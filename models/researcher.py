@@ -1,6 +1,8 @@
 __author__ = 'Swastik'
 class Researcher:
+    id = ''
     publications = [] #List of Publication class
+
     fields = []
     def __init__(self, name):
       self.name = name

@@ -1,14 +1,7 @@
 __author__ = 'Swastik'
-from nltk.tokenize import RegexpTokenizer
-from stop_words import get_stop_words
-from nltk.stem.porter import PorterStemmer
 
-# Create p_stemmer of class PorterStemmer
-p_stemmer = PorterStemmer()
+from common import *
 
-tokenizer = RegexpTokenizer(r'\w+')
-# create English stop words list
-en_stop = get_stop_words('en')
 
 def get_tokens(document):
     raw = document.lower()

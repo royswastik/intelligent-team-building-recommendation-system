@@ -13,5 +13,3 @@ def extract_corrected_text(pub_id):
     return replaced
 
 
-data = extract_corrected_text("A00-1001")
-print(data)

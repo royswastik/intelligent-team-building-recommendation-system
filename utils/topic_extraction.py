@@ -8,3 +8,4 @@ def generate_document_term_matrix(texts):
     ldamodel = models.ldamodel.LdaModel(corpus, num_topics=50, id2word = dictionary, passes=20)
     # print(ldamodel.print_topics(num_topics=3, num_words=3))
     return ldamodel
+

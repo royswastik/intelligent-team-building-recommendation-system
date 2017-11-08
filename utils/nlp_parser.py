@@ -1,3 +1,8 @@
+import os,sys,inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0,parentdir)
+
 import os
 import re
 import nltk
@@ -92,14 +97,15 @@ def write_author_noun_phrases():
     # count = 0
     for filename in os.listdir(readDir):
         # if count > 3: break
-        authorContentPath = os.path.join(readDir, filename)
-        text = TextExtractor.extract_corrected_text(authorContentPath)
-        nounPhrases = get_noun_phrases(text)
-        content = ",".join(nounPhrases)
-        outPath = os.path.join(constants.DATA_PATH, "authors_topic", filename)
-        TextExtractor.write_to_file(content, outPath)
-        print filename
-        # count += 1
+        if filename[0]>=2:
+            authorContentPath = os.path.join(readDir, filename)
+            text = TextExtractor.extract_corrected_text(authorContentPath)
+            nounPhrases = get_noun_phrases(text)
+            content = ",".join(nounPhrases)
+            outPath = os.path.join(constants.DATA_PATH, "authors_topic", filename)
+            TextExtractor.write_to_file(content, outPath)
+            # print filename
+            # count += 1
 
 if __name__ == "__main__":
     write_author_noun_phrases()

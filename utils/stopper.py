@@ -5,7 +5,14 @@ import math
 
 from nltk.corpus import names, gazetteers
 
-#TODO - Add languages stopwords - english, french, arabic
+def get_stopword_path(filename):
+    return "../data/stopwords/"+filename
+
+
+CUSTOM_PHRASES_STOPS = {'system', 'document', 'xml document', 'element', 'text document', 'full document', 'approach',
+                        'text document', 'experiment', 'functionality', 'document set', 'text segment', 'feature',
+                        'start_tag', 'end tag', 'specific domain' , 'markup', 'behaviour', 'accuracy', 'xml markup',
+                        'department', 'national', 'letter', 'number', 'sentence', 'performance' }
 
 NUMBERS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven',
            'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen',
@@ -84,6 +91,11 @@ RE_PERCENT = '%s\s*' % RE_NUMERIC + '%'
 RE_YEAR = '(\d{4}s?|\d{2}s)'
 
 RE_TIME = '\d{1,2}(\:\d{2})?(\s*[aApP]\.?[mM]\.?)?'
+
+#TODO - list not complete
+LANGUAGES = ['arabic', 'english', 'french', 'spanish', 'finnish', 'mexican', 'greek', 'chinese', 'mandarin', 'hindi']
+
+ARTICLE_HEADERS = ['introduction', 'example' , 'citations' , 'references' , 'section', 'work' , 'conclusion', 'abstract']
 
 def contains(is_method, s):
     for word in s.split():
@@ -260,8 +272,15 @@ def endswith_person_suffix(s):
 def contains_person_suffix(s):
     return contains(is_person_suffix, s)
 
+def is_language(s):
+    return s.replace('.', '').lower() in LANGUAGES
+
+def is_article_header(s):
+    return s.replace('.', '').lower() in ARTICLE_HEADERS
+
 def is_org_suffix(s):
     return s.replace('.', '').lower() in ORG_SUFFIXES
+
 
 def endswith_org_suffix(s):
     return endswith(is_org_suffix, s)

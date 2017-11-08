@@ -1,0 +1,2204 @@
+Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing, pages 938?947,
+Singapore, 6-7 August 2009. c?2009 ACL and AFNLP
+ 
+ 
+Web-Scale Distributional Similarity and Entity Set Expansion 
+Patrick Pantel?, Eric Crestan?, Arkady Borkovsky?, Ana-Maria Popescu?, Vishnu Vyas? 
+?Yahoo! Labs 
+Sunnyvale, CA 94089 
+{ppantel,ecrestan}@yahoo-inc.com 
+{amp,vishnu}@yahoo-inc.com 
+?Yandex Labs 
+Burlingame, CA 94010 
+arkady@yandex-team.ru 
+  
+ 
+Abstract 
+Computing the pairwise semantic similarity 
+between all words on the Web is a compu-
+tationally challenging task. Parallelization 
+and optimizations are necessary. We pro-
+pose a highly scalable implementation 
+based on distributional similarity, imple-
+mented in the MapReduce framework and 
+deployed over a 200 billion word crawl of 
+the Web. The pairwise similarity between 
+500 million terms is computed in 50 hours 
+using 200 quad-core nodes. We apply the 
+learned similarity matrix to the task of au-
+tomatic set expansion and present a large 
+empirical study to quantify the effect on 
+expansion performance of corpus size, cor-
+pus quality, seed composition and seed 
+size. We make public an experimental 
+testbed for set expansion analysis that in-
+cludes a large collection of diverse entity 
+sets extracted from Wikipedia. 
+1 Introduction 
+Computing the semantic similarity between terms 
+has many applications in NLP including word clas-
+sification (Turney and Littman 2003), word sense 
+disambiguation (Yuret and Yatbaz 2009), context-
+spelling correction (Jones and Martin 1997), fact 
+extraction (Pa?ca et al 2006), semantic role labe-
+ling (Erk 2007), and applications in IR such as 
+query expansion (Cao et al 2008) and textual ad-
+vertising (Chang et al 2009). 
+For commercial engines such as Yahoo! and 
+Google, creating lists of named entities found on 
+the Web is critical for query analysis, document 
+categorization, and ad matching. Computing term 
+similarity is typically done by comparing co-
+occurrence vectors between all pairs of terms 
+(Sarmento et al 2007). Scaling this task to the 
+Web requires parallelization and optimizations. 
+In this paper, we propose a large-scale term si-
+milarity algorithm, based on distributional similari-
+ty, implemented in the MapReduce framework and 
+deployed over a 200 billion word crawl of the 
+Web. The resulting similarity matrix between 500 
+million terms is applied to the task of expanding 
+lists of named entities (automatic set expansion). 
+We provide a detailed empirical analysis of the 
+discovered named entities and quantify the effect 
+on expansion accuracy of corpus size, corpus 
+quality, seed composition, and seed set size. 
+2 Related Work 
+Below we review relevant work in optimizing si-
+milarity computations and automatic set expansion. 
+2.1 Computing Term Similarities 
+The distributional hypothesis (Harris 1954), which 
+links the meaning of words to their contexts, has 
+inspired many algorithms for computing term simi-
+larities (Lund and Burgess 1996; Lin 1998; Lee 
+1999; Erk and Pad? 2008; Agirre et al 2009). 
+Brute force similarity computation compares all 
+the contexts for each pair of terms, with complexi-
+ty O(n2m) where n is the number of terms and m is 
+the number of possible contexts. More efficient 
+strategies are of three kinds: 
+938
+Smoothing: Techniques such as Latent Semantic 
+Analysis reduce the context space by applying 
+truncated Singular Value Decomposition (SVD) 
+(Deerwester et al 1990). Computing the matrix 
+decomposition however does not scale well to 
+web-size term-context matrices. Other currently 
+unscalable smoothing techniques include Probabil-
+istic Latent Semantic Analysis (Hofmann 1999), 
+Iterative Scaling (Ando 2000), and Latent Dirichlet 
+Allocation (Blei et al 2003). 
+Randomized Algorithms: Randomized tech-
+niques for approximating various similarity meas-
+ures have been successfully applied to term simi-
+larity (Ravichandran et al 2005; Gorman and Cur-
+ran 2006). Common techniques include Random 
+Indexing based on Sparse Distributed Memory 
+(Kanerva 1993) and Locality Sensitive Hashing 
+(Broder 1997). 
+Optimizations and Distributed Processing: 
+Bayardo et al (2007) present a sparse matrix opti-
+mization strategy capable of efficiently computing 
+the similarity between terms which?s similarity 
+exceeds a given threshold. Rychl? and Kilgarriff 
+(2007), Elsayed et al (2008) and Agirre et al 
+(2009) use reverse indexing and the MapReduce 
+framework to distribute the similarity computa-
+tions across several machines. Our proposed ap-
+proach combines these two strategies and efficient-
+ly computes the exact similarity (cosine, Jaccard, 
+Dice, and Overlap) between all pairs. 
+2.2 Entity extraction and classification 
+Building entity lexicons is a task of great interest 
+for which structured, semi-structured and unstruc-
+tured data have all been explored (GoogleSets; 
+Sarmento et al 2007; Wang and Cohen 2007; Bu-
+nescu and Mooney 2004; Etzioni et al 2005; Pa?ca 
+et al 2006). Our own work focuses on set expan-
+sion from unstructured Web text. Apart from the 
+choice of a data source, state-of-the-art entity ex-
+traction methods differ in their use of numerous, 
+few or no labeled examples, the open or targeted 
+nature of the extraction as well as the types of fea-
+tures employed. Supervised approaches (McCal-
+lum and Li 2003, Bunescu and Mooney 2004) rely 
+on large sets of labeled examples, perform targeted 
+extraction and employ a variety of sentence- and 
+corpus-level features. While very precise, these 
+methods are typically used for coarse grained enti-
+ty classes (People, Organizations, Companies) for 
+which large training data sets are available. Unsu-
+pervised approaches rely on no labeled data and 
+use either bootstrapped class-specific extraction 
+patterns (Etzioni et al 2005) to find new elements 
+of a given class (for targeted extraction) or corpus-
+based term similarity (Pantel and Lin 2002) to find 
+term clusters (in an open extraction framework). 
+Finally, semi-supervised methods have shown 
+great promise for identifying and labeling entities 
+(Riloff and Shepherd 1997; Riloff and Jones 1999; 
+Banko et al 2007; Downey et al 2007; Pa?ca et al 
+2006; Pa?ca 2007a; Pa?ca 2007b; Pa?ca and Durme 
+2008). Starting with a set of seed entities, semi-
+supervised extraction methods use either class-
+specific patterns to populate an entity class or dis-
+tributional similarity to find terms similar to the 
+seed set (Pa?ca?s work also examines the advan-
+tages of combining these approaches). Semi-
+supervised methods (including ours) are useful for 
+extending finer grain entity classes, for which large 
+unlabeled data sets are available. 
+2.3 Impact of corpus on system performance 
+Previous work has examined the effect of using 
+large, sometimes Web-size corpora, on system per-
+formance in the case of familiar NLP tasks. Banko 
+and Brill (2001) show that Web-scale data helps 
+with confusion set disambiguation while Lapata 
+and Keller (2005) find that the Web is a good 
+source of n-gram counts for unsupervised models. 
+Atterer and Schutze (2006) examine the influence 
+of corpus size on combining a supervised approach 
+with an unsupervised one for relative clause and 
+PP-attachment. Etzioni et al (2005) and Pantel et 
+al. (2004) show the advantages of using large 
+quantities of generic Web text over smaller corpora 
+for extracting relations and named entities. Overall, 
+corpus size and quality are both found to be impor-
+tant for extraction. Our paper adds to this body of 
+work by focusing on the task of similarity-based 
+set expansion and providing a large empirical 
+study quantify the relative corpus effects. 
+2.4 Impact of seeds on extraction performance 
+Previous extraction systems report on the size and 
+quality of the training data or, if semi-supervised, 
+the size and quality of entity or pattern seed sets. 
+Narrowing the focus to closely related work, Pa?ca 
+(2007a; 2007b) and Pa?ca and Durme (2008) show 
+the impact of varying the number of instances rep-
+resentative of a given class and the size of the 
+attribute seed set on the precision of class attribute 
+extraction. An example observation is that good 
+939
+quality class attributes can still be extracted using 
+20 or even 10 instances to represent an entity class. 
+Among others, Etzioni et al (2005) shows that a 
+small pattern set can help bootstrap useful entity 
+seed sets and reports on the impact of seed set 
+noise on final performance. Unlike previous work, 
+empirically quantifying the influence of seed set 
+size and quality on extraction performance of ran-
+dom entity types is a key objective of this paper. 
+3 Large-Scale Similarity Model 
+Term semantic models normally invoke the distri-
+butional hypothesis (Harris 1985), which links the 
+meaning of terms to their contexts. Models are 
+built by recording the surrounding contexts for 
+each term in a large collection of unstructured text 
+and storing them in a term-context matrix. Me-
+thods differ in their definition of a context (e.g., 
+text window or syntactic relations), or by a means 
+to weigh contexts (e.g., frequency, tf-idf, pointwise 
+mutual information), or ultimately in measuring 
+the similarity between two context vectors (e.g., 
+using Euclidean distance, Cosine, Dice). 
+In this paper, we adopt the following methodol-
+ogy for computing term similarity. Our various 
+web crawls, described in Section 6.1, are POS-
+tagged using Brill?s tagger (1995) and chunked 
+using a variant of the Abney chunker (Abney 
+1991). Terms are NP chunks with some modifiers 
+removed; their contexts (i.e., features) are defined 
+as their rightmost and leftmost stemmed chunks. 
+We weigh each context f using pointwise mutual 
+information (Church and Hanks 1989). Let PMI(w) 
+denote a pointwise mutual information vector, con-
+structed for each term as follows: PMI(w) = (pmiw1, 
+pmiw2, ?, pmiwm), where pmiwf is the pointwise 
+mutual information between term w and feature f: 
+ 
+???
+?=
+==
+m
+j
+wj
+n
+i
+if
+wf
+wf
+cc
+Nc
+pmi
+11
+log
+ 
+where cwf is the frequency of feature f occurring for 
+term w, n is the number of unique terms and N is 
+the total number of features for all terms. 
+Term similarities are computed by comparing 
+these pmi context vectors using measures such as 
+cosine, Jaccard, and Dice. 
+3.1 Large-Scale Implementation  
+Computing the similarity between terms on a large 
+Web crawl is a non-trivial problem, with a worst 
+case cubic running time ? O(n2m) where n is the 
+number of terms and m is the dimensionality of the 
+feature space. Section 2.1 introduces several opti-
+mization techniques; below we propose an algo-
+rithm for large-scale term similarity computation 
+which calculates exact scores for all pairs of terms, 
+generalizes to several different metrics, and is scal-
+able to a large crawl of the Web. 
+Our optimization strategy follows a generalized 
+sparse-matrix multiplication approach (Sarawagi 
+and Kirpal 2004), which is based on the well-
+known observation that a scalar product of two 
+vectors depends only on the coordinates for which 
+both vectors have non-zero values. Further, we 
+observe that most commonly used similarity scores 
+for feature vectors x
+r
+ and y
+r
+, such as cosine and 
+Dice, can be decomposed into three values: one 
+depending only on features of x
+r
+, another depend-
+ing only on features of y
+r
+, and the third depending 
+on the features shared both by x
+r
+ and y
+r
+. More for-
+mally, commonly used similarity scores ( )yxF rr,  
+can be expressed as: 
+ ( ) ( ) ( ) ( )??
+???
+?= ? yfxfyxffyxF
+i
+ii
+rrrr
+3210 ,,,,
+ 
+Table 1 defines f0, f1, f2, and f3 for some common 
+similarity functions. For each of these scores, f2 = 
+f3. In our work, we compute all of these scores, but 
+report our results using only the cosine function. 
+Let A and B be two matrices of PMI feature vec-
+tors. Our task is to compute the similarity between 
+all vectors in A and all vectors in B. In computing 
+the similarity between all pairs of terms, A = B. 
+Figure 1 outlines our algorithm for computing 
+the similarity between all elements of A and B. Ef-
+ficient computation of the similarity matrix can be 
+achieved by leveraging the fact that ( )yxF rr,  is de-
+termined solely by the features shared by x
+r
+ and y
+r
+ 
+(i.e., f1(0,x) = f1(x,0) = 0 for any x) and that most of 
+Table 1. Definitions for f0, f1, f2, and f3 for commonly used 
+similarity scores. 
+METRIC ( )zyxf ,,0  ( )yxf ,1  ( ) ( )xfxf rr 32 =  
+Overlap x  1 0  
+Jaccard* xzy
+x
+?+
+ ( )yx ,min  ?
+i
+ix
+Dice* 
+zy
+x
++
+2
+ 
+yx ?  ?
+i
+ix
+2
+Cosine zy
+x
+?
+ 
+yx ?  ?
+i
+ix
+2
+*weighted generalization  
+ 
+940
+the feature vectors are very sparse (i.e., most poss-
+ible contexts never occur for a given term). In this 
+case, calculating f1(x, y) is only required when both 
+feature vectors have a shared non-zero feature, sig-
+nificantly reducing the cost of computation. De-
+termining which vectors share a non-zero feature 
+can easily be achieved by first building an inverted 
+index for the features. The computational cost of 
+this algorithm is ? 2iN , where Ni is the number of 
+vectors that have a non-zero ith coordinate. Its 
+worst case time complexity is O(ncv) where n is 
+the number of terms to be compared, c is the max-
+imum number of non-zero coordinates of any vec-
+tor, and v is the number of vectors that have a non-
+zero ith coordinate where i is the coordinate which 
+is non-zero for the most vectors. In other words, 
+the algorithm is efficient only when the density of 
+the coordinates is low. On our datasets, we ob-
+served near linear running time in the corpus size. 
+Bayardo et al (2007) described a strategy that 
+potentially reduces the cost even further by omit-
+ting the coordinates with the highest number of 
+non-zero value. However, their algorithm gives a 
+significant advantage only when we are interested 
+in finding solely the similarity between highly sim-
+ilar terms. In our experiments, we compute the ex-
+act similarity between all pairs of terms. 
+Distributed Implementation 
+The pseudo-code in Figure 1 assumes that A can fit 
+into memory, which for large A may be impossible. 
+Also, as each element of B is processed indepen-
+dently, running parallel processes for non-
+intersecting subsets of B makes the processing 
+faster. In this section, we outline our MapReduce 
+implementation of Figure 1 deployed using Ha-
+doop1, the open-source software package imple-
+menting the MapReduce framework and distri-
+buted file system. Hadoop has been shown to scale 
+to several thousands of machines, allowing users to 
+write simple ?map? and ?reduce? code, and to 
+seamlessly manage the sophisticated parallel ex-
+ecution of the code. A good primer on MapReduce 
+programming is in (Dean and Ghemawat 2008). 
+Our implementation employs the MapReduce 
+model by using the Map step to start M?N Map 
+tasks in parallel, each caching 1/Mth part of A as 
+an inverted index and streaming 1/Nth part of B 
+through it. The actual inputs are read by the tasks 
+                                                 
+1 Hadoop, http://lucene.apache.org/hadoop/ 
+directly from HDFS (Hadoop Distributed File Sys-
+tem). Each part of A is processed N times, and each 
+part of B is processed M times. M is determined by 
+the amount of memory dedicated for the inverted 
+index, and N should be determined by trading off 
+the fact that as N increases, more parallelism can 
+be obtained at the increased cost of building the 
+same inverse index N times. 
+The similarity algorithm from Figure 1 is run in 
+each task of the Map step of a MapReduce job. 
+The Reduce step is used to group the output by bi. 
+4 Application to Set Expansion 
+Creating lists of named entities is a critical prob-
+lem at commercial engines such as Yahoo! and 
+Google. The types of entities to be expanded are 
+often not known a priori, leaving supervised clas-
+sifiers undesirable. Additionally, list creators typi-
+cally need the ability to expand sets of varying 
+granularity. Semi-supervised approaches are pre-
+dominantly adopted since they allow targeted ex-
+pansions while requiring only small sets of seed 
+entities. State-of-the-art techniques first compute 
+term-term similarities for all available terms and 
+then select candidates for set expansion from 
+amongst the terms most similar to the seeds (Sar-
+mento et al 2007). 
+Input: Two matrices A and B of feature vectors. 
+## Build an inverted index for A (optimiza- 
+## tion for data sparseness) 
+AA = an empty hash-table 
+for i in (1..n): 
+   F2[i] = f2(A[i]) ## cache values of f2(x) 
+   for k in non-zero features of A[i]: 
+      if k not in AA: AA[k] = empty-set 
+      ## append <vector-id, feature-value> 
+      ## pairs to the set of non-zero 
+      ## values for feature k 
+      AA[k].append( (i,A[i,k]) ) 
+## Process the elements of B 
+for b in B: 
+   F1 = {} ## the set of Ai that have non-
+zero similarity with b 
+   for k in non-zero features of b: 
+      for i in AA[k]: 
+         if i not in sim: sim[i] = 0 
+         F1[i] += f1( AA[k][i], b[k]) 
+   F3 = f3(b) 
+   for i in sim: 
+      print i, b, f0( F1[i], F2[i], F3) 
+Output: A matrix containing the similarity between 
+all elements in A and in B. 
+Figure 1. Similarity computation algorithm. 
+941
+Formally, we define our expansion task as: 
+Task Definition: Given a set of seed entities S = 
+{s1, s2, ?, sk} of a class C = {s1, s2, ?, sk, ?,, sn} and 
+an unlabeled textual corpus T, find all members of 
+the class C. 
+For example, consider the class of Bottled Water 
+Brands. Given the set of seeds S = {Volvic, San 
+Pellegrino, Gerolsteiner Brunnen, Bling H2O}, our 
+task is to find all other members of this class, such 
+as {Agua Vida, Apenta, Culligan, Dasani, Ethos 
+Water, Iceland Pure Spring Water, Imsdal, ?} 
+4.1 Set Expansion Algorithm 
+Our goal is not to propose a new set expansion al-
+gorithm, but instead to test the effect of using our 
+Web-scale term similarity matrix (enabled by the 
+algorithm proposed in Section 3) on a state-of-the-
+art distributional set expansion algorithm, namely 
+(Sarmento et al 2007). 
+We consider S as a set of prototypical examples 
+of the underlying entity set. A representation for 
+the meaning of S is computed by building a feature 
+vector consisting of a weighted average of the fea-
+tures of its seed elements s1, s2, ?, sk, a centroid. For 
+example, given the seed elements {Volvic, San Pel-
+legrino, Gerolsteiner Brunnen, Bling H2O}, the 
+resulting centroid consists of (details of the feature 
+extraction protocol are in Section 6.1): 
+brand, mineral water, monitor, 
+lake, water, take over, ? 
+Centroids are represented in the same space as 
+terms allowing us to compute the similarity be-
+tween centroids and all terms in our corpus. A 
+scored and ranked set for expansion is ultimately 
+generated by sorting all terms according to their 
+similarity to the seed set centroid, and applying a 
+cutoff on either the similarity score or on the total 
+number of retrieved terms. In our reported experi-
+ments, we expanded over 22,000 seed sets using 
+our Web similarity model from Section 3. 
+5 Evaluation Methodology 
+In this section, we describe our methodology for 
+evaluating Web-scale set expansion. 
+5.1 Gold Standard Entity Sets 
+Estimating the quality of a set expansion algorithm 
+requires a random sample from the universe of all 
+entity sets that may ever be expanded, where a set 
+represents some concept such as Stage Actors. An 
+approximation of this universe can be extracted 
+from the ?List of? pages in Wikipedia2. 
+Upon inspection of a random sample of the ?List 
+of? pages, we found that several lists were compo-
+sitions or joins of concepts, for example ?List of 
+World War II aces from Denmark? and ?List of 
+people who claimed to be God?. We addressed this 
+issue by constructing a quasi-random sample as 
+follows. We randomly sorted the list of every noun 
+occurring in Wikipedia2. Then, for each noun we 
+verified whether or not it existed in a Wikipedia 
+list, and if so we extracted this list. If a noun be-
+longed to multiple lists, the authors chose the list 
+that seemed most appropriate. Although this does 
+not generate a perfect random sample, diversity is 
+ensured by the random selection of nouns and rele-
+vancy is ensured by the author adjudication. 
+The final gold standard consists of 50 sets, in-
+cluding: classical pianists, Spanish provinces, 
+Texas counties, male tennis players, first ladies, 
+cocktails, bottled water brands, and Archbishops of 
+Canterbury. For each set, we then manually 
+scraped every instance from Wikipedia keeping 
+track also of the listed variants names. 
+The gold standard is available for download at: 
+http://www.patrickpantel.com/cgi-bin/Web/Tools/getfile.pl?type=data&id=sse-
+gold/wikipedia.20071218.goldsets.tgz 
+The 50 sets consist on average of 208 instances 
+(with a minimum of 11 and a maximum of 1,116) 
+for a total of 10,377 instances. 
+5.2 Trials 
+In order to analyze the corpus and seed effects on 
+performance, we created 30 copies of each of the 
+50 sets and randomly sorted each copy. Then, for 
+each of the 1500 copies, we created a trial for each 
+of the following 23 seed sizes: 1, 2, 5, 10, 20, 30, 
+40, ?, 200. Each trial of seed size s was created by 
+taking the first s entries in each of the 1500 random 
+copies. For sets that contained fewer than 200 
+items, we only generated trials for seed sizes 
+                                                 
+2 In this paper, extractions from Wikipedia are taken 
+from a snapshot of the resource in December 2008. 
+942
+smaller than the set size. The resulting trial dataset 
+consists of 20,220 trials3. 
+5.3 Judgments 
+Set expansion systems consist of an expansion al-
+gorithm (such as the one described in Section 4.1) 
+as well as a corpus (such as Wikipedia, a news 
+corpus, or a web crawl). For a given system, each 
+of the 20,220 trials described in the previous sec-
+tion are expanded. In our work, we limited the total 
+number of system expansions, per trial, to 1000. 
+Before judgment of an expanded set, we first 
+collapse each instance that is a variant of another 
+(determined using the variants in our gold stan-
+dard) into one single instance (keeping the highest 
+system score)4. Then, each expanded instance is 
+judged as correct or incorrect automatically 
+against the gold standard described in Section 5.1. 
+5.4 Analysis Metrics 
+Our experiments in Section 6 consist of precision 
+vs. recall or precision vs. rank curves, where: 
+a) precision is defined as the percentage of correct 
+instances in the expansion of a seed set; and 
+b) recall is defined as the percentage of non-seed 
+gold standard instances retrieved by the system. 
+Since the gold standard sets vary significantly in 
+size, we also provide the R-precision metric to 
+normalize for set size: 
+c) R-precision is defined as the average precision 
+of all trials where precision is taken at rank R = 
+{size of trial?s associated gold standard set}, 
+thereby normalizing for set size. 
+                                                 
+3 Available for download at http://www.patrickpantel.com/cgi-
+bin/Web/Tools/getfile.pl?type=data&id=sse-gold/wikipedia.20071218.trials.tgz. 
+4 Note also that we do not allow seed instances nor their 
+variants to appear in an expansion set. 
+For the above metrics, 95% confidence bounds are 
+computed using the randomly generated samples 
+described in Section 5.2. 
+6 Experimental Results 
+Our goal is to study the performance gains on set 
+expansion using our Web-scale term similarity al-
+gorithm from Section 3. We present a large empir-
+ical study quantifying the importance of corpus 
+and seeds on expansion accuracy. 
+6.1 Experimental Setup 
+We extracted statistics to build our model from 
+Section 3 using four different corpora, outlined in 
+Table 2. The Wikipedia corpus consists of a snap-
+shot of the English articles in December 20085. 
+The Web100 corpus consists of an extraction from 
+a large crawl of the Web, from Yahoo!, of over 
+600 million English webpages. For each crawled 
+document, we removed paragraphs containing 
+fewer than 50 tokens (as a rough approximation of 
+the narrative part of a webpage) and then removed 
+all duplicate sentences. The resulting corpus con-
+sists of over 200 billion words. The Web020 cor-
+pus is a random sample of 1/5th of the sentences in 
+Web100 whereas Web004 is a random sample of 
+1/25th of Web100. 
+For each corpus, we tagged and chunked each 
+sentence as described in Section 3. We then com-
+puted the similarity between all noun phrase 
+chunks using the model of Section 3.1. 
+6.2 Quantitative Analysis 
+Our proposed optimization for term similarity 
+computation produces exact scores (unlike rando-
+mized techniques) for all pairs of terms on a large 
+Web crawl. For our largest corpus, Web100, we 
+computed the pairwise similarity between over 500 
+million words in 50 hours using 200 four-core ma-
+chines. Web004 is of similar scale to the largest 
+reported randomized technique (Ravichandran et 
+al. 2005). On this scale, we compute the exact si-
+milarity matrix in a little over two hours whereas 
+Ravichandran et al (2005) compute an approxima-
+tion in 570 hours. On average they only find 73% 
+                                                 
+5 To avoid biasing our Wikipedia corpus with the test 
+sets, Wikipedia ?List of? pages were omitted from our 
+statistics as were any page linked to gold standard list 
+members from ?List of? pages. 
+Table 2. Corpora used to build our expansion models.
+CORPORA 
+UNIQUE 
+SENTENCES 
+(MILLIONS) 
+TOKENS 
+(MILLIONS) 
+UNIQUE 
+WORDS 
+(MILLIONS) 
+Web100 5,201 217,940 542 
+Web020? 1040 43,588 108 
+Web004? 208 8,717 22 
+Wikipedia6 30 721 34 
+?Estimated from Web100 statistics. 
+ 
+943
+of the top-1000 similar terms of a random term 
+whereas we find all of them. 
+For set expansion, experiments have been run on 
+corpora as large as Web004 and Wikipedia (Sar-
+mento et al 2007), a corpora 300 times smaller 
+than our Web crawl. Below, we compare the ex-
+pansion accuracy of Sarmento et al (2007) on Wi-
+kipedia and our Web crawls. 
+Figure 2 illustrates the precision and recall tra-
+deoff for our four corpora, with 95% confidence 
+intervals computed over all 20,220 trials described 
+in Section 4.2. Table 3 lists the resulting R-
+precision along with the system precisions at ranks 
+25, 50, and 100 (see Figure 2 for detailed precision 
+analysis). Why are the precision scores so low? 
+Compared with previous work that manually select 
+entity types for expansion, such as countries and 
+companies, our work is the first to evaluate over a 
+large set of randomly selected entity types. On just 
+the countries class, our R-Precision was 0.816 us-
+ing Web100. 
+The following sections analyze the effects of 
+various expansion variables: corpus size, corpus 
+quality, seed size, and seed quality. 
+6.2.1 Corpus Size and Corpus Quality Effect 
+Not surprisingly, corpus size and quality have a 
+significant impact on expansion performance. Fig-
+ure 2 and Table 3 quantify this expectation. On our 
+Web crawl corpora, we observe that the full 200+ 
+billion token crawl (Web100) has an average R-
+precision 13% higher than 1/5th of the crawl 
+(Web020) and 53% higher than 1/25th of the crawl. 
+Figure 2 also illustrates that throughout the full 
+precision/recall curve, Web100 significantly out-
+performs Web020, which in turn significantly out-
+performs Web004. 
+The higher text quality Wikipedia corpus, which 
+consists of roughly 60 times fewer tokens than 
+Web020, performs nearly as well as Web020 (see 
+Figure 2). We omitted statistics from Wikipedia 
+?List of? pages in order to not bias our evaluation 
+to the test set described in Section 5.1. Inspection 
+of the precision vs. rank graph (omitted for lack of 
+space) revealed that from rank 1 thru 550, Wikipe-
+dia had the same precision as Web020. From rank 
+550 to 1000, however, Wikipedia?s precision 
+dropped off significantly compared with Web020, 
+accounting for the fact that the Web corpus con-
+tains a higher recall of gold standard instances. The 
+R-precision reported in Table 3 shows that this 
+precision drop-off results in a significantly lower 
+R-precision for Wikipedia compared with Web020. 
+6.2.2  The Effect of Seed Selection 
+Intuitively, some seeds are better than others. We 
+study the impact of seed selection effect by in-
+specting the system performance for several ran-
+domly selected seed sets of fixed size and we find 
+that seed set composition greatly affects perfor-
+mance. Figure 3 illustrates the precision vs. recall 
+tradeoff on our best performing corpus Web100 for 
+30 random seed sets of size 10 for each of our 50 
+gold standard sets (i.e., 1500 trials were tested.) 
+Each of the trials performed better than the average 
+system performance (the double-lined curve lowest 
+in Figure 3). Distinguishing between the various 
+data series is not important, however important to 
+notice is the very large gap between the preci-
+sion/recall curves of the best and worst performing 
+random seed sets. On average, the best performing 
+seed sets had 42% higher precision and 39% higher 
+recall than the worst performing seed set. Similar 
+Table 3. Corpora analysis: R-precision and Precision at var-
+ious ranks. 95% confidence bounds are all below 0.005?. 
+CORPORA R-PREC PREC@25 PREC@50 PREC@100 
+Web100 0.404 0.407 0.347 0.278 
+Web020 0.356 0.377 0.319 0.250 
+Web004 0.264 0.353 0.298 0.239 
+Wikipedia 0.315 0.372 0.314 0.253 
+?95% confidence bounds are computed over all trials described in Section 5.2. 
+Figure 2. Corpus size and quality improve performance. 
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0 0.1 0.2 0.3 0.4 0.5 0.6
+Re
+ca
+ll
+Precision
+Corpora?Analysis
+(Precision?vs.?Recall)
+Web100
+Web020
+Web004
+Wikipedia
+CORPORA R-PREC PREC@25 PREC@50 PREC@100 
+Web100 0.404 0.407 0.347 0.278 
+Web020 0.356 0.377 0.319 0.250 
+Web004 0.264 0.353 0.298 0.239 
+Wikipedia 0.315 0.372 0.314 0.253 
+?95% confidence bounds are computed over all trials described in Section 5.2. 
+944
+curves were observed for inspected seed sets of 
+size 5, 20, 30, and 40. 
+Although outside of the scope of this paper, we 
+are currently investigating ways to automatically 
+detect which seed elements are better than others in 
+order to reduce the impact of seed selection effect. 
+6.2.3 The Effect of Seed Size 
+Here we aim to confirm, with a large empirical 
+study, the anecdotal claims in (Pa?ca and Durme 
+2008) that few seeds are necessary. We found that 
+a) very small seed sets of size 1 or 2 are not suffi-
+cient for representing the intended entity set; b) 5-
+20 seeds yield on average best performance; and c) 
+surprisingly, increasing the seed set size beyond 
+20 or 30 on average does not find any new correct 
+instances. 
+We inspected the effect of seed size on R-
+precision over the four corpora. Each seed size 
+curve is computed by averaging the system per-
+formance over the 30 random trials of all 50 sets. 
+For each corpus, R-precision increased sharply 
+from seed size 1 to 10 and the curve flattened out 
+for seed sizes larger than 20 (figure omitted for 
+lack of space). Error analysis on the Web100 cor-
+pus shows that once our model has seen 10-20 
+seeds, the distributional similarity model seems to 
+have enough statistics to discover as many new 
+correct instances as it could ever find. Some enti-
+ties could never be found by the distributional si-
+milarity model since they either do not occur or 
+infrequently occur in the corpus or they occur in 
+contexts that vary a great deal from other set ele-
+ments. Figure 4 illustrates this behavior by plotting 
+for each seed set size the rate of increase in discov-
+ery of new correct instances (i.e., not found in 
+smaller seed set sizes). 
+We see that most gold standard instances are 
+discovered with the first 5-10 seeds. After the 30th 
+seed is introduced, no new correct instances are 
+found. An important finding is that the error rate 
+does not increase with increased seed set size (see 
+Figure 5). This study shows that only few seeds 
+(10-20) yield best performance and that adding 
+more seeds beyond this does not on average affect 
+performance in a positive or negative way. 
+Figure 3. Seed set composition greatly affects system performance (with 30 different seed samples of size 10). 
+Figure 4. Few new instances are discovered with more 
+than 5-20 seeds on Web100 (with 95% confidence). 
+Figure 5. Percentage of errors does not increase as 
+seed size increases on Web100 (with 95% confidence).
+0
+0.5
+1
+1.5
+2
+2.5
+3
+0 20 40 60 80 100 120 140 160 180 200
+Ra
+te
+?o
+f?N
+ew
+?C
+or
+re
+ct
+?
+Seed?Size
+Rate?of?New?Correct?Expansions
+vs.?Seed?Size
+0
+0.2
+0.4
+0.6
+0.8
+1
+0 20 40 60 80 100 120 140 160 180 200
+%
+?o
+f?E
+rr
+or
+Seed?Size
+Seed?Size?vs.?%?of?Errors
+0
+0.2
+0.4
+0.6
+0.8
+0 0.2 0.4 0.6 0.8 1
+Re
+ca
+ll
+Precision
+Web100:?Seed?Selection?Effect
+Precision?vs.?Recall
+Web100 s010
+s010.t01 s010.t02
+s010.t03 s010.t04
+s010.t05 s010.t06
+s010.t07 s010.t08
+s010.t09 s010.t10
+s010.t11 s010.t12
+s010.t13 s010.t14
+s010.t15 s010.t16
+s010.t17 s010.t18
+s010.t19 s010.t20
+s010.t21 s010.t22
+s010.t23 s010.t24
+s010.t25 s010.t26
+s010.t27 s010.t28
+s010.t29 s010.t30
+945
+7 Conclusion  
+We proposed a highly scalable term similarity al-
+gorithm, implemented in the MapReduce frame-
+work, and deployed over a 200 billion word crawl 
+of the Web. The pairwise similarity between 500 
+million terms was computed in 50 hours using 200 
+quad-core nodes. We evaluated the impact of the 
+large similarity matrix on a set expansion task and 
+found that the Web similarity matrix gave a large  
+performance boost over a state-of-the-art expan-
+sion algorithm using Wikipedia. Finally, we re-
+lease to the community a testbed for experimental-
+ly analyzing automatic set expansion, which in-
+cludes a large collection of nearly random entity 
+sets extracted from Wikipedia and over 22,000 
+randomly sampled seed expansion trials.  
+References 
+Abney, S. Parsing by Chunks. In: Robert Berwick, Ste-
+ven Abney and Carol Tenny (eds.), Principle-Based 
+Parsing. Kluwer Academic Publishers, Dordrecht. 
+1991. 
+Agirre, E.; Alfonseca, E.; Hall, K.; Kravalova, J.; Pasca, 
+M.; and Soroa, A.. 2009. A Study on Similarity and 
+Relatedness Using Distributional and WordNet-based 
+Approaches. In Proceedings of NAACL HLT 09. 
+Ando, R. K. 2000. Latent semantic space: Iterative scal-
+ing improves precision of interdocument similarity 
+measurement. In Proceedings of SIGIR-00. pp. 216?
+223. 
+Atterer, M. and Schutze, H., 2006. The Effect of Corpus 
+Size when Combining Supervised and Unsupervised 
+Training for Disambiguation. In Proceedings of ACL-
+06. 
+Banko, M. and Brill, E. 2001. Mitigating the paucity of 
+data problem. In Proceedings of HLT-2001. San Di-
+ego, CA. 
+Banko, M.; Cafarella, M.; Soderland, S.; Broadhead, M.; 
+Etzioni, O. 2007. Open Information Extraction from 
+the Web. In Proceedings of IJCAI. 
+Bayardo, R. J.; Ma, Y.; Srikant, R. 2007. Scaling Up 
+All-Pairs Similarity Search. In Proceedings of WWW-
+07. pp. 131-140. Banff, Canada. 
+Blei, D. M.; Ng, A. Y.; and Jordan, M. I. 2003. Latent 
+Dirichlet Allocation. Journal of Machine Learning 
+Research, 3:993?1022. 
+Brill, E. 1995. Transformation-Based Error-Driven 
+Learning and Natural Language Processing: A Case 
+Study in Part of Speech Tagging. Computational 
+Linguistics. 
+Broder, A. 1997. On the resemblance and containment 
+of documents. In Compression and Complexity of 
+Sequences. pp. 21-29. 
+Bunescu, R. and Mooney, R. 2004 Collective Informa-
+tion Extraction with Relational Markov Networks. In 
+Proceedings of ACL-04, pp. 438-445. 
+Cao, H.; Jiang, D.; Pei, J.; He, Q.; Liao, Z.; Chen, E.; 
+and Li, H. 2008. Context-aware query suggestion by 
+mining click-through and session data. In Proceed-
+ings of KDD-08. pp. 875?883. 
+Chang, W.; Pantel, P.; Popescu, A.-M.; and Gabrilovich, 
+E. 2009. Towards intent-driven bidterm suggestion. 
+In Proceedings of WWW-09 (Short Paper), Madrid, 
+Spain. 
+Church, K. and Hanks, P. 1989. Word association 
+norms, mutual information, and lexicography. In 
+Proceedings of ACL89. pp. 76?83. 
+Dean, J. and Ghemawat, S. 2008. MapReduce: Simpli-
+fied Data Processing on Large Clusters. Communica-
+tions of the ACM, 51(1):107-113. 
+Deerwester, S. C.; Dumais, S. T.; Landauer, T. K.; Fur-
+nas, G. W.; and Harshman, R. A. 1990. Indexing by 
+latent semantic analysis. Journal of the American So-
+ciety for Information Science, 41(6):391?407. 
+Downey, D.; Broadhead, M; Etzioni, O. 2007. Locating 
+Complex Named Entities in Web Text. In Proceed-
+ings of IJCAI-07.  
+Elsayed, T.; Lin, J.; Oard, D. 2008. Pairwise Document 
+Similarity in Large Collections with MapReduce. In 
+Proceedings of ACL-08: HLT, Short Papers (Com-
+panion Volume). pp. 265?268. Columbus, OH. 
+Erk, K. 2007. A simple, similarity-based model for se-
+lectional preferences. In Proceedings of ACL-07. pp. 
+216?223. Prague, Czech Republic. 
+Erk, K. and Pad?, S. 2008. A structured vector space 
+model for word meaning in context. In Proceedings 
+of EMNLP-08. Honolulu, HI. 
+Etzioni, O.; Cafarella, M.; Downey. D.; Popescu, A.; 
+Shaked, T; Soderland, S.; Weld, D.; Yates, A. 2005. 
+Unsupervised named-entity extraction from the Web: 
+An Experimental Study. In Artificial Intelligence, 
+165(1):91-134. 
+Gorman, J. and Curran, J. R. 2006. Scaling distribution-
+al similarity to large corpora. In Proceedings of ACL-
+06. pp. 361-368. 
+946
+Harris, Z. 1985. Distributional Structure. In: Katz, J. J. 
+(ed.), The Philosophy of Linguistics. New York: Ox-
+ford University Press. pp. 26-47. 
+Hindle, D. 1990. Noun classification from predicate-
+argument structures. In Proceedings of ACL-90. pp. 
+268?275. Pittsburgh, PA. 
+Hofmann, T. 1999. Probabilistic Latent Semantic Index-
+ing. In Proceedings of SIGIR-99. pp. 50?57, Berke-
+ley, California. 
+Kanerva, P. 1993. Sparse distributed memory and re-
+lated models. pp. 50-76. 
+Lapata, M. and Keller, F., 2005. Web-based Models for 
+Natural Language Processing, In ACM Transactions 
+on Speech and Language Processing (TSLP), 2(1). 
+Lee, Lillian. 1999. Measures of Distributional Similarity. 
+In Proceedings of ACL-93. pp. 25-32. College Park, 
+MD. 
+Lin, D. 1998. Automatic retrieval and clustering of 
+similar words. In Proceedings of COLING/ACL-98. 
+pp. 768?774. Montreal, Canada. 
+Lund, K., and Burgess, C. 1996. Producing high-
+dimensional semantic spaces from lexical co-
+occurrence. Behavior Research Methods, Instruments, 
+and Computers, 28(2):203?208. 
+McCallum, A. and Li, W. Early Results for Named 
+Entity Recognition with Conditional Random Fields, 
+Feature Induction and Enhanced Lexicons. In Pro-
+ceedings of CoNLL-03. 
+McQueen, J. 1967. Some methods for classification and 
+analysis of multivariate observations. In Proceedings 
+of 5th Berkeley Symposium on Mathematics, Statistics 
+and Probability, 1:281?298. 
+Pa?ca, M. 2007a. Weakly-supervised discovery of 
+named entities using web search queries. In Proceed-
+ings of CIKM-07. pp. 683-690. 
+Pa?ca, M. 2007b. Organizing and Searching the World 
+Wide Web of Facts ? Step Two: Harnessing the Wis-
+dom of the Crowds. In Proceedings of WWW-07. 
+Pa?ca, M. and Durme, B.J. 2008. Weakly-supervised 
+Acquisition of Open-Domain Classes and Class 
+Attributes from Web Documents and Query Logs. In 
+Proceedings of ACL-08. 
+Pa?ca, M.; Lin, D.; Bigham, J.; Lifchits, A.; Jain, A. 
+2006. Names and Similarities on the Web: Fast Ex-
+traction in the Fast Lane. In Proceedings of ACL-
+2006. pp. 113-120. 
+Pantel, P. and Lin, D. 2002. Discovering Word Senses 
+from Text. In Proceedings of KDD-02. pp. 613-619. 
+Edmonton, Canada. 
+Pantel, P.; Ravichandran, D; Hovy, E.H. 2004. Towards 
+terascale knowledge acquisition. In proceedings of 
+COLING-04. pp 771-777. 
+Ravichandran, D.; Pantel, P.; and Hovy, E. 2005. Ran-
+domized algorithms and NLP: Using locality sensi-
+tive hash function for high speed noun clustering. In 
+Proceedings of ACL-05. pp. 622-629. 
+Riloff, E. and Jones, R. 1999 Learning Dictionaries for 
+Information Extraction by Multi-Level Boostrapping. 
+In Proceedings of AAAI/IAAAI-99. 
+Riloff, E. and Shepherd, J. 1997. A corpus-based ap-
+proach for building semantic lexicons. In Proceed-
+ings of EMNLP-97. 
+Rychl?, P. and Kilgarriff, A. 2007. An efficient algo-
+rithm for building a distributional thesaurus (and oth-
+er Sketch Engine developments). In Proceedings of 
+ACL-07, demo sessions. Prague, Czech Republic. 
+Sarawagi, S. and Kirpal, A. 2004. Efficient set joins on 
+similarity predicates. In Proceedings of SIGMOD '04. 
+pp. 74 ?754. New York, NY. 
+Sarmento, L.; Jijkuon, V.; de Rijke, M.; and Oliveira, E. 
+2007. ?More like these?: growing entity classes from 
+seeds. In Proceedings of CIKM-07. pp. 959-962. Lis-
+bon, Portugal. 
+Turney, P. D., and Littman, M. L. 2003. Measuring 
+praise and criticism: Inference of semantic orienta-
+tion from association. ACM Transactions on Infor-
+mation Systems, 21(4). 
+Wang, R.C. and Cohen, W.W. 2008. Iterative Set Ex-
+pansion of Named Entities using the Web. In Pro-
+ceedings of ICDM 2008. Pisa, Italy. 
+Wang. R.C. and Cohen, W.W. 2007 Language-
+Independent Set Expansion of Named Entities Using 
+the Web. In Proceedings of ICDM-07. 
+Yuret, D., and Yatbaz, M. A. 2009. The noisy channel 
+model for unsupervised word sense disambiguation. 
+Computational Linguistics. Under review. 
+ 
+947
+Browsing Help for Faster Document Retrieval
+Eric Crestan 
+Sinequa, SinequaLabs 
+51-54, rue Ledru-Rollin 
+92400 Ivry-sur-Seine, France 
+crestan@sinequa.com 
+Laboratoire Informatique d?Avignon 
+B.P. 1228 Agroparc 
+339 Chemin des Meinajaries 
+84911 Avignon Cedex 9, France 
+Claude de LOUPY 
+Sinequa, SinequaLabs 
+51-54, rue Ledru-Rollin 
+92400 Ivry-sur-Seine, France 
+loupy@sinequa.com 
+MoDyCo, Universit? de Paris 10 
+Laboratoire MoDyCo - UMR 7114 
+Universit? Paris 10, B?timent L 
+200, avenue de la R?publique 
+92001 Nanterre Cedex, France 
+ 
+ 
+Abstract 
+In this paper, the search engine Intuition is 
+described. It allows the user to navigate 
+through the documents retrieved with a given 
+query. Several ?browse help? functions are 
+provided by the engine and described here: 
+conceptualisation, named entities, similar 
+documents and entity visualization. They 
+intend to ?save the user?s time?. In order to 
+evaluate the amount of time these features can 
+save, an evaluation was made. It involves 6 
+users, 18 queries and the corpus is made of 16 
+years of the newspaper Le Monde. The results 
+show that, with the different features, a user 
+get faster to the needed information. fewer 
+non-relevant documents are read (filtering) 
+and more relevant documents are retrieved in 
+less time.  
+1 Introduction 
+During the last 10 years, TREC (Harman, 1993) 
+allowed many researchers to evaluate their search 
+engines and helped the field to progress. In 2000, 
+Donna Harman studied the evolution of 2 search 
+engines from 1993 (Harman, 2000). She showed 
+that, after an improvement period, the 
+performances have been almost the same for 
+several years. This observation seems now classic: 
+improving the heuristics or adding linguistic 
+knowledge to a "good" engine does not 
+dramatically improve its results. The problem is 
+that even the best engines do not come up to the 
+expectations of most users. So, if the performances 
+do not really rise anymore, how can we rise users? 
+satisfaction?  
+In fact, there are other ways to evaluate search 
+engines than recall and precision. Time spent to 
+find answers seems to be the most important one 
+for the users and several papers present such an 
+evaluation (Borlund and Ingwersen, 1998) 
+(J?rvelin and Kek?l?inen, 2002). Considering the 
+time factor, it is quite easy to improve the 
+performances using procedures in order to help the 
+user in his/her search.  
+In this paper, we present the different 'browse 
+help' features proposed to the users by Intuition, 
+the search engine of Sinequa. First of all, we 
+present the search engine itself (section 2). Then 
+four types of help features are presented in section 
+3: conceptualisation, named entities filtering, 
+similar documents and entity visualization. Section 
+4 describes the experiments done in order to 
+evaluate the different browsing features and 
+section 5 presents the results. These results show 
+that using browsing help can decrease the time 
+spent on searching.  
+2 Intuition search engine 
+Intuition, the search engine of Sinequa, is based 
+both on deep statistics and linguistic knowledge 
+and treatments (Loupy et al, 2003). During 
+indexing, the documents are analysed with a part 
+of speech tagging, and a lemmatization procedure. 
+But the most original linguistic feature of Intuition 
+is the use of a semantic lexicon based on the "see 
+also" relation (Manigot and Pelletier, 1997). In 
+fact, it is based on bags of words containing units 
+linked by a common seme. For instance, the bag of 
+words "Wind" contains wind, hurricane, to blow, 
+tornado, etc. 800 bags of words describe the 
+"Universe". It seems very poor but it is enough for 
+most applications. A Salton like vector space 
+(Salton, 1983) of 800 dimensions is created with 
+these bags of words. 120,000 lemmas are 
+represented in this space for French (a word can 
+belong to several dimensions). During the analysis 
+of a document, the vector of each term is added to 
+the others in order to have a document 
+representation in this space.  
+This analysis allows a thematic characterization 
+of a document. Secondly, it increases both 
+precision and recall. When a query is submitted to 
+Intuition, two searches are made in parallel. The 
+first one is the standard search of documents 
+containing the words (lemmas) of the query or 
+synonyms. The second one searches for documents 
+with similar subjects that are having a close vector. 
+Each document of the corpus has two scores and 
+they are merged according to a user defined 
+heuristic. The advantage of such an approach is 
+that the first documents retrieved not only contain 
+the words of the query but are also closely related 
+to the subject of the query. Lastly, this vector 
+representation of words and documents allows the 
+disambiguation of words semantically ambiguous. 
+3 Navigation Features 
+3.1 Conceptualization 
+3.1.1 Description 
+The ?concepts part? of the interface shows 
+several links represented by short noun phrases. 
+When the user clicks on one of these links, a new 
+query is submitted to the engine. The documents 
+retrieved by the first query are then filtered and 
+only the ones that contain the selected noun phrase 
+are kept. This is a very convenient way to select 
+relevant topics. The user can select the appropriate 
+concept corresponding to his/her expectations in 
+order to reduce the search space. For instance, the 
+concepts retrieved with the ?ouragan ?Am?rique 
+Central? 1998? (hurricane ?Central America?) 
+query are the following (numbers in brackets give 
+the number of documents in which the concepts 
+occur): 
+Concepts 
+  ouragan Mitch  (12) 
+  Am?rique centrale  (29) 
+  Mitch  (10) 
+  Honduras  (17) 
+  Nicaragua  (18) 
+  cyclone Mitch  (85) 
+  Guatemala  (12) 
+  pays d'Am?rique centrale  (17) 
+  Managua  (97) 
+  Salvador  (34) 
+  Banque interam?ricaine  (34) 
+  programme alimentaire  (05) 
+  Colombie  (79) 
+  glissements de terrain  (14) 
+  aide internationale  (86) 
+  Costa-Rica  (65) 
+Figure 1: Concepts for query ?ouragan ?Am?rique 
+Centrale? 1998? 
+Because concepts are extracted from the top list 
+of relevant documents (according to the relevance 
+score), they can be seen as a summary mined 
+across them. The list contains different types of 
+concepts, from noun groups to proper nouns. In the 
+top of the list comes the answer to the current 
+question (Q1056): ouragan Mitch, Mitch and 
+cyclone Mitch (Mitch hurricane, Mitch and Mitch 
+cyclone). A click on one of those links will directly 
+lead to the document containing the text string, and 
+thus, to the relevant documents. 
+This way of browsing is even more useful when 
+the engine is not able to get rid of an ambiguity. In 
+a perfect world, a query divides the document 
+space in two parts, the relevant and non-relevant 
+documents. However, what might be relevant 
+regarding to a query, might not be relevant 
+according to the user. Everybody knows that a 
+search engine often returns non-relevant 
+documents. This is due to both the complexity of 
+languages and the difficulty to express an 
+information in some words. Because an engine 
+may not fit correctly the needs of the user, the 
+proposed way to browse within the retrieved 
+documents is very handy. The user can then select 
+the relevant concepts. Of course, it is also possible 
+to select several concepts, to eliminate several 
+others and then resubmit a query.  
+3.1.2 Concept detection 
+As the search engine indexes the documents, 
+several linguistic analysis are applied on each of 
+them in order to detect all possible concepts. 
+Morpho-syntactic analysis is needed by concept 
+detection because most of the patterns are based on 
+Part-of-Speech sequences. The concept detection 
+itself is based on Finite State Automata. The 
+automata were built by linguists in order to catch 
+syntactic relation such as the ones cited above. For 
+each document, the potential concepts are stored in 
+the engine database.  
+3.1.3 Concept selection 
+For the purpose of concept selection, only the 
+first 1000 documents retrieved by the engine (or 
+fewer if relevancy score is too low) are used. Then, 
+frequencies of concept occurrences in the sub-
+corpus are compared with the frequencies in the 
+entire corpus. The selected concepts should be the 
+best compromise between minimum ambiguity and 
+the maximum of occurrence. A specificity score is 
+computed for each concept. This score is used to 
+sort all the occurring noun phrases. Only the top 
+ones are displayed and should represent the most 
+important concepts of the documents.  
+3.2 Named entities 
+The last area of the interface shows several 
+named entities: locations, people and organizations 
+(see section 4.1 for a description of the named 
+entity recognition procedure). Like it is done with 
+meta-data, entities can be used in order to restrict 
+search space. We can filter the documents retrieved 
+by the original query and get only those, which 
+contain Managua.  
+ 
+  Pays (Countries) 
+  Etats-Unis  (22) 
+  Nicaragua  (21) 
+  Honduras  (18) 
+  France  (12) 
+  Guatemala  (12) 
+  Villes (Cities) 
+  Managua  (10) 
+  Londres  (6) 
+  New York  (6) 
+  Paris  (5) 
+  Washington  (4) 
+  Personnes (Persons) 
+  Jacques Chirac  (3) 
+  Arnoldo Aleman  (2) 
+  Bernard Kouchner  (2) 
+  Bill Clinton  (2) 
+  Daniel Ortega  (2) 
+  Soci?t?s (Organizations) 
+  Banque mondiale  (6) 
+  Banque interam?ricaine de d?veloppement  (4) 
+  Fonds mon?taire international  (4) 
+  Chrysler  (1) 
+Figure 2: Named entities distribution for query 
+Concepts for query ?ouragan ?Am?rique Centrale? 
+1998? 
+Named entities become very useful when doing 
+statistics on a corpus. For a given query, the 
+distribution for each entity type can be computed 
+and sorted according to a scoring function. 
+Document frequency (DF) is usually a good way to 
+sort the result. But the information provided by the 
+search engine is very useful against the query. The 
+scoring function used by Intuition is based on 
+document score ? and document rank j (1<j<N) for 
+a given category v: 
+The parameter ? modifies the importance given 
+to the document score, and the parameter ? 
+modifies the importance given to the document 
+ranking. Figure 2 presents the entities for locations, 
+persons and organizations for the query ?ouragan 
+?Am?rique Centrale? 1998?. Numbers in 
+parenthesis represent the entity score. 
+3.3 Named Entities visualization 
+Sometimes, additional information is insufficient 
+or not at all present in the documents. In order to 
+increase the browsing possibilities, specific 
+information can be automatically extracted from 
+texts. For this purpose, we use a document analysis 
+process based on transducers in order to detect 
+named entities. This system has been previously 
+developed in order to participate to 
+question/answering task in TREC evaluation 
+campaign (Voorhees, 2001). The commonly 
+established notion of names entities has been 
+extended in order to include more types. More than 
+50 different types of entities are recognized in 
+French and English.  
+The document analysis system can be 
+decomposed in two main tasks. First, a morpho-
+syntactic analysis is done on the documents. Every 
+word is reduced to its basic form, and a Part-of-
+Speech tag is proposed. In addition to the classical 
+POS tags, the lexicon includes semantic 
+information. For example, first names have a 
+specific tag (?PRENOM?). These semantic tags are 
+used in the next phase for entity recognition. 
+Transducers are applied in cascade. Every entity 
+recognized by one transducer can be used by the 
+next one. The analysis results in a list of entity 
+type, value, position and length in the original 
+document. 
+ 
+Figure 3: Visualization of named entities 
+Entity recognition and extraction opens up new 
+perspectives for browsing within documents. The 
+most trivial use is to display certain entities in 
+color according to their type. Users can then 
+quickly filter documents talking about the right 
+persons or places. He can also immediately find 
+interesting passages. Figure 3 shows a document 
+with highlighted entities. 
+100)( ?=?? vvscore   where )(1 1 vj
+N
+j
+M
+i
+v
+j ????? ?=??= =   
+and 0)( 1=??= vvvij ?  
+It is clear that this allows an easier quick reading 
+because the most representative parts of the 
+documents are highlighted.  
+Moreover, it is very easy to find the entities in 
+the current document. In Fig. 4, one can 
+immediately see which locations are mentioned 
+(e.g. Am?rique Centrale, Salvador, Honduras, 
+Nicaragua, Managua, etc). 
+4 Task description 
+The evaluation includes six interfaces with 
+different features for the most of them. They were 
+designed in order to evaluate whether the 
+navigation facilities proposed to users improve 
+their ability to find relevant documents. The six 
+interfaces query the same document base:  
+775 000-article collection extracted from the 
+French newspaper Le Monde (years 1989 to 2002). 
+The features used for each interface are listed in 
+Table 1. 
+ 
+Interface name Features 
+Interface1 Classical search 
+Interface2 Concept navigation 
+Interface3 Named entity navigation 
+Interface4 Named entity visualization 
+Interface5 Similar documents 
+Interface6 All features 
+Table 1: Interface profiles 
+Interface1: No additional navigation facilities 
+are provided to users. A simple query box is 
+supplied in order to query Intuition search engine 
+(see Section 2). A summary of 10 documents per 
+page is presented to the user. It gives the article 
+title, the relevance score and an abstract consisting 
+in the first 250 bytes from the document. 
+Interface2: Equivalent to Interface1, it 
+features in addition a list of concepts in summary 
+presentation. Concepts are extracted according to 
+the user query (see Section 3.1). 
+Interface3: Equivalent to Interface1, it 
+displays also four lists of named entities related to 
+the documents returned by the engine. In the left 
+side column are listed the persons, cities, counties 
+and companies the most representative (see Section 
+3.2). 
+Interface4: Alike Interface1, the only 
+difference resides in the named entities 
+highlighting (persons, dates, cities, counties and 
+companies) when users open the articles (see 
+Section 3.3). 
+Interface5: Same as Interface1, it enables, 
+when opening a document, to navigate through one 
+of the 3 similar documents proposed into an 
+additional frame. 
+Interface6: It figures a compilation of 
+additional features used in all the other interfaces. 
+All the user actions are stored into the search 
+engine log file, so that we can evaluate how many 
+users employ additional features. On each visited 
+article, users were asked, through buttons, to 
+precise whether the document was relevant 
+(VALIDATION button) or not (ANNULATION 
+button). Information such as time and user id was 
+stored in the log file as well. 
+5 Experiment 
+In order to evaluate the six interfaces, a set of 
+queries had to be built according to the number of 
+subjects available for the experiment. Furthermore, 
+a specific framework has been set for each user. 
+5.1 Material 
+Two sets of queries were used for this 
+evaluation. The first is composed of 12 task 
+description queries, which originate from TREC-6 
+ad-hoc campaign (Voorhees and Harman, 1997). 
+Twelve descriptions were selected among the fifty 
+proposed for the task according to their 
+applicability to a French newspaper corpus. We 
+deliberately selected the description part in order to 
+have a more precise idea of what document should 
+be considered has relevant. Moreover, supplying a 
+short description (2-3 words) would have lead to 
+equivalent queries at the first stage. Users would 
+have probably copied the proposed keywords in 
+order to compose their queries. Then, they were 
+translated into French by an external person (not 
+involved in the evaluation process). The second set 
+is composed of 6 factual questions inspired from 
+the previous TREC Question/Answering 
+evaluation campaigns (Voorhees, 2003) and 
+translated. The subjects were asked to retrieve 
+documents containing the answer. 
+ID Queries 
+301 Identify organizations that participate in international 
+criminal activity, the activity, and, if possible, 
+collaborating organizations and the countries 
+involved. 
+304 Compile a list of mammals that are considered to be 
+endangered, identify their habitat and, if possible, 
+specify what threatens them. 
+305 Which are the most crashworthy, and least 
+crashworthy, passenger vehicles? 
+310 Evidence that radio waves from radio towers or car 
+phones affect brain cancer occurrence. 
+311 Document will discuss the theft of trade secrets along 
+with the sources of information:  trade journals, 
+business meetings, data from Patent Offices, trade 
+shows, or analysis of a competitor's products. 
+322 Isolate instances of fraud or embezzlement in the 
+international art trade. 
+326 Any report of a ferry sinking where 100 or more 
+people lost their lives. 
+327 Identify a country or a city where there is evidence of 
+human slavery being practiced in the eighties or 
+nineties. 
+331 What criticisms have been made of World Bank 
+policies, activities or personnel? 
+338 What adverse effects have people experienced while 
+taking aspirin repeatedly? 
+339 What drugs are being used in the treatment of 
+Alzheimer's Disease and how successful are they? 
+342 The end of the Cold War seems to have intensified 
+economic competition and has started to generate 
+serious friction between nations as attempts are made 
+by diplomatic personnel to acquire sensitive trade and 
+technology information or to obtain information on 
+highly classified industrial projects. Identify instances 
+where attempts have been made by personnel with 
+diplomatic status to obtain information of this nature. 
+Q215 Who is the prime minister of India?   
+Q250 Where did the Maya people live?   
+Q924 What is the average speed of a cheetah? 
+Q942 How many liters in a gallon? 
+Q1056 What hurricane stroked Central America in 198? 
+Q1501 How much of French power is from nuclear energy? 
+Table 2: Sets of queries 
+5.2 Evaluation framework 
+The definition of the framework was constraint 
+by the number of subjects available for this 
+evaluation. Because it was an internal experiment, 
+only six persons tested the interfaces. The group 
+was composed of 3 linguists and 3 computer 
+scientists (2 females and 4 males) with different 
+aptitude levels with search engines. Each subject 
+was given 3 queries (2 descriptive queries and 1 
+question) per interface starting with Interface1 and 
+finishing with Interface6. A cross-evaluation was 
+used so that two subjects would not employ the 
+same interface with the same question. At the end, 
+the 18 queries were evaluated with each interface. 
+Because of the corpus nature (newspaper), 
+subjects need a certain amount of time to read the 
+article in order to judge it relevant or not. The time 
+available for each query was limited to 10 minutes 
+during which the subject was asked to retrieve a 
+maximum of relevant documents. It is twice the 
+time devoted to a similar task presented in (Bruza 
+et al, 2000)1. We consider that the time needed to 
+find relevant documents on a newspaper collection 
+is greater than on the Internet for many reasons: 
+First, the redundancy is much higher on the 
+Internet; Second, we mostly find long narrative 
+articles on a newspaper collection though web 
+documents seems more structured (section title, 
+colors, bold and italic phrase, table, figures, etc.). 
+This last enables a quicker reading of the 
+document. 
+                                                     
+1 Bruza et al have compared three different kinds of 
+interactive Internet search: The first was based on 
+Google search engine; the second was a directory-based 
+search via Yahoo; and the last was a phrase based query 
+reformulation assisted search via the Hyperindex 
+Browser. 
+6 Results 
+During the evaluation, participants could take a 
+break between each research because of the 3 
+hours required for the full experiment. Several 
+criteria have been used for performance 
+judgement: 
+? Time to find the first relevant document, 
+? Number of relevant documents 
+retrieved, 
+? Average recall. 
+They are described in the following sections. 
+6.1 Relevance judgment 
+For each visited article, the subjects were asked 
+to click on one of the two following buttons: 
+? VALIDATION: document is judged 
+relevant, 
+? ANNULATION:  document is judged 
+non-relevant. 
+An average of 4.9 documents was assessed 
+relevant per query and user. Table 3 shows the 
+average of relevant and non-relevant documents 
+found by every user: 
+ 
+User Average Relevant Doc. 
+Average non-
+Relevant Doc. 
+User1 2.78 2.28 
+User2 3.06 2.78 
+User3 5.28 6.56 
+User4 5.67 6.22 
+User5 5.89 4.94 
+User6 9.39 8.83 
+Average 5.3 5.3 
+Table 3: Average number of relevant and non-
+relevant document found by participant 
+6.2 Time to first relevant document 
+Time is a good criterion for navigation 
+effectiveness judgment. How long does it take for 
+users to find the first relevant document? This 
+question is probably one of the most important in 
+order to judge navigability gain over the six 
+interfaces. When no-relevant documents were 
+found for a query, the time was set to the 
+maximum research time: 600s. 
+The results, presented in Table 4, show the mean 
+time over users/queries to the first relevant 
+document. Responding to our expectations, 
+Interface6 obtains the best result (smallest mean 
+time).  
+Interface Mean time to fi
+Interface1 2
+Interface2 1
+Interface3 1
+Interface4 2
+Interface5 2
+Interface6 1
+Table 4: Mean time to find
+document 
+It shows that an interface 
+better than having only one
+According to the different res
+that a search interface featurin
+named entities as navigation 
+the search time toward the firs
+The other interfaces seem to 
+some way, that was predicta
+and Interface5 do not 
+alternative at the summary pag
+In this table, no standard
+because the considered data a
+(different users with diffe
+different queries). For instanc
+spent by User 1 (na?ve user) o
+while the expert user 6 spent
+31 s in order to find the first re
+6.3 Number of relevant do
+The time to first relevant d
+be the only criterion in o
+navigation effectiveness. 
+uire longer getting to the first 
+0
+0,05
+0,1
+0,15
+0,2
+0,25
+0,3
+0,35
+0,4
+0,45
+0,5
+0 20 40 60 80
+Av
+er
+ag
+e 
+re
+ca
+llrst rel. doc. (in s) interfaces can req
+48.0 
+89.3 
+74.3 
+42.8 
+40.8 
+21.8 
+ the first relevant 
+with all features is 
+ or none of them. 
+ults, it also appears 
+g the concepts or the 
+alternative decreases 
+t relevant document. 
+be of little help. In 
+ble since Interface4 
+present navigation 
+e level. 
+ deviation is given 
+re not homogeneous 
+rent interfaces for 
+e, the average time 
+n Interface 4 is 452 s 
+ an average time of 
+levant document. 
+cuments retrieved 
+ocument should not 
+rder to judge the 
+Therefore, some 
+relevant document, but after that it can fully 
+benefit from additional features. 
+ 
+Interface Average Relevant 
+Average 
+Non-Relevant
+Interface1 3.83 7.17 
+Interface2 4.78 5.17 
+Interface3 5.50 3.50 
+Interface4 6.17 7.11 
+Interface5 5.22 4.39 
+Interface6 6.56 4.28 
+Table 5: Average number of relevant and non-
+relevant documents / interface 
+As expected, Interface6 (all features available to 
+users) gives maximum relevant documents in 
+average. It scores almost twice as Interface1. 
+Concerning the non-relevant documents, we see 
+that interfaces 2,3,5 and 6 allow the filtering of 
+non-relevant documents or the navigation from a 
+relevant document to another one. The consistency 
+between Interface1 and Interface4 is logical 
+because the user has to look in both cases at the 
+document to know it is not relevant. 
+6.4 Average recall 
+In order to combine the two previous criteria, we 
+computed the average recall over all users and all 
+queries, for a given interface. In order to compute 
+the recall for a query q, the total number of 
+relevant documents was approximated to the total 
+10
+0
+12
+0
+14
+0
+16
+0
+18
+0
+20
+0
+22
+0
+24
+0
+26
+0
+28
+0
+30
+0
+32
+0
+34
+0
+36
+0
+38
+0
+40
+0
+42
+0
+44
+0
+46
+0
+48
+0
+50
+0
+52
+0
+54
+0
+56
+0
+58
+0
+60
+0
+Time (in s)
+I1
+I2
+I3
+I4
+I5
+I6
+Figure 4: Average Recall according to time 
+number of documents marked as relevant over 
+subjects for q. The recall at time t for a query q, a 
+user u is then computed with the following 
+formula: 
+( ) ( )( )qN
+tuqN ,,tu,q,Recall ?  
+where N(q,u,t) is the number of relevant 
+documents assessed by user u at time t for query q 
+and N(q) is the total number of unique relevant 
+documents found by all the users for query q. 
+The average recall at time t is computed by 
+averaging the recall over the users and the queries. 
+Figure 4 presents the curves of average recall 
+according to time at a sampling rate of 10 seconds. 
+ 
+First of all, this figure shows that using any of 
+the browsing features improves the document 
+retrieval performances. The two better curves are 
+obtained with entity filtering or using all the 
+features. It is however a little bit strange that 
+Interface3 rises over Interface6 on the first 120 
+seconds. Extensive tests should be carried on to 
+corroborate these results. 
+7 Conclusion 
+In this paper, several ways to help the user in 
+his/her search are presented. We think that it is 
+now necessary to have such kind of high-level 
+interaction with the user. The evaluations showed 
+that the navigation features provided here can 
+decrease the time spent on a query. Firstly, that is 
+true because the first answer is got more quickly. 
+Secondly, even if the total number of relevant 
+documents is not increased, they are retrieved in 
+less time. Thirdly, the concepts and entities filters 
+decrease the number of non-relevant documents 
+the user will read.  
+There are some biases in this evaluation. Almost 
+all the users, even if they are not experts in 
+document retrieval, knew the search engine and the 
+features used. Having said, (Bruza et al, 2000) 
+trained their user before the real evaluation. It 
+depends on the targeted users. Furthermore, 6 users 
+and 18 queries do not seem to be enough to 
+evaluate 6 different interfaces. We plan to 
+reproduce this evaluation with more users.  
+One of the important points of the features 
+presented in this paper is that most of them are 
+based on linguistic analysis. If the use of linguistic 
+in classical document retrieval is controversial, we 
+think linguistic knowledge and treatments give the 
+easiest way to interact with users.   
+8 Acknowledges 
+We wish to warmly thank the six participants 
+(Vanessa C., Elise L., Frederik C., Eric B., Arnaud 
+D. et Luc M.) to volunteer and their patience. We 
+also thank the newspaper Le Monde to make their 
+corpus available for us. 
+References 
+P. Borlund and P. Ingwersen. 1998. Measures of 
+relative relevance and ranked half-life: 
+performance indicators for interactive IR. 
+In:Croft, B.W, Moffat, A., van Rijsbergen, C.J, 
+Wilkinson, R., and Zobel, J., eds. Proceedings of 
+the 21st ACM Sigir Conference on Research and 
+Development of Information Retrieval. 
+Melbourne, Australia: ACM Press/York Press, 
+pp. 324-331. 
+P. Bruza, R. McArthur and S. Dennis. 2000. 
+Interactive Internet search: keyword, directory 
+and query reformulation mechanisms compared. 
+Proceedings of the 23rd annual international 
+ACM SIGIR conference on Research and 
+development in information retrieval. Athens, 
+Greece, pp. 280-287. 
+D. Harman. 1993. Overview of the First Text 
+REtrieval Conference. National Institute of 
+Standards and Technology Special Publication 
+500-207. (1993).  
+D. Harman.2000. What we have learned and not 
+learned from TREC. Proceeding of the 22nd 
+Annual Colloquium on IR Research. Sidney 
+Sussex College, Cambridge, England. 
+K. J?rvelin, and J. Kek?l?inen. 2002. Cumulated 
+gain-based evaluation of IR techniques. ACM 
+Transactions on Information Systems (ACM 
+TOIS) 20(4), pp. 422-446. 
+C. de Loupy, V. Combet and E. Crestan. 2003. 
+Linguistic resources for Information Retrieval. in 
+ENABLER/ELSNET International Roadmap for 
+Language Resources. 
+L. Manigot , B. Pelletier. 1997. Intuition, une 
+approche math?matique et s?mantique du 
+traitement d'informations textuelles. Proceedings 
+of Fractal'1997. pp. 287-291. 
+G. Salton. 1983. Introduction to Modern 
+Information Retrieval, McGraw-Hill. 
+E. M. Voorhees. 2003. Overview of the TREC 2002 
+Question Answering Track, The Eleventh Text 
+Retrieval Conference, NIST Special Publication: 
+SP 500-251. 
+E.  Voorhees, D. Harman. 1997. Overview of the 
+sixth Text Retrieval Conference; Proceeding of 
+the 6th Text REtrieval Conference, NIST Special 
+Publication 500-240; pp. 1-24; Gaithersburg, 
+MD, USA. 
+Contextual Semantics for WSD
+ERIC CRESTAN(1,2) 
+ 
+(1) Sinequa SAS 
+51-54, rue Ledru-Rollin 
+92400 Ivry-sur-Seine, France 
+Crestan@sinequa.com 
+(2) Laboratoire Informatique d?Avignon 
+B.P. 1228 Agroparc 
+339 Chemin des Meinajaries 
+84911 Avignon Cedex 9, France 
+ 
+ 
+ 
+ 
+Abstract 
+For Sinequa?s second participation to the 
+Senseval evaluation, two systems using 
+contextual semantic have been proposed. 
+Based on different approaches, they both 
+share the same data preprocessing and 
+enrichment. The first system is a 
+combined approach using semantic 
+classification trees and information 
+retrieval techniques. For the second 
+system, the words from the context are 
+considered as clues. The final sense is 
+determined by summing the weight 
+assigned to each clue for a given 
+example. 
+1 Introduction 
+In the framework of the Senseval-3 evaluation 
+campaign on Word Sense Disambiguation 
+(WSD), we presented two systems relying on 
+different strategy. The system SynLexEn is an 
+evolution from the system used during the 
+Senseval-2 campaign. It is based on two steps. 
+The first step uses semantic classification trees 
+on a short context size. A decision system based 
+on document similarity is used as second step. 
+The novelty of this system resides in a new 
+vision level on the context. The semantic 
+dictionary of Sinequa is extensively used in this 
+process. 
+The second system, SynLexEn2, is based on 
+weighted clues summation over a short context 
+size. From the training data, a score is computed 
+for each word in a short context size, for each 
+sense. 
+In Section 2, the combined approach system 
+for WSD is presented. We first give an overview 
+of the data pre-processing that was applied 
+(Section 2.1). Then, a brief description of 
+Semantic Classification Trees is given (Section 
+2.2) along with a description of additional data 
+used for semantic view of short and long context 
+(Section 2.3 and Section 2.4). Next, a semantic 
+information retrieval system used in order to 
+select the appropriate sense is proposed (Section 
+2.5). 
+Finally, the SynLexEn2 system is presented in 
+Section 3. We then conclude with the evaluation 
+results for both systems in Section 4. 
+2 Combined approach 
+The SinLexEn system is quite similar to the 
+system used during the last Senseval-2 evaluation 
+campaign (Crestan et al, 2001). It is based on 
+two stages: the first stage uses three Semantic 
+Classification Trees in parallel, trained on 
+different size of context. Then, the second stage 
+brings in a decision system based on information 
+retrieval techniques. The novelty of this approach 
+dwells in the use of semantic resource as 
+conceptual view on extended context in both 
+stages. 
+2.1 Data pre-processing 
+The first step in order to get the most from the 
+data is to lemmatize and clean sentences. Each 
+paragraph from the training and the test data are 
+first passed though an internal tagger/lemmatizer. 
+Then, some grammatical words are removed such 
+as articles and possessive pronouns. Only one 
+word is not handled in this process, it is the word 
+to be disambiguated. Indeed, previous works 
+(Loupy et al, 1998) have shown that the form of 
+this word could bring interesting clues about its 
+                                             Association for Computational Linguistics
+                        for the Semantic Analysis of Text, Barcelona, Spain, July 2004
+                 SENSEVAL-3: Third International Workshop on the Evaluation of Systems
+possible sense. Other pronouns, such as subject 
+pronouns, are replaced by a generic PRP tag. 
+2.2 Semantic Classification Trees for WSD 
+The Semantic Classification Trees (SCT) were 
+first introduced by Kuhn and De Mori (1995). It 
+can be defined as simple binary decision trees. 
+Training data are used in order to build one or 
+more trees for each word to be disambiguate. An 
+SCT is made up of questions distributed along 
+the tree nodes. Then, each test sequence is 
+presented to the corresponding trees and follows 
+a path along the SCT according to the way the 
+questions are answers. When no more question is 
+available (arrived at a leaf), the major sense is 
+assigned to the test. 
+In order to build the trees, the Gini impurity 
+(Breiman et al, 1984) was used. It is defined as: 
+( )2/1)( 
+?
+?=
+Ss
+XsPXG
+ 
+where P(s/X) is the likelihood of sense s given 
+the population X. 
+At the first step of the tree building process, 
+the Gini impurity is computed for each possible 
+questions. Then, the best question is selected and 
+the population made up of all the examples is 
+divided between the ones which answer the 
+question (yes branch) and the others (no branch). 
+The same process is recursively applied on each 
+branch until the maximum tree depth is reached. 
+ 
+In the framework of the SinLexEn system, 
+three different trees have been built for each 
+word to be disambiguated. They use different 
+context size, varying from one to three words on 
+each side of the target word. Following is an 
+example of three training sequences using 
+respectively 1, 2 and 3 words on each side of the 
+target (0#sense): 
+ 
+  
+-1#make 0#sense 1#of   
+ 
+-2#make -1#more 0#sense 1#to 2#annex  
+-3#ceiling -2#add -1#to 0#sense 1#of 2#space 3#and 
+ 
+The number preceding the # character gives the 
+position of the word according to the target. The 
+set of possible questions for the SCT building 
+process is composed of all the words present in 
+considered window width. The tree shown in 
+Figure 1 was built for the word ?sense? on a 
+window width of 3 words. Each node 
+corresponds to a question, while leafs contain the 
+sense to be assigned to the target. The test 
+sequence?1#make 0#sense 1#of will be assigned 
+to sense%1:10:00:: sense (?the meaning of a 
+word or expression?) from WordNet (Miller et 
+al., 1990). For a more detail description of SCT, 
+see (Crestan et al, 2003). 
+2.3 Semantic in short context 
+WSD is much more easy to do for a human 
+than for a machine. By simply reading a 
+sentence, we can determine at a glance the 
+meaning of a word in this particular context. 
+However, we are not relying solely on what the 
+words look like. The human brain is able to see 
+the correlation between ?open a box? and ?open a 
+jar?. We have the ability to generalize over 
+similar ?concepts?. In order to follow this 
+scheme, we used the WordNet?s semantic classes 
+(SC). It enables a generalization over words 
+sharing the same high-level hyperonym. Because 
+the correct SC is not known for each word in 
+context, all the possible SC were included in the 
+set of questions for a given word and position. 
+The WordNet top ontology is separated in 26 SC 
+for the nouns and 15 for the verbs. An extended 
+description of SC can be found in (Ciaramita and 
+Johnson. 2003). In the following example, the 
+two first sequences share the same sense (?cause 
+to open or to become open?) whereas the last 
+Figure 1. SCT example for the target word 'sense' 
+-1#in ? 
+1#of ? 
+-1#of ? 
+-1#senses ? -1#make ? 
+sense%1:10:00:: 
+sense%1:10:00:: sense%1:09:04:: sense%1:09:02:: 
+sense%1:09:05:: sense%1:00:00:: 
+y n 
+y n y n 
+y n 
+y n 
+sequence corresponds to another sense (?start to 
+operate or function or cause to start operating or 
+functioning?): 
+ 
+0#open 1#box 1#06 1#20 1#23 1#25 1#35 
+0#open 1#jar 1#06 1#11 1#23 1#38 1#42 
+0#open 1#business 1#04  1#09 1#14   
+ 
+Two of the five SC are common to both words 
+box and jar: 
+? 06: nouns denoting man-made objects, 
+? 23: nouns denoting quantities and units of 
+measure. 
+However, they have nothing in common with 
+the word business.  
+Although many wrong SC are proposed for 
+each word according to its context, we noticed a 
+2% improvement on Senseval-2 data while using 
+these ?high level information?. 
+2.4 Semantic in full context 
+The main improvement for this evaluation is 
+the use of semantic clues at a paragraph level. 
+Sinequa has developed along the last 5 years a 
+large scale semantic dictionary of about 100.000 
+entries. All the word of the language are 
+organized across a semantic space composed of 
+800 dimensions. For example, a word such as 
+?diary? is present in the dimensions: calendar, 
+story, book and newspaper. It has been wildly 
+used in the information retrieval system Intuition 
+(Manigot and Pelletier, 1997), (Loupy et al, 
+2003).  
+For each training sample, we summed the 
+semantic vectors of each word. This step results 
+on a global semantic vector from which only the 
+3 most representative dimensions (with highest 
+score) where kept. That additional information 
+has been used as possible question in the tree 
+building process. Then, the same semantic 
+analysis has been done on each test sentence. For 
+example, the major dimension represented in the 
+next sentence for the word material is 
+?newspaper?: 
+?furthermore , nothing have yet be say about all the 
+research that do not depend on the collection of datum 
+by the sociologist ( primary datum ) but instead make 
+use of secondary datum - the wealth of material 
+already available from other source , such as 
+government statistics , personal diary , newspaper , 
+and other kind of information .? 
+This enables a new vision of the context on a 
+wider scale than the one we used with only short 
+context SCT. Preliminary experiments carried on 
+the Sensenval-2 nouns have shown a 1% 
+improvement. Some nouns such as dyke, sense 
+and spade have been dramatically improved 
+(more than 5%). Although, words such as 
+authority and post have had about 5% decrease in 
+precision. A first hypothesis can be proposed to 
+explain the gain of some words while others have 
+lost in precision:  the use of a wide context 
+semantic is mostly benefic in the case of 
+homonymy, while it is not when dealing with 
+polysemy. 
+2.5 Semantic similarity for decision system 
+In order to select the appropriate sense among 
+the three senses proposed by the SCT, a decision 
+system was used. It is based on the Intuition 
+search engine used on the Default mode: the 
+words and the semantic vectors of documents are 
+used. The final score is a combination between 
+the words score and the semantic score. 
+Moreover, all the sentences linked to a given 
+sense in the training data were concatenated in 
+order to form a unique document (pseudo-
+document). Then, for a given test instance, the 
+whole paragraph was used to query the engine. 
+The pseudo-document?s scores were then used in 
+order to select among the three senses proposed 
+by the SCT. A 2% improvement have been 
+observed during the Senseval-2 evaluation 
+campaign while using this strategy. 
+3 Maximum clues approach 
+Starting from the same preprocessing used for 
+the combined approach, we implemented a 
+simple approach based on Gini impurity. 
+Considering a short context, the Gini impurity is 
+computed for all the possible questions in the 
+training data (including the questions about 
+semantic level). For instance, if the question ?
+1#of appears 3 times with the sense S1, 1 time 
+with S2 and does not appear in 1 example of 
+sense S1 and 2 examples for sense S2, the final 
+score for this question is: 
+ 
+G(-1#of) = [1-(3/4)?-(1/4)?] + [1-(1/3)?-(2/3)?] = 0.82 
+ 
+Which corresponds to the Gini impurity of the 
+examples where ?1#of is present, plus the Gini 
+impurity for the examples where it is not. Then, a 
+score is given for each sense according to each 
+question. For the previous example, the score S1 
+for the question ?1#of is: 
+ 
+Score(S1, ?1#of) = P(S1/-1#of) * [G - G(?1#of)] 
+ 
+Where G is the initial Gini impurity, minus the 
+Gini impurity of G(-1#of) and weighted by the 
+probability of S1 when ?1#of was observed. 
+When disambiguating a test phrase, the score 
+for each sense is computed by summing the 
+individual score for each question. The highest 
+score gives the sense. 
+This simple approach has shown similar results 
+as those obtained with the combined approach on 
+nouns. Unlike the trees, this system is able to 
+benefit from all the clues in the training corpus. 
+At the opposite, for the SCT, if two questions get 
+rather good scores at first stage, only on question 
+will be selected in order to build the node. This 
+prevents from using clues from the other question 
+because its population is (or might be) divided 
+between the two branches. 
+4 Results and conclusion 
+For the third edition of the Senseval campaign, 
+the sense repository for the verbs was different, 
+using WordsMyth instead of WordNet. The 
+proportion of nouns, verbs and adjectives was 
+also different. Because of these changes, it is 
+difficult to compare this evaluation results with 
+the previous ones. 
+ Fine Coarse 
+SinLexEn 67.2% 74.3% 
+SinLexEn2 66.8% 73.6% 
+ Table 1:  Precision for both systems 
+The precisions of both systems are presented in 
+Table 1. The column named Fine corresponds to 
+fine grain scores, while the column named 
+Coarse is for the coarse grained senses. 
+ 
+Although we are using different strategies, 
+both systems give approximately the same results 
+for fine grained precision. According to the 
+previous evaluation, we can observe almost 5% 
+increase in precision. However, this increase 
+cannot be taken as significant because of the 
+differences between the evaluations. 
+A comparative evaluation have to be carried 
+now in order to establish if a combination of both 
+system could improve the final score. 
+References 
+L. Breiman, J. Friedman, R. Olshen, and C. Stone 
+1984. Classification and Regression Trees, 
+Wadsworth. 
+M. Ciaramita and M. Johnson. 2003. Supersense 
+Tagging of Unknown Nouns in WordNet. In 
+Proceedings of the Conference on Empirical 
+Methods in Natural Language Processing. 
+E. Crestan, M. El-B?ze and C. de Loupy 2001. 
+Improving WSD with Multi-Level View of Context 
+Monitored by Similarity Measure, Proceedings of 
+Senseval-2, 39th ACL. 
+E. Crestan, M. El-B?ze, C. de Loupy. 2003. Peut-on 
+trouver la taille de contexte optimale en 
+d?sambigu?sation s?mantique ?, In Proceedings of 
+TALN 2003. 
+C. de Loupy, V. Combet and E. Crestan 2003. 
+Linguistic resources for Information Retrieval, 
+Proceedings ENABLER/ELSNET, International 
+Roadmap for Language Resources, Paris. 
+R. Kuhn and R. De Mori. 1995. The Application of 
+Semantic Classification Trees to Natural Language 
+Understanding, IEEE Transactions on Pattern 
+Analysis and Machine Intelligence, 17(5), 
+p 449-460.  
+C. de Loupy, M. El-B?ze and P.-F. Marteau. 1998. 
+WSD based on three short context methods, 
+SENSEVAL Workshop, Herstmontceux. 
+L. Manigot, B. Pelletier. 1997. Intuition, une approche 
+math?matique et s?mantique du traitement 
+d'informations textuelles. Proceedings of 
+Fractal'1997. pp. 287-291. Besan?on. 
+G. A. Miller, R. Beckwith, C. Fellbaum, D. Gross, and 
+K. Miller. 1990. Introduction to WordNet: An on-
+line lexical database, International Journal of 
+Lexicography, vol. 3(4), p 235-244. 
+ 

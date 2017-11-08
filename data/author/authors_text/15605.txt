@@ -1,0 +1,4736 @@
+Proceedings of the 13th Conference of the European Chapter of the Association for Computational Linguistics, pages 120?129,
+Avignon, France, April 23 - 27 2012. c?2012 Association for Computational Linguistics
+Computing Lattice BLEU Oracle Scores for Machine Translation
+Artem Sokolov Guillaume Wisniewski
+LIMSI-CNRS & Univ. Paris Sud
+BP-133, 91 403 Orsay, France
+{firstname.lastname}@limsi.fr
+Franc?ois Yvon
+Abstract
+The search space of Phrase-Based Statisti-
+cal Machine Translation (PBSMT) systems
+can be represented under the form of a di-
+rected acyclic graph (lattice). The quality
+of this search space can thus be evaluated
+by computing the best achievable hypoth-
+esis in the lattice, the so-called oracle hy-
+pothesis. For common SMT metrics, this
+problem is however NP-hard and can only
+be solved using heuristics. In this work,
+we present two new methods for efficiently
+computing BLEU oracles on lattices: the
+first one is based on a linear approximation
+of the corpus BLEU score and is solved us-
+ing the FST formalism; the second one re-
+lies on integer linear programming formu-
+lation and is solved directly and using the
+Lagrangian relaxation framework. These
+new decoders are positively evaluated and
+compared with several alternatives from the
+literature for three language pairs, using lat-
+tices produced by two PBSMT systems.
+1 Introduction
+The search space of Phrase-Based Statistical Ma-
+chine Translation (PBSMT) systems has the form
+of a very large directed acyclic graph. In several
+softwares, an approximation of this search space
+can be outputted, either as a n-best list contain-
+ing the n top hypotheses found by the decoder, or
+as a phrase or word graph (lattice) which com-
+pactly encodes those hypotheses that have sur-
+vived search space pruning. Lattices usually con-
+tain much more hypotheses than n-best lists and
+better approximate the search space.
+Exploring the PBSMT search space is one of
+the few means to perform diagnostic analysis and
+to better understand the behavior of the system
+(Turchi et al 2008; Auli et al 2009). Useful
+diagnostics are, for instance, provided by look-
+ing at the best (oracle) hypotheses contained in
+the search space, i.e, those hypotheses that have
+the highest quality score with respect to one or
+several references. Such oracle hypotheses can
+be used for failure analysis and to better under-
+stand the bottlenecks of existing translation sys-
+tems (Wisniewski et al 2010). Indeed, the in-
+ability to faithfully reproduce reference transla-
+tions can have many causes, such as scantiness
+of the translation table, insufficient expressiveness
+of reordering models, inadequate scoring func-
+tion, non-literal references, over-pruned lattices,
+etc. Oracle decoding has several other applica-
+tions: for instance, in (Liang et al 2006; Chi-
+ang et al 2008) it is used as a work-around to
+the problem of non-reachability of the reference
+in discriminative training of MT systems. Lattice
+reranking (Li and Khudanpur, 2009), a promising
+way to improve MT systems, also relies on oracle
+decoding to build the training data for a reranking
+algorithm.
+For sentence level metrics, finding oracle hy-
+potheses in n-best lists is a simple issue; how-
+ever, solving this problem on lattices proves much
+more challenging, due to the number of embed-
+ded hypotheses, which prevents the use of brute-
+force approaches. When using BLEU, or rather
+sentence-level approximations thereof, the prob-
+lem is in fact known to be NP-hard (Leusch et
+al., 2008). This complexity stems from the fact
+that the contribution of a given edge to the total
+modified n-gram precision can not be computed
+without looking at all other edges on the path.
+Similar (or worse) complexity result are expected
+120
+for other metrics such as METEOR (Banerjee and
+Lavie, 2005) or TER (Snover et al 2006). The
+exact computation of oracles under corpus level
+metrics, such as BLEU, poses supplementary com-
+binatorial problems that will not be addressed in
+this work.
+In this paper, we present two original methods
+for finding approximate oracle hypotheses on lat-
+tices. The first one is based on a linear approxima-
+tion of the corpus BLEU, that was originally de-
+signed for efficient Minimum Bayesian Risk de-
+coding on lattices (Tromble et al 2008). The sec-
+ond one, based on Integer Linear Programming, is
+an extension to lattices of a recent work on failure
+analysis for phrase-based decoders (Wisniewski
+et al 2010). In this framework, we study two
+decoding strategies: one based on a generic ILP
+solver, and one, based on Lagrangian relaxation.
+Our contribution is also experimental as we
+compare the quality of the BLEU approxima-
+tions and the time performance of these new ap-
+proaches with several existing methods, for differ-
+ent language pairs and using the lattice generation
+capacities of two publicly-available state-of-the-
+art phrase-based decoders: Moses1 and N-code2.
+The rest of this paper is organized as follows.
+In Section 2, we formally define the oracle decod-
+ing task and recall the formalism of finite state
+automata on semirings. We then describe (Sec-
+tion 3) two existing approaches for solving this
+task, before detailing our new proposals in sec-
+tions 4 and 5. We then report evaluations of the
+existing and new oracles on machine translation
+tasks.
+2 Preliminaries
+2.1 Oracle Decoding Task
+We assume that a phrase-based decoder is able
+to produce, for each source sentence f , a lattice
+Lf = ?Q,??, with # {Q} vertices (states) and
+# {?} edges. Each edge carries a source phrase
+fi, an associated output phrase ei as well as a fea-
+ture vector h?i, the components of which encode
+various compatibility measures between fi and ei.
+We further assume that Lf is a word lattice,
+meaning that each ei carries a single word3 and
+1http://www.statmt.org/moses/
+2http://ncode.limsi.fr/
+3Converting a phrase lattice to a word lattice is a simple
+matter of redistributing a compound input or output over a
+that it contains a unique initial state q0 and a
+unique final state qF . Let ?f denote the set of all
+paths from q0 to qF in Lf . Each path pi ? ?f cor-
+responds to a possible translation epi. The job of
+a (conventional) decoder is to find the best path(s)
+in Lf using scores that combine the edges? fea-
+ture vectors with the parameters ?? learned during
+tuning.
+In oracle decoding, the decoder?s job is quite
+different, as we assume that at least a reference
+rf is provided to evaluate the quality of each indi-
+vidual hypothesis. The decoder therefore aims at
+finding the path pi? that generates the hypothesis
+that best matches rf . For this task, only the output
+labels ei will matter, the other informations can be
+left aside.4
+Oracle decoding assumes the definition of a
+measure of the similarity between a reference
+and a hypothesis. In this paper we will con-
+sider sentence-level approximations of the popu-
+lar BLEU score (Papineni et al 2002). BLEU is
+formally defined for two parallel corpora, E =
+{ej}Jj=1 and R = {rj}
+J
+j=1, each containing J
+sentences as:
+n-BLEU(E ,R) = BP ?
+( n?
+m=1
+pm
+)1/n
+, (1)
+where BP = min(1, e1?c1(R)/c1(E)) is the
+brevity penalty and pm = cm(E ,R)/cm(E) are
+clipped or modified m-gram precisions: cm(E) is
+the total number of wordm-grams in E ; cm(E ,R)
+accumulates over sentences the number of m-
+grams in ej that also belong to rj . These counts
+are clipped, meaning that a m-gram that appears
+k times in E and l times in R, with k > l, is only
+counted l times. As it is well known, BLEU per-
+forms a compromise between precision, which is
+directly appears in Equation (1), and recall, which
+is indirectly taken into account via the brevity
+penalty. In most cases, Equation (1) is computed
+with n = 4 and we use BLEU as a synonym for
+4-BLEU.
+BLEU is defined for a pair of corpora, but, as an
+oracle decoder is working at the sentence-level, it
+should rely on an approximation of BLEU that can
+linear chain of arcs.
+4The algorithms described below can be straightfor-
+wardly generalized to compute oracle hypotheses under
+combined metrics mixing model scores and quality measures
+(Chiang et al 2008), by weighting each edge with its model
+score and by using these weights down the pipe.
+121
+evaluate the similarity between a single hypoth-
+esis and its reference. This approximation intro-
+duces a discrepancy as gathering sentences with
+the highest (local) approximation may not result
+in the highest possible (corpus-level) BLEU score.
+Let BLEU? be such a sentence-level approximation
+of BLEU. Then lattice oracle decoding is the task
+of finding an optimal path pi?(f) among all paths
+?f for a given f , and amounts to the following
+optimization problem:
+pi?(f) = arg max
+pi??f
+BLEU?(epi, rf ). (2)
+2.2 Compromises of Oracle Decoding
+As proved by Leusch et al(2008), even with
+brevity penalty dropped, the problem of deciding
+whether a confusion network contains a hypoth-
+esis with clipped uni- and bigram precisions all
+equal to 1.0 is NP-complete (and so is the asso-
+ciated optimization problem of oracle decoding
+for 2-BLEU). The case of more general word and
+phrase lattices and 4-BLEU score is consequently
+also NP-complete. This complexity stems from
+chaining up of local unigram decisions that, due
+to the clipping constraints, have non-local effect
+on the bigram precision scores. It is consequently
+necessary to keep a possibly exponential num-
+ber of non-recombinable hypotheses (character-
+ized by counts for each n-gram in the reference)
+until very late states in the lattice.
+These complexity results imply that any oracle
+decoder has to waive either the form of the objec-
+tive function, replacing BLEU with better-behaved
+scoring functions, or the exactness of the solu-
+tion, relying on approximate heuristic search al-
+gorithms.
+In Table 1, we summarize different compro-
+mises that the existing (section 3), as well as
+our novel (sections 4 and 5) oracle decoders,
+have to make. The ?target? and ?target level?
+columns specify the targeted score. None of
+the decoders optimizes it directly: their objec-
+tive function is rather the approximation of BLEU
+given in the ?target replacement? column. Col-
+umn ?search? details the accuracy of the target re-
+placement optimization. Finally, columns ?clip-
+ping? and ?brevity? indicate whether the corre-
+sponding properties of BLEU score are considered
+in the target substitute and in the search algorithm.
+2.3 Finite State Acceptors
+The implementations of the oracles described in
+the first part of this work (sections 3 and 4) use the
+common formalism of finite state acceptors (FSA)
+over different semirings and are implemented us-
+ing the generic OpenFST toolbox (Allauzen et al
+2007).
+A (?,?)-semiring K over a set K is a system
+?K,?,?, 0?, 1??, where ?K,?, 0?? is a commutative
+monoid with identity element 0?, and ?K,?, 1?? is
+a monoid with identity element 1?. ? distributes
+over ?, so that a ? (b ? c) = (a ? b) ? (a ? c)
+and (b? c)? a = (b? a)? (c? a) and element
+0? annihilates K (a? 0? = 0?? a = 0?).
+Let A = (?, Q, I, F,E) be a weighted finite-
+state acceptor with labels in ? and weights in K,
+meaning that the transitions (q, ?, q?) in A carry a
+weight w ? K. Formally, E is a mapping from
+(Q ? ? ? Q) into K; likewise, initial I and fi-
+nal weight F functions are mappings from Q into
+K. We borrow the notations of Mohri (2009):
+if ? = (q, a, q?) is a transition in domain(E),
+p(?) = q (resp. n(?) = q?) denotes its origin
+(resp. destination) state, w(?) = ? its label and
+E(?) its weight. These notations extend to paths:
+if pi is a path in A, p(pi) (resp. n(pi)) is its initial
+(resp. ending) state and w(pi) is the label along
+the path. A finite state transducer (FST) is an FSA
+with output alphabet, so that each transition car-
+ries a pair of input/output symbols.
+As discussed in Sections 3 and 4, several oracle
+decoding algorithms can be expressed as shortest-
+path problems, provided a suitable definition of
+the underlying acceptor and associated semiring.
+In particular, quantities such as:
+?
+pi??(A)
+E(pi), (3)
+where the total weight of a successful path pi =
+?1 . . . ?l in A is computed as:
+E(pi) =I(p(?1))?
+[
+l?
+i=1
+E(?i)
+]
+? F (n(?l))
+can be efficiently found by generic shortest dis-
+tance algorithms over acyclic graphs (Mohri,
+2002). For FSA-based implementations over
+semirings where ? = max, the optimization
+problem (2) is thus reduced to Equation (3), while
+the oracle-specific details can be incorporated into
+in the definition of ?.
+122
+oracle target target level target replacement search clipping brevity
+ex
+is
+ti
+ng LM-2g/4g 2/4-BLEU sentence P2(e; r) or P4(e; r) exact no no
+PB 4-BLEU sentence partial log BLEU (4) appr. no no
+PB` 4-BLEU sentence partial log BLEU (4) appr. no yes
+th
+is
+pa
+pe
+r LB-2g/4g 2/4-BLEU corpus linear appr. lin BLEU (5) exact no yes
+SP 1-BLEU sentence unigram count exact no yes
+ILP 2-BLEU sentence uni/bi-gram counts (7) appr. yes yes
+RLX 2-BLEU sentence uni/bi-gram counts (8) exact yes yes
+Table 1: Recapitulative overview of oracle decoders.
+3 Existing Algorithms
+In this section, we describe our reimplementation
+of two approximate search algorithms that have
+been proposed in the literature to solve the oracle
+decoding problem for BLEU. In addition to their
+approximate nature, none of them accounts for the
+fact that the count of each matching word has to
+be clipped.
+3.1 Language Model Oracle (LM)
+The simplest approach we consider is introduced
+in (Li and Khudanpur, 2009), where oracle decod-
+ing is reduced to the problem of finding the most
+likely hypothesis under a n-gram language model
+trained with the sole reference translation.
+Let us suppose we have a n-gram language
+model that gives a probability P (en|e1 . . . en?1)
+of word en given the n? 1 previous words.
+The probability of a hypothesis e is then
+Pn(e|r) =
+?
+i=1 P (ei+n|ei . . . ei+n?1). The lan-
+guage model can conveniently be represented as a
+FSA ALM , with each arc carrying a negative log-
+probability weight and with additional ?-type fail-
+ure transitions to accommodate for back-off arcs.
+If we train, for each source sentence f , a sepa-
+rate language model ALM (rf ) using only the ref-
+erence rf , oracle decoding amounts to finding a
+shortest (most probable) path in the weighted FSA
+resulting from the composition L ?ALM (rf ) over
+the (min,+)-semiring:
+pi?LM (f) = ShortestPath(L ?ALM (rf )).
+This approach replaces the optimization of n-
+BLEU with a search for the most probable path
+under a simplistic n-gram language model. One
+may expect the most probable path to select fre-
+quent n-gram from the reference, thus augment-
+ing n-BLEU.
+3.2 Partial BLEU Oracle (PB)
+Another approach is put forward in (Dreyer et
+al., 2007) and used in (Li and Khudanpur, 2009):
+oracle translations are shortest paths in a lattice
+L, where the weight of each path pi is the sen-
+tence level log BLEU(pi) score of the correspond-
+ing complete or partial hypothesis:
+log BLEU(pi) =
+1
+4
+?
+m=1...4
+log pm. (4)
+Here, the brevity penalty is ignored and n-
+gram precisions are offset to avoid null counts:
+pm = (cm(epi, r) + 0.1)/(cm(epi) + 0.1).
+This approach has been reimplemented using
+the FST formalism by defining a suitable semir-
+ing. Let each weight of the semiring keep a set
+of tuples accumulated up to the current state of
+the lattice. Each tuple contains three words of re-
+cent history, a partial hypothesis as well as current
+values of the length of the partial hypothesis, n-
+gram counts (4 numbers) and the sentence-level
+log BLEU score defined by Equation (4). In the
+beginning each arc is initialized with a singleton
+set containing one tuple with a single word as the
+partial hypothesis. For the semiring operations we
+define one common?-operation and two versions
+of the ?-operation:
+? L1 ?PB L2 ? appends a word on the edge of
+L2 to L1?s hypotheses, shifts their recent histories
+and updates n-gram counts, lengths, and current
+score; ? L1 ?PB L2 ? merges all sets from L1
+and L2 and recombinates those having the same
+recent history; ? L1 ?PB` L2 ? merges all sets
+from L1 and L2 and recombinates those having
+the same recent history and the same hypothesis
+length.
+If several hypotheses have the same recent
+history (and length in the case of ?PB`), re-
+combination removes all of them, but the one
+123
+q?
+0:0/01:1/0
+(a) ?1
+q?
+00:/10 
+:/10
+0:0010
+:0100:010
+:10
+(b) ?2
+q?
+0
+0:/10
+:/10
+0:/10 00
+0:/10
+00:/10 
+:/10
+:010
+0:0010
+:010
+0:00100:010
+:10
+:0010
+0:00010
+(c) ?3
+Figure 1: Examples of the ?n automata for ? = {0, 1} and n = 1 . . . 3. Initial and final states are marked,
+respectively, with bold and with double borders. Note that arcs between final states are weighted with 0, while in
+reality they will have this weight only if the corresponding n-gram does not appear in the reference.
+with the largest current BLEU score. Optimal
+path is then found by launching the generic
+ShortestDistance(L) algorithm over one of
+the semirings above.
+The (?PB`,?PB)-semiring, in which the
+equal length requirement also implies equal
+brevity penalties, is more conservative in recom-
+bining hypotheses and should achieve final BLEU
+that is least as good as that obtained with the
+(?PB,?PB)-semiring5.
+4 Linear BLEU Oracle (LB)
+In this section, we propose a new oracle based on
+the linear approximation of the corpus BLEU in-
+troduced in (Tromble et al 2008). While this ap-
+proximation was earlier used for Minimum Bayes
+Risk decoding in lattices (Tromble et al 2008;
+Blackwood et al 2010), we show here how it can
+also be used to approximately compute an oracle
+translation.
+Given five real parameters ?0...4 and a word vo-
+cabulary ?, Tromble et al(2008) showed that one
+can approximate the corpus-BLEU with its first-
+order (linear) Taylor expansion:
+lin BLEU(pi) = ?0 |epi|+
+4?
+n=1
+?n
+?
+u??n
+cu(epi)?u(r),
+(5)
+where cu(e) is the number of times the n-gram
+u appears in e, and ?u(r) is an indicator variable
+testing the presence of u in r.
+To exploit this approximation for oracle decod-
+ing, we construct four weighted FSTs ?n con-
+taining a (final) state for each possible (n ? 1)-
+5See, however, experiments in Section 6.
+gram, and all weighted transitions of the kind
+(?n?11 , ?n : ?
+n
+1 /?n ? ??n1 (r), ?
+n
+2 ), where ?s are
+in ?, input word sequence ?n?11 and output se-
+quence ?n2 , are, respectively, the maximal prefix
+and suffix of an n-gram ?n1 .
+In supplement, we add auxiliary states corre-
+sponding to m-grams (m < n ? 1), whose func-
+tional purpose is to help reach one of the main
+(n ? 1)-gram states. There are |?|
+n?1?1
+|?|?1 , n > 1,
+such supplementary states and their transitions are
+(?k1 , ?k+1 : ?
+k+1
+1 /0, ?
+k+1
+1 ), k = 1 . . . n?2. Apart
+from these auxiliary states, the rest of the graph
+(i.e., all final states) reproduces the structure of
+the well-known de Bruijn graphB(?, n) (see Fig-
+ure 1).
+To actually compute the best hypothesis, we
+first weight all arcs in the input FSA L with ?0 to
+obtain ?0. This makes each word?s weight equal
+in a hypothesis path, and the total weight of the
+path in ?0 is proportional to the number of words
+in it. Then, by sequentially composing ?0 with
+other ?ns, we discount arcs whose output n-gram
+corresponds to a matching n-gram. The amount
+of discount is regulated by the ratio between ?n?s
+for n > 0.
+With all operations performed over the
+(min,+)-semiring, the oracle translation is then
+given by:
+pi?LB = ShortestPath(?0??1??2??3??4).
+We set parameters ?n as in (Tromble et al
+2008): ?0 = 1, roughly corresponding to the
+brevity penalty (each word in a hypothesis adds
+up equally to the final path length) and ?n =
+?(4p ? rn?1)?1, which are increasing discounts
+124
+ 0 0.2
+ 0.4 0.6
+ 0.8 1
+p
+ 0
+ 0.2
+ 0.4
+ 0.6
+ 0.8
+ 1
+r
+ 22
+ 24
+ 26
+ 28
+ 30
+ 32
+ 34
+ 36
+BLEU
+ 22
+ 24
+ 26
+ 28
+ 30
+ 32
+ 34
+ 36
+Figure 2: Performance of the LB-4g oracle for differ-
+ent combinations of p and r on WMT11 de2en task.
+for matching n-grams. The values of p and r were
+found by grid search with a 0.05 step value. A
+typical result of the grid evaluation of the LB or-
+acle for German to English WMT?11 task is dis-
+played on Figure 2. The optimal values for the
+other pairs of languages were roughly in the same
+ballpark, with p ? 0.3 and r ? 0.2.
+5 Oracles with n-gram Clipping
+In this section, we describe two new oracle de-
+coders that take n-gram clipping into account.
+These oracles leverage on the well-known fact
+that the shortest path problem, at the heart of
+all the oracles described so far, can be reduced
+straightforwardly to an Integer Linear Program-
+ming (ILP) problem (Wolsey, 1998). Once oracle
+decoding is formulated as an ILP problem, it is
+relatively easy to introduce additional constraints,
+for instance to enforce n-gram clipping. We will
+first describe the optimization problem of oracle
+decoding and then present several ways to effi-
+ciently solve it.
+5.1 Problem Description
+Throughout this section, abusing the notations,
+we will also think of an edge ?i as a binary vari-
+able describing whether the edge is ?selected? or
+not. The set {0, 1}#{?} of all possible edge as-
+signments will be denoted by P . Note that ?, the
+set of all paths in the lattice is a subset of P: by
+enforcing some constraints on an assignment ? in
+P , it can be guaranteed that it will represent a path
+in the lattice. For the sake of presentation, we as-
+sume that each edge ?i generates a single word
+w(?i) and we focus first on finding the optimal
+hypothesis with respect to the sentence approxi-
+mation of the 1-BLEU score.
+As 1-BLEU is decomposable, it is possible to
+define, for every edge ?i, an associated reward, ?i
+that describes the edge?s local contribution to the
+hypothesis score. For instance, for the sentence
+approximation of the 1-BLEU score, the rewards
+are defined as:
+?i =
+{
+?1 if w(?i) is in the reference,
+??2 otherwise,
+where ?1 and ?2 are two positive constants cho-
+sen to maximize the corpus BLEU score6. Con-
+stant ?1 (resp. ?2) is a reward (resp. a penalty)
+for generating a word in the reference (resp. not in
+the reference). The score of an assignment ? ? P
+is then defined as: score(?) =
+?#{?}
+i=1 ?i ? ?i. This
+score can be seen as a compromise between the
+number of common words in the hypothesis and
+the reference (accounting for recall) and the num-
+ber of words of the hypothesis that do not appear
+in the reference (accounting for precision).
+As explained in Section 2.3, finding the or-
+acle hypothesis amounts to solving the shortest
+distance (or path) problem (3), which can be re-
+formulated by a constrained optimization prob-
+lem (Wolsey, 1998):
+arg max
+??P
+#{?}?
+i=1
+?i ? ?i (6)
+s.t.
+?
+????(qF )
+? = 1,
+?
+???+(q0)
+? = 1
+?
+???+(q)
+? ?
+?
+????(q)
+? = 0, q ? Q\{q0, qF }
+where q0 (resp. qF ) is the initial (resp. final) state
+of the lattice and ??(q) (resp. ?+(q)) denotes the
+set of incoming (resp. outgoing) edges of state q.
+These path constraints ensure that the solution of
+the problem is a valid path in the lattice.
+The optimization problem in Equation (6) can
+be further extended to take clipping into account.
+Let us introduce, for each word w, a variable ?w
+that denotes the number of times w appears in the
+hypothesis clipped to the number of times, it ap-
+pears in the reference. Formally, ?w is defined by:
+?w = min
+?
+?
+?
+?
+???(w)
+?, cw(r)
+?
+?
+?
+6We tried several combinations of ?1 and ?2 and kept
+the one that had the highest corpus 4-BLEU score.
+125
+where ? (w) is the subset of edges generating w,
+and
+?
+???(w) ? is the number of occurrences of
+w in the solution and cw(r) is the number of oc-
+currences of w in the reference r. Using the ?
+variables, we define a ?clipped? approximation of
+1-BLEU:
+?1 ?
+?
+w
+?w ??2 ?
+?
+?
+#{?}?
+i=1
+?i ?
+?
+w
+?w
+?
+?
+Indeed, the clipped number of words in the hy-
+pothesis that appear in the reference is given by
+?
+w ?w, and
+?#{?}
+i=1 ?i ?
+?
+w ?w corresponds to
+the number of words in the hypothesis that do not
+appear in the reference or that are surplus to the
+clipped count.
+Finally, the clipped lattice oracle is defined by
+the following optimization problem:
+arg max
+??P,?w
+(?1 + ?2) ?
+?
+w
+?w ??2 ?
+#{?}?
+i=1
+?i
+(7)
+s.t. ?w ? 0, ?w ? cw(r), ?w ?
+?
+???(w)
+?
+?
+????(qF )
+? = 1,
+?
+???+(q0)
+? = 1
+?
+???+(q)
+? ?
+?
+????(q)
+? = 0, q ? Q \ {q0, qF }
+where the first three sets of constraints are the lin-
+earization of the definition of ?w, made possible
+by the positivity of ?1 and ?2, and the last three
+sets of constraints are the path constraints.
+In our implementation we generalized this op-
+timization problem to bigram lattices, in which
+each edge is labeled by the bigram it generates.
+Such bigram FSAs can be produced by compos-
+ing the word lattice with ?2 from Section 4. In
+this case, the reward of an edge will be defined as
+a combination of the (clipped) number of unigram
+matches and bigram matches, and solving the op-
+timization problem yields a 2-BLEU optimal hy-
+pothesis. The approach can be further generalized
+to higher-order BLEU or other metrics, as long as
+the reward of an edge can be computed locally.
+The constrained optimization problem (7) can
+be solved efficiently using off-the-shelf ILP
+solvers7.
+7In our experiments we used Gurobi (Optimization,
+2010) a commercial ILP solver that offers free academic li-
+cense.
+5.2 Shortest Path Oracle (SP)
+As a trivial special class of the above formula-
+tion, we also define a Shortest Path Oracle (SP)
+that solves the optimization problem in (6). As
+no clipping constraints apply, it can be solved ef-
+ficiently using the standard Bellman algorithm.
+5.3 Oracle Decoding through Lagrangian
+Relaxation (RLX)
+In this section, we introduce another method to
+solve problem (7) without relying on an exter-
+nal ILP solver. Following (Rush et al 2010;
+Chang and Collins, 2011), we propose an original
+method for oracle decoding based on Lagrangian
+relaxation. This method relies on the idea of re-
+laxing the clipping constraints: starting from an
+unconstrained problem, the counts clipping is en-
+forced by incrementally strengthening the weight
+of paths satisfying the constraints.
+The oracle decoding problem with clipping
+constraints amounts to solving:
+arg min
+???
+?
+#{?}?
+i=1
+?i ? ?i (8)
+s.t.
+?
+???(w)
+? ? cw(r), w ? r
+where, by abusing the notations, r also denotes
+the set of words in the reference. For sake of clar-
+ity, the path constraints are incorporated into the
+domain (the arg min runs over ? and not over P).
+To solve this optimization problem we consider its
+dual form and use Lagrangian relaxation to deal
+with clipping constraints.
+Let ? = {?w}w?r be positive Lagrange mul-
+tipliers, one for each different word of the refer-
+ence, then the Lagrangian of the problem (8) is:
+L(?, ?) = ?
+#{?}?
+i=1
+?i?i+
+?
+w?r
+?w
+?
+?
+?
+???(w)
+? ? cw(r)
+?
+?
+The dual objective is L(?) = min? L(?, ?)
+and the dual problem is: max?,?0 L(?). To
+solve the latter, we first need to work out the dual
+objective:
+?? = arg min
+???
+L(?, ?)
+= arg min
+???
+#{?}?
+i=1
+?i
+(
+?w(?i) ? ?i
+)
+126
+where we assume that ?w(?i) is 0 when word
+w(?i) is not in the reference. In the same way
+as in Section 5.2, the solution of this problem can
+be efficiently retrieved with a shortest path algo-
+rithm.
+It is possible to optimize L(?) by noticing that
+it is a concave function. It can be shown (Chang
+and Collins, 2011) that, at convergence, the clip-
+ping constraints will be enforced in the optimal
+solution. In this work, we chose to use a simple
+gradient descent to solve the dual problem. A sub-
+gradient of the dual objective is:
+?L(?)
+??w
+=
+?
+???(w)???
+? ? cw(r).
+Each component of the gradient corresponds to
+the difference between the number of times the
+word w appears in the hypothesis and the num-
+ber of times it appears in the reference. The algo-
+rithm below sums up the optimization of task (8).
+In the algorithm ?(t) corresponds to the step size
+at the tth iteration. In our experiments we used a
+constant step size of 0.1. Compared to the usual
+gradient descent algorithm, there is an additional
+projection step of ? on the positive orthant, which
+enforces the constraint ?  0.
+?w, ?(0)w ? 0
+for t = 1? T do
+??(t) = arg min?
+?
+i ?i ?
+(
+?w(?i) ? ?i
+)
+if all clipping constraints are enforced
+then optimal solution found
+else for w ? r do
+nw ? n. of occurrences of w in ??(t)
+?(t)w ? ?
+(t)
+w + ?(t) ? (nw ? cw(r))
+?(t)w ? max(0, ?
+(t)
+w )
+6 Experiments
+For the proposed new oracles and the existing ap-
+proaches, we compare the quality of oracle trans-
+lations and the average time per sentence needed
+to compute them8 on several datasets for 3 lan-
+guage pairs, using lattices generated by two open-
+source decoders: N-code and Moses9 (Figures 3
+8Experiments were run in parallel on a server with 64G
+of RAM and 2 Xeon CPUs with 4 cores at 2.3 GHz.
+9As the ILP (and RLX) oracle were implemented in
+Python, we pruned Moses lattices to accelerate task prepa-
+ration for it.
+decoder fr2en de2en en2de
+te
+st N-code 27.88 22.05 15.83
+Moses 27.68 21.85 15.89
+or
+ac
+le N-code 36.36 29.22 21.18
+Moses 35.25 29.13 22.03
+Table 2: Test BLEU scores and oracle scores on
+100-best lists for the evaluated systems.
+and 4). Systems were trained on the data provided
+for the WMT?11 Evaluation task10, tuned on the
+WMT?09 test data and evaluated on WMT?10 test
+set11 to produce lattices. The BLEU test scores
+and oracle scores on 100-best lists with the ap-
+proximation (4) for N-code and Moses are given
+in Table 2. It is not until considering 10,000-best
+lists that n-best oracles achieve performance com-
+parable to the (mediocre) SP oracle.
+To make a fair comparison with the ILP and
+RLX oracles which optimize 2-BLEU, we in-
+cluded 2-BLEU versions of the LB and LM ora-
+cles, identified below with the ?-2g? suffix. The
+two versions of the PB oracle are respectively
+denoted as PB and PB`, by the type of the ?-
+operation they consider (Section 3.2). Parame-
+ters p and r for the LB-4g oracle for N-code were
+found with grid search and reused for Moses:
+p = 0.25, r = 0.15 (fr2en); p = 0.175, r = 0.575
+(en2de) and p = 0.35, r = 0.425 (de2en). Cor-
+respondingly, for the LB-2g oracle: p = 0.3, r =
+0.15; p = 0.3, r = 0.175 and p = 0.575, r = 0.1.
+The proposed LB, ILP and RLX oracles were
+the best performing oracles, with the ILP and
+RLX oracles being considerably faster, suffering
+only a negligible decrease in BLEU, compared to
+the 4-BLEU-optimized LB oracle. We stopped
+RLX oracle after 20 iterations, as letting it con-
+verge had a small negative effect (?1 point of the
+corpus BLEU), because of the sentence/corpus dis-
+crepancy ushered by the BLEU score approxima-
+tion.
+Experiments showed consistently inferior per-
+formance of the LM-oracle resulting from the op-
+timization of the sentence probability rather than
+BLEU. The PB oracle often performed compara-
+bly to our new oracles, however, with sporadic
+resource-consumption bursts, that are difficult to
+10http://www.statmt.org/wmt2011
+11All BLEU scores are reported using the multi-bleu.pl
+script.
+127
+ 25
+ 30
+ 35
+ 40
+ 45
+ 50
+RLX ILP LB-4g LB-2g PB PBl SP LM-4g LM-2g  0
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+BLE
+U
+avg
+. tim
+e, s
+BLEU
+47.8
+2
+48.1
+2
+48.2
+2
+47.7
+1
+46.7
+6
+46.4
+8
+41.2
+3
+38.9
+1
+38.7
+5
+avg. time
+(a) fr2en
+ 25
+ 30
+ 35
+RLX ILP LB-4g LB-2g PB PBl SP LM-4g LM-2g  0
+ 0.5
+ 1
+ 1.5
+BLE
+U
+avg
+. tim
+e, s
+BLEU
+34.7
+9
+34.7
+0 35.4
+9
+35.0
+9
+34.8
+5
+34.7
+6
+30.7
+8
+29.5
+3
+29.5
+3
+avg. time
+(b) de2en
+ 15
+ 20
+ 25
+ 30
+RLX ILP LB-4g LB-2g PB PBl SP LM-4g LM-2g  0
+ 0.5
+ 1
+BLE
+U
+avg
+. tim
+e, s
+BLEU
+24.7
+5
+24.6
+6 25.3
+4
+24.8
+5
+24.7
+8
+24.7
+3
+22.1
+9
+20.7
+8
+20.7
+4
+avg. time
+(c) en2de
+Figure 3: Oracles performance for N-code lattices.
+ 25
+ 30
+ 35
+ 40
+ 45
+ 50
+RLX ILP LB-4g LB-2g PB PBl SP LM-4g LM-2g  0
+ 1
+ 2
+ 3
+BLE
+U
+avg
+. tim
+e, s
+BLEU
+43.8
+2
+44.0
+8
+44.4
+4
+43.8
+2
+43.4
+2
+43.2
+0
+41.0
+3
+36.3
+4
+36.2
+5
+avg. time
+(a) fr2en
+ 25
+ 30
+ 35
+RLX ILP LB-4g LB-2g PB PBl SP LM-4g LM-2g  0
+ 1
+ 2
+ 3
+ 4
+BLE
+U
+avg
+. tim
+e, s
+BLEU
+36.4
+3 36.9
+1 37.7
+3
+36.5
+2
+36.7
+5
+36.6
+2
+30.5
+2
+29.5
+1
+29.4
+5
+avg. time
+(b) de2en
+ 15
+ 20
+ 25
+ 30
+RLX ILP LB-4g LB-2g PB PBl SP LM-4g LM-2g  0
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+BLE
+U
+avg
+. tim
+e, s
+BLEU
+28.6
+8
+28.6
+4 29.
+94
+28.9
+4
+28.7
+6
+28.6
+5
+26.4
+8
+21.2
+9
+21.2
+3
+avg. time
+(c) en2de
+Figure 4: Oracles performance for Moses lattices pruned with parameter -b 0.5.
+avoid without more cursory hypotheses recom-
+bination strategies and the induced effect on the
+translations quality. The length-aware PB` oracle
+has unexpectedly poorer scores compared to its
+length-agnostic PB counterpart, while it should,
+at least, stay even, as it takes the brevity penalty
+into account. We attribute this fact to the com-
+plex effect of clipping coupled with the lack of
+control of the process of selecting one hypothe-
+sis among several having the same BLEU score,
+length and recent history. Anyhow, BLEU scores
+of both of PB oracles are only marginally differ-
+ent, so the PB`?s conservative policy of pruning
+and, consequently, much heavier memory con-
+sumption makes it an unwanted choice.
+7 Conclusion
+We proposed two methods for finding oracle
+translations in lattices, based, respectively, on a
+linear approximation to the corpus-level BLEU
+and on integer linear programming techniques.
+We also proposed a variant of the latter approach
+based on Lagrangian relaxation that does not rely
+on a third-party ILP solver. All these oracles have
+superior performance to existing approaches, in
+terms of the quality of the found translations, re-
+source consumption and, for the LB-2g oracles,
+in terms of speed. It is thus possible to use bet-
+ter approximations of BLEU than was previously
+done, taking the corpus-based nature of BLEU, or
+clipping constrainst into account, delivering better
+oracles without compromising speed.
+Using 2-BLEU and 4-BLEU oracles yields com-
+parable performance, which confirms the intuition
+that hypotheses sharing many 2-grams, would
+likely have many common 3- and 4-grams as well.
+Taking into consideration the exceptional speed of
+the LB-2g oracle, in practice one can safely opti-
+mize for 2-BLEU instead of 4-BLEU, saving large
+amounts of time for oracle decoding on long sen-
+tences.
+Overall, these experiments accentuate the
+acuteness of scoring problems that plague modern
+decoders: very good hypotheses exist for most in-
+put sentences, but are poorly evaluated by a linear
+combination of standard features functions. Even
+though the tuning procedure can be held respon-
+sible for part of the problem, the comparison be-
+tween lattice and n-best oracles shows that the
+beam search leaves good hypotheses out of the n-
+best list until very high value of n, that are never
+used in practice.
+Acknowledgments
+This work has been partially funded by OSEO un-
+der the Quaero program.
+128
+References
+Cyril Allauzen, Michael Riley, Johan Schalkwyk, Wo-
+jciech Skut, and Mehryar Mohri. 2007. OpenFst:
+A general and efficient weighted finite-state trans-
+ducer library. In Proc. of the Int. Conf. on Imple-
+mentation and Application of Automata, pages 11?
+23.
+Michael Auli, Adam Lopez, Hieu Hoang, and Philipp
+Koehn. 2009. A systematic analysis of translation
+model search spaces. In Proc. of WMT, pages 224?
+232, Athens, Greece.
+Satanjeev Banerjee and Alon Lavie. 2005. ME-
+TEOR: An automatic metric for MT evaluation with
+improved correlation with human judgments. In
+Proc. of the ACL Workshop on Intrinsic and Extrin-
+sic Evaluation Measures for Machine Translation,
+pages 65?72, Ann Arbor, MI, USA.
+Graeme Blackwood, Adria` de Gispert, and William
+Byrne. 2010. Efficient path counting transducers
+for minimum bayes-risk decoding of statistical ma-
+chine translation lattices. In Proc. of the ACL 2010
+Conference Short Papers, pages 27?32, Strouds-
+burg, PA, USA.
+Yin-Wen Chang and Michael Collins. 2011. Exact de-
+coding of phrase-based translation models through
+lagrangian relaxation. In Proc. of the 2011 Conf. on
+EMNLP, pages 26?37, Edinburgh, UK.
+David Chiang, Yuval Marton, and Philip Resnik.
+2008. Online large-margin training of syntactic
+and structural translation features. In Proc. of the
+2008 Conf. on EMNLP, pages 224?233, Honolulu,
+Hawaii.
+Markus Dreyer, Keith B. Hall, and Sanjeev P. Khu-
+danpur. 2007. Comparing reordering constraints
+for SMT using efficient BLEU oracle computation.
+In Proc. of the Workshop on Syntax and Structure
+in Statistical Translation, pages 103?110, Morris-
+town, NJ, USA.
+Gregor Leusch, Evgeny Matusov, and Hermann Ney.
+2008. Complexity of finding the BLEU-optimal hy-
+pothesis in a confusion network. In Proc. of the
+2008 Conf. on EMNLP, pages 839?847, Honolulu,
+Hawaii.
+Zhifei Li and Sanjeev Khudanpur. 2009. Efficient
+extraction of oracle-best translations from hyper-
+graphs. In Proc. of Human Language Technolo-
+gies: The 2009 Annual Conf. of the North Ameri-
+can Chapter of the ACL, Companion Volume: Short
+Papers, pages 9?12, Morristown, NJ, USA.
+Percy Liang, Alexandre Bouchard-Co?te?, Dan Klein,
+and Ben Taskar. 2006. An end-to-end discrim-
+inative approach to machine translation. In Proc.
+of the 21st Int. Conf. on Computational Linguistics
+and the 44th annual meeting of the ACL, pages 761?
+768, Morristown, NJ, USA.
+Mehryar Mohri. 2002. Semiring frameworks and al-
+gorithms for shortest-distance problems. J. Autom.
+Lang. Comb., 7:321?350.
+Mehryar Mohri. 2009. Weighted automata algo-
+rithms. In Manfred Droste, Werner Kuich, and
+Heiko Vogler, editors, Handbook of Weighted Au-
+tomata, chapter 6, pages 213?254.
+Gurobi Optimization. 2010. Gurobi optimizer, April.
+Version 3.0.
+Kishore Papineni, Salim Roukos, Todd Ward, and
+Wei-Jing Zhu. 2002. BLEU: a method for auto-
+matic evaluation of machine translation. In Proc. of
+the Annual Meeting of the ACL, pages 311?318.
+Alexander M. Rush, David Sontag, Michael Collins,
+and Tommi Jaakkola. 2010. On dual decomposi-
+tion and linear programming relaxations for natural
+language processing. In Proc. of the 2010 Conf. on
+EMNLP, pages 1?11, Stroudsburg, PA, USA.
+Matthew Snover, Bonnie Dorr, Richard Schwartz, Lin-
+nea Micciulla, and John Makhoul. 2006. A study
+of translation edit rate with targeted human anno-
+tation. In Proc. of the Conf. of the Association for
+Machine Translation in the America (AMTA), pages
+223?231.
+Roy W. Tromble, Shankar Kumar, Franz Och, and
+Wolfgang Macherey. 2008. Lattice minimum
+bayes-risk decoding for statistical machine transla-
+tion. In Proc. of the Conf. on EMNLP, pages 620?
+629, Stroudsburg, PA, USA.
+Marco Turchi, Tijl De Bie, and Nello Cristianini.
+2008. Learning performance of a machine trans-
+lation system: a statistical and computational anal-
+ysis. In Proc. of WMT, pages 35?43, Columbus,
+Ohio.
+Guillaume Wisniewski, Alexandre Allauzen, and
+Franc?ois Yvon. 2010. Assessing phrase-based
+translation models with oracle decoding. In Proc.
+of the 2010 Conf. on EMNLP, pages 933?943,
+Stroudsburg, PA, USA.
+L. Wolsey. 1998. Integer Programming. John Wiley
+& Sons, Inc.
+129
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Short Papers), pages 488?494,
+Baltimore, Maryland, USA, June 23-25 2014.
+c
+?2014 Association for Computational Linguistics
+Learning Translational and Knowledge-based Similarities
+from Relevance Rankings for Cross-Language Retrieval
+Shigehiko Schamoni and Felix Hieber and Artem Sokolov and Stefan Riezler
+Department of Computational Linguistics
+Heidelberg University, 69120 Heidelberg, Germany
+{schamoni,hieber,sokolov,riezler}@cl.uni-heidelberg.de
+Abstract
+We present an approach to cross-language
+retrieval that combines dense knowledge-
+based features and sparse word transla-
+tions. Both feature types are learned di-
+rectly from relevance rankings of bilin-
+gual documents in a pairwise ranking
+framework. In large-scale experiments for
+patent prior art search and cross-lingual re-
+trieval in Wikipedia, our approach yields
+considerable improvements over learning-
+to-rank with either only dense or only
+sparse features, and over very competitive
+baselines that combine state-of-the-art ma-
+chine translation and retrieval.
+1 Introduction
+Cross-Language Information Retrieval (CLIR) for
+the domain of web search successfully lever-
+ages state-of-the-art Statistical Machine Transla-
+tion (SMT) to either produce a single most prob-
+able translation, or a weighted list of alternatives,
+that is used as search query to a standard search
+engine (Chin et al, 2008; Ture et al, 2012). This
+approach is advantageous if large amounts of in-
+domain sentence-parallel data are available to train
+SMT systems, but relevance rankings to train re-
+trieval models are not.
+The situation is different for CLIR in special
+domains such as patents or Wikipedia. Paral-
+lel data for translation have to be extracted with
+some effort from comparable or noisy parallel data
+(Utiyama and Isahara, 2007; Smith et al, 2010),
+however, relevance judgments are often straight-
+forwardly encoded in special domains. For ex-
+ample, in patent prior art search, patents granted
+at any patent office worldwide are considered rel-
+evant if they constitute prior art with respect to
+the invention claimed in the query patent. Since
+patent applicants and lawyers are required to list
+relevant prior work explicitly in the patent appli-
+cation, patent citations can be used to automati-
+cally extract large amounts of relevance judgments
+across languages (Graf and Azzopardi, 2008). In
+Wikipedia search, one can imagine a Wikipedia
+author trying to investigate whether a Wikipedia
+article covering the subject the author intends to
+write about already exists in another language.
+Since authors are encouraged to avoid orphan arti-
+cles and to cite their sources, Wikipedia has a rich
+linking structure between related articles, which
+can be exploited to create relevance links between
+articles across languages (Bai et al, 2010).
+Besides a rich citation structure, patent docu-
+ments and Wikipedia articles contain a number
+of further cues on relatedness that can be ex-
+ploited as features in learning-to-rank approaches.
+For monolingual patent retrieval, Guo and Gomes
+(2009) and Oh et al (2013) advocate the use of
+dense features encoding domain knowledge on
+inventors, assignees, location and date, together
+with dense similarity scores based on bag-of-word
+representations of patents. Bai et al (2010) show
+that for the domain of Wikipedia, learning a sparse
+matrix of word associations between the query and
+document vocabularies from relevance rankings is
+useful in monolingual and cross-lingual retrieval.
+Sokolov et al (2013) apply the idea of learning
+a sparse matrix of bilingual phrase associations
+from relevance rankings to cross-lingual retrieval
+in the patent domain. Both show improvements
+of learning-to-rank on relevance data over SMT-
+based approaches on their respective domains.
+The main contribution of this paper is a thor-
+ough evaluation of dense and sparse features
+for learning-to-rank that have so far been used
+only monolingually or only on either patents or
+Wikipedia. We show that for both domains,
+patents and Wikipedia, jointly learning bilingual
+sparse word associations and dense knowledge-
+based similarities directly on relevance ranked
+488
+data improves significantly over approaches that
+use either only sparse or only dense features, and
+over approaches that combine query translation
+by SMT with standard retrieval in the target lan-
+guage. Furthermore, we show that our approach
+can be seen as supervised model combination
+that allows to combine SMT-based and ranking-
+based approaches for further substantial improve-
+ments. We conjecture that the gains are due to
+orthogonal information contributed by domain-
+knowledge, ranking-based word associations, and
+translation-based information.
+2 Related Work
+CLIR addresses the problem of translating or pro-
+jecting a query into the language of the document
+repository across which retrieval is performed. In
+a direct translation approach (DT), a state-of-the-
+art SMT system is used to produce a single best
+translation that is used as search query in the target
+language. For example, Google?s CLIR approach
+combines their state-of-the-art SMT system with
+their proprietary search engine (Chin et al, 2008).
+Alternative approaches avoid to solve the hard
+problem of word reordering, and instead rely on
+token-to-token translations that are used to project
+the query terms into the target language with a
+probabilistic weighting of the standard term tf-
+idf scheme. Darwish and Oard (2003) termed
+this method the probabilistic structured query ap-
+proach (PSQ). The advantage of this technique
+is an implicit query expansion effect due to the
+use of probability distributions over term trans-
+lations (Xu et al, 2001). Ture et al (2012)
+brought SMT back into this paradigm by pro-
+jecting terms from n-best translations from syn-
+chronous context-free grammars.
+Ranking approaches have been presented by
+Guo and Gomes (2009) and Oh et al (2013).
+Their method is a classical learning-to-rank setup
+where pairwise ranking is applied to a few hun-
+dred dense features. Methods to learn sparse
+word-based translation correspondences from su-
+pervised ranking signals have been presented by
+Bai et al (2010) and Sokolov et al (2013). Both
+approaches work in a cross-lingual setting, the for-
+mer on Wikipedia data, the latter on patents.
+Our approach extends the work of Sokolov et
+al. (2013) by presenting an alternative learning-
+to-rank approach that can be used for supervised
+model combination to integrate dense and sparse
+features, and by evaluating both approaches on
+cross-lingual retrieval for patents and Wikipedia.
+This relates our work to supervised model merg-
+ing approaches (Sheldon et al, 2011).
+3 Translation and Ranking for CLIR
+SMT-based Models. We will refer to DT and
+PSQ as SMT-based models that translate a query,
+and then perform monolingual retrieval using
+BM25. Translation is agnostic of the retrieval task.
+Linear Ranking for Word-Based Models. Let
+q ? {0, 1}
+Q
+be a query and d ? {0, 1}
+D
+be a doc-
+ument where the j
+th
+vector dimension indicates the
+occurrence of the j
+th
+word for dictionaries of size
+Q and D. A linear ranking model is defined as
+f(q,d) = q
+>
+Wd =
+Q
+?
+i=1
+D
+?
+j=1
+q
+i
+W
+ij
+d
+j
+,
+where W ? IR
+Q?D
+encodes a matrix of ranking-
+specific word associations (Bai et al, 2010) . We
+optimize this model by pairwise ranking, which
+assumes labeled data in the form of a set R of tu-
+ples (q,d
++
+,d
+?
+), where d
++
+is a relevant (or higher
+ranked) document and d
+?
+an irrelevant (or lower
+ranked) document for query q. The goal is to
+find a weight matrix W such that an inequality
+f(q,d
++
+) > f(q,d
+?
+) is violated for the fewest
+number of tuples from R. We present two meth-
+ods for optimizing W in the following.
+Pairwise Ranking using Boosting (BM). The
+Boosting-based Ranking baseline (Freund et al,
+2003) optimizes an exponential loss:
+L
+exp
+=
+?
+(q,d
++
+,d
+?
+)?R
+D(q,d
++
+,d
+?
+)e
+f(q,d
+?
+)?f(q,d
++
+)
+,
+whereD(q,d
++
+,d
+?
+) is a non-negative importance
+function on tuples. The algorithm of Sokolov et
+al. (2013) combines batch boosting with bagging
+over a number of independently drawn bootstrap
+data samples fromR. In each step, the single word
+pair feature is selected that provides the largest de-
+crease of L
+exp
+. The found corresponding models
+are averaged. To reduce memory requirements we
+used random feature hashing with the size of the
+hash of 30 bits (Shi et al, 2009). For regulariza-
+tion we rely on early stopping.
+Pairwise Ranking with SGD (VW). The sec-
+ond objective is an `
+1
+-regularized hinge loss:
+L
+hng
+=
+?
+(q,d
++
+,d
+?
+)?R
+(
+f(q,d
++
+)? f(q,d
+?
+)
+)
++
++ ?||W ||
+1
+,
+489
+where (x)
++
+= max(0, 1 ? x) and ? is the regu-
+larization parameter. This newly added model uti-
+lizes the standard implementation of online SGD
+from the Vowpal Wabbit (VW) toolkit (Goel et al,
+2008) and was run on a data sample of 5M to 10M
+tuples from R. On each step, W is updated with
+a scaled gradient vector ?
+W
+L
+hng
+and clipped to
+account for `
+1
+-regularization. Memory usage was
+reduced using the same hashing technique as for
+boosting.
+Domain Knowledge Models. Domain knowl-
+edge features for patents were inspired by Guo
+and Gomes (2009): a feature fires if two patents
+share similar aspects, e.g. a common inventor. As
+we do not have access to address data, we omit
+geolocation features and instead add features that
+evaluate similarity w.r.t. patent classes extracted
+from IPC codes. Documents within a patent sec-
+tion, i.e. the topmost hierarchy, are too diverse
+to provide useful information but more detailed
+classes and the count of matching classes do.
+For Wikipedia, we implemented features that
+compare the relative length of documents, num-
+ber of links and images, the number of common
+links and common images, and Wikipedia cat-
+egories: Given the categories associated with a
+foreign query, we use the language links on the
+Wikipedia category pages to generate a set of
+?translated? English categories S. The English-
+side category graph is used to construct sets of
+super- and subcategories related to the candidate
+document?s categories. This expansion is done in
+both directions for two levels resulting in 5 cat-
+egory sets. The intersection between target set
+T
+n
+and the source category set S reflects the cat-
+egory level similarity between query and docu-
+ment, which we calculate as a mutual containment
+score s
+n
+=
+1
+2
+(|S ? T
+n
+|/|S| + |S ? T
+n
+|/|T
+n
+|) for
+n ? {?2,?1, 0,+1,+2} (Broder, 1997).
+Optimization for these additional models in-
+cluding domain knowledge features was done by
+overloading the vector representation of queries q
+and documents d in the VW linear learner: Instead
+of sparse word-based features, q and d are rep-
+resented by real-valued vectors of dense domain-
+knowledge features. Optimization for the over-
+loaded vectors is done as described above for VW.
+4 Model Combination
+Combination by Borda Counts. The baseline
+consensus-based voting Borda Count procedure
+endows each voter with a fixed amount of voting
+points which he is free to distribute among the
+scored documents (Aslam and Montague, 2001;
+Sokolov et al, 2013). The aggregate score for
+two rankings f
+1
+(q,d) and f
+2
+(q,d) for all (q,d)
+in the test set is then a simple linear interpolation:
+f
+agg
+(q,d) = ?
+f
+1
+(q,d)?
+d
+f
+1
+(q,d)
++(1??)
+f
+2
+(q,d)?
+d
+f
+2
+(q,d)
+. Pa-
+rameter ? was adjusted on the dev set.
+Combination by Linear Learning. In order to
+acquire the best combination of more than two
+models, we created vectors of model scores along
+with domain knowledge features and reused the
+VW pairwise ranking approach. This means
+that the vector representation of queries q and
+documents d in the VW linear learner is over-
+loaded once more: In addition to dense domain-
+knowledge features, we incorporate arbitrary
+ranking models as dense features whose value is
+the score of the ranking model. Training data was
+sampled from the dev set and processed with VW.
+5 Data
+Patent Prior Art Search (JP-EN). We use
+BoostCLIR
+1
+, a Japanese-English (JP-EN) corpus
+of patent abstracts from the MAREC and NTCIR
+data (Sokolov et al, 2013). It contains automati-
+cally induced relevance judgments for patent ab-
+stracts (Graf and Azzopardi, 2008): EN patents
+are regarded as relevant with level (3) to a JP query
+patent, if they are in a family relationship (e.g.,
+same invention), cited by the patent examiner (2),
+or cited by the applicant (1). Statistics on the rank-
+ing data are given in Table 1. On average, queries
+and documents contain about 5 sentences.
+Wikipedia Article Retrieval (DE-EN). The in-
+tuition behind our Wikipedia retrieval setup is as
+follows: Consider the situation where the German
+(DE) Wikipedia article on geological sea stacks
+does not yet exist. A native speaker of Ger-
+man with profound knowledge in geology intends
+to write it, naming it ?Brandungspfeiler?, while
+seeking to align its structure with the EN counter-
+part. The task of a CLIR engine is to return rele-
+vant EN Wikipedia articles that may describe the
+very same concept (Stack (geology)), or relevant
+instances of it (Bako National Park, Lange Anna).
+The information need may be paraphrased as a
+high-level definition of the topic. Since typically
+the first sentence of any Wikipedia article is such
+1
+www.cl.uni-heidelberg.de/boostclir
+490
+#q #d #d
++
+/q #words/q
+Patents (JP-EN)
+train 107,061 888,127 13.28 178.74
+dev 2,000 100,000 13.24 181.70
+test 2,000 100,000 12.59 182.39
+Wikipedia (DE-EN)
+train 225,294 1,226,741 13.04 25.80
+dev 10,000 113,553 12.97 25.75
+test 10,000 115,131 13.22 25.73
+Table 1: Ranking data statistics: number of queries and doc-
+uments, avg. number of relevant documents per query, avg.
+number of words per query.
+a well-formed definition, this allows us to extract
+a large set of one sentence queries from Wikipedia
+articles. For example: ?Brandungspfeiler sind vor
+einer Kliffk?uste aufragende Felsent?urme und ver-
+gleichbare Formationen, die durch Brandungsero-
+sion gebildet werden.?
+2
+Similar to Bai et al (2010)
+we induce relevance judgments by aligning DE
+queries with their EN counterparts (?mates?) via
+the graph of inter-language links available in arti-
+cles and Wikidata
+3
+. We assign relevance level (3)
+to the EN mate and level (2) to all other EN ar-
+ticles that link to the mate, and are linked by the
+mate. Instead of using all outgoing links from the
+mate, we only use articles with bidirectional links.
+To create this data
+4
+we downloaded XML and
+SQL dumps of the DE and EN Wikipedia from,
+resp., 22
+nd
+and 4
+th
+of November 2013. Wikipedia
+markup removal and link extraction was carried
+out using the Cloud9 toolkit
+5
+. Sentence extrac-
+tion was done with NLTK
+6
+. Since Wikipedia arti-
+cles vary greatly in length, we restricted EN doc-
+uments to the first 200 words after extracting the
+link graph to reduce the number of features for BM
+and VW models. To avoid rendering the task too
+easy for literal keyword matching of queries about
+named entities, we removed title words from the
+German queries. Statistics are given in Table 1.
+Preprocessing Ranking Data. In addition to
+lowercasing and punctuation removal, we applied
+Correlated Feature Hashing (CFH), that makes
+collisions more likely for words with close mean-
+ing (Bai et al, 2010). For patents, vocabularies
+contained 60k and 365k words for JP and EN.
+Filtering special symbols and stopwords reduced
+the JP vocabulary size to 50k (small enough not
+to resort to CFH). To reduce the EN vocabulary
+2
+de.wikipedia.org/wiki/Brandungspfeiler
+3
+www.wikidata.org/
+4
+www.cl.uni-heidelberg.de/wikiclir
+5
+lintool.github.io/Cloud9/index.html
+6
+www.nltk.org/
+to a comparable size, we applied similar prepro-
+cessing and CFH with F=30k and k=5. Since for
+Wikipedia data, the DE and EN vocabularies were
+both large (6.7M and 6M), we used the same filter-
+ing and preprocessing as for the patent data before
+applying CFH with F=40k and k=5 on both sides.
+Parallel Data for SMT-based CLIR. For both
+tasks, DT and PSQ require an SMT baseline
+system trained on parallel corpora that are dis-
+junct from the ranking data. A JP-EN sys-
+tem was trained on data described and prepro-
+cessed by Sokolov et al (2013), consisting of
+1.8M parallel sentences from the NTCIR-7 JP-EN
+PatentMT subtask (Fujii et al, 2008) and 2k par-
+allel sentences for parameter development from
+the NTCIR-8 test collection. For Wikipedia, we
+trained a DE-EN system on 4.1M parallel sen-
+tences from Europarl, Common Crawl, and News-
+Commentary. Parameter tuning was done on 3k
+parallel sentences from the WMT?11 test set.
+6 Experiments
+Experiment Settings. The SMT-based models
+use cdec (Dyer et al, 2010). Word align-
+ments were created with mgiza (JP-EN) and
+fast align (Dyer et al, 2013) (DE-EN). Lan-
+guage models were trained with the KenLM
+toolkit (Heafield, 2011). The JP-EN system uses
+a 5-gram language model from the EN side of the
+training data. For the DE-EN system, a 4-gram
+model was built on the EN side of the training
+data and the EN Wikipedia documents. Weights
+for the standard feature set were optimized using
+cdec?s MERT (JP-EN) and MIRA (DE-EN) im-
+plementations (Och, 2003; Chiang et al, 2008).
+PSQ on patents reuses settings found by Sokolov
+et al (2013); settings for Wikipedia were adjusted
+on its dev set (n=1000, ?=0.4, L=0, C=1).
+Patent retrieval for DT was done by sentence-
+wise translation and subsequent re-joining to form
+one query per patent, which was ranked against the
+documents using BM25. For PSQ, BM25 is com-
+puted on expected term and document frequencies.
+For ranking-based retrieval, we compare several
+combinations of learners and features (Table 2).
+VW denotes a sparse model using word-based fea-
+tures trained with SGD. BM denotes a similar
+model trained using Boosting. DK denotes VW
+training of a model that represents queries q and
+documents d by dense domain-knowledge fea-
+tures instead of by sparse word-based vectors. In
+491
+order to simulate pass-through behavior of out-of-
+vocabulary terms in SMT systems, additional fea-
+tures accounting for source and target term iden-
+tity were added to DK and BM models. The pa-
+rameter ? for VW was found on dev set. Statis-
+tical significance testing was performed using the
+paired randomization test (Smucker et al, 2007).
+Borda denotes model combination by Borda
+Count voting where the linear interpolation pa-
+rameter is adjusted for MAP on the respective de-
+velopment sets with grid search. This type of
+model combination only allows to combine pairs
+of rankings. We present a combination of SMT-
+based CLIR, DT+PSQ, a combination of dense
+and sparse features, DK+VW, and a combination
+of both combinations, (DT+PSQ)+(DK+VW).
+LinLearn denotes model combination by over-
+loading the vector representation of queries q and
+documents d in the VW linear learner by incor-
+porating arbitrary ranking models as dense fea-
+tures. In difference to grid search for Borda, opti-
+mal weights for the linear combination of incorpo-
+rated ranking models can be learned automatically.
+We investigate the same combinations of rank-
+ing models as described for Borda above. We do
+not report combination results including the sparse
+BM model since they were consistently lower than
+the ones with the sparse VW model.
+Test Results. Experimental results on test data
+are given in Table 2. Results are reported
+with respect to MAP (Manning et al, 2008),
+NDCG (J?arvelin and Kek?al?ainen, 2002), and
+PRES (Magdy and Jones, 2010). Scores were
+computed on the top 1,000 retrieved documents.
+As can be seen from inspecting the two blocks
+of results, one for patents, one for Wikipedia, we
+find the same system rankings on both datasets. In
+both cases, as standalone systems, DT and PSQ
+are very close and far better than any ranking ap-
+proach, irrespective of the objective function or the
+choice of sparse or dense features. Model combi-
+nation of similar models, e.g., DT and PSQ, gives
+minimal gains, compared to combining orthogo-
+nal models, e.g. DK and VW. The best result is
+achieved by combining DT and PSQ with DK and
+VW. This is due to the already high scores of the
+combined models, but also to the combination of
+yet other types of orthogonal information. Borda
+voting gives the best result under MAP which is
+probably due to the adjustment of the interpola-
+tion parameter for MAP on the development set.
+combination models MAP NDCG PRES
+P
+a
+t
+e
+n
+t
+s
+(
+J
+P
+-
+E
+N
+)
+s
+t
+a
+n
+d
+a
+l
+o
+n
+e
+DT 0.2554 0.5397 0.5680
+PSQ 0.2659 0.5508 0.5851
+DK 0.2203 0.4874 0.5171
+VW 0.2205 0.4989 0.4911
+BM 0.1669 0.4167 0.4665
+B
+o
+r
+d
+a
+DT+PSQ
+?
+0.2747
+?
+0.5618
+?
+0.5988
+DK+VW
+?
+0.3023
+?
+0.5980
+?
+0.6137
+(DT+PSQ)+(DK+VW)
+?
+0.3465
+?
+0.6420
+?
+0.6858
+L
+i
+n
+L
+e
+a
+r
+n
+DT+PSQ
+??
+0.2707
+??
+0.5578
+??
+0.5941
+DK+VW
+??
+0.3283
+??
+0.6366
+??
+0.7104
+DT+PSQ+DK+VW
+??
+0.3739
+??
+0.6755
+??
+0.7599
+W
+i
+k
+i
+p
+e
+d
+i
+a
+(
+D
+E
+-
+E
+N
+)
+s
+t
+a
+n
+d
+a
+l
+o
+n
+e
+DT 0.3678 0.5691 0.7219
+PSQ 0.3642 0.5671 0.7165
+DK 0.2661 0.4584 0.6717
+VW 0.1249 0.3389 0.6466
+BM 0.1386 0.3418 0.6145
+B
+o
+r
+d
+a
+DT+PSQ
+?
+0.3742
+?
+0.5777
+?
+0.7306
+DK+VW
+?
+0.3238
+?
+0.5484
+?
+0.7736
+(DT+PSQ)+(DK+VW)
+?
+0.4173
+?
+0.6333
+?
+0.8031
+L
+i
+n
+L
+e
+a
+r
+n
+DT+PSQ
+??
+0.3718
+??
+0.5751
+??
+0.7251
+DK+VW
+??
+0.3436
+??
+0.5686
+??
+0.7914
+DT+PSQ+DK+VW
+?
+0.4137
+??
+0.6435
+??
+0.8233
+Table 2: Test results for standalone CLIR models using di-
+rect translation (DT), probabilistic structured queries (PSQ),
+sparse model with CFH (VW), sparse boosting model (BM),
+dense domain knowledge features (DK), and model combi-
+nations using Borda Count voting (Borda) or linear super-
+vised model combination (LinLearn). Significant differences
+(at p=0.01) between aggregated systems and all its compo-
+nents are indicated by ?, between LinLearn and the respective
+Borda system by ?.
+Under NDCG and PRES, LinLearn achieves the
+best results, showing the advantage of automati-
+cally learning combination weights that leads to
+stable results across various metrics.
+7 Conclusion
+Special domains such as patents or Wikipedia of-
+fer the possibility to extract cross-lingual rele-
+vance data from citation and link graphs. These
+data can be used to directly optimizing cross-
+lingual ranking models. We showed on two differ-
+ent large-scale ranking scenarios that a supervised
+combination of orthogonal information sources
+such as domain-knowledge, translation knowl-
+edge, and ranking-specific word associations by
+far outperforms a pipeline of query translation and
+retrieval. We conjecture that if these types of in-
+formation sources are available, a supervised rank-
+ing approach will yield superior results in other re-
+trieval scenarios as well.
+Acknowledgments
+This research was supported in part by DFG
+grant RI-2221/1-1 ?Cross-language Learning-to-
+Rank for Patent Retrieval?.
+492
+References
+Javed A. Aslam and Mark Montague. 2001. Models
+for metasearch. In Proceedings of the ACM SIGIR
+Conference on Research and Development in Infor-
+mation Retrieval (SIGIR?01), New Orleans, LA.
+Bing Bai, Jason Weston, David Grangier, Ronan Col-
+lobert, Kunihiko Sadamasa, Yanjun Qi, Olivier
+Chapelle, and Kilian Weinberger. 2010. Learning
+to rank with (a lot of) word features. Information
+Retrieval Journal, 13(3):291?314.
+Andrei Z. Broder. 1997. On the resemblance and con-
+tainment of documents. In Compression and Com-
+plexity of Sequences (SEQUENCES?97), pages 21?
+29. IEEE Computer Society.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of the Con-
+ference on Empirical Methods in Natural Language
+Processing (EMNLP?08), Waikiki, Hawaii.
+Jeffrey Chin, Maureen Heymans, Alexandre Ko-
+joukhov, Jocelyn Lin, and Hui Tan. 2008. Cross-
+language information retrieval. Patent Application.
+US 2008/0288474 A1.
+Kareem Darwish and Douglas W. Oard. 2003. Proba-
+bilistic structured query methods. In Proceedings.
+of the ACM SIGIR Conference on Research and
+Development in Information Retrieval (SIGIR?03),
+Toronto, Canada.
+Chris Dyer, Adam Lopez, Juri Ganitkevitch, Jonathan
+Weese, Ferhan Ture, Phil Blunsom, Hendra Seti-
+awan, Vladimir Eidelman, and Philip Resnik. 2010.
+cdec: A decoder, alignment, and learning framework
+for finite-state and context-free translation models.
+In Proceedings of the ACL 2010 System Demonstra-
+tions, Uppsala, Sweden.
+Chris Dyer, Victor Chahuneau, and Noah A. Smith.
+2013. A simple, fast, and effective reparameteriza-
+tion of IBM Model 2. In Proceedings of the Con-
+ference of the North American Chapter of the Asso-
+ciation for Computational Linguistics: Human Lan-
+guage Technologies, Atlanta, GA.
+Yoav Freund, Ray Iyer, Robert E. Schapire, and Yoram
+Singer. 2003. An efficient boosting algorithm for
+combining preferences. Journal of Machine Learn-
+ing Research, 4:933?969.
+Atsushi Fujii, Masao Utiyama, Mikio Yamamoto, and
+Takehito Utsuro. 2008. Overview of the patent
+translation task at the NTCIR-7 workshop. In Pro-
+ceedings of NTCIR-7 Workshop Meeting, Tokyo,
+Japan.
+Sharad Goel, John Langford, and Alexander L. Strehl.
+2008. Predictive indexing for fast search. In Ad-
+vances in Neural Information Processing Systems,
+Vancouver, Canada.
+Erik Graf and Leif Azzopardi. 2008. A methodol-
+ogy for building a patent test collection for prior
+art search. In Proceedings of the 2nd Interna-
+tional Workshop on Evaluating Information Access
+(EVIA?08), Tokyo, Japan.
+Yunsong Guo and Carla Gomes. 2009. Ranking struc-
+tured documents: A large margin based approach for
+patent prior art search. In Proceedings of the Inter-
+national Joint Conference on Artificial Intelligence
+(IJCAI?09), Pasadena, CA.
+Kenneth Heafield. 2011. KenLM: faster and smaller
+language model queries. In Proceedings of the
+EMNLP 2011 Sixth Workshop on Statistical Ma-
+chine Translation (WMT?11), Edinburgh, UK.
+Kalervo J?arvelin and Jaana Kek?al?ainen. 2002. Cumu-
+lated gain-based evaluation of IR techniques. ACM
+Transactions in Information Systems, 20(4):422?
+446.
+Walid Magdy and Gareth J.F. Jones. 2010. PRES:
+a score metric for evaluating recall-oriented infor-
+mation retrieval applications. In Proceedings of the
+ACM SIGIR conference on Research and develop-
+ment in information retrieval (SIGIR?10), New York,
+NY.
+Christopher D. Manning, Prabhakar Raghavan, and
+Hinrich Sch?utze. 2008. Introduction to Information
+Retrieval. Cambridge University Press.
+Franz Josef Och. 2003. Minimum error rate training
+in statistical machine translation. In Proceedings of
+the 41st Meeting on Association for Computational
+Linguistics (ACL?03), Sapporo, Japan.
+Sooyoung Oh, Zhen Lei, Wang-Chien Lee, Prasenjit
+Mitra, and John Yen. 2013. CV-PCR: A context-
+guided value-driven framework for patent citation
+recommendation. In Proceedings of the Interna-
+tional Conference on Information and Knowledge
+Management (CIKM?13), San Francisco, CA.
+Daniel Sheldon, Milad Shokouhi, Martin Szummer,
+and Nick Craswell. 2011. Lambdamerge: Merging
+the results of query reformulations. In Proceedings
+of WSDM?11, Hong Kong, China.
+Qinfeng Shi, James Petterson, Gideon Dror, John
+Langford, Alexander J. Smola, Alexander L. Strehl,
+and Vishy Vishwanathan. 2009. Hash Kernels. In
+Proceedings of the 12th Int. Conference on Artifi-
+cial Intelligence and Statistics (AISTATS?09), Irvine,
+CA.
+Jason R. Smith, Chris Quirk, and Kristina Toutanova.
+2010. Extracting parallel sentences from compa-
+rable corpora using document level alignment. In
+Proceedings of Human Language Technologies: The
+11th Annual Conference of the North American
+Chapter of the Association for Computational Lin-
+guistics (NAACL-HLT?10), Los Angeles, CA.
+493
+Mark D. Smucker, James Allan, and Ben Carterette.
+2007. A comparison of statistical significance tests
+for information retrieval evaluation. In Proceedings
+of the 16th ACM conference on Conference on Infor-
+mation and Knowledge Management (CIKM ?07),
+New York, NY.
+Artem Sokolov, Laura Jehl, Felix Hieber, and Stefan
+Riezler. 2013. Boosting cross-language retrieval
+by learning bilingual phrase associations from rele-
+vance rankings. In Proceedings of the Conference
+on Empirical Methods in Natural Language Pro-
+cessing (EMNLP?13).
+Ferhan Ture, Jimmy Lin, and Douglas W. Oard.
+2012. Combining statistical translation techniques
+for cross-language information retrieval. In Pro-
+ceedings of the International Conference on Compu-
+tational Linguistics (COLING?12), Bombay, India.
+Masao Utiyama and Hitoshi Isahara. 2007. A
+Japanese-English patent parallel corpus. In Pro-
+ceedings of MT Summit XI, Copenhagen, Denmark.
+Jinxi Xu, Ralph Weischedel, and Chanh Nguyen. 2001.
+Evaluating a probabilistic model for cross-lingual
+information retrieval. In Proceedings of the ACM
+SIGIR Conference on Research and Development in
+Information Retrieval (SIGIR?01), New York, NY.
+494
+First Joint Conference on Lexical and Computational Semantics (*SEM), pages 543?546,
+Montre?al, Canada, June 7-8, 2012. c?2012 Association for Computational Linguistics
+LIMSI: Learning Semantic Similarity by Selecting Random Word Subsets
+Artem Sokolov
+LIMSI-CNRS
+B.P. 133, 91403 Orsay, France
+artem.sokolov@limsi.fr
+Abstract
+We propose a semantic similarity learning
+method based on Random Indexing (RI) and
+ranking with boosting. Unlike classical RI, we
+use only those context vector features that are
+informative for the semantics modeled. De-
+spite ignoring text preprocessing and dispens-
+ing with semantic resources, the approach was
+ranked as high as 22nd among 89 participants
+in the SemEval-2012 Task6: Semantic Textual
+Similarity.
+1 Introduction
+One of the popular and flexible tools of semantics
+modeling are vector distributional representations of
+texts (also known as vector space models, seman-
+tic word spaces or distributed representations). The
+principle idea behind vector space models is to use
+word usage statistics in different contexts to gen-
+erate a high-dimensional vector representations for
+each word. Words are represented by context vec-
+tors whose closeness in the vector space is postu-
+lated to reflect semantic similarity (Sahlgren, 2005).
+The approach rests upon the distributional hypothe-
+sis: words with similar meanings or functions tend
+to appear in similar contexts. The prominent ex-
+amples of vector space models are Latent Seman-
+tic Analysis (or Indexing) (Landauer and Dutnais,
+1997) and Random Indexing (Kanerva et al, 2000).
+Because of the heuristic nature of distributional
+methods, they are often designed with a specific
+semantic relation in mind (synonymy, paraphrases,
+contradiction, etc.). This complicates their adaption
+to other application domains and tasks, requiring
+manual trial-and-error feature redesigns and tailored
+preprocessing steps to remove morphology/syntax
+variations that are not supposed to contribute to the
+semantics facet in question (e.g., stemming, stop-
+words). Further, assessing closeness of semantic
+vectors is usually based on a fixed simple similarity
+function between distributed representations (often,
+the cosine function). The cosine function implicitly
+assigns equal weights to each component of the se-
+mantic vectors regardless of its importance for the
+particular semantic relation and task. Finally, dur-
+ing production of training and evaluation sets, the
+continuum of possible grades of semantic similar-
+ity is usually substituted with several integer values,
+although often only the relative grade order matters
+and not their absolute values. Trying to reproduce
+the same values or the same gaps between grades
+when designing a semantic representation scheme
+may introduce an unnecessary bias.
+In this paper we address all of the above draw-
+backs and present a semantic similarity learning
+method based on Random Indexing. It does not re-
+quire manual feature design, and is automatically
+adapted to the specific semantic relations by select-
+ing needed important features and/or learning neces-
+sary feature transformations before calculating sim-
+ilarity. In the proof-of-concept experiments on the
+SemEval-2012 data we deliberately ignored all rou-
+tine preprocessing steps, that are often considered
+obligatory in semantic text processing, we did not
+use any of the semantic resources (like WordNet)
+nor trained different models for different data do-
+mains/types. Despite such over-constrained setting,
+the method showed very positive performance and
+543
+was ranked as high as 22nd among 89 participants.
+2 Random Indexing
+Random Indexing (RI) is an alternative to LSA-
+like models with large co-occurrence matrices and
+separate matrix decomposition phase to reduce di-
+mension. RI constructs context vectors on-the-fly
+based on the occurrence of words in contexts. First,
+each word is assigned a unique and randomly gener-
+ated high-dimensional sparse ternary vector. Vec-
+tors contain a small number (between 0.1-1%) of
+randomly distributed +1s and -1s, with the rest of
+the elements set to 0. Next, the final context vectors
+for words are produced by scanning through the text
+with a sliding window of fixed size, and each time
+the word occurs in the text, the generated vectors of
+all its neighbors in the sliding context window are
+added to the context vector of this word1. Finally,
+the obtained context vectors are normalized by the
+occurrence count of the word.
+RI is a practical variant of the well-known
+dimension reduction technique of the Johnson-
+Lindenstrauss (JL) lemma (Dasgupta and Gupta,
+2003). An Euclidean space can be projected with a
+random Gaussian matrix R onto smaller dimension
+Euclidean space, such that with high probability the
+distance between any pair of points in the new space
+is within a distortion factor of 1 ? ? of their origi-
+nal distance. Same or similar guarantees also hold
+for a uniform {?1,+1}-valued or ternary (from a
+certain distribution) randomR (Achlioptas, 2003) or
+for even sparser matrices (Dasgupta et al, 2010)
+Restating the JL-lemma in the RI-terminology,
+one can think of the initial space of characteristic
+vectors of word sets of all contexts (each compo-
+nent counts corresponding words seen in the context
+window over the corpus) embedded into a smaller
+dimension space, and approximately preserving dis-
+tances between characteristic vectors. Because
+of the ternary generation scheme, each resulting
+feature-vector dimension either rewards, penalizes
+or ?switches off? certain words for which the cor-
+responding row of R contained, resp., +1, ?1 or 0.
+So far, RI has been a na??ve approach to feature
+1Although decreasing discounts dampening contribution of
+far-located context words may by beneficial, we do not use it
+putting our method in more difficult conditions.
+learning ? although it produces low-dimensional
+feature representations, it is unconscious of the
+learning task behind. There is no guarantee that the
+Euclidean distance (or cosine similarity) will cor-
+rectly reflect the necessary semantic relation: for a
+pair of vectors, not all word subsets are characteris-
+tic of a particular semantic relation or specific to it,
+as presence or absence of certain words may play no
+role in assessing given similarity type. Implications
+of RI in the context of learning textual similarity
+are coming from the feature selection (equivalently,
+word subset selection) method, based on boosting,
+that selects only those features that are informative
+for the semantic relation being learned (Section 4).
+Thus, the supervision information on sentence simi-
+larity guides the choose of word subsets (among all
+randomly generated by the projection matrix) that
+happen to be relevant to the semantic annotations.
+3 Semantic Textual Similarity Task
+Let {(si1, s
+i
+2)} be the training set of N pairs of sen-
+tences, provided along with similarity labels yi. The
+higher the value of yi the more semantically similar
+is the pair (si1, s
+i
+2). Usually absolute values of yi are
+chosen arbitrary; only their relative order matters.
+We would learn semantic similarity between
+(si1, s
+i
+2) as a function H(x?
+i), where x?i is a sin-
+gle vector combining sentence context vectors v(si1)
+and v(si2). Context representation v(s) for a sen-
+tence s is defined as an average of the word context
+vectors v(w) contained in it, found using a large text
+corpus with the RI approach, described in the pre-
+vious section: v(s) =
+?
+w?s v(w)/ |s|. Possible
+transformations into x?i include a concatenation of
+v(si1) and v(s
+i
+2), concatenation of the sum and dif-
+ference vectors or a vector composed of component-
+wise symmetric functions (e.g., a product of cor-
+responding components). In order to learn a sym-
+metric H , one can either use each pair twice during
+training, or symmetrize the construction of x?.
+4 Feature Selection with Boosting
+We propose to exploit natural ordering of (si1, s
+i
+2)
+according to yi to learn a parameterized similarity
+function H(x?i). In this way we do not try learn-
+ing the absolute values of similarity provided in the
+training. Also, by using boosting approach we allow
+544
+for gradual inclusion of features into similarity func-
+tion H , implementing in this way feature selection.
+For a given number of training steps T , a boost-
+ing ranking algorithm learns a scoring function H ,
+which is a linear combination of T simple, non-
+linear functions ht called weak learners: H(x?) =?T
+t=1 ?tht(x?),where each ?t is the weight assigned
+to ht at step t of the learning process.
+Usually the weak learner is defined on only few
+components of x?. Having build H at step t, the next
+in turn (t + 1)?s leaner is selected, optimized and
+weighted with the corresponding coefficient ?t+1.
+In this way the learning process selects only those
+features in x? (or, if viewed from the RI perspective,
+random word subsets) that contribute most to learn-
+ing the desired type input similarity.
+As the first ranking method we applied the pair-
+wise ranking algorithm RankBoost (Freund et al,
+2003), that learns H by minimizing a convex ap-
+proximation to a weighted pair-wise loss:
+?
+(si1,s
+i
+2),(s
+j
+1,s
+j
+2):y
+i<yj
+P (i, j)[[H(x?i) ? H(x?j)]].
+Operator [[A]] = 1 if the A = true and 0 other-
+wise. Positive values of P weight pairs of x?i and x?j
+? the higher is P (i, j), the more important it is to
+preserve the relative ordering of x?i and x?j . We used
+the simplest decision stumps that depend on one fea-
+ture as weak learners: h(x; ?, k) = [[xk > ?]], where
+k is a feature index and ? is a learned threshold.
+The second ranking method we used was a point-
+wise ranking algorithm, based on gradient boosting
+regression for ranking (Zheng et al, 2007), called
+RtRank and implemented by Mohan et al (2011)2.
+The loss optimized by RtRank is slightly different:
+?
+(si1,s
+i
+2),(s
+j
+1,s
+j
+2):y
+i<yj
+(max{0, H(x?i)?H(x?j)})2.
+Another difference is in the method for selecting
+weak learner at each boosting step, that relies on re-
+gression loss and not scalar product as RankBoost.
+Weak learners for RtRank were regression trees of
+fixed depth (4 in our experiments).
+5 Experiments
+We learned context vectors on the GigaWord En-
+glish corpus. The only preprocessing of the cor-
+2http://sites.google.com/site/rtranking
+learner transform correl. ?
+ba
+se
+li
+ne pure RI, cos - 0.264 0.005
+logistic reg. - 0.508 0.041
+logistic reg. concat 0.537 0.052
+bo
+os
+ti
+ng RankBoost
+sumdiff 0.685 0.027
+product 0.663 0.018
+crossprod 0.648 0.028
+crossdiff 0.643 0.023
+concat 0.625 0.025
+absdiff 0.602 0.021
+RtRank
+sumdiff 0.730 0.020
+product 0.721 0.023
+Table 1: Mean performance of the transformation and
+boosting methods for N = 100 on train data.
+pus was stripping all tag data, removing punctuation
+and lowercasing. Stop-words were not removed.
+Context vectors were built with the JavaSDM pack-
+age (Hassel, 2004)3 of dimensionality N = 100 and
+N = 105, resp., for preliminary and final experi-
+ments, with random degree 10 (five +1s and -1s in
+each initial vector), right and left context window
+size of 4 words4 and constant weighting scheme.
+Training and test data provided in the SemEval-
+2012 Task 6 contained 5 training and 5 testing text
+sets each of different domains or types of sentences
+(short video descriptions, pairs of outputs of a ma-
+chine translation system, etc.). Although the 5 sets
+had very different characteristics, we concatenated
+all training files and trained a single model. The
+principal evaluation metrics was Pearson correlation
+coefficient, that we report here. Two related other
+measures were also used (Agirre et al, 2012).
+Obtained sentence vectors v(s) for were trans-
+formed into vectors x? with several methods:
+? ?sumdiff?: x? = (v?(s1) + v?(s2), sgn(v1(s1) ?
+v1(s2))(v(s1)? v(s2)))
+? ?concat?: x? = (v(s1), v(s2)), and x?? =
+(v(s2), v(s1))
+? ?product?: xi = vi(s1) ? vi(s2)
+? ?crossprod?: xij = vi(s1) ? vj(s2)
+? ?crossdiff?: xij = vi(s1)? vj(s2)
+? ?absdiff?: xi = |vi(s1)? vi(s2)|.
+Methods ?concat? and ?sumdiff? were proposed
+by Hertz et al (2004) for distance learning for clus-
+3http://www.csc.kth.se/?xmartin/java
+4Little sensitivity was found to the window sizes from 3 to 6.
+545
+learner transform train?? test rank MSRpar MSRvid SMTeur OnWN SMTnews
+RankBoost
+product 0.748?0.017 0.6392 32 0.3948 0.6597 0.0143 0.4157 0.2889
+sumdiff 0.735?0.016 0.6196 45 0.4295 0.5724 0.2842 0.3989 0.2575
+RtRank
+product 0.784?0.017 0.6789 22 0.4848 0.6636 0.0934 0.3706 0.2455
+sumdiff 0.763?0.014
+Table 2: Mean performance of the best-performing two transformation and two boosting methods for N = 105.
+tering. Comparison of mean performance of differ-
+ent transformation and learning methods on the 5-
+fold splitting of the training set is given in Table 1
+for short context vectors (N = 100). The correlation
+is given for the optimal algorithms? parameters (T
+for RankBoost and, additionally, tree depth and ran-
+dom ratio for RtRank), found with cross-validation
+on 5 folds. With these results for smallN , two trans-
+formation methods were preselected (?sumdiff? and
+?product?) for testing and submission with N = 105
+(Table 2), as increasing N usually increased perfor-
+mance. Yet, only about 103 features were actually
+selected by RankBoost, meaning that a relatively
+few random word subsets were informative for ap-
+proximating semantic textual similarity.
+In result, RtRank showed better performance,
+most likely because of more powerful learners, that
+depend on several features (word subsets) simulta-
+neously. Performance on machine translation test
+sets was the lowest that can be explained by very
+poor quality of the training data5: models for these
+subsets should have been trained separately.
+6 Conclusion
+We presented a semantic similarity learning ap-
+proach that learns a similarity function specific to
+the semantic relation modeled and that selects only
+those word subsets in RI, presence of which in the
+compared sentences is indicative of their similarity,
+by using only relative order of the labels and not
+their absolute values. In spite of paying no atten-
+tion to preprocessing, nor using semantic corpora,
+and with no domain adaptation the method showed
+promising results.
+Acknowledgments
+This work has been funded by OSEO under the Quaero
+program.
+5A reviewer suggested another reason: more varied or even
+incorrect lexical choice that is sometimes found in MT output.
+References
+Dimitris Achlioptas. 2003. Database-friendly random
+projections: Johnson-Lindenstrauss with binary coins.
+Comput. Syst. Sci., 66:671?687.
+Eneko Agirre, Daniel Cer, Mona Diab, and Aitor Gonza-
+lez. 2012. Semeval-2012 task 6: A pilot on semantic
+textual similarity. In Proc. of the Int. Workshop on Se-
+mantic Evaluation (SemEval 2012) // Joint Conf. on
+Lexical & Computational Semantics (*SEM 2012).
+Sanjoy Dasgupta and Anupam Gupta. 2003. An elemen-
+tary proof of a theorem of Johnson and Lindenstrauss.
+Random Struct. Algorithms, 22(1):60?65.
+Anirban Dasgupta, Ravi Kumar, and Tama?s Sarlos. 2010.
+A sparse Johnson-Lindenstrauss transform. In Proc. of
+the ACM Symp. on Theory of Comput., pages 341?350.
+Yoav Freund, Raj Iyer, Robert E. Schapire, and Yoram
+Singer. 2003. An efficient boosting algorithm for
+combining preferences. Mach.Learn.Res., 4:933?969.
+Martin Hassel. 2004. JavaSDM - a Java package for
+working with Random Indexing and Granska.
+Tomer Hertz, Aharon Bar-hillel, and Daphna Weinshall.
+2004. Boosting margin based distance functions for
+clustering. In ICML, pages 393?400.
+Pentti Kanerva, Jan Kristoferson, and Anders Holst.
+2000. Random indexing of text samples for latent se-
+mantic analysis. In Proc. of the Conf. of the Cogn.
+Science Society.
+Thomas K. Landauer and Susan T. Dutnais. 1997. A so-
+lution to Plato?s problem: The latent semantic analysis
+theory of acquisition, induction, and representation of
+knowledge. Psychol. Rev., pages 211?240.
+Ananth Mohan, Zheng Chen, and Kilian Q. Weinberger.
+2011. Web-search ranking with initialized gradient
+boosted regression trees. Mach.Learn.Res., 14:77?89.
+Magnus Sahlgren. 2005. An introduction to random in-
+dexing. In Workshop on Methods & Applic. of Sem.
+Indexing // Int. Conf. on Terminol. & Knowl. Eng.
+Zhaohui Zheng, Hongyuan Zha, Tong Zhang, Olivier
+Chapelle, Keke Chen, and Gordon Sun. 2007. A
+general boosting method and its application to learn-
+ing ranking functions for web search. In NIPS.
+546
+Proceedings of the 6th Workshop on Statistical Machine Translation, pages 309?315,
+Edinburgh, Scotland, UK, July 30?31, 2011. c?2011 Association for Computational Linguistics
+LIMSI @ WMT11
+Alexandre Allauzen
+He?le`ne Bonneau-Maynard
+Hai-Son Le
+Aure?lien Max
+Guillaume Wisniewski
+Franc?ois Yvon
+Univ. Paris-Sud and LIMSI-CNRS
+B.P. 133, 91403 Orsay cedex, France
+Gilles Adda
+Josep M. Crego
+Adrien Lardilleux
+Thomas Lavergne
+Artem Sokolov
+LIMSI-CNRS
+B.P. 133, 91403 Orsay cedex, France
+Abstract
+This paper describes LIMSI?s submissions to
+the Sixth Workshop on Statistical Machine
+Translation. We report results for the French-
+English and German-English shared transla-
+tion tasks in both directions. Our systems
+use n-code, an open source Statistical Ma-
+chine Translation system based on bilingual
+n-grams. For the French-English task, we fo-
+cussed on finding efficient ways to take ad-
+vantage of the large and heterogeneous train-
+ing parallel data. In particular, using a sim-
+ple filtering strategy helped to improve both
+processing time and translation quality. To
+translate from English to French and Ger-
+man, we also investigated the use of the
+SOUL language model in Machine Trans-
+lation and showed significant improvements
+with a 10-gram SOUL model. We also briefly
+report experiments with several alternatives to
+the standard n-best MERT procedure, leading
+to a significant speed-up.
+1 Introduction
+This paper describes LIMSI?s submissions to the
+Sixth Workshop on Statistical Machine Translation,
+where LIMSI participated in the French-English and
+German-English tasks in both directions. For this
+evaluation, we used n-code, our in-house Statistical
+Machine Translation (SMT) system which is open-
+source and based on bilingual n-grams.
+This paper is organized as follows. Section 2 pro-
+vides an overview of n-code, while the data pre-
+processing and filtering steps are described in Sec-
+tion 3. Given the large amount of parallel data avail-
+able, we proposed a method to filter the French-
+English GigaWord corpus (Section 3.2). As in our
+previous participations, data cleaning and filtering
+constitute a non-negligible part of our work. This
+includes detecting and discarding sentences in other
+languages; removing sentences which are also in-
+cluded in the provided development sets, as well as
+parts that are repeated (for the monolingual news
+data, this can reduce the amount of data by a fac-
+tor 3 or 4, depending on the language and the year);
+normalizing the character set (non-utf8 characters
+which are aberrant in context, or in the case of the
+GigaWord corpus, a lot of non-printable and thus in-
+visible control characters such as EOT (end of trans-
+mission)1).
+For target language modeling (Section 4), a stan-
+dard back-off n-gram model is estimated and tuned
+as described in Section 4.1. Moreover, we also in-
+troduce in Section 4.2 the use of the SOUL lan-
+guage model (LM) (Le et al, 2011) in SMT. Based
+on neural networks, the SOUL LM can handle an
+arbitrary large vocabulary and a high order marko-
+vian assumption (up to 10-gram in this work). Fi-
+nally, experimental results are reported in Section 5
+both in terms of BLEU scores and translation edit
+rates (TER) measured on the provided newstest2010
+dataset.
+2 System Overview
+Our in-house n-code SMT system implements the
+bilingual n-gram approach to Statistical Machine
+Translation (Casacuberta and Vidal, 2004). Given a
+1This kind of characters was used for Teletype up to the sev-
+enties or early eighties.
+309
+source sentence sJ1, a translation hypothesis t?
+I
+1 is de-
+fined as the sentence which maximizes a linear com-
+bination of feature functions:
+t?I1 = argmax
+tI1
+{
+M
+?
+m=1
+?mhm(sJ1, tI1)
+}
+(1)
+where sJ1 and t
+I
+1 respectively denote the source and
+the target sentences, and ?m is the weight associated
+with the feature function hm. The translation fea-
+ture is the log-score of the translation model based
+on bilingual units called tuples. The probability as-
+signed to a sentence pair by the translation model is
+estimated by using the n-gram assumption:
+p(sJ1, t
+I
+1) =
+K
+?
+k=1
+p((s, t)k|(s, t)k?1 . . .(s, t)k?n+1)
+where s refers to a source symbol (t for target) and
+(s, t)k to the kth tuple of the given bilingual sentence
+pair. It is worth noticing that, since both languages
+are linked up in tuples, the context information pro-
+vided by this translation model is bilingual. In ad-
+dition to the translation model, eleven feature func-
+tions are combined: a target-language model (see
+Section 4 for details); four lexicon models; two lex-
+icalized reordering models (Tillmann, 2004) aim-
+ing at predicting the orientation of the next transla-
+tion unit; a ?weak? distance-based distortion model;
+and finally a word-bonus model and a tuple-bonus
+model which compensate for the system preference
+for short translations. The four lexicon models are
+similar to the ones used in a standard phrase-based
+system: two scores correspond to the relative fre-
+quencies of the tuples and two lexical weights are
+estimated from the automatically generated word
+alignments. The weights associated to feature func-
+tions are optimally combined using a discriminative
+training framework (Och, 2003) (Minimum Error
+Rate Training (MERT), see details in Section 5.4),
+using the provided newstest2009 data as develop-
+ment set.
+2.1 Training
+Our translation model is estimated over a training
+corpus composed of tuple sequences using classi-
+cal smoothing techniques. Tuples are extracted from
+a word-aligned corpus (using MGIZA++2 with de-
+fault settings) in such a way that a unique segmenta-
+tion of the bilingual corpus is achieved, allowing to
+estimate the n-gram model. Figure 1 presents a sim-
+ple example illustrating the unique tuple segmenta-
+tion for a given word-aligned pair of sentences (top).
+Figure 1: Tuple extraction from a sentence pair.
+The resulting sequence of tuples (1) is further re-
+fined to avoid NULL words in the source side of the
+tuples (2). Once the whole bilingual training data is
+segmented into tuples, n-gram language model prob-
+abilities can be estimated. In this example, note that
+the English source words perfect and translations
+have been reordered in the final tuple segmentation,
+while the French target words are kept in their orig-
+inal order.
+2.2 Inference
+During decoding, source sentences are encoded
+in the form of word lattices containing the most
+promising reordering hypotheses, so as to reproduce
+the word order modifications introduced during the
+tuple extraction process. Hence, at decoding time,
+only those encoded reordering hypotheses are trans-
+lated. Reordering hypotheses are introduced using
+a set of reordering rules automatically learned from
+the word alignments.
+In the previous example, the rule [perfect transla-
+tions ; translations perfect] produces the swap of
+the English words that is observed for the French
+and English pair. Typically, part-of-speech (POS)
+information is used to increase the generalization
+power of such rules. Hence, rewriting rules are built
+using POS rather than surface word forms. Refer
+2http://geek.kyloo.net/software
+310
+to (Crego and Marin?o, 2007) for details on tuple ex-
+traction and reordering rules.
+3 Data Pre-processing and Selection
+We used all the available parallel data allowed in
+the constrained task to compute the word align-
+ments, except for the French-English tasks where
+the United Nation corpus was not used to train our
+translation models. To train the target language
+models, we also used all provided data and mono-
+lingual corpora released by the LDC for French
+and English. Moreover, all parallel corpora were
+POS-tagged with the TreeTagger (Schmid, 1994).
+For German, the fine-grained POS information used
+for pre-processing was computed by the RFTag-
+ger (Schmid and Laws, 2008).
+3.1 Tokenization
+We took advantage of our in-house text process-
+ing tools for the tokenization and detokenization
+steps (De?chelotte et al, 2008). Previous experi-
+ments have demonstrated that better normalization
+tools provide better BLEU scores (Papineni et al,
+2002). Thus all systems are built in ?true-case.?
+As German is morphologically more complex
+than English, the default policy which consists in
+treating each word form independently is plagued
+with data sparsity, which poses a number of diffi-
+culties both at training and decoding time. Thus,
+to translate from German to English, the German
+side was normalized using a specific pre-processing
+scheme (described in (Allauzen et al, 2010)), which
+aims at reducing the lexical redundancy and splitting
+complex compounds.
+Using the same pre-processing scheme to trans-
+late from English to German would require to post-
+process the output to undo the pre-processing. As in
+our last year?s experiments (Allauzen et al, 2010),
+this pre-processing step could be achieved with a
+two-step decoding. However, by stacking two de-
+coding steps, we may stack errors as well. Thus, for
+this direction, we used the German tokenizer pro-
+vided by the organizers.
+3.2 Filtering the GigaWord Corpus
+The available parallel data for English-French in-
+cludes a large Web corpus, referred to as the Giga-
+Word parallel corpus. This corpus is very noisy, and
+contains large portions that are not useful for trans-
+lating news text. The first filter aimed at detecting
+foreign languages based on perplexity and lexical
+coverage. Then, to select a subset of parallel sen-
+tences, trigram LMs were trained for both French
+and English languages on a subset of the available
+News data: the French (resp. English) LM was used
+to rank the French (resp. English) side of the cor-
+pus, and only those sentences with perplexity above
+a given threshold were selected. Finally, the two se-
+lected sets were intersected. In the following exper-
+iments, the threshold was set to the median or upper
+quartile value of the perplexity. Therefore, half (or
+75%) of this corpus was discarded.
+4 Target Language Modeling
+Neural networks, working on top of conventional
+n-gram models, have been introduced in (Bengio
+et al, 2003; Schwenk, 2007) as a potential means
+to improve conventional n-gram language models
+(LMs). However, probably the major bottleneck
+with standard NNLMs is the computation of poste-
+rior probabilities in the output layer. This layer must
+contain one unit for each vocabulary word. Such a
+design makes handling of large vocabularies, con-
+sisting of hundreds thousand words, infeasible due
+to a prohibitive growth in computation time. While
+recent work proposed to estimate the n-gram dis-
+tributions only for the most frequent words (short-
+list) (Schwenk, 2007), we explored the use of the
+SOUL (Structured OUtput Layer Neural Network)
+language model for SMT in order to handle vocabu-
+laries of arbitrary sizes.
+Moreover, in our setting, increasing the order of
+standard n-gram LM did not show any significant
+improvement. This is mainly due to the data spar-
+sity issue and to the drastic increase in the number of
+parameters that need to be estimated. With NNLM
+however, the increase in context length at the input
+layer results in only a linear growth in complexity
+in the worst case (Schwenk, 2007). Thus, training
+longer-context neural network models is still feasi-
+ble, and was found to be very effective in our system.
+311
+4.1 Standard n-gram Back-off Language
+Models
+To train our language models, we assumed that the
+test set consisted in a selection of news texts dat-
+ing from the end of 2010 to the beginning of 2011.
+This assumption was based on what was done for
+the 2010 evaluation. Thus, for each language, we
+built a development corpus in order to optimize the
+vocabulary and the target language model.
+Development set and vocabulary In order to
+cover different periods, two development sets were
+used. The first one is newstest2008. This corpus is
+two years older than the targeted time period; there-
+fore, a second development corpus named dev2010-
+2011 was collected by randomly sampling bunches
+of 5 consecutive sentences from the provided news
+data of 2010 and 2011.
+To estimate such large LMs, a vocabulary
+was first defined for each language by including
+all tokens observed in the Europarl and News-
+Commentary corpora. For French and English, this
+vocabulary was then expanded with all words that
+occur more than 5 times in the French-English Gi-
+gaWord corpus, and with the most frequent proper
+names taken from the monolingual news data of
+2010 and 2011. As for German, since the amount
+of training data was smaller, the vocabulary was ex-
+panded with the most frequent words observed in the
+monolingual news data of 2010 and 2011. This pro-
+cedure resulted in a vocabulary containing around
+500k words in each language.
+Language model training All the training data al-
+lowed in the constrained task were divided into sev-
+eral sets based on dates or genres (resp. 9 and 7
+sets for English and French). On each set, a stan-
+dard 4-gram LM was estimated from the 500k words
+vocabulary using absolute discounting interpolated
+with lower order models (Kneser and Ney, 1995;
+Chen and Goodman, 1998).
+All LMs except the one trained on the news cor-
+pora from 2010-2011 were first linearly interpolated.
+The associated coefficients were estimated so as to
+minimize the perplexity evaluated on dev2010-2011.
+The resulting LM and the 2010-2011 LM were fi-
+naly interpolated with newstest2008 as development
+data. This procedure aims to avoid overestimating
+the weight associated to the 2010-2011 LM.
+4.2 The SOUL Model
+We give here a brief overview of the SOUL LM;
+refer to (Le et al, 2011) for the complete training
+procedure. Following the classical work on dis-
+tributed word representation (Brown et al, 1992),
+we assume that the output vocabulary is structured
+by a clustering tree, where each word belongs to
+only one class and its associated sub-classes. If wi
+denotes the i-th word in a sentence, the sequence
+c1:D(wi) = c1, . . . ,cD encodes the path for the word
+wi in the clustering tree, with D the depth of the tree,
+cd(wi) a class or sub-class assigned to wi, and cD(wi)
+the leaf associated with wi (the word itself). The
+n-gram probability of wi given its history h can then
+be estimated as follows using the chain rule:
+P(wi|h) = P(c1(wi)|h)
+D
+?
+d=2
+P(cd(wi)|h,c1:d?1)
+Figure 2 represents the architecture of the NNLM
+to estimate this distribution, for a tree of depth
+D = 3. The SOUL architecture is the same as for
+the standard model up to the output layer. The
+main difference lies in the output structure which in-
+volves several layers with a softmax activation func-
+tion. The first softmax layer (class layer) estimates
+the class probability P(c1(wi)|h), while other out-
+put sub-class layers estimate the sub-class proba-
+bilities P(cd(wi)|h,c1:d?1). Finally, the word layers
+estimate the word probabilities P(cD(wi)|h,c1:D?1).
+Words in the short-list are a special case since each
+of them represents its own class without any sub-
+classes (D = 1 in this case).
+5 Experimental Results
+The experimental results are reported in terms of
+BLEU and translation edit rate (TER) using the
+newstest2010 corpus as evaluation set. These auto-
+matic metrics are computed using the scripts pro-
+vided by the NIST after a detokenization step.
+5.1 English-French
+Compared with last year evaluation, the amount of
+available parallel data has drastically increased with
+about 33M of sentence pairs. It is worth noticing
+312
+wi-1
+w
+i-2
+w
+i-3
+R
+R
+R
+W
+ih
+ shared context space
+input layer
+hidden layer:
+tanh activation
+word layers
+sub-class 
+layers
+}
+short list
+Figure 2: Architecture of the Structured Output Layer
+Neural Network language model.
+that the provided corpora are not homogeneous, nei-
+ther in terms of genre nor in terms of topics. Never-
+theless, the most salient difference is the noise car-
+ried by the GigaWord and the United Nation cor-
+pora. The former is an automatically collected cor-
+pus drawn from different websites, and while some
+parts are indeed relevant to translate news texts, us-
+ing the whole GigaWord corpus seems to be harm-
+ful. The latter (United Nation) is obviously more
+homogeneous, but clearly out of domain. As an il-
+lustration, discarding the United Nation corpus im-
+proves performance slightly.
+Table 1 summarizes some of our attempts at deal-
+ing with such a large amount of parallel data. As
+stated above, translation models are trained with
+the news-commentary, Europarl, and GigaWord cor-
+pora. For this last data set, results show the reward of
+sentence pair selection as described in Section 3.2.
+Indeed, filtering out 75% of the corpus yields to
+a significant BLEU improvement when translating
+from English to French and of 1 point in the other
+direction (line upper quartile in Table 1). More-
+over, a larger selection (50% in the median line) still
+increases the overall performance. This shows the
+room left for improvement by a more accurate data
+selection process such as a well optimized thresh-
+old in our approach, or a more sophisticated filtering
+strategy (see for example (Foster et al, 2010)).
+Another issue when using such a large amount
+System en2fr fr2en
+BLEU TER BLEU TER
+All 27.4 56.6 26.8 55.0
+Upper quartile 27.8 56.3 28.4 53.8
+Median 28.1 56.0 28.6 53.5
+Table 1: English-French translation results in terms of
+BLEU score and TER estimated on newstest2010 with
+the NIST script. All means that the translation model is
+trained on news-commentary, Europarl, and the whole
+GigaWord. The rows upper quartile and median corre-
+spond to the use of a filtered version of the GigaWord.
+of data is the mismatch between the target vocab-
+ulary derived from the translation model and that of
+the LM. The translation model may generate words
+which are unknown to the LM, and their probabili-
+ties could be overestimated. To avoid this behaviour,
+the probability of unknown words for the target LM
+is penalized during the decoding step.
+5.2 English-German
+For this translation task, we compare the impact of
+two different POS-taggers to process the German
+part of the parallel data. The results are reported
+in Table 2. Results show that to translate from En-
+glish to German, the use of a fine-grained POS infor-
+mation (RFTagger) leads to a slight improvement,
+whereas it harms the source reordering model in the
+other direction. It is worth noticing that to translate
+from German to English, the RFTagger is always
+used during the data pre-processing step, while a dif-
+ferent POS tagger may be involved for the source
+reordering model training.
+System en2de de2en
+BLEU TER BLEU TER
+RFTagger 22.8 60.1 16.3 66.0
+TreeTagger 23.1 59.4 16.2 66.0
+Table 2: Translation results in terms of BLEU score
+and translation edit rate (TER) estimated on newstest2010
+with the NIST scoring script.
+5.3 The SOUL Model
+As mentioned in Section 4.2, the order of a con-
+tinuous n-gram model such as the SOUL LM can
+be raised without a prohibitive increase in complex-
+ity. We summarize in Table 3 our experiments with
+313
+SOUL LMs of orders 4, 6, and 10. The SOUL LM
+is introduced in the SMT pipeline by rescoring the
+n-best list generated by the decoder, and the asso-
+ciated weight is tuned with MERT. We observe for
+the English-French task: a BLEU improvement of
+0.3, as well as a similar trend in TER, when intro-
+ducing a 4-gram SOUL LM; an additional BLEU
+improvement of 0.3 when increasing the order from
+4 to 6; and a less important gain with the 10-gram
+SOUL LM. In the end, the use of a 10-gram SOUL
+LM achieves a 0.7 BLEU improvement and a TER
+decrease of 0.8. The results on the English-German
+task show the same trend with a 0.5 BLEU point
+improvement.
+SOUL LM en2fr en2de
+BLEU TER BLEU TER
+without 28.1 56.0 16.3 66.0
+4-gram 28.4 55.5 16.5 64.9
+6-gram 28.7 55.3 16.7 64.9
+10-gram 28.8 55.2 16.8 64.6
+Table 3: Translation results from English to French and
+English to German measured on newstest2010 using a
+100-best rescoring with SOUL LMs of different orders.
+5.4 Optimization Issues
+Along with MIRA (Margin Infused Relaxed Al-
+gorithm) (Watanabe et al, 2007), MERT is the
+most widely used algorithm for system optimiza-
+tion. However, standard MERT procedure is known
+to suffer from instability of results and very slow
+training cycle with approximate estimates of one de-
+coding cycle for each training parameter. For this
+year?s evaluation, we experimented with several al-
+ternatives to the standard n-best MERT procedure,
+namely, MERT on word lattices (Macherey et al,
+2008) and two differentiable variants to the BLEU
+objective function optimized during the MERT cy-
+cle. We have recast the former in terms of a spe-
+cific semiring and implemented it using a general-
+purpose finite state automata framework (Sokolov
+and Yvon, 2011). The last two approaches, hereafter
+referred to as ZHN and BBN, replace the BLEU
+objective function, with the usual BLEU score on
+expected n-gram counts (Rosti et al, 2010) and
+with an expected BLEU score for normal n-gram
+counts (Zens et al, 2007), respectively. All expecta-
+tions (of the n-gram counts in the first case and the
+BLEU score in the second) are taken over all hy-
+potheses from n-best lists for each source sentence.
+Experiments with the alternative optimization
+methods achieved virtually the same performance in
+terms of BLEU score, but 2 to 4 times faster. Neither
+approach, however, showed any consistent and sig-
+nificant improvement for the majority of setups tried
+(with the exception of the BBN approach, that had
+almost always improved over n-best MERT, but for
+the sole French to English translation direction). Ad-
+ditional experiments with 9 complementary transla-
+tion models as additional features were performed
+with lattice-MERT, but neither showed any substan-
+tial improvement. In the view of these rather incon-
+clusive experiments, we chose to stick to the classi-
+cal MERT for the submitted results.
+6 Conclusion
+In this paper, we described our submissions to
+WMT?11 in the French-English and German-
+English shared translation tasks, in both directions.
+For this year?s participation, we only used n-code,
+our open source Statistical Machine Translation sys-
+tem based on bilingual n-grams. Our contributions
+are threefold. First, we have shown that n-gram
+based systems can achieve state-of-the-art perfor-
+mance on large scale tasks in terms of automatic
+metrics such as BLEU. Then, as already shown by
+several sites in the past evaluations, there is a signifi-
+cant reward for using data selection algorithms when
+dealing with large heterogeneous data sources such
+as the GigaWord. Finally, the use of a large vocab-
+ulary continuous space language model such as the
+SOUL model has enabled to achieve significant and
+consistent improvements. For the upcoming evalua-
+tion(s), we would like to suggest that the important
+work of data cleaning and pre-processing could be
+shared among all the participants instead of being
+done independently several times by each site. Re-
+ducing these differences could indeed help improve
+the reliability of SMT systems evaluation.
+Acknowledgment
+This work was achieved as part of the Quaero Pro-
+gramme, funded by OSEO, French State agency for
+innovation.
+314
+References
+Alexandre Allauzen, Josep M. Crego, I?lknur Durgar El-
+Kahlout, and Francois Yvon. 2010. LIMSI?s statis-
+tical translation systems for WMT?10. In Proc. of the
+Joint Workshop on Statistical Machine Translation and
+MetricsMATR, pages 54?59, Uppsala, Sweden.
+Yoshua Bengio, Re?jean Ducharme, Pascal Vincent, and
+Christian Janvin. 2003. A neural probabilistic lan-
+guage model. JMLR, 3:1137?1155.
+P.F. Brown, P.V. de Souza, R.L. Mercer, V.J. Della Pietra,
+and J.C. Lai. 1992. Class-based n-gram models of nat-
+ural language. Computational Linguistics, 18(4):467?
+479.
+Francesco Casacuberta and Enrique Vidal. 2004. Ma-
+chine translation with inferred stochastic finite-state
+transducers. Computational Linguistics, 30(3):205?
+225.
+Stanley F. Chen and Joshua T. Goodman. 1998. An
+empirical study of smoothing techniques for language
+modeling. Technical Report TR-10-98, Computer Sci-
+ence Group, Harvard University.
+Josep Maria Crego and Jose? Bernardo Marin?o. 2007. Im-
+proving statistical MT by coupling reordering and de-
+coding. Machine Translation, 20(3):199?215.
+Daniel De?chelotte, Gilles Adda, Alexandre Allauzen,
+Olivier Galibert, Jean-Luc Gauvain, He?le`ne Mey-
+nard, and Franc?ois Yvon. 2008. LIMSI?s statisti-
+cal translation systems for WMT?08. In Proc. of the
+NAACL-HTL Statistical Machine Translation Work-
+shop, Columbus, Ohio.
+George Foster, Cyril Goutte, and Roland Kuhn. 2010.
+Discriminative instance weighting for domain adapta-
+tion in statistical machine translation. In Proceedings
+of the 2010 Conference on Empirical Methods in Natu-
+ral Language Processing, pages 451?459, Cambridge,
+MA, October.
+Reinhard Kneser and Herman Ney. 1995. Improved
+backing-off for m-gram language modeling. In Pro-
+ceedings of the International Conference on Acoustics,
+Speech, and Signal Processing, ICASSP?95, pages
+181?184, Detroit, MI.
+Hai-Son Le, Ilya Oparin, Alexandre Allauzen, Jean-Luc
+Gauvain, and Franc?ois Yvon. 2011. Structured output
+layer neural network language model. In IEEE Inter-
+national Conference on Acoustics, Speech and Signal
+Processing (ICASSP 2011), Prague (Czech Republic),
+22-27 May.
+Wolfgang Macherey, Franz Josef Och, Ignacio Thayer,
+and Jakob Uszkoreit. 2008. Lattice-based minimum
+error rate training for statistical machine translation.
+In Proc. of the Conf. on EMNLP, pages 725?734.
+Franz Josef Och. 2003. Minimum error rate training in
+statistical machine translation. In ACL ?03: Proc. of
+the 41st Annual Meeting on Association for Computa-
+tional Linguistics, pages 160?167.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. BLEU: a method for automatic eval-
+uation of machine translation. In ACL ?02: Proc. of
+the 40th Annual Meeting on Association for Compu-
+tational Linguistics, pages 311?318. Association for
+Computational Linguistics.
+Antti-Veikko I. Rosti, Bing Zhang, Spyros Matsoukas,
+and Richard Schwartz. 2010. BBN system description
+for wmt10 system combination task. In Proceedings of
+the Joint Fifth Workshop on Statistical Machine Trans-
+lation and MetricsMATR, WMT ?10, pages 321?326,
+Stroudsburg, PA, USA. Association for Computational
+Linguistics.
+Helmut Schmid and Florian Laws. 2008. Estimation
+of conditional probabilities with decision trees and an
+application to fine-grained POS tagging. In Proceed-
+ings of the 22nd International Conference on Com-
+putational Linguistics (Coling 2008), pages 777?784,
+Manchester, UK, August.
+Helmut Schmid. 1994. Probabilistic part-of-speech tag-
+ging using decision trees. In Proc. of International
+Conference on New Methods in Language Processing,
+pages 44?49, Manchester, UK.
+Holger Schwenk. 2007. Continuous space language
+models. Computer, Speech & Language, 21(3):492?
+518.
+Artem Sokolov and Franc?ois Yvon. 2011. Minimum er-
+ror rate training semiring. In Proceedings of the 15th
+Annual Conference of the European Association for
+Machine Translation, EAMT?2011, May.
+Christoph Tillmann. 2004. A unigram orientation model
+for statistical machine translation. In Proceedings of
+HLT-NAACL 2004, pages 101?104. Association for
+Computational Linguistics.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2007. Online large-margin training for sta-
+tistical machine translation. In Proceedings of the
+2007 Joint Conference on Empirical Methods in Nat-
+ural Language Processing and Computational Natu-
+ral Language Learning (EMNLP-CoNLL), pages 764?
+773, Prague, Czech Republic.
+Richard Zens, Sasa Hasan, and Hermann Ney. 2007.
+A systematic comparison of training criteria for sta-
+tistical machine translation. In Proceedings of the
+2007 Joint Conference on Empirical Methods in Nat-
+ural Language Processing and Computational Natu-
+ral Language Learning (EMNLP-CoNLL), pages 524?
+532.
+315
+Proceedings of the 7th Workshop on Statistical Machine Translation, pages 330?337,
+Montre?al, Canada, June 7-8, 2012. c?2012 Association for Computational Linguistics
+LIMSI @ WMT?12
+Hai-Son Le1,2, Thomas Lavergne2, Alexandre Allauzen1,2,
+Marianna Apidianaki2, Li Gong1,2, Aure?lien Max1,2,
+Artem Sokolov2, Guillaume Wisniewski1,2, Franc?ois Yvon1,2
+Univ. Paris-Sud1 and LIMSI-CNRS2
+rue John von Neumann, 91403 Orsay cedex, France
+{firstname.lastname}@limsi.fr
+Abstract
+This paper describes LIMSI?s submissions to
+the shared translation task. We report results
+for French-English and German-English in
+both directions. Our submissions use n-code,
+an open source system based on bilingual
+n-grams. In this approach, both the transla-
+tion and target language models are estimated
+as conventional smoothed n-gram models; an
+approach we extend here by estimating the
+translation probabilities in a continuous space
+using neural networks. Experimental results
+show a significant and consistent BLEU im-
+provement of approximately 1 point for all
+conditions. We also report preliminary experi-
+ments using an ?on-the-fly? translation model.
+1 Introduction
+This paper describes LIMSI?s submissions to the
+shared translation task of the Seventh Workshop
+on Statistical Machine Translation. LIMSI partic-
+ipated in the French-English and German-English
+tasks in both directions. For this evaluation, we
+used n-code, an open source in-house Statistical
+Machine Translation (SMT) system based on bilin-
+gual n-grams1. The main novelty of this year?s
+participation is the use, in a large scale system, of
+the continuous space translation models described
+in (Hai-Son et al, 2012). These models estimate the
+n-gram probabilities of bilingual translation units
+using neural networks. We also investigate an alter-
+native approach where the translation probabilities
+of a phrase based system are estimated ?on-the-fly?
+1http://ncode.limsi.fr/
+by sampling relevant examples, instead of consider-
+ing the entire training set. Finally we also describe
+the use in a rescoring step of several additional fea-
+tures based on IBM1 models and word sense disam-
+biguation information.
+The rest of this paper is organized as follows. Sec-
+tion 2 provides an overview of the baseline systems
+built with n-code, including the standard transla-
+tion model (TM). The continuous space translation
+models are then described in Section 3. As in our
+previous participations, several steps of data pre-
+processing, cleaning and filtering are applied, and
+their improvement took a non-negligible part of our
+work. These steps are summarized in Section 5.
+The last two sections report experimental results ob-
+tained with the ?on-the-fly? system in Section 6 and
+with n-code in Section 7.
+2 System overview
+n-code implements the bilingual n-gram approach
+to SMT (Casacuberta and Vidal, 2004; Marin?o et al,
+2006; Crego and Marin?o, 2006). In this framework,
+translation is divided in two steps: a source reorder-
+ing step and a (monotonic) translation step. Source
+reordering is based on a set of learned rewrite rules
+that non-deterministically reorder the input words.
+Applying these rules result in a finite-state graph of
+possible source reorderings, which is then searched
+for the best possible candidate translation.
+2.1 Features
+Given a source sentence s of I words, the best trans-
+lation hypothesis t? is defined as the sequence of J
+words that maximizes a linear combination of fea-
+330
+ture functions:
+t? = argmax
+t,a
+{
+M?
+m=1
+?mhm(a, s, t)
+}
+(1)
+where ?m is the weight associated with feature func-
+tion hm and a denotes an alignment between source
+and target phrases. Among the feature functions, the
+peculiar form of the translation model constitute one
+of the main difference between the n-gram approach
+and standard phrase-based systems. This will be fur-
+ther detailled in section 2.2 and 3.
+In addition to the translation model, fourteen
+feature functions are combined: a target-language
+model (Section 5.3); four lexicon models; six lexi-
+calized reordering models (Tillmann, 2004; Crego
+et al, 2011) aiming at predicting the orientation of
+the next translation unit; a ?weak? distance-based
+distortion model; and finally a word-bonus model
+and a tuple-bonus model which compensate for the
+system preference for short translations. The four
+lexicon models are similar to the ones used in stan-
+dard phrase-based systems: two scores correspond
+to the relative frequencies of the tuples and two lexi-
+cal weights are estimated from the automatic word
+alignments. The weights vector ? is learned us-
+ing a discriminative training framework (Och, 2003)
+(Minimum Error Rate Training (MERT)) using the
+newstest2009 as development set and BLEU (Pap-
+ineni et al, 2002) as the optimization criteria.
+2.2 Standard n-gram translation models
+n-gram translation models rely on a specific de-
+composition of the joint probability of a sentence
+pair P (s, t): a sentence pair is assumed to be
+decomposed into a sequence of L bilingual units
+called tuples defining a joint segmentation: (s, t) =
+u1, ..., uL2. In the approach of (Marin?o et al, 2006),
+this segmentation is a by-product of source reorder-
+ing obtained by ?unfolding? initial word alignments.
+In this framework, the basic translation units are
+tuples, which are the analogous of phrase pairs and
+represent a matching u = (s, t) between a source
+s and a target t phrase (see Figure 1). Using the
+n-gram assumption, the joint probability of a seg-
+2From now on, (s, t) thus denotes an aligned sentence pair,
+and we omit the alignment variable a in further developments.
+mented sentence pair decomposes as:
+P (s, t) =
+L?
+i=1
+P (ui|ui?1, ..., ui?n+1) (2)
+During the training phase (Marin?o et al, 2006), tu-
+ples are extracted from a word-aligned corpus (us-
+ing MGIZA++3 with default settings) in such a
+way that a unique segmentation of the bilingual
+corpus is achieved. A baseline n-gram translation
+model is then estimated over a training corpus com-
+posed of tuple sequences using modified Knesser-
+Ney Smoothing (Chen and Goodman, 1998).
+2.3 Inference
+During decoding, source sentences are represented
+in the form of word lattices containing the most
+promising reordering hypotheses, so as to reproduce
+the word order modifications introduced during the
+tuple extraction process. Hence, only those reorder-
+ing hypotheses are translated and they are intro-
+duced using a set of reordering rules automatically
+learned from the word alignments.
+In the example in Figure 1, the rule [prix no-
+bel de la paix ; nobel de la paix prix] repro-
+duces the invertion of the French words that is ob-
+served when translating from French into English.
+Typically, part-of-speech (POS) information is used
+to increase the generalization power of these rules.
+Hence, rewrite rules are built using POS rather than
+surface word forms (Crego and Marin?o, 2006).
+3 SOUL translation models
+A first issue with the model described by equa-
+tion (2) is that the elementary units are bilingual
+pairs. As a consequence, the underlying vocabulary,
+hence the number of parameters, can be quite large,
+even for small translation tasks. Due to data sparsity
+issues, such model are bound to face severe estima-
+tion problems. Another problem with (2) is that the
+source and target sides play symmetric roles: yet,
+in decoding, the source side is known and only the
+target side must be predicted.
+3.1 A word factored translation model
+To overcome these issues, the n-gram probability in
+equation (2) can be factored by decomposing tuples
+3http://www.kyloo.net/software/doku.php
+331
+ s?
+8
+: ? 
+ t
+?
+8
+: to 
+ s?
+9
+: recevoir 
+ t
+?
+9
+: receive 
+ s?
+10
+: le 
+ t
+?
+10
+: the 
+ s?
+11
+: nobel de la paix 
+ t
+?
+11
+: nobel peace 
+ s?
+12
+: prix 
+ t
+?
+12
+: prize 
+ u
+8
+  u
+9
+  u
+10
+  u
+11
+  u
+12
+ 
+S :   .... 
+T :   .... 
+? recevoir le prix nobel de la paixorg :   ....
+....
+....
+Figure 1: Extract of a French-English sentence pair segmented into bilingual units. The original (org) French sentence
+appears at the top of the figure, just above the reordered source s and target t. The pair (s, t) decomposes into a
+sequence of L bilingual units (tuples) u1, ..., uL. Each tuple ui contains a source and a target phrase: si and ti.
+in two parts (source and target), and by taking words
+as the basic units of the n-gram TM. This may seem
+to be a regression with respect to current state-of-
+the-art SMT systems, as the shift from the word-
+based model of (Brown et al, 1993) to the phrase-
+based models of (Zens et al, 2002) is usually con-
+sidered as a major breakthrough of the recent years.
+Indeed, one important motivation for considering
+phrases was to capture local context in translation
+and reordering. It should however be emphasized
+that the decomposition of phrases into words is only
+re-introduced here as a way to mitigate the param-
+eter estimation problems. Translation units are still
+pairs of phrases, derived from a bilingual segmen-
+tation in tuples synchronizing the source and target
+n-gram streams. In fact, the estimation policy de-
+scribed in section 4 will actually allow us to take into
+account larger contexts than is possible with conven-
+tional n-gram models.
+Let ski denote the k
+th word of source tuple si.
+Considering the example of Figure 1, s111 denotes
+the source word nobel, s411 the source word paix.
+We finally denote hn?1(tki ) the sequence made of
+the n? 1 words preceding tki in the target sentence:
+in Figure 1, h3(t211) thus refers to the three words
+context receive the nobel associated with t211 peace.
+Using these notations, equation (2) is rewritten as:
+P (a, s, t) =
+L?
+i=1
+[ |ti|?
+k=1
+P
+(
+tki |h
+n?1(tki ), h
+n?1(s1i+1)
+)
+?
+|si|?
+k=1
+P
+(
+ski |h
+n?1(t1i ), h
+n?1(ski )
+)] (3)
+This decomposition relies on the n-gram assump-
+tion, this time at the word level. Therefore, this
+model estimates the joint probability of a sentence
+pair using two sliding windows of length n, one for
+each language; however, the moves of these win-
+dows remain synchronized by the tuple segmenta-
+tion. Moreover, the context is not limited to the cur-
+rent phrase, and continues to include words from ad-
+jacent phrases. Using the example of Figure 1, the
+contribution of the target phrase t11 = nobel, peace
+to P (s, t) using a 3- gram model is:
+P
+(
+nobel|[receive, the], [la, paix]
+)
+?P
+(
+peace|[the, nobel], [la, paix]
+)
+.
+A benefit of this new formulation is that the vo-
+cabularies involved only contain words, and are thus
+much smaller that tuple vocabularies. These models
+are thus less at risk to be plagued by data sparsity is-
+sues. Moreover, the decomposition (3) now involves
+two models: the first term represents a TM, the sec-
+ond term is best viewed as a reordering model. In
+this formulation, the TM only predicts the target
+phrase, given its source and target contexts.
+P (s, t) =
+L?
+i=1
+[ |si|?
+k=1
+P
+(
+ski |h
+n?1(ski ), h
+n?1(t1i+1)
+)
+?
+|ti|?
+k=1
+P
+(
+tki |h
+n?1(s1i ), h
+n?1(tki )
+)] (4)
+4 The principles of SOUL
+In section 3.1, we defined a n-gram translation
+model based on equations (3) and (4). A major diffi-
+culty with such models is to reliably estimate their
+parameters, the numbers of which grow exponen-
+tially with the order of the model. This problem
+is aggravated in natural language processing due to
+332
+the well-known data sparsity issue. In this work,
+we take advantage of the recent proposal of (Le et
+al., 2011). Using a specific neural network architec-
+ture (the Structured OUtput Layer or SOUL model),
+it becomes possible to handle large vocabulary lan-
+guage modeling tasks. This approach was experi-
+mented last year for target language models only and
+is now extended to translation models. More details
+about the SOUL architecture can be found in (Le et
+al., 2011), while its extension to translation models
+is more precisely described in (Hai-Son et al, 2012).
+The integration of SOUL models for large SMT
+tasks is carried out using a two-pass approach: the
+first pass uses conventional back-off n-gram trans-
+lation and language models to produce a k-best list
+(the k most likely translations); in the second pass,
+the probability of a m-gram SOUL model is com-
+puted for each hypothesis and the k-best list is ac-
+cordingly reordered. In all the following experi-
+ments, we used a context size for SOUL of m = 10,
+and used k = 300. The two decompositions of equa-
+tions (3) and (4) are used by introducing 4 scores
+during the rescoring step.
+5 Corpora and data pre-processing
+Concerning data pre-processing, we started from our
+submissions from last year (Allauzen et al, 2011)
+and mainly upgraded the corpora and the associated
+language-dependent pre-processing routines.
+5.1 Pre-processing
+We used in-house text processing tools for the to-
+kenization and detokenization steps (De?chelotte et
+al., 2008). Previous experiments have demonstrated
+that better normalization tools provide better BLEU
+scores: all systems are thus built in ?true-case?.
+Compared to last year, the pre-processing of utf-8
+characters was significantly improved.
+As German is morphologically more complex
+than English, the default policy which consists in
+treating each word form independently is plagued
+with data sparsity, which severely impacts both
+training (alignment) and decoding (due to unknown
+forms). When translating from German into En-
+glish, the German side is thus normalized using a
+specific pre-processing scheme (described in (Al-
+lauzen et al, 2010; Durgar El-Kahlout and Yvon,
+2010)), which aims at reducing the lexical redun-
+dancy by (i) normalizing the orthography, (ii) neu-
+tralizing most inflections and (iii) splitting complex
+compounds. All parallel corpora were POS-tagged
+with the TreeTagger (Schmid, 1994); in addition, for
+German, fine-grained POS labels were also needed
+for pre-processing and were obtained using the RF-
+Tagger (Schmid and Laws, 2008).
+5.2 Bilingual corpora
+As for last year?s evaluation, we used all the avail-
+able parallel data for the German-English language
+pair, while only a subpart of the French-English par-
+allel data was selected. Word alignment models
+were trained using all the data, whereas the transla-
+tion models were estimated on a subpart of the par-
+allel data: the UN corpus was discarded for this step
+and about half of the French-English Giga corpus
+was filtered based on a perplexity criterion as in (Al-
+lauzen et al, 2011)).
+For French-English, we mainly upgraded the
+training material from last year by extracting the
+new parts from the common data. The word
+alignment models trained last year were then up-
+dated by running a forced alignment 4 of the new
+data. These new word-aligned data was added to
+last year?s parallel corpus and constitute the train-
+ing material for the translation models and feature
+functions described in Section 2. Given the large
+amount of available data, three different bilingual
+n-gram models are estimated, one for each source of
+data: News-Commentary, Europarl, and the French-
+English Giga corpus. These models are then added
+to the weighted mixture defined by equation (1). For
+German-English, we simply used all the available
+parallel data to train one single translation models.
+5.3 Monolingual corpora and language models
+For the monolingual training data, we also used the
+same setup as last year. For German, all the train-
+ing data allowed in the constrained task were di-
+vided into several sets based on dates or genres:
+News-Commentary, the news crawled from the Web
+grouped by year, and Europarl. For each subset,
+a standard 4-gram LM was estimated using inter-
+polated Kneser-Ney smoothing (Kneser and Ney,
+4The forced alignment step consists in an additional EM it-
+eration.
+333
+1995; Chen and Goodman, 1998). The resulting
+LMs are then linearly combined using interpolation
+coefficients chosen so as to minimize the perplexity
+of the development set. The German vocabulary is
+created using all the words contained in the parallel
+data and expanded to reach a total of 500k words by
+including the most frequent words observed in the
+monolingual News data for 2011.
+For French and English, the same monolingual
+corpora as last year were used5. We did not observe
+any perplexity decrease in our attempts to include
+the new data specifically provided for this year?s
+evaluation. We therefore used the same language
+models as in (Allauzen et al, 2011).
+6 ?On-the-fly? system
+We also developped an alternative approach imple-
+menting ?on-the-fly? estimation of the parameter of
+a standard phase-based model, using Moses (Koehn
+et al, 2007) as the decoder. Implementing on-the-
+fly estimation for n-code, while possible in the-
+ory, is less appealing due to the computational cost
+of estimating a smoothed language model. Given
+an input source file, it is possible to compute only
+those statistics which are required to translate the
+phrases it contains. As in previous works on on-
+the-fly model estimation for SMT (Callison-Burch
+et al, 2005; Lopez, 2008), we compute a suffix
+array for the source corpus. This further enables
+to consider only a subset of translation examples,
+which we select by deterministic random sampling,
+meaning that the sample is chosen randomly with
+respect to the full corpus but that the same sample
+is always returned for a given value of sample size,
+hereafter denoted N . In our experiments, we used
+N = 1, 000 and computed from the sample and the
+word alignments (we used the same tokenization and
+word alignments as in all other submitted systems)
+the same translation6 and lexical reordering models
+as the standard training scripts of the Moses system.
+Experiments were run on the data sets used for
+WMT English-French machine translation evalua-
+tion tasks, using the same corpora and optimization
+5The fifth edition of the English Gigaword (LDC2011T07)
+was not used.
+6An approximation is used for p(f |e), and coherent transla-
+tion estimation is used; see (Lopez, 2008).
+procedure as in our other experiments. The only no-
+table difference is our use of the Moses decoder in-
+stead of the n-gram-based system. As shown in Ta-
+ble 1, our on-the-fly system achieves a result (31.7
+BLEU point) that is slightly worst than the n-code
+baseline (32.0) and slightly better than the equiva-
+lent Moses baseline (31.5), but does it much faster.
+Model estimation for the test file is reduced to 2
+hours and 50 minutes, with an additional overhead
+for loading and writing files of one and a half hours,
+compared to roughly 210 hours for our baseline sys-
+tems under comparable hardware conditions.
+7 Experimental results
+7.1 n-code with SOUL
+Table 1 summarizes the experimental results sub-
+mitted to the shared translation for French-English
+and German-English in both directions. The perfor-
+mances are measured in terms of BLEU on new-
+stest2011, last year?s test set, and this year?s test
+set newstest2012. For the former, BLEU scores are
+computed with the NIST script mteva-v13.pl, while
+we provide for newstest2012 the results computed
+by the organizers 7. The Baseline results are ob-
+tained with standard n-gram models estimated with
+back-off, both for the bilingual and monolingual tar-
+get models. With standard n-gram estimates, the or-
+der is limited to n = 4. For instance, the n-code
+French-English baseline achieves a 0.5 BLEU point
+improvement over a Moses system trained with the
+same data setup in both directions.
+From Table 1, it can be observed that adding
+the SOUL models (translation models and target
+language model) consistently improves the base-
+line, with an increase of 1 BLEU point. Con-
+trastive experiments show that the SOUL target LM
+does not bring significant gain when added to the
+SOUL translation models. For instance, a gain of
+0.3 BLEU point is observed when translating from
+French to English with the addition of the SOUL tar-
+get LM. In the other translation directions, the differ-
+ences are negligible.
+7All results come from the official website: http://
+matrix.statmt.org/matrix/.
+334
+Direction System BLEU
+test2011 test2012?
+en2fr Baseline 32.0 28.9
++ SOUL TM 33.4 29.9
+on-the-fly 31.7 28.6
+fr2en Baseline 30.2 30.4
++ SOUL TM 31.1 31.5
+en2de Baseline 15.4 16.0
++ SOUL TM 16.6 17.0
+de2en Baseline 21.8 22.9
++ SOUL TM 22.8 23.9
+Table 1: Experimental results in terms of BLEU scores
+measured on the newstest2011 and newstest2012. For
+newstest2012, the scores are provided by the organizers.
+7.2 Experiments with additional features
+For this year?s evaluation, we also investigated sev-
+eral additional features based on IBM1 models and
+word sense disambiguation (WSD) information in
+rescoring. As for the SOUL models, these features
+are added after the n-best list generation step.
+In previous work (Och et al, 2004; Hasan, 2011),
+the IBM1 features (Brown et al, 1993) are found
+helpful. As the IBM1 model is asymmetric, two
+models are estimated, one in both directions. Con-
+trary to the reported results, these additional features
+do not yield significant improvements over the base-
+line system. We assume that the difficulty is to add
+information to an already extensively optimized sys-
+tem. Moreover, the IBM1 models are estimated on
+the same training corpora as the translation system,
+a fact that may explain the redundancy of these ad-
+ditional features.
+In a separate series of experiments, we also add
+WSD features calculated according to a variation of
+the method proposed in (Apidianaki, 2009). For
+each word of a subset of the input (source lan-
+guage) vocabulary, a simple WSD classifier pro-
+duces a probability distribution over a set of trans-
+lations8. During reranking, each translation hypoth-
+esis is scanned and the word translations that match
+one of the proposed variant are rewarded using an
+additional score. While this method had given some
+8The difference with the method described in (Apidianaki,
+2009) is that no sense clustering is performed, and each transla-
+tion is represented by a separate weighted source feature vector
+which is used for disambiguation
+small gains on a smaller dataset (IWSLT?11), we did
+not observe here any improvement over the base-
+line system. Additional analysis hints that (i) most
+of the proposed variants are already covered by the
+translation model with high probabilities and (ii) that
+these variants are seldom found in the reference sen-
+tences. This means that, in the situation in which
+only one reference is provided, the hypotheses with
+a high score for the WSD feature are not adequately
+rewarded with the actual references.
+8 Conclusion
+In this paper, we described our submissions to
+WMT?12 in the French-English and German-
+English shared translation tasks, in both directions.
+As for our last year?s participation, our main sys-
+tems are built with n-code, the open source Statis-
+tical Machine Translation system based on bilingual
+n-grams. Our contributions are threefold. First, we
+have experimented a new kind of translation mod-
+els, where the bilingual n-gram distribution are es-
+timated in a continuous space with neural networks.
+As shown in past evaluations with target language
+model, there is a significant reward for using this
+kind of models in a rescoring step. We observed that,
+in general, the continuous space translation model
+yields a slightly larger improvement than the target
+translation model. However, their combination does
+not result in an additional gain.
+We also reported preliminary results with a sys-
+tem ?on-the-fly?, where the training data are sam-
+pled according to the data to be translated in order
+to train contextually adapted system. While this sys-
+tem achieves comparable performance to our base-
+line system, it is worth noticing that its total train-
+ing time is much smaller than a comparable Moses
+system. Finally, we investigated several additional
+features based on IBM1 models and word sense dis-
+ambiguation information in rescoring. While these
+methods have sometimes been reported to help im-
+prove the results, we did not observe any improve-
+ment here over the baseline system.
+Acknowledgment
+This work was partially funded by the French State
+agency for innovation (OSEO) in the Quaero Pro-
+gramme.
+335
+References
+Alexandre Allauzen, Josep M. Crego, I?lknur Durgar El-
+Kahlout, and Franc?ois Yvon. 2010. LIMSI?s statis-
+tical translation systems for WMT?10. In Proc. of the
+Joint Workshop on Statistical Machine Translation and
+MetricsMATR, pages 54?59, Uppsala, Sweden.
+Alexandre Allauzen, Gilles Adda, He?le`ne Bonneau-
+Maynard, Josep M. Crego, Hai-Son Le, Aure?lien Max,
+Adrien Lardilleux, Thomas Lavergne, Artem Sokolov,
+Guillaume Wisniewski, and Franc?ois Yvon. 2011.
+LIMSI @ WMT11. In Proceedings of the Sixth Work-
+shop on Statistical Machine Translation, pages 309?
+315, Edinburgh, Scotland, July. Association for Com-
+putational Linguistics.
+Marianna Apidianaki. 2009. Data-driven semantic anal-
+ysis for multilingual WSD and lexical selection in
+translation. In Proceedings of the 12th Conference of
+the European Chapter of the ACL (EACL 2009), pages
+77?85, Athens, Greece, March. Association for Com-
+putational Linguistics.
+Peter F. Brown, Vincent J. Della Pietra, Stephen A. Della
+Pietra, and Robert L. Mercer. 1993. The mathemat-
+ics of statistical machine translation: parameter esti-
+mation. Comput. Linguist., 19(2):263?311.
+Chris Callison-Burch, Colin Bannard, and Josh
+Schroeder. 2005. Scaling phrase-based statisti-
+cal machine translation to larger corpora and longer
+phrases. In Proceedings of the 43rd Annual Meeting
+of the Association for Computational Linguistics
+(ACL?05), pages 255?262, Ann Arbor, Michigan,
+June. Association for Computational Linguistics.
+Francesco Casacuberta and Enrique Vidal. 2004. Ma-
+chine translation with inferred stochastic finite-state
+transducers. Computational Linguistics, 30(3):205?
+225.
+Stanley F. Chen and Joshua T. Goodman. 1998. An
+empirical study of smoothing techniques for language
+modeling. Technical Report TR-10-98, Computer Sci-
+ence Group, Harvard Un iversity.
+Josep M. Crego and Jose? B. Marin?o. 2006. Improving
+statistical MT by coupling reordering and decoding.
+Machine Translation, 20(3):199?215.
+Josep M. Crego, Franc?ois Yvon, and Jose? B. Marin?o.
+2011. N-code: an open-source Bilingual N-gram SMT
+Toolkit. Prague Bulletin of Mathematical Linguistics,
+96:49?58.
+Ilknur Durgar El-Kahlout and Franc?ois Yvon. 2010. The
+pay-offs of preprocessing for German-English Statis-
+tical Machine Translation. In Marcello Federico, Ian
+Lane, Michael Paul, and Franc?ois Yvon, editors, Pro-
+ceedings of the seventh International Workshop on
+Spoken Language Translation (IWSLT), pages 251?
+258.
+Daniel De?chelotte, Gilles Adda, Alexandre Allauzen,
+Olivier Galibert, Jean-Luc Gauvain, He?le`ne May-
+nard, and Franc?ois Yvon. 2008. LIMSI?s statisti-
+cal translation systems for WMT?08. In Proc. of the
+NAACL-HTL Statistical Machine Translation Work-
+shop, Columbus, Ohio.
+Hai-Son, Alexandre Allauzen, and Franc?ois Yvon. 2012.
+Continuous space translation models with neural net-
+works. In NAACL ?12: Proceedings of the 2012 Con-
+ference of the North American Chapter of the Associ-
+ation for Computational Linguistics on Human Lan-
+guage Technology.
+Sas?a Hasan. 2011. Triplet Lexicon Models for Statisti-
+cal Machine Translation. Ph.D. thesis, RWTH Aachen
+University.
+Reinhard Kneser and Herman Ney. 1995. Improved
+backing-off for m-gram language modeling. In Pro-
+ceedings of the International Conference on Acoustics,
+Speech, and Signal Processing, ICASSP?95, pages
+181?184, Detroit, MI.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran, Richard
+Zens, Chris Dyer, Ondrej Bojar, Alexandra Con-
+stantin, and Evan Herbst. 2007. Moses: Open source
+toolkit for statistical machine translation. In Proceed-
+ings of the 45th Annual Meeting of the Association for
+Computational Linguistics Companion Volume Pro-
+ceedings of the Demo and Poster Sessions, pages 177?
+180, Prague, Czech Republic, June. Association for
+Computational Linguistics.
+Hai-Son Le, Ilya Oparin, Alexandre Allauzen, Jean-Luc
+Gauvain, and Franc?ois Yvon. 2011. Structured output
+layer neural network language model. In Proceedings
+of ICASSP?11, pages 5524?5527.
+Adam Lopez. 2008. Tera-scale translation models via
+pattern matching. In Proceedings of the 22nd Interna-
+tional Conference on Computational Linguistics (Col-
+ing 2008), pages 505?512, Manchester, UK, August.
+Coling 2008 Organizing Committee.
+Jose? B. Marin?o, Rafael E. Banchs, Josep M. Crego, Adria`
+de Gispert, Patrick Lambert, Jose? A.R. Fonollosa, and
+Marta R. Costa-Jussa`. 2006. N-gram-based machine
+translation. Computational Linguistics, 32(4):527?
+549.
+Franz Josef Och, Daniel Gildea, Sanjeev Khudanpur,
+Anoop Sarkar, Kenji Yamada, Alex Fraser, Shankar
+Kumar, Libin Shen, David Smith, Katherine Eng,
+Viren Jain, Zhen Jin, and Dragomir Radev. 2004. A
+smorgasbord of features for statistical machine trans-
+lation. In Daniel Marcu Susan Dumais and Salim
+Roukos, editors, HLT-NAACL 2004: Main Proceed-
+ings, pages 161?168, Boston, Massachusetts, USA,
+336
+May 2 - May 7. Association for Computational Lin-
+guistics.
+Franz Josef Och. 2003. Minimum error rate training in
+statistical machine translation. In ACL ?03: Proc. of
+the 41st Annual Meeting on Association for Computa-
+tional Linguistics, pages 160?167.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. BLEU: a method for automatic eval-
+uation of machine translation. In ACL ?02: Proc. of
+the 40th Annual Meeting on Association for Compu-
+tational Linguistics, pages 311?318. Association for
+Computational Linguistics.
+Helmut Schmid and Florian Laws. 2008. Estimation
+of conditional probabilities with decision trees and an
+application to fine-grained POS tagging. In Proceed-
+ings of the 22nd International Conference on Com-
+putational Linguistics (Coling 2008), pages 777?784,
+Manchester, UK, August.
+Helmut Schmid. 1994. Probabilistic part-of-speech tag-
+ging using decision trees. In Proc. of International
+Conference on New Methods in Language Processing,
+pages 44?49, Manchester, UK.
+Christoph Tillmann. 2004. A unigram orientation model
+for statistical machine translation. In Proceedings of
+HLT-NAACL 2004, pages 101?104. Association for
+Computational Linguistics.
+Richard Zens, Franz Josef Och, and Hermann Ney. 2002.
+Phrase-based statistical machine translation. In KI
+?02: Proceedings of the 25th Annual German Con-
+ference on AI, pages 18?32, London, UK. Springer-
+Verlag.
+337
+Proceedings of SSST-6, Sixth Workshop on Syntax, Semantics and Structure in Statistical Translation, pages 1?9,
+Jeju, Republic of Korea, 12 July 2012. c?2012 Association for Computational Linguistics
+WSD for n-best reranking and local language modeling in SMT
+Marianna Apidianaki, Guillaume Wisniewski?, Artem Sokolov, Aure?lien Max?, Franc?ois Yvon?
+LIMSI-CNRS
+? Univ. Paris Sud
+BP 133, F-91403, Orsay Cedex, France
+firstname.lastname@limsi.fr
+Abstract
+We integrate semantic information at two
+stages of the translation process of a state-of-
+the-art SMT system. A Word Sense Disam-
+biguation (WSD) classifier produces a proba-
+bility distribution over the translation candi-
+dates of source words which is exploited in
+two ways. First, the probabilities serve to
+rerank a list of n-best translations produced by
+the system. Second, the WSD predictions are
+used to build a supplementary language model
+for each sentence, aimed to favor translations
+that seem more adequate in this specific sen-
+tential context. Both approaches lead to sig-
+nificant improvements in translation perfor-
+mance, highlighting the usefulness of source
+side disambiguation for SMT.
+1 Introduction
+Word Sense Disambiguation (WSD) is the task of
+identifying the sense of words in texts by reference
+to some pre-existing sense inventory. The selec-
+tion of the appropriate inventory and WSD method
+strongly depends on the goal WSD intends to serve:
+recent methods are increasingly oriented towards
+the disambiguation needs of specific end applica-
+tions, and explicitly aim at improving the overall
+performance of complex Natural Language Process-
+ing systems (Ide and Wilks, 2007; Carpuat and Wu,
+2007). This task-oriented conception of WSD is
+manifested in the area of multilingual semantic pro-
+cessing: supervised methods, which were previously
+shown to give the best results, are being abandoned
+in favor of unsupervised ones that do not rely on pre-
+annotated training data. Accordingly, pre-defined
+semantic inventories, that usually served to provide
+the lists of candidate word senses, are being replaced
+by senses relevant to the considered applications and
+directly identified from corpora by means of word
+sense induction methods.
+In a multilingual setting, the sense inventories
+needed for disambiguation are generally built from
+all possible translations of words or phrases in a par-
+allel corpus (Carpuat and Wu, 2007; Chan et al,
+2007), or by using more complex representations
+of the semantics of translations (Apidianaki, 2009;
+Mihalcea et al, 2010; Lefever and Hoste, 2010).
+However, integrating this semantic knowledge into
+Statistical Machine Translation (SMT) raises sev-
+eral challenges: the way in which the predictions of
+the WSD classifier have to be taken into account;
+the type of context exploited for disambiguation;
+the target words to be disambiguated (?all-words?
+WSD vs. WSD restricted to target words satisfy-
+ing specific criteria); the use of a single classifier
+versus building separate classifiers for each source
+word; the quantity and type of data used for training
+the classifier (e.g., use of raw data or of more ab-
+stract representations, such as lemmatization, allow-
+ing to deal with sparseness issues), and many oth-
+ers. Seemingly, the optimal way to take advantage
+of WSD predictions remains an open issue.
+In this work, we carry out a set of experiments
+to investigate the impact of integrating the predic-
+tions of a cross-lingual WSD classifier into an SMT
+system, at two different stages of the translation pro-
+cess. The first approach exploits the probability dis-
+tribution built by the WSD classifier over the set of
+translations of words found in the parallel corpus,
+1
+for reranking the translations in the n-best list gen-
+erated by the SMT system. Words in the list that
+match one of the proposed translations are boosted
+and are thus more likely to appear in the final trans-
+lation. Our results on the English-French IWSLT?11
+task show substantial improvements in translation
+quality. The second approach provides a tighter in-
+tegration of the WSD classifier with the rest of the
+system: using the WSD predictions, an additional
+sentence specific language model is estimated and
+used during decoding. These additional local mod-
+els can be used as an external knowledge source to
+reinforce translation hypotheses matching the pre-
+diction of the WSD system.
+In the rest of the paper, we present related work
+on integrating semantic information into SMT (Sec-
+tion 2). The WSD classifier used in the current study
+is described in Section 3. We then present the two
+approaches adopted for integrating the WSD out-
+put into SMT (Section 4). Evaluation results are
+presented in Section 5, before concluding and dis-
+cussing some avenues for future work.
+2 Related work
+Word sense disambiguation systems generally work
+at the word level: given an input word and its con-
+text, they predict its (most likely) meaning. At
+the same time, state-of-the-art translation systems
+all consider groups of words (phrases, tuples, etc.)
+rather than single words in the translation process.
+This discrepancy between the units used in MT and
+those used in WSD is one of the major difficul-
+ties in integrating word predictions into the decoder.
+This was, for instance, one of the reasons for the
+somewhat disappointing results obtained by Carpuat
+and Wu (2005) when the output of a WSD system
+was directly incorporated into a Chinese-English
+SMT system. Because of this difficulty, other cross-
+lingual semantics works have considered only sim-
+plified tasks, like blank-filling, without addressing
+the integration of the WSD models in full-scale MT
+systems (Vickrey et al, 2005; Specia, 2006).
+Since the pioneering work of Carpuat and Wu
+(2005), several more successful ways to take WSD
+predictions into account have been proposed. For
+instance, Carpuat and Wu (2007) proposed to gen-
+eralize the WSD system so that it performs a fully
+phrasal multiword disambiguation. However, given
+that the number of phrases is far larger than the num-
+ber of words, this approach suffers from sparsity
+and computational problems, as it requires training
+a classifier for each entry of the phrase table.
+Chan et al (2007) introduced a way to modify the
+rule weights of a hierarchical translation system to
+reflect the predictions of their WSD system. While
+their approach and ours are built on the same intu-
+ition (an adaptation of a model to incorporate word
+predictions) their work is specific to hierarchical
+systems, while ours can be applied to any decoder
+that uses a language model. Haque et al (2009) et
+Haque et al (2010) introduce lexico-syntactic de-
+scriptions in the form of supertags as source lan-
+guage context-informed features in a phrase-based
+SMT and a state-of-the-art hierarchical model, re-
+spectively, and report significant gains in translation
+quality.
+Closer to our work, Mauser et al (2009) and Pa-
+try and Langlais (2011) train a global lexicon model
+that predicts the bag of output words from the bag
+of input words. As no explicit alignment between
+input and output words is used, words are chosen
+based on the (global) input context. For each input
+sentence, the decoder considers these word predic-
+tions as an additional feature that it uses to define a
+new model score which favors translation hypothe-
+ses containing words predicted by the global lexicon
+model. A difference between this approach and our
+work is that instead of using a global lexicon model,
+we disambiguate a subset of the words in the input
+sentence by employing a WSD classifier that cre-
+ates a probability distribution over the translations
+of each word in its context.
+The unsupervised cross-lingual WSD classifier
+used in this work is similar to the one proposed in
+Apidianaki (2009). The original classifier disam-
+biguates new instances of words in context by se-
+lecting the most appropriate cluster of translations
+among a set of candidate clusters found in an auto-
+matically built bilingual sense inventory. The sense
+inventory exploited by the classifier is created by
+a cross-lingual word sense induction (WSI) method
+that reveals the senses of source words by grouping
+their translations into clusters according to their se-
+mantic proximity, revealed by a distributional sim-
+ilarity calculation. The resulting clusters represent
+2
+the source words? candidate senses. This WSD
+method gave good results in a word prediction task
+but, similarly to the work of Vickrey et al (2005)
+and of Specia (2006), the predictions are not inte-
+grated into a complete MT system.
+3 The WSD classifier
+Our WSD classifier is a variation of the one intro-
+duced in Apidianaki (2009). The main difference
+is that here the classifier serves to discriminate be-
+tween unclustered translations of a word and to as-
+sign a probability to each translation for new in-
+stances of the word in context. Each translation is
+represented by a source language feature vector that
+the classifier uses for disambiguation. All experi-
+ments carried out in this study are for the English
+(EN) - French (FR) language pair.
+3.1 Source Language Feature Vectors
+Preprocessing The information needed by the clas-
+sifier is gathered from the EN-FR training data pro-
+vided for the IWSLT?11 evaluation task.1 The
+dataset consists of 107,268 parallel sentences, word-
+aligned in both translation directions using GIZA++
+(Och and Ney, 2003). We disambiguate EN words
+found in the parallel corpus that satisfy the set of
+criteria described below.
+Two bilingual lexicons are built from the align-
+ment results and filtered to eliminate spurious align-
+ments. First, translation correspondences with a
+probability lower than a threshold are discarded;2
+then translations are filtered by part-of-speech
+(PoS), keeping for each word only translations per-
+taining to the same grammatical category;3 finally,
+only intersecting alignments (i.e., correspondences
+found in the lexicons of both directions) are retained.
+Given that the lexicons contain word forms, the in-
+tersection is calculated based on lemmatization in-
+formation in order to perform a generalization over
+the contents of the lexicons. For instance, if the EN
+adjective regular is translated by habituelle (femi-
+1http://www.iwslt2011.org/
+2The translation probabilities between word tokens are
+found in the translation table produced by GIZA++; the thresh-
+old is set to 0.01.
+3For this filtering, we employ a PoS and lemmatization lex-
+icon built after tagging both parts of the training corpus with
+TreeTagger (Schmid, 1994).
+nine singular form of the adjective habituel) in the
+EN-FR lexicon, but is found to translate habituel
+(masculine singular form) in the other direction,
+the EN-FR correspondence regular/habituelle is re-
+tained (because the two variants of the adjective are
+reduced to the same lemma).
+All lexicon entries satisfying the above criteria are
+retained and used for disambiguation. In these initial
+experiments, we disambiguate English words having
+less than 20 French translations in the lexicon. Each
+French translation of an English word that appears
+more than once in the training corpus4 is character-
+ized by a weighted English feature vector built from
+the training data.
+Vector building The feature vectors corresponding
+to the translations are built by exploiting information
+from the source contexts (Apidianaki, 2008; Grefen-
+stette, 1994). For each translation of an EN word w,
+we extract the content words that co-occur with w
+in the corresponding source sentences of the parallel
+corpus (i.e. the content words that occur in the same
+sentence as w whenever it is translated by this trans-
+lation). The extracted source language words con-
+stitute the features of the vector built for the transla-
+tion.
+For each translation Ti of w, let N be the number
+of features retained from the corresponding source
+context. Each feature Fj (1 ? j ? N) receives a to-
+tal weight tw(Fj,Ti) defined as the product of the
+feature?s global weight, gw(Fj), and its local weight
+with that translation, lw(Fj,Ti):
+tw(Fj,Ti) = gw(Fj) ? lw(Fj,Ti) (1)
+The global weight of a feature Fj is a function of
+the number Ni of translations (Ti?s) to which Fj is re-
+lated, and of the probabilities (pi j) that Fj co-occurs
+with instances of w translated by each of the Ti?s:
+gw(Fj) = 1?
+?Ti pi j log(pi j)
+Ni
+(2)
+Each of the pi j?s is computed as the ratio between
+the co-occurrence frequency of Fj with w when
+translated as Ti, denoted as cooc frequency(Fj,Ti),
+4We do not consider hapax translations because they often
+correspond to alignment errors.
+3
+and the total number of features (N) seen with Ti:
+pi j =
+cooc frequency(Fj,Ti)
+N
+(3)
+Finally, the local weight lw(Fj,Ti) between Fj and Ti
+directly depends on their co-occurrence frequency:
+lw(Fj,Ti) = log(cooc frequency(Fj,Ti)) (4)
+3.2 Cross-Lingual WSD
+The weighted feature vectors corresponding to the
+different translations of an English word are used
+for disambiguation.5 As noted in Section 3.1, we
+disambiguate source words satisfying a set of crite-
+ria. Disambiguation is performed by comparing the
+vector associated with each translation to the new
+context of the words in the input sentences from the
+IWSLT?11 test set.
+More precisely, the information contained in each
+vector is exploited by the WSD classifier to produce
+a probability distribution over the translations, for
+each new instance of a word in context. We dis-
+ambiguate word forms (not lemmas) in order to di-
+rectly use the selected translations in the translated
+texts. However, we should note that in some cases
+this reduces the role of WSD to distinguishing be-
+tween different forms of one word and no different
+senses are involved. Using more abstract represen-
+tations (corresponding to senses) is one of the per-
+spectives of this work.
+The classifier assigns a score to each transla-
+tion by comparing information in the corresponding
+source vector to information found in the new con-
+text. Given that the vector features are lemmatized,
+the new context is lemmatized as well and the lem-
+mas of the content words are gathered in a bag of
+words. The adequacy of each translation for a new
+instance of a word is estimated by comparing the
+translation?s vector with the bag of words built from
+the new context. If common features are found be-
+tween the new context and a translation vector, an
+association score is calculated corresponding to the
+mean of the weights of the common features rela-
+tively to the translation (i.e. found in its vector). In
+5The vectors are not used for clustering the translations as
+in Apidianaki (2009) but all translations are considered as can-
+didate senses.
+Equation (5), (CFj)|CF |j=1 is the set of common fea-
+tures between the translation vector Vi and the new
+context C and tw is the weight of a CF with transla-
+tion Ti (cf. formula (1)).
+assoc score(Vi,C) =
+?|CF |j=1 tw(CFj,Ti)
+|CF| (5)
+The scores assigned to the different translations of a
+source word are normalized to sum up to one.
+In this way, a subset of the words that occur in the
+input sentences from the test set are annotated with
+their translations and the associated scores (contex-
+tual probabilities), as shown in the example in Fig-
+ure 1.6 The WSD classifier makes predictions only
+for the subset of the words found in the source part
+of the parallel test set that were retained from the ini-
+tial EN-FR lexicon after filtering. Table 1 presents
+the total coverage of the WSD method as well as its
+coverage for words of different PoS, with a focus
+on content words. We report the number of disam-
+biguated words for each content PoS (cf. third col-
+umn) and the corresponding percentage, calculated
+on the basis of the total number of words pertaining
+to this PoS (cf. second column). We observe that
+the coverage of the method on nouns and adjectives
+is higher than the one on verbs. Given the rich ver-
+bal morphology of French, several verbs have a very
+high number of translations in the bilingual lexicon
+(over 20) and are not handled during disambigua-
+tion. The same applies to function words (articles,
+prepositions, conjunctions, etc.) included in the ?all
+PoS? category.
+4 Integrating Semantics into SMT
+In this section, we present two ways to integrate
+WSD predictions into an SMT decoder. The first
+one (Section 4.1) is a simple method based on n-
+best reranking. This method, already proposed in
+the literature (Specia et al, 2008), allows us to eas-
+ily evaluate the impact of WSD predictions on au-
+tomatic translation quality. The second one (Sec-
+tion 4.2) builds on the idea, introduced in (Crego et
+al., 2010), of using an additional language model to
+6Some source words are tagged with only one translation
+(e.g. stones {pierres(1.000)}) because their other translations
+in the lexicon occurred only once in the training corpus and,
+consequently, were not considered.
+4
+PoS # of words # of WSD predictions %
+Nouns 5535 3472 62.72
+Verbs 5336 1269 23.78
+Adjs 1787 1249 69.89
+Advs 2224 1098 49.37
+all content PoS 14882 7088 47.62
+all PoS 27596 8463 30.66
+Table 1: Coverage of the WSD method
+you know, one of the intense {intenses(0.305), forte(0.306), intense(0.389)} pleasures of
+travel {transport(0.334), voyage(0.332), voyager(0.334)} and one of the delights of ethnographic
+research {recherche(0.225), research(0.167), e?tudes(0.218), recherches(0.222), e?tude(0.167)} is
+the opportunity {possibilite?(0.187), chance(0.185), opportunite?s(0.199), occasion(0.222), opportu-
+nite?(0.207)} to live amongst those who have not forgotten {oubli(0.401), oublie?s(0.279), ou-
+blie?e(0.321)} the old {ancien(0.079), a?ge(0.089), anciennes(0.072), a?ge?es(0.100), a?ge?s(0.063), an-
+cienne(0.072), vieille(0.093), ans(0.088), vieux(0.086), vieil(0.078), anciens(0.081), vieilles(0.099)}
+ways {fac?ons(0.162), manie`res(0.140), moyens(0.161), aspects(0.113), fac?on(0.139), moyen(0.124),
+manie`re(0.161)} , who still feel their past {passe?e(0.269), autrefois(0.350), passe?(0.381)} in the
+wind {e?olienne(0.305), vent(0.392), e?oliennes(0.304)} , touch {touchent(0.236), touchez(0.235),
+touche(0.235), toucher(0.293)} it in stones {pierres(1.000)} polished by rain {pluie(1.000)} ,
+taste {gou?t(0.500), gou?ter(0.500)} it in the bitter {amer(0.360), ame`re(0.280), amertume(0.360)}
+leaves {feuilles(0.500), feuillages(0.500)} of plants {usines(0.239), centrales(0.207), plantes(0.347),
+ve?ge?taux(0.207)}.
+Figure 1: Input sentence with WSD information
+directly integrate the prediction of the WSD system
+into the decoder.
+4.1 N-best List Reranking
+A simple way to influence translation hypotheses se-
+lection with WSD information is to use the WSD
+probabilities of translation variants to produce an ad-
+ditional feature appended to the n-best list after its
+generation. The feature value should reflect the de-
+gree to which a particular hypothesis includes pro-
+posed WSD variants for the respective words. Re-
+running the standard MERT optimization procedure
+on the augmented features gives a new set of model
+weights, that are used to rescore the n-best list.
+We propose the following method of features con-
+struction. Given the phrase alignment information
+between a source sentence and a hypothesis, we ver-
+ify if one or more of the proposed WSD variants for
+the source word occur in the corresponding phrase of
+the translation hypothesis. If this is the case, the cor-
+responding probabilities are additively accumulated
+for the current hypothesis. At the end, two features
+are appended to each hypothesis in the n-best list:
+the total score accumulated for the hypothesis and
+the same score normalized by the number of words
+in the hypothesis.
+Two MERT initialization schemes were consid-
+ered: (1) all model weights are initialized to zero,
+and (2) all the weights of ?standard? features are ini-
+tialized to the values found by MERT and the new
+WSD features to zero.
+4.2 Local Language Models
+We propose to adapt the approach introduced in
+Crego et al (2010) as an alternative way to inte-
+grate the WSD predictions within the decoder: for
+each sentence to be translated, an additional lan-
+guage model (LM) is estimated and taken into ac-
+count during decoding. As this additional ?local?
+model depends on the source sentence, it can be
+used as an external source of knowledge to reinforce
+translation hypotheses complying with criteria pre-
+dicted from the whole source sentence. For instance,
+the unigram probabilities of the additional LM can
+be derived from the (word) predictions of a WSD
+system, bigram probabilities from the prediction of
+phrases and so on and so forth. Although this ap-
+proach was suggested in (Crego et al, 2010), this
+5
+is, to the best of our knowledge, the first time it is
+experimentally validated.
+In practice, the predictions of the WSD system
+described in Section 3 can be integrated by defining,
+for each sentence, an additional unigram language
+model as follows:
+? each translation predicted by the WSD classi-
+fier can be generated by the language model
+with the probability estimated by the WSD
+classifier; no information about the source
+word that has been disambiguated is consid-
+ered;
+? the probability of unknown words is set to a
+small arbitrary constant.
+Even if most of the words composing the transla-
+tion hypothesis are considered as unknown words,
+hypotheses that contain the words predicted by the
+WSD system still have a higher LM score and are
+therefore preferred. Note that even if we only use
+unigram language models in our experiments, as
+senses are predicted at the word level, our approach
+is able to handle disambiguation of phrases as well.
+This approach has two main advantages over ex-
+isting ways to integrate WSD predictions in an SMT
+system. First, no hard decisions are made: errors
+of the WSD can be ?corrected? by the translation.
+Second, sense disambiguation at the word level is
+naturally and automatically propagated at the phrase
+level: the additional LM is influencing all phrase
+pairs using one of the predicted words.
+Compared to the reranking approach introduced
+in the previous section, this method results in a
+tighter integration with the decoder. In particu-
+lar, the WSD predictions are applied before search-
+space pruning and are therefore expected to have a
+more important role.
+5 Evaluation
+5.1 Experimental Setting
+In all our experiments, we considered the TED-
+talk English to French data set provided by the
+IWSLT?11 evaluation campaign, a collection of pub-
+lic speeches on a variety of topics. We used the
+Moses decoder (Koehn et al, 2007).
+The TED-talk corpus is a small data set made
+of a monolingual corpus (111,431 sentences) used
+to estimate a 4-gram language model with KN-
+smoothing, and a bilingual corpus (107,268 sen-
+tences) used to extract the phrase table. All data
+are tokenized, cleaned and converted to lowercase
+letters using the tools provided by the WMT orga-
+nizers.7 We then use a standard training pipeline to
+construct the translation model: the bitext is aligned
+using GIZA++, symmetrized using the grow-diag-
+final-and heuristic; the phrase table is extracted and
+scored using the tools distributed with Moses. Fi-
+nally, systems are optimized using MERT on the
+934 sentences of the dev-2010 set. All evalua-
+tions are performed on the 1,664 sentences of the
+test-2010 set.
+5.2 Baseline
+In addition to the models introduced in Section 4,
+we considered two other supplementary models as
+baselines. The first one uses the IBM 1 model esti-
+mated during the SMT system training as a simple
+WSD system: for each source sentence, a unigram
+additional language model is defined by taking, for
+each source, the 20 best translations according to the
+IBM 1 model and their probability. Model 1 has
+been shown to be one of the best performing fea-
+tures to be added to an SMT system in a reranking
+step (Och et al, 2004) and can be seen as a naive
+WSD classifier.
+To test the validity of our approach, we repli-
+cate the ?oracle? experiments of Crego et al (2010)
+and estimate the best gain our method can achieve.
+These experiments consist in using the reference to
+train a local n-gram language model (with n in the
+range 1 to 3) which amounts, in the local language
+model method of Section 4.2, to assuming that the
+WSD system correctly predicted a single translation
+for each source word.
+5.3 Results
+Table 2 reports the results of our experiments. It
+appears that, for the considered task, sense disam-
+biguation improves translation performance: n-best
+rescoring results in a 0.37 BLEU improvement and
+using an additional language model brings about an
+improvement of up to a 0.88 BLEU. In both cases,
+MERT assigns a large weight to the additional fea-
+7http://statmt.org/wmt08/scripts.tgz
+6
+method BLEU METEOR
+baseline ? 29.63 53.78
+rescoring WSD (zero init) 30.00 54.26WSD (reinit) 29.58 53.96
+additional LM
+oracle 3-gram 43.56 64.64
+oracle 2-gram 39.36 62.92
+oracle 1-gram 42.92 69.39
+IBM 1 30.18 54.36
+WSD 30.51 54.38
+Table 2: Evaluation results on the TED-talk task of our two methods to integrate WSD predictions.
+PoS baseline WSD
+Nouns 67.57 69.06
+Verbs 45.97 47.76
+Adjectives 51.79 53.94
+Adverbs 52.17 56.25
+Table 3: Contrastive lexical evaluation: % of words correctly translated within each PoS class
+tures during tuning. When rescoring n-best, an im-
+provement is observed only when the weights are
+initialized to zero and not to the weights resulting
+from the previous optimization, maybe because of
+the difficulty to exit the local minimum MERT had
+found earlier.
+As expected, integrating the WSD predictions
+with an additional language model results in a larger
+improvement than simple rescoring, which shows
+the importance of applying this new source of in-
+formation early in the translation pipeline, before
+search space pruning. Also note that the system us-
+ing the IBM 1 predictions is outperformed by the
+system using the WSD classifier introduced in Sec-
+tion 3, showing the quality of its predictions.
+Oracle experiments stress the high potential of
+the method introduced in (Crego et al, 2010) as a
+way to integrate external sources of knowledge: all
+three conditions result in large improvements over
+the baseline and the proposed methods. It must,
+however, be noted that contrary to the WSD method
+introduced in Section 3, these oracle experiments
+rely on sense predictions for all source words and
+not only content words. Surprisingly enough, pre-
+dicting phrases instead of words results only in a
+small improvement. Additional experiments are re-
+quired to explain why 2-gram oracle achieved such
+a low performance.
+5.4 Contrastive lexical evaluation
+All the measures used for evaluating the impact
+of WSD information on translation show improve-
+ments, as discussed in the previous section. We
+complement these results with another measure of
+translation performance, proposed by Max et al
+(2010), which allows for a more fine-grained con-
+trastive evaluation of the translations produced by
+different systems. The method permits to compare
+the results produced by the systems on different
+word classes and to take into account the source
+words that were actually translated. We focus this
+evaluation on the classes of content words (nouns,
+adjectives, verbs and adverbs) on which WSD had
+an important coverage. Our aim is, first, to ex-
+plore how these words are handled by a WSD-
+informed SMT system (the system using the lo-
+cal language models) compared to the baseline sys-
+tem that does not exploit any semantic informa-
+tion; and, second, to investigate whether their dis-
+ambiguation influences the translation of surround-
+ing non-disambiguated words.
+Table 3 reports the percentage of words cor-
+rectly translated by the semantically-informed sys-
+tem within each content word class: consistent gains
+in translation quality are observed for all parts-of-
+speech compared to the baseline, and the best results
+are obtained for nouns.
+7
+baseline WSD
+w?2 w?1 w+1 w+2 w?2 w?1 w+1 w+2
+Nouns 64.01 68.69 75.17 64.6 65.47 70.46 76.3 66.6
+Verbs 68.67 67.58 63 62.19 69.98 68.89 64.85 64.25
+Adjectives 63.1 64.39 64.28 66.55 64.09 65.65 64.76 69.33
+Adverbs 70.8 69.44 68.67 66.38 71 71.21 70 67.22
+Table 4: Impact of WSD prediction on the surrounding words
+Table 4 shows how the words surrounding a dis-
+ambiguated word w (noun, verb, adjective or adverb)
+in the text are handled by the two systems. More
+precisely, we look at the translation of words in the
+immediate context of w, i.e. at positions w?2, w?1,
+w+1 and w+2. The left column reports the percent-
+age of correct translations produced by the baseline
+system (without disambiguation) for words in these
+positions; the right column shows the positive im-
+pact that the disambiguation of a word has on the
+translation of its neighbors. Note that this time we
+look at disambiguated words and their context with-
+out evaluating the correctness of the WSD predic-
+tions. Nevertheless, even in this case, consistent
+gains are observed when WSD information is ex-
+ploited. For instance, when a noun is disambiguated,
+70.46% and 76.3% of the immediately preceding
+(w?1) and following (w+1) words, respectively, are
+correctly translated, versus 68.69% and 75.17% of
+correct translations produced by the baseline system.
+6 Conclusion and future work
+The preliminary results presented in this paper on
+integrating cross-lingual WSD into a state-of-the-
+art SMT system are encouraging. Both adopted ap-
+proaches (n-best rescoring and local language mod-
+eling) benefit from the predictions of the proposed
+cross-lingual WSD classifier. The contrastive eval-
+uation results further show that WSD improves not
+only the translation of disambiguated words, but also
+the translation of neighboring words in the input
+texts.
+We consider various ways for extending this
+work. First, future experiments will involve the use
+of more abstract representations of senses than indi-
+vidual translations, by applying a cross-lingual word
+sense induction method to the training corpus prior
+to disambiguation. We will also experiment with
+disambiguation at the level of lemmas, to reduce
+sparseness issues, and with different ways for han-
+dling lemmatized predictions by the SMT systems.
+Furthermore, we intend to extend the coverage of the
+WSD method by exploring other filtering methods
+for cleaning the alignment lexicons, and by address-
+ing the disambiguation of words of all PoS.
+Acknowledgments
+This work was partly funded by the European Union
+under the FP7 project META-NET (T4ME), Con-
+tract No. 249119, and by OSEO, the French agency
+for innovation, as part of the Quaero Program.
+References
+Marianna Apidianaki. 2008. Translation-oriented Word
+Sense Induction Based on Parallel Corpora. In Pro-
+ceedings of the Sixth International Conference on Lan-
+guage Resources and Evaluation (LREC?08), Mar-
+rakech, Morocco.
+Marianna Apidianaki. 2009. Data-driven Semantic
+Analysis for Multilingual WSD and Lexical Selection
+in Translation. In Proceedings of the 12th Confer-
+ence of the European Chapter of the Association for
+Computational Linguistics (EACL-09), pages 77?85,
+Athens, Greece.
+Marine Carpuat and Dekai Wu. 2005. Word Sense Dis-
+ambiguation vs. Statistical Machine Translation. In
+Proceedings of the 43rd Annual Meeting of the Asso-
+ciation for Computational Linguistics (ACL?05), pages
+387?394, Ann Arbor, Michigan.
+Marine Carpuat and Dekai Wu. 2007. Improving Sta-
+tistical Machine Translation using Word Sense Disam-
+biguation. In Proceedings of the Joint EMNLP-CoNLL
+Conference, pages 61?72, Prague, Czech Republic.
+Yee Seng Chan, Hwee Tou Ng, and David Chiang. 2007.
+Word Sense Disambiguation Improves Statistical Ma-
+chine Translation. In Proceedings of the 45th Annual
+Meeting of the Association for Computational Linguis-
+tics (ACL-07), pages 33?40, Prague, Czech Republic.
+8
+Josep Maria Crego, Aure?lien Max, and Franc?ois Yvon.
+2010. Local lexical adaptation in Machine Transla-
+tion through triangulation: SMT helping SMT. In
+Proceedings of the 23rd International Conference on
+Computational Linguistics (Coling 2010), pages 232?
+240, Beijing, China.
+Gregory Grefenstette. 1994. Explorations in Automatic
+Thesaurus Discovery. Kluwer Academic Publishers,
+Norwell, MA.
+Rejwanual Haque, Sudip Naskar, Yanjun Ma, and Andy
+Way. 2009. Using supertags as source language con-
+text in SMT. In Proceedings of the 13th Annual Meet-
+ing of the European Association for Machine Transla-
+tion (EAMT 2009), pages 234?241, Barcelona, Spain.
+Rejwanul Haque, Sudip Kumar Naskar, Antal Van Den
+Bosch, and Andy Way. 2010. Supertags as source lan-
+guage context in hierarchical phrase-based SMT. In
+Proceedings of AMTA 2010: The Ninth Conference of
+the Association for Machine Translation in the Ameri-
+cas, pages 210?219, Denver, CO.
+N. Ide and Y. Wilks. 2007. Making Sense About Sense.
+In E. Agirre and P. Edmonds, editors, Word Sense Dis-
+ambiguation, Algorithms and Applications, pages 47?
+73. Springer.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran, Richard
+Zens, Chris Dyer, Ondrej Bojar, Alexandra Con-
+stantin, and Evan Herbst. 2007. Moses: Open source
+toolkit for statistical machine translation. In Proceed-
+ings of the 45th Annual ACL Meeting, Companion Vol-
+ume Proceedings of the Demo and Poster Sessions,
+pages 177?180, Prague, Czech Republic.
+Els Lefever and Veronique Hoste. 2010. SemEval-2010
+Task 3: Cross-lingual Word Sense Disambiguation.
+In Proceedings of the 5th International Workshop on
+Semantic Evaluations (SemEval-2), ACL 2010, pages
+15?20, Uppsala, Sweden.
+Arne Mauser, Sas?a Hasan, and Hermann Ney. 2009. Ex-
+tending statistical machine translation with discrimi-
+native and trigger-based lexicon models. In Proceed-
+ings of the Conference on Empirical Methods in Nat-
+ural Language Processing (EMNLP), pages 210?217,
+Singapore, August.
+Aure?lien Max, Josep Maria Crego, and Franc?ois Yvon.
+2010. Contrastive Lexical Evaluation of Machine
+Translation. In Proceedings of the Seventh Interna-
+tional Conference on Language Resources and Evalu-
+ation (LREC?10), Valletta, Malta.
+Rada Mihalcea, Ravi Sinha, and Diana McCarthy. 2010.
+SemEval-2010 Task 2: Cross-Lingual Lexical Sub-
+stitution. In Proceedings of the 5th International
+Workshop on Semantic Evaluations (SemEval-2), ACL
+2010, pages 9?14, Uppsala, Sweden.
+Franz Josef Och and Hermann Ney. 2003. A Systematic
+Comparison of Various Statistical Alignment Models.
+Computational Linguistics, 29(1):19?51.
+Franz Josef Och, Daniel Gildea, Sanjeev Khudanpur,
+Anoop Sarkar, Kenji Yamada, Alex Fraser, Shankar
+Kumar, Libin Shen, David Smith, Katherine Eng,
+Viren Jain, Zhen Jin, and Dragomir Radev. 2004. A
+smorgasbord of features for statistical machine transla-
+tion. In Proceedings of HLT-NAACL 2004, pages 161?
+168, Boston, Massachusetts, USA.
+Alexandre Patry and Philippe Langlais. 2011. Going be-
+yond word cooccurrences in global lexical selection
+for statistical machine translation using a multilayer
+perceptron. In Proceedings of 5th International Joint
+Conference on Natural Language Processing, pages
+658?666, Chiang Mai, Thailand, November.
+Helmut Schmid. 1994. Probabilistic Part-of-Speech Tag-
+ging Using Decision Trees. In Proceedings of the In-
+ternational Conference on New Methods in Language
+Processing, pages 44?49, Manchester, UK.
+Lucia Specia, Baskaran Sankaran, and Maria Das
+Grac?as Volpe Nunes. 2008. n-Best Reranking for the
+Efficient Integration of Word Sense Disambiguation
+and Statistical Machine Translation. In Proceedings of
+the 9th international conference on Computational lin-
+guistics and intelligent text processing, CICLing?08,
+pages 399?410, Berlin, Heidelberg. Springer-Verlag.
+Lucia Specia. 2006. A Hybrid Relational Approach for
+WSD - First Results. In Proceedings of the COL-
+ING/ACL 2006 Student Research Workshop, pages 55?
+60, Sydney, Australia.
+David Vickrey, Luke Biewald, Marc Teyssier, and
+Daphne Koller. 2005. Word-Sense Disambiguation
+for Machine Translation. In Proceedings of the Joint
+Conference on Human Language Technology / Empir-
+ical Methods in Natural Language Processing (HLT-
+EMNLP), pages 771?778, Vancouver, Canada.
+9

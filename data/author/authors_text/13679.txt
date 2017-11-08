@@ -1,0 +1,4313 @@
+203
+204
+205
+206
+207
+208
+209
+210
+Proceedings of the ACL 2007 Demo and Poster Sessions, pages 209?212,
+Prague, June 2007. c?2007 Association for Computational Linguistics
+HunPos ? an open source trigram tagger
+Pe?ter Hala?csy
+Budapest U. of Technology
+MOKK Media Research
+H-1111 Budapest, Stoczek u 2
+peter@halacsy.com
+Andra?s Kornai
+MetaCarta Inc.
+350 Massachusetts Ave.
+Cambridge MA 02139
+andras@kornai.com
+Csaba Oravecz
+Hungarian Academy of Sciences
+Institute of Linguistics
+H-1068 Budapest, Benczur u. 33.
+oravecz@nytud.hu
+Abstract
+In the world of non-proprietary NLP soft-
+ware the standard, and perhaps the best,
+HMM-based POS tagger is TnT (Brants,
+2000). We argue here that some of the crit-
+icism aimed at HMM performance on lan-
+guages with rich morphology should more
+properly be directed at TnT?s peculiar li-
+cense, free but not open source, since it is
+those details of the implementation which
+are hidden from the user that hold the key
+for improved POS tagging across a wider
+variety of languages. We present HunPos1,
+a free and open source (LGPL-licensed) al-
+ternative, which can be tuned by the user to
+fully utilize the potential of HMM architec-
+tures, offering performance comparable to
+more complex models, but preserving the
+ease and speed of the training and tagging
+process.
+0 Introduction
+Even without a formal survey it is clear that
+TnT (Brants, 2000) is used widely in research
+labs throughout the world: Google Scholar shows
+over 400 citations. For research purposes TnT is
+freely available, but only in executable form (closed
+source). Its greatest advantage is its speed, impor-
+tant both for a fast tuning cycle and when dealing
+with large corpora, especially when the POS tag-
+ger is but one component in a larger information re-
+trieval, information extraction, or question answer-
+1http://mokk.bme.hu/resources/hunpos/
+ing system. Though taggers based on dependency
+networks (Toutanova et al, 2003), SVM (Gime?nez
+and Ma`rquez, 2003), MaxEnt (Ratnaparkhi, 1996),
+CRF (Smith et al, 2005), and other methods may
+reach slightly better results, their train/test cycle is
+orders of magnitude longer.
+A ubiquitous problem in HMM tagging originates
+from the standard way of calculating lexical prob-
+abilities by means of a lexicon generated during
+training. In highly inflecting languages considerably
+more unseen words will be present in the test data
+than in more isolating languages, which largely ac-
+counts for the drop in the performance of n-gram
+taggers when moving away from English. To mit-
+igate the effect one needs a morphological dictio-
+nary (Hajic? et al, 2001) or a morphological analyzer
+(Hakkani-Tu?r et al, 2000), but if the implementation
+source is closed there is no handy way to incorporate
+morphological knowledge in the tagger.
+The paper is structured as follows. In Section 1
+we present our own system, HunPos, while in Sec-
+tion 2 we describe some of the implementation de-
+tails of TnT that we believe influence the perfor-
+mance of a HMM based tagging system. We eval-
+uate the system and compare it to TnT on a variety
+of tasks in Section 3. We don?t necessarily consider
+HunPos to be significantly better than TnT, but we
+argue that we could reach better results, and so could
+others coming after us, because the system is open
+to explore all kinds of fine-tuning strategies. Some
+concluding remarks close the paper in Section 4.
+209
+1 Main features of HunPos
+HunPos has been implemented in OCaml, a high-
+level language which supports a succinct, well-
+maintainable coding style. OCaml has a high-
+performance native-code compiler (Doligez et al,
+2004) that can produce a C library with the speed
+of a C/C++ implementation.
+On the whole HunPos is a straightforward trigram
+system estimating the probabilities
+argmax
+t1...tT
+P (tT+1|tT )
+T
+?
+i=1
+P (ti|ti?1, ti?2)P (wi|ti?1, ti)
+for a given sequence of words w1 . . . wT (the addi-
+tional tags t?1, t0, and tT+1 are for sentence bound-
+ary markers). Notice that unlike traditional HMM
+models, we estimate emission/lexicon probabilities
+based on the current tag and the previous tag as well.
+As we shall see in the next Section, using tag bi-
+grams to condition the emissions can lead to as much
+as 10% reduction in the error rate. (In fact, HunPos
+can handle a context window of any size, but on the
+limited training sets available to us increasing this
+parameter beyond 2 gives no further improvement.)
+As for contextualized lexical probabilities, our ex-
+tension is very similar to Banko and Moore (2004)
+who use P (wi|ti?1, ti, ti+1) lexical probabilities
+and found, on the Penn Treebank, that ?incorporat-
+ing more context into an HMM when estimating lex-
+ical probabilities improved accuracy from 95.87% to
+96.59%?. One difficulty with their approach, noted
+by Banko and Moore (2004), is the treatment of un-
+seen words: their method requires a full dictionary
+that lists what tags are possible for each word. To
+be sure, for isolating languages such information is
+generally available from machine readable dictio-
+naries which are often large enough to make the out
+of vocabulary problem negligible. But in our situ-
+ation this amounts to idealized morphological ana-
+lyzers (MA) that have their stem list extended so as
+to have no OOV on the test set.
+The strong side of TnT is its suffix guessing algo-
+rithm that is triggered by unseen words. From the
+training set TnT builds a trie from the endings of
+words appearing less than n times in the corpus, and
+memorizes the tag distribution for each suffix.2 A
+2The parameter n cannot be externally set ? it is docu-
+mented as 10 but we believe it to be higher.
+clear advantage of this approach is the probabilis-
+tic weighting of each label, however, under default
+settings the algorithm proposes a lot more possible
+tags than a morphological analyzer would. To facil-
+itate the use of MA, HunPos has hooks to work with
+a morphological analyzer (lexicon), which might
+still leave some OOV items. As we shall see in
+Section 3, the key issue is that for unseen words
+the HMM search space may be narrowed down to
+the alternatives proposed by this module, which not
+only speeds up search but also very significantly
+improves precision. That is, for unseen words the
+MA will generate the possible labels, to which the
+weights are assigned by the suffix guessing algo-
+rithm.
+2 Inside TnT
+Here we describe, following the lead of (Jurish,
+2003), some non-trivial features of TnT sometimes
+only hinted at in the user guide, but clearly evident
+from its behavior on real and experimentally ad-
+justed corpora. For the most part, these features are
+clever hacks, and it is unfortunate that neither Brants
+(2000) nor the standard HMM textbooks mention
+them, especially as they often yield more signifi-
+cant error reduction than the move from HMM to
+other architectures. Naturally, these features are also
+available in HunPos.
+2.1 Cardinals
+For the following regular expressions TnT learns the
+tag distribution of the training corpus separately to
+give more reliable estimates for open class items like
+numbers unseen during training:
+?[0-9]+$
+?[0-9]+\.$
+?[0-9.,:-]+[0-9]+$
+?[0-9]+[a-zA-Z]{1,3}$
+(The regexps are only inferred ? we haven?t at-
+tempted to trace the execution.) After this, at test
+time, if the word is not found in the lexicon (nu-
+merals are added to the lexicon like all other items)
+TnT checks whether the unseen word matches some
+of the regexps, and uses the distribution learned for
+this regexp to guess the tag.
+210
+2.2 Upper- and lowercase
+The case of individual words may carry relevant in-
+formation for tagging, so it is well worth preserving
+the uppercase feature for items seen as such in train-
+ing. For unseen words TnT builds two suffix tries:
+if the word begins with uppercase one trie is used,
+for lowercase words the other trie is applied. The
+undocumented trick is to try to lookup the word in
+sentence initial position from the training lexicon in
+its lowercase variant, which contributes noticeably
+to the better performance of the system.
+3 Evaluation
+English For the English evaluation we used the
+WSJ data from Penn Treebank II. We extracted sen-
+tences from the parse trees. We split data into train-
+ing and test set in the standard way (Table 1).
+Set Sect?ns Sent. Tokens Unseen
+Train 0-18 38,219 912,344 0
+Test 22-24 5,462 129,654 2.81%
+Table 1: Data set splits used for English
+As Table 2 shows HunPos achieves performance
+comparable to TnT for English. The increase in the
+emission order clearly improves this performance.
+seen unseen overall
+TnT 96.77% 85.91% 96.46%
+HunPos 1 96.76% 86.90% 96.49%
+HunPos 2 96.88% 86.13% 96.58%
+Table 2: WSJ tagging accuracy, HunPos with first
+and second order emission/lexicon probabilities
+If we follow Banko and Moore (2004) and con-
+struct a full (no OOV) morphological lexicon from
+the tagged version of the test corpus, we obtain
+96.95% precision where theirs was 96.59%. For
+words seen, precision improves by an entirely neg-
+ligible 0.01%, but for unseen words it improves by
+10%, from 86.13% to 98.82%. This surprising result
+arises from the fact that there are a plenty of unam-
+biguous tokens (especially the proper names that are
+usually unseen) in the test corpus.
+What this shows is not just that morphology mat-
+ters (this is actually not that visible for English), but
+that the difference between systems can only be ap-
+preciated once the small (and scantily documented)
+tricks are factored out. The reason why Banko and
+Moore (2004) get less than HunPos is not because
+their system is inherently worse, but rather because
+it lacks the engineering hacks built into TnT and
+HunPos.
+Hungarian We evaluated the different models
+by tenfold cross-validation on the Szeged Corpus
+(Csendes et al, 2004), with the relevant data in pre-
+sented Table 3.
+Set Sent. Tokens Unseens OOV
+Train 63,075 1,044,914 0 N.A
+Test 7,008 116,101 9.59% 5.64%
+Table 3: Data set splits used for Hungarian.
+Note that the proportion of unseen words, nearly
+10%, is more than three times higher than in En-
+glish. Most of these words were covered by the mor-
+phological analyzer (Tro?n et al, 2006) but still 28%
+of unseen words were only guessed. However, this
+is just 2.86% of the whole corpus, in the magnitude
+similar to English.
+morph lex order seen unseen overall
+no
+1 98.34% 88.96% 97.27%
+2 98.58% 87.97% 97.40%
+yes 1 98.32% 96.01% 98.03%2 98.56% 95.96% 98.24%
+Table 4: Tagging accuracy for Hungarian of HunPos
+with and without morphological lexicon and with
+first and second order emission/lexicon probabili-
+ties.
+On the same corpus TnT had 97.42% and Hala?csy
+et al (2006) reached 98.17% with a MaxEnt tag-
+ger that used the TnT output as a feature. HunPos
+gets as good performance in one minute as this Max-
+Ent model which took three hours to go through the
+train/test cycle.
+4 Concluding remarks
+Though there can be little doubt that the ruling sys-
+tem of bakeoffs actively encourages a degree of one-
+upmanship, our paper and our software are not of-
+fered in a competitive spirit. As we said at the out-
+211
+set, we don?t necessarily believe HunPos to be in any
+way better than TnT, and certainly the main ideas
+have been pioneered by DeRose (1988), Church
+(1988), and others long before this generation of
+HMM work. But to improve the results beyond what
+a basic HMM can achieve one needs to tune the sys-
+tem, and progress can only be made if the experi-
+ments are end to end replicable.
+There is no doubt many other systems could be
+tweaked further and improve on our results ? what
+matters is that anybody could now also tweak Hun-
+Pos without any restriction to improve the state of
+the art. Such tweaking can bring surprising results,
+e.g. the conclusion, strongly supported by the results
+presented here, that HMM tagging is actually quite
+competitive with, and orders of magnitude faster
+than, the current generation of learning algorithms
+including SVM and MaxEnt. No matter how good
+TnT was to begin with, the closed source has hin-
+dered its progress to the point that inherently clum-
+sier, but better tweakable algorithms could overtake
+HMMs, a situation that HunPos has now hopefully
+changed at least for languages with more complex
+morphologies.
+Acknowledgement
+We thank Thorsten Brants for TnT, and Gyo?rgy
+Gyepesi for constant help and encouragement.
+References
+Michele Banko and Robert C. Moore. 2004. Part of
+speech tagging in context. In COLING ?04: Proceed-
+ings of the 20th international conference on Compu-
+tational Linguistics, page 556, Morristown, NJ, USA.
+Association for Computational Linguistics.
+Thorsten Brants. 2000. TnT ? a statistical part-of-speech
+tagger. In Proceedings of the Sixth Applied Natural
+Language Processing Conference (ANLP-2000), Seat-
+tle, WA.
+Kenneth Ward Church. 1988. A stochastic parts program
+and noun phrase parser for unrestricted text. In Pro-
+ceedings of the second conference on Applied natural
+language processing, pages 136?143, Morristown, NJ,
+USA. Association for Computational Linguistics.
+Do?ra Csendes, Ja?no?s Csirik, and Tibor Gyimo?thy. 2004.
+The Szeged Corpus: A POS tagged and syntacti-
+cally annotated Hungarian natural language corpus.
+In Karel Pala Petr Sojka, Ivan Kopecek, editor, Text,
+Speech and Dialogue: 7th International Conference,
+TSD, pages 41?47.
+Steven J. DeRose. 1988. Grammatical category disam-
+biguation by statistical optimization. Computational
+Linguistics, 14:31?39.
+Damien Doligez, Jacques Garrigue, Didier Re?my, and
+Je?ro?me Vouillon, 2004. The Objective Caml system.
+Institut National de Recherche en Informatique et en
+Automatique.
+Jesu?s Gime?nez and Llu??s Ma`rquez. 2003. Fast and accu-
+rate part-of-speech tagging: The svm approach revis-
+ited. In Proceedings of RANLP, pages 153?163.
+Jan Hajic?, Pavel Krbec, Karel Oliva, Pavel Kve?ton?, and
+Vladim??r Petkevic?. 2001. Serial combination of rules
+and statistics: A case study in Czech tagging. In
+Proceedings of the 39th Association of Computational
+Linguistics Conference, pages 260?267, Toulouse,
+France.
+Dilek Z. Hakkani-Tu?r, Kemal Oflazer, and Go?khan Tu?r.
+2000. Statistical morphological disambiguation for
+agglutinative languages. In Proceedings of the 18th
+conference on Computational linguistics, pages 285?
+291, Saarbru?cken, Germany.
+Pe?ter Hala?csy, Andra?s Kornai, Csaba Oravecz, Viktor
+Tro?n, and Da?niel Varga. 2006. Using a morphological
+analyzer in high precision POS tagging of Hungarian.
+In Proceedings of LREC 2006, pages 2245?2248.
+Bryan Jurish. 2003. A hybrid approach to part-of-speech
+tagging. Technical report, Berlin-Brandenburgische
+Akademie der Wissenschaften.
+Adwait Ratnaparkhi. 1996. A maximum entropy model
+for part-of-speech tagging. In Karel Pala Petr Sojka,
+Ivan Kopecek, editor, Proceedings of the Conference
+on Empirical Methods in Natural Language Process-
+ing, pages 133?142, University of Pennsylvania.
+Noah A. Smith, David A. Smith, and Roy W. Tromble.
+2005. Context-based morphological disambiguation
+with random fields. In Proceedings of the Conference
+on Human Language Technology and Empirical Meth-
+ods in Natural Language Processing, Vancouver.
+Kristina Toutanova, Dan Klein, Christopher Manning,
+and Yoram Singer. 2003. Feature-rich part-of-speech
+tagging with a cyclic dependency network. In Pro-
+ceedings of HLT-NAACL, pages 252?259.
+Viktor Tro?n, Pe?ter Hala?csy, Pe?ter Rebrus, Andra?s Rung,
+Pe?ter Vajda, and Eszter Simon. 2006. Morphdb.hu:
+Hungarian lexical database and morphological gram-
+mar. In Proceedings of LREC 2006, pages 1670?1673.
+212
+Hunmorph: open source word analysis
+Viktor Tro?n
+IGK, U of Edinburgh
+2 Buccleuch Place
+EH8 9LW Edinburgh
+v.tron@ed.ac.uk
+Gyo?rgy Gyepesi
+K-PRO Ltd.
+H-2092 Budakeszi
+Villa?m u. 6.
+ggyepesi@kpro.hu
+Pe?ter Hala?csy
+Centre of Media Research and Education
+Stoczek u. 2
+H-1111 Budapest
+hp@mokk.bme.hu
+Andra?s Kornai
+MetaCarta Inc.
+350 Massachusetts Avenue
+Cambridge MA 02139
+andras@kornai.com
+La?szlo? Ne?meth
+CMRE
+Stoczek u. 2
+H-1111 Budapest
+nemeth@mokk.bme.hu
+Da?niel Varga
+CMRE
+Stoczek u. 2
+H-1111 Budapest
+daniel@mokk.bme.hu
+Abstract
+Common tasks involving orthographic
+words include spellchecking, stemming,
+morphological analysis, and morpho-
+logical synthesis. To enable signifi-
+cant reuse of the language-specific re-
+sources across all such tasks, we have
+extended the functionality of the open
+source spellchecker MySpell, yield-
+ing a generic word analysis library, the
+runtime layer of the hunmorph toolkit.
+We added an offline resource manage-
+ment component, hunlex, which com-
+plements the efficiency of our runtime
+layer with a high-level description lan-
+guage and a configurable precompiler.
+0 Introduction
+Word-level analysis and synthesis problems range
+from strict recognition and approximate matching
+to full morphological analysis and generation. Our
+technology is predicated on the observation that
+all of these problems are, when viewed algorith-
+mically, very similar: the central problem is to
+dynamically analyze complex structures derived
+from some lexicon of base forms. Viewing word
+analysis routines as a unified problem means shar-
+ing the same codebase for a wider range of tasks, a
+design goal carried out by finding the parameters
+which optimize each of the analysis modes inde-
+pendently of the language-specific resources.
+The C/C++ runtime layer of our toolkit, called
+hunmorph, was developed by extending the code-
+base of MySpell, a reimplementation of the well-
+known Ispell spellchecker. Our technology, like
+the Ispell family of spellcheckers it descends
+from, enforces a strict separation between the
+language-specific resources (known as dictionary
+and affix files), and the runtime environment,
+which is independent of the target natural lan-
+guage.
+Figure 1: Architecture
+Compiling accurate wide coverage machine-
+readable dictionaries and coding the morphology
+of a language can be an extremely labor-intensive
+task, so the benefit expected from reusing the
+language-specific input database across tasks can
+hardly be overestimated. To facilitate this resource
+sharing and to enable systematic task-dependent
+optimizations from a central lexical knowledge
+base, we designed and implemented a powerful of-
+fline layer we call hunlex. Hunlex offers an easy
+to use general framework for describing the lexi-
+con and morphology of any language. Using this
+description it can generate the language-specific
+aff/dic resources, optimized for the task at hand.
+The architecture of our toolkit is depicted in Fig-
+ure 1. Our toolkit is released under a permissive
+LGPL-style license and can be freely downloaded
+from mokk.bme.hu/resources/hunmorph.
+The rest of this paper is organized as follows.
+Section 1 is about the runtime layer of our toolkit.
+We discuss the algorithmic extensions and imple-
+mentational enhancements in the C/C++ runtime
+layer over MySpell, and also describe the newly
+created Java port jmorph. Section 2 gives an
+overview of the offline layer hunlex. In Section 3
+we consider the free open source software alterna-
+tives and offer our conclusions.
+1 The runtime layer
+Our development is a prime example of code
+reuse, which gives open source software devel-
+opment most of its power. Our codebase is a
+direct descendant of MySpell, a thread-safe C++
+spell-checking library by Kevin Hendricks, which
+descends from Ispell Peterson (1980), which in
+turn goes back to Ralph Gorin?s spell (1971),
+making it probably the oldest piece of linguistic
+software that is still in active use and development
+(see fmg-www.cs.ucla.edu/fmg-members/
+geoff/ispell.html).
+The key operation supported by this codebase is
+affix stripping. Affix rules are specified in a static
+resource (the aff file) by a sequence of conditions,
+an append string, and a strip string: for example,
+in the rule forming the plural of body the strip
+string would be y, and the affix string would be
+ies. The rules are reverse applied to complex input
+wordforms: after the append string is stripped and
+the edge conditions are checked, a pseudo-stem is
+hypothesized by appending the strip string to the
+stem which is then looked up in the base dictio-
+nary (which is the other static resource, called the
+dic file).
+Lexical entries (base forms) are all associated
+with sets of affix flags, and affix flags in turn are
+associated to sets of affix rules. If the hypothe-
+sized base is found in the dictionary after the re-
+verse application of an affix rule, the algorithm
+checks whether its flags contain the one that the
+affix rule is assigned to. This is a straight table-
+driven approach, where affix flags can be inter-
+preted directly as lexical features that license en-
+tire subparts of morphological paradigms. To pick
+applicable affix rules efficiently, MySpell uses a
+fast indexing technique to check affixation condi-
+tions.
+In theory, affix-rules should only specify gen-
+uine prefixes and suffixes to be stripped before lex-
+ical lookup. But in practice, for languages with
+rich morphology, the affix stripping mechanism is
+(ab)used to strip complex clusters of affix morphs
+in a single step. For instance, in Hungarian, due
+to productive combinations of derivational and in-
+flectional affixation, a single nominal base can
+yield up to a million word forms. To treat all
+these combinations as affix clusters, legacy ispell
+resources for Hungarian required so many com-
+bined affix rule entries that its resource file sizes
+were not manageable.
+To solve this problem we extended the affix
+stripping technique to a multistep method: after
+stripping an affix cluster in step i, the resulting
+pseudo-stem can be stripped of affix clusters in
+step i+ 1. Restrictions of rule application are
+checked with the help of flags associated to affixes
+analogously to lexical entries: this only required
+a minor modification of the data structure coding
+affix entries and a recursive call for affix stripping.
+By cross-checking flags of prefixes on the suffix
+(as opposed to the stem only), simultaneous pre-
+fixation and suffixation can be made interdepen-
+dent, extending the functionality to describe cir-
+cumfixes like German participle ge+t, or Hungar-
+ian superlative leg+bb, and in general provide the
+correct handling of prefix-suffix dependencies like
+English undrinkable (cf. *undrink), see Ne?meth
+et al (2004) for more details.
+Due to productive compounding in a lot of lan-
+guages, proper handling of composite bases is a
+feature indispensable for achieving wide coverage.
+Ispell incorporates the possibility of specifying
+lexical restrictions on compounding implemented
+as switches in the base dictionary. However, the
+algorithm allows any affixed form of the bases that
+has the relevant switch to be a potential member
+of a compound, which proves not to be restrictive
+enough. We have improved on this by the intro-
+duction of position-sensitive compounding. This
+means that lexical features can specify whether
+a base or affix can occur as leftmost, rightmost
+or middle constituent in compounds and whether
+they can only appear in compounds. Since these
+features can also be specified on affixes, this pro-
+vides a welcome solution to a number of resid-
+ual problems hitherto problematic for open-source
+spellcheckers. In some Germanic languages, ?fo-
+gemorphemes?, morphemes which serve linking
+compound constituents can now be handled easily
+by allowing position specific compound licensing
+on the foge-affixes. Another important example is
+the German common noun: although it is capital-
+ized in isolation, lowercase variants should be ac-
+cepted when the noun is a compound constituent.
+By handling lowercasing as a prefix with the com-
+pound flag enabled, this phenomenon can be han-
+dled in the resource file without resort to language
+specific knowledge hard-wired in the code-base.
+1.1 From spellchecking to morphological
+analysis
+We now turn to the extensions of the MySpell
+algorithm that were required to equip hunmorph
+with stemming and morphological analysis func-
+tionality. The core engine was extended with an
+optional output handling interface that can process
+arbitrary string tags associated with the affix-rules
+read from the resources. Once this is done, sim-
+ply outputting the stem found at the stage of dic-
+tionary lookup already yields a stemmer. In mul-
+tistep affix stripping, registering output informa-
+tion associated with the rules that apply renders
+the system capable of morphological analysis or
+other word annotation tasks. Thus the processing
+of output tags becomes a mode-dependent param-
+eter that can be:
+? switched off (spell-checking)
+? turned on only for tag lookup in the dictio-
+nary (simple stemming)
+? turned on fully to register tags with all rule-
+applications (morphological analysis)
+The single most important algorithmic aspect that
+distinguishes the recognition task from analysis
+is the handling of ambiguous structures. In the
+original MySpell design, identical bases are con-
+flated and once their switch-set licensing affixes
+are merged, there is no way to tell them apart.
+The correct handling of homonyms is crucial for
+morphological analysis, since base ambiguities
+can sometimes be resolved by the affixes. In-
+terestingly, our improvement made it possible to
+rule out homonymous bases with incorrect simul-
+taneous prefixing and suffixing such as English
+out+number+?s. Earlier these could be handled
+only by lexical pregeneration of relevant forms or
+duplication of affixes.
+Most importantly, ambiguity arises in relation
+to the number of analyses output by the system.
+While with spell-checking the algorithm can ter-
+minate after the first analysis found, performing
+an exhaustive search for all alternative analyses is
+a reasonable requirement in morphological analy-
+sis mode as well as in some stemming tasks. Thus
+the exploration of the search space also becomes
+an active parameter in our enhanced implementa-
+tion of the algorithm:
+? search until the first correct analysis
+? search restricted multiple analyses (e.g., dis-
+abling compounds)
+? search all alternative analyses
+Search until the first analysis is a functionality for
+recognizers used for spell-checking and stemming
+for accelerated document indexing. Preemption
+of potential compound analyses by existing lexi-
+cal bases serves as a general way of filtering out
+spurious ambiguities when a reduction is required
+in the space of alternative analyses. In these cases,
+frequent compounds which trick the analyzer can
+be precompiled to the lexicon. Finally, there is a
+possibility to give back a full set of possible anal-
+yses. This output then can be passed to a tagger
+that disambiguates among the candidate analyses.
+Parameters can be used that guide the search (such
+as ?do lexical lookup first at all stages? or ?strip the
+shortest affix first?), which yield candidate rank-
+ings without the use of numerical weights or statis-
+tics. These rankings can be used as disambigua-
+tion heuristics based on a general idea of blocking
+(e.g., Times would block an analysis of time+s).
+All further parametrization is managed offline by
+the resource compiler layer, see Section 2.
+1.2 Reimplementing the runtime layer
+In our efforts to gear up the MySpell codebase
+to a fully functional word analysis library we suc-
+cessfully identified various resource-related, algo-
+rithmic and implementational bottlenecks of the
+affix-rule based technology. With these lessons
+learned, a new project has been launched in or-
+der to provide an even more flexible and efficient
+open source runtime layer. A principled object-
+oriented refactorization of the same basic algo-
+rithm described above has already been imple-
+mented in Java. This port, called jmorph also uses
+the aff/dic resource formats.
+In jmorph, various algorithmic options guiding
+the search (shortest/longest matching affix) can
+be controlled for each individual rule. The im-
+plementation keeps track of affix and compound
+matches checking conditions only once for a given
+substring and caching partial results. As a conse-
+quence, it ends up being measurably faster than
+the C++ implementation with the same resources.
+The main loop of jmorph is driven by config-
+uring consumers, i.e., objects which monitor the
+recursive step that is running. For example the
+analysis of the form besze?desek ?talkative.PLUR?
+begins by inspecting the global configuration of
+the analysis: this initial consumer specifies how
+many analyses, and what kind, need to be found.
+In Step 1, the initial consumer finds the rule that
+strips ek with stem besze?des, builds a consumer
+that can apply this rule to the output of the analy-
+sis returned by the next consumer, and launches
+the next step with this consumer and stem. In
+Step 2, this consumer finds the rule stripping es
+with stem besze?d, which is found in the lexicon.
+besze?d is not just a string, it is a complete lexi-
+cal object which lists the rules that can apply to
+it and all the homonyms. The consumer creates a
+new analysis that reflects that besze?des is formed
+from besze?d by suffixing es (a suffix object), and
+passes this back to its parent consumer, which ver-
+ifies whether the ek suffixation rule is applicable.
+If not, the Step 1 consumer requests further anal-
+yses from the Step 2 consumer. If, however, the
+answer is positive, the Step 1 consumer returns its
+analysis to the Step 0 (initial) consumer, which de-
+cides whether further analyses are needed.
+In terms of functionality, there are a number of
+differences between the Java and the C++ variants.
+jmorph records the full parse tree of rule appli-
+cations. By offering various ways of serializing
+this data structure, it allows for more structured
+information in the outputs than would be possible
+by simple concatenation of the tag chunks asso-
+ciated with the rules. Class-based restrictions on
+compounding is implemented and will eventually
+supersede the overgeneralizing position-based re-
+strictions that the C++ variant and our resources
+currently use.
+Two major additional features of jmorph are
+its capability of morphological synthesis as well
+as acting as a guesser (hypothesizing lemmas).
+Synthesis is implemented by forward application
+of affix rules starting with the base. Rules have
+to be indexed by their tag chunks for the search,
+so synthesis introduces the non-trivial problem of
+chunking the input tag string. This is currently im-
+plemented by plug-ins for individual tag systems,
+however, this should ideally be precompiled off-
+line since the space of possible tags is limited.
+2 Resource development and offline
+precompilation
+Due to the backward compatibility of the runtime
+layer with MySpell-style resources, our software
+can be used as a spellchecker and simplistic stem-
+mer for some 50 languages for which MySpell
+resources are available, see lingucomponent.
+openoffice.org/spell dic.html.
+For languages with complex morphology, com-
+piling and maintaining these resources is a painful
+undertaking. Without using a unified framework
+for morphological description and a principled
+method of precompilation, resource developers for
+highly agglutinative languages like Hungarian (see
+magyarispell.sourceforge.net) have to re-
+sort to a maze of scripts to maintain and precom-
+pile aff and dic files. This problem is intolerably
+magnified once morphological tags or additional
+lexicographic information are to be entered in or-
+der to provide resources for the analysis routines
+of our runtime layer.
+The offline layer of our toolkit seeks to remedy
+this by offering a high-level description language
+in which grammar developers can specify rule-
+based morphologies and lexicons (somewhat in
+the spirit of lexc Beesley and Karttunen (2003),
+the frontend to Xerox?s Finite State Toolkit). This
+promises rapid resource development which can
+then be used in various tasks. Once primary re-
+sources are created, hunlex, the offline precom-
+piler can generate aff and dic resources op-
+timized for the runtime layer based on various
+compile-time configurations.
+Figure 2 illustrates the description language
+with a fragment of English morphology describ-
+ing plural formation. Individual rules are sepa-
+rated by commas. The syntax of the rule descrip-
+tions organized around the notion of information
+blocks. Blocks are introduced by keywords (like
+IF:) and allow the encoding of various properties
+of a rule (or a lexical entry), among others speci-
+fying affixation (+es), substitution, character trun-
+cation before affixation (CLIP: 1), regular ex-
+pression matches (MATCH: [^o]o), positive and
+negative lexical feature conditions on application
+(IF: f-v_altern), feature inheritance, output
+(continuation) references (OUT: PL_POSS), out-
+put tags (TAG: "[PLUR]").
+One can specify the rules that can be applied to
+the output of a rule and also one can specify appli-
+cation conditions on the input to the rule. These
+two possibilities allow for many different styles
+of morphological description: one based on in-
+put feature constraints, one based on continuation
+classes (paradigm indexes), and any combination
+between these two extremes. On top of this, reg-
+ular expression matches on the input can also be
+used as conditions on rule application.
+Affixation rules ?grouped together? here under
+PLUR can be thought of as allomorphic rules of the
+plural morpheme. Practically, this allows informa-
+tion about the morpheme shared among variants
+(e.g., morphological tag, recursion level, some
+output information) to be abstracted in a pream-
+ble which then serves as a default for the individ-
+ual rules. Most importantly, the grouping of rules
+PL
+TAG: "[PLUR]"
+OUT: PL_POSS
+# house -> houses
+, +s MATCH: [^shoxy] IF: regular
+# kiss -> kisses
+, +es MATCH: [^c]s IF: regular
+# ...
+# ethics
+, + MATCH: cs IF: regular
+# body -> bodies <C> is a regexp macro
+, +ies MATCH: <C>y CLIP:1 IF: regular
+# zloty -> zlotys
+, +s MATCH: <C>y IF: y-ys
+# macro -> macros
+, +s MATCH: [^o]o IF: regular
+# potato -> potatoes
+, +es MATCH: [^o]o IF: o-oes
+# wife -> wives
+, +ves MATCH: fe CLIP: 2 IF: f-ves
+# leaf -> leaves
+, +ves MATCH: f CLIP: 1 IF: f-ves
+;
+Figure 2: hunlex grammar fragment
+into morphemes serves to index those rules which
+can be referenced in output conditions, For exam-
+ple, in the above the plural morpheme specifies
+that the plural possessive rules can be applied to
+its output (OUT: PL_POSS). This design makes it
+possible to handle some morphosyntactic dimen-
+sions (part of speech) very cleanly separated from
+the conditions regulating the choice of allomorphs,
+since the latter can be taken care of by input fea-
+ture checking and pattern matching conditions of
+rules. The lexicon has the same syntax as the
+grammar only that morphemes stand for lemmas
+and variant rules within the morpheme correspond
+to stem allomorphs.
+Rules with zero affix morph can be used as
+filters that decorate their inputs with features
+based on their orthographic shape or other features
+present. This architecture enables one to let only
+exceptions specify certain features in the lexicon
+while regular words left unspecified are assigned
+a default feature by the filters (see PL_FILTER in
+REGEXP: C [bcdfgklmnprstvwxyz];
+DEFINE: N
+OUT: SG PL_FILTER
+TAG: NOUN
+;
+PL_FILTER
+OUT:
+PL
+FILTER:
+f-ves
+y-ys
+o-oes
+regular
+, DEFAULT:
+regular
+;
+Figure 3: Macros and filters in hunlex
+Figure 3) potentially conditioned the same way as
+any rule application. Feature inheritance is fully
+supported, that is, filters for particular dimensions
+of features (such as the plural filter in Figure 3)
+can be written as independent units. This design
+makes it possible to engineer sophisticated filter
+chains decorating lexical items with various fea-
+tures relevant for their morphological behavior.
+With this at hand, extending the lexicon with a reg-
+ular lexeme just boils down to specifying its base
+and part of speech. On the other hand, indepen-
+dent sets of filter rules make feature assignments
+transparent and maintainable.
+In order to support concise and maintainable
+grammars, the description language also allows
+(potentially recursive) macros to abbreviate arbi-
+trary sets of blocks or regular expressions, illus-
+trated in Figure 3.
+The resource compiler hunlex is a stand-
+alone program written in OCaml which comes
+with a command-line as well as a Makefile as
+toplevel control interface. The internal workings
+of hunlex are as follows.
+As the morphological grammar is parsed by the
+precompiler, rule objects are created. A block is
+read and parsed into functions which each trans-
+form the ?affix-rule? data-structure by enriching its
+internal representation according to the semantic
+content of the block. At the end of each unit,
+the empty rule is passed to the composition of
+block functions to result in a specific rule. Thanks
+to OCaml?s flexibility of function abstraction and
+composition, this design makes it easy to imple-
+ment macros of arbitrary blocks directly as func-
+tions. When the grammar is parsed, rules are ar-
+ranged in a directed (possibly cyclic) graph with
+edges representing possible rule applications as
+given by the output specifications.
+Precompilation proceeds by performing a re-
+cursive closure on this graph starting from lexi-
+cal nodes. Rules are indexed by ?levels? and con-
+tiguous rule-nodes that are on the same level are
+merged along the edges if constraints on rule ap-
+plication (feature and match conditions, etc.) are
+satisfied. These precompiled affix-clusters and
+complex lexical items are to be placed in the aff
+and dic file, respectively.
+Instead of affix merging, closure between rules
+a and b on different levels causes the affix clus-
+ters in the closure of b to be registered as rules in
+a hash and their indexes recorded on a. After the
+entire lexicon is read, these index sets registered
+on rules are considered. The affix cluster rules to
+be output into the affix file are arranged into max-
+imal subsets such that if two output affix cluster
+rules a and b are in the same set, then every item
+or affix to which a can be applied, b can also be
+applied. These sets of affix clusters correspond to
+partial paradigms which each full paradigm either
+includes or is disjoint with. The resulting sets of
+output rules are assigned to a flag and items ref-
+erencing them will specify the appropriate com-
+bination of flags in the output dic and aff file.
+Since equivalent affix cluster rules are conflated,
+the compiled resources are always optimal in the
+following three ways.
+First, the affix file is redundancy free: no two af-
+fix rules have the same form. With hand-coded af-
+fix files this can almost never be guaranteed since
+one is always inclined to group affix rules by lin-
+guistically motivated paradigms thereby possibly
+duplicating entries. A redundancy-free set of affix
+rules will enhance performance by minimizing the
+search space for affixes. Note that conflation of
+identical rules by the runtime layer is not possible
+without reindexing the flags which would be very
+computationally intensive if done at runtime.
+Second, given the redundancy free affix-set,
+maximizing homogeneous rulesets assigned to a
+flag minimizes the number of flags used. Since the
+internal representation of flags depends on their
+number, this has the practical advantage of reduc-
+ing memory requirements for the runtime layer.
+Third, identity of output affix rules is calculated
+relative to mode and configuration settings, there-
+fore identical morphs with different morphologi-
+cal tags will be conflated for recognizers (spell-
+checking) where ambiguity is irrelevant, while for
+analysis it can be kept apart. This is impossible
+to achieve without a precompilation stage. Note
+that finite state transducer-based systems perform
+essentially the same type of optimizations, elimi-
+nating symbol redundancy when two symbols be-
+have the same in every rule, and eliminating state
+redundancy when two states have the exact same
+continuations.
+Though the bulk of the knowledge used by
+spellcheckers, by stemmers, and by morphologi-
+cal analysis and generation tools is shared (how
+affixes combine with stems, what words allow
+compounding), the ideal resources for these var-
+ious tasks differ to some extent. Spellcheck-
+ers are meant to help one to conform to ortho-
+graphic norms and therefore should be error sen-
+sitive, stemmers and morphological analyzers are
+expected to be more robust and error tolerant espe-
+cially towards common violations of standard use.
+Although this seems at first to justify the individ-
+ual efforts one has to invest in tailoring one?s re-
+sources to the task at hand, most of the resource
+specifics are systematic, and therefore allow for
+automatic fine-tuning from a central knowledge
+base. Configuration within hunlex allows the
+specification of various features, among others:
+? selection of registers and degree of normativ-
+ity based on usage qualifiers in the database
+(allows for boosting robustness for analysis
+or stick to normativity for synthesis and spell-
+checking)
+? flexible selection of output information:
+choice of tagset for different encodings, sup-
+port for sense indexes
+? arbitrary selection of morphemes
+? setting levels of morphemes (grouping of
+morphs that are precompiled as a cluster to
+be stripped with one rule application by the
+runtime layer)
+? fine-tuning which morphemes are stripped
+during stemming
+? arbitrary selection of morphophonological
+features that are to be observed or ignored
+(allows for enhancing robustness by e.g., tol-
+erating non-standard regularizations)
+The input description language allows for arbi-
+trary attributes (ones encoding part of speech, ori-
+gin, register, etc.) to be specified in the descrip-
+tion. Since any set of attributes can be selected to
+be compiled into the runtime resources, it takes
+no more than precompiling the central database
+with the appropriate configuration for the runtime
+analyzer to be used as an arbitrary word annota-
+tion tool, e.g., style annotator or part of speech
+tagger. We also provide an implementation of a
+feature-tree based tag language which we success-
+fully used for the description of Hungarian mor-
+phology.
+If the resources are created for some filtering
+task, say, extracting (possibly inflected) proper
+nouns in a text, resource optimization described
+above can save considerable amounts of time com-
+pared to full analysis followed by post-processing.
+While the relevant portion of the dictionary might
+be easily filtered therefore speeding up lookup, tai-
+loring a corresponding redundancy-free affix file
+would be a hopeless enterprise without the pre-
+compiler.
+As we mentioned, our offline layer can be con-
+figured to cluster any or no sets of affixes together
+on various levels, and therefore resources can be
+optimized for either memory use (affix by affix
+stripping) or speed (generally toward one level
+stripping). This is a major advantage given po-
+tential applications as diverse as spellchecking on
+the word processor of an old 386 at one end, and
+industrial scale stemming on terabytes of web con-
+tent for IR at the other.
+In sum, our offline layer allows for the princi-
+pled maintenance of a central resource, saving the
+redundant effort that would otherwise have to be
+invested in encoding very similar knowledge in a
+task-specific manner for each word level analysis
+task.
+3 Conclusion
+The importance of word level analysis can hardly
+be questioned: spellcheckers reach the extremely
+wide audience of all word processor users, stem-
+mers are used in a variety of areas ranging from
+information retrieval to statistical machine transla-
+tion, and for non-isolating languages morpholog-
+ical analysis is the initial phase of every natural
+language processing pipeline.
+Over the past decades, two closely intertwined
+methods emerged to handle word analysis tasks,
+affix stripping and finite state transducers (FSTs).
+Since both technologies can provide industrial
+strength solutions for most tasks, when it comes
+to choice of actual software and its practical use,
+the differences that have the greatest impact are
+not lodged in the algorithmic core. Rather, two
+other factors play a role: the ease with which one
+can integrate the software into applications and the
+infrastructure offered to translate the knowledge of
+the grammarian to efficient and maintainable com-
+putational blocks.
+To be sure, in an end-to-end machine learning
+paradigm, the mundane differences between how
+the systems interact with the human grammari-
+ans would not matter. But as long as the gram-
+mars are written and maintained by humans, an of-
+fline framework providing a high-level language to
+specify morphologies and supporting configurable
+precompilation that allows for resource sharing
+across word-analysis tasks addresses a major bot-
+tleneck in resource creation and management.
+The Xerox Finite State Toolkit provides com-
+prehensive high-level support for morphology
+and lexicon development (Beesley and Karttunen,
+2003). These descriptions are compiled into mini-
+mal deterministic FST-s, which give excellent run-
+time performance and can also be extended to
+error-tolerant analysis for spellchecking Oflazer
+(1996). Nonetheless, XFST is not free software,
+and as long as the work is not driven by aca-
+demic curiosity alone, the LGPL-style license of
+our toolkit, explicitly permitting reuse for com-
+mercial purposes as well, can already decide the
+choice.
+There are other free open source ana-
+lyzer technologies, either stand-alone an-
+alyzers such as the Stuttgart Finite State
+Toolkit (SFST, available only under the
+GPL, see www.ims.uni-stuttgart.de/
+projekte/gramotron/SOFTWARE/SFST.html,
+Smid et al (2004)) or as part of a power-
+ful integrated NLP platform such as In-
+tex/NooJ (freely available for academic re-
+search to individuals affiliated with a university
+only, see intex.univ-fcomte.fr; a clone
+called Unitex is available under LGPL, see
+www-igm.univ-mlv.fr/~unitex.) Unfortu-
+nately, NooJ has its limitations when it comes
+to implementing complex morphologies (Vajda
+et al, 2004) and SFST provides no high-level
+offline component for grammar description and
+configurable resource creation.
+We believe that the liberal license policy and the
+powerful offline layer contributed equally to the
+huge interest that our project generated, in spite
+of its relative novelty. MySpell was not just our
+choice: it is also the spell-checking library incor-
+porated into OpenOffice.org, a free open-source
+office suite with an ever wider circle of users. The
+Hungarian build of OpenOffice is already running
+our C++ runtime library, but OpenOffice is now
+considering to completely replace MySpell with
+our code. This would open up the possibility of
+introducing morphological analysis capabilities in
+the program, which in turn could serve as the first
+step towards enhanced grammar checking and hy-
+phenation.
+Though in-depth grammars and lexica are avail-
+able for nearly as many languages in FST-
+based frameworks (InXight Corporation?s Lin-
+guistX platform supports 31 languages), very lit-
+tle of this material is available for grammar hack-
+ing or open source dictionary development. In ad-
+dition to permissive license and easy to integrate
+infrastructure, the fact that the hunmorph routines
+are backward compatible with already existing and
+freely available spellchecking resources for some
+50 languages goes a long way toward explaining
+its rapid spread.
+For Hungarian, hunlex already serves as the
+development framework for the MORPHDB project
+which merges three independently developed lex-
+ical databases by critically unifying their contents
+and supplying it with a comprehensive morpho-
+logical grammar. It also provided a framework
+for our English morphology project that used the
+XTAG morphological database for English (see
+ftp.cis.upenn.edu/pub/xtag/morph-1.5,
+Karp et al (1992)). A project describing the
+morphology of the Bea?s dialect of Romani with
+hunlex is also under way.
+The hunlex resource precompiler is not archi-
+tecturally bound to the aff/dic format used by
+our toolkit, and we are investigating the possibility
+of generating FST resources with it. This would
+decouple the offline layer of our toolkit from the
+details of the runtime technology, and would be an
+important step towards a unified open source so-
+lution for method-independent resource develop-
+ment for word analysis software.
+Acknowledgements
+The development of hunmorph and hunlex is fi-
+nancially supported by the Hungarian Ministry
+of Informatics and Telecommunications and by
+MATA?V Telecom Co., and is led by the Centre
+for Media Research and Education at the Budapest
+University of Technology. We would like to thank
+the anonymous reviewers of the ACL Software
+Workshop for their valuable comments on this pa-
+per.
+Availability
+Due to the confligting needs of Unix, Windows,
+and MacOs users, the packaging/build environ-
+ment for our software has not yet been final-
+ized. However, a version of our tools, and
+some of the major language resources that have
+been created using these tools, are available at
+mokk.bme.hu/resouces.
+References
+Kenneth R. Beesley and Lauri Karttunen. 2003.
+Finite State Morphology. CSLI Publications.
+Daniel Karp, Yves Schabes, Martin Zaidel, and
+Dania Egedi. 1992. A freely available wide cov-
+erage morphological analyzer for english. In
+Proceedings of the 14th International Confer-
+ence on Computational Linguistics (COLING-
+92) Nantes, France.
+La?szlo? Ne?meth, Viktor Tro?n, Pe?ter Hala?csy,
+Andra?s Kornai, Andra?s Rung, and Istva?n Sza-
+kada?t. 2004. Leveraging the open-source is-
+pell codebase for minority language analysis.
+In Proceedings of SALTMIL 2004. European
+Language Resources Association. URL http:
+//www.lrec-conf.org/lrec2004.
+Kemal Oflazer. 1996. Error-tolerant finite-state
+recognition with applications to morphological
+analysis and spelling correction. Computational
+Linguistics, 22(1):73?89.
+James Lyle Peterson. 1980. Computer programs
+for spelling correction: an experiment in pro-
+gram design, volume 96 of Lecture Notes in
+Computer Science. Springer.
+Helmut Smid, Arne Fitschen, and Ulrich Heid.
+2004. SMOR: A German computational mor-
+phology covering derivation, composition, and
+inflection. In Proceedings of the IVth Interna-
+tional Conference on Language Resources and
+Evaluation (LREC 2004), pages 1263?1266.
+Pe?ter Vajda, Viktor Nagy, and Em??lia Dancsecs.
+2004. A Ragoza?si szo?ta?rto?l a NooJ morfolo?giai
+modulja?ig [from a morphological dictionary to
+a morphological module for NooJ]. In 2nd Hun-
+garian Computational Linguistics Conference,
+pages 183?190.
+Web-based frequency dictionaries for medium density languages
+Andra?s Kornai
+MetaCarta Inc.
+350 Massachusetts Avenue
+Cambridge MA 02139
+andras@kornai.com
+Pe?ter Hala?csy
+Media Research and Education Center
+Stoczek u. 2
+H-1111 Budapest
+halacsy@mokk.bme.hu
+Viktor Nagy
+Institute of Linguistics
+Benczu?r u 33
+H-1399 Budapest
+nagyv@nytud.hu
+Csaba Oravecz
+Institute of Linguistics
+Benczu?r u 33
+H-1399 Budapest
+oravecz@nytud.hu
+Viktor Tro?n
+U of Edinburgh
+2 Buccleuch Place
+EH8 9LW Edinburgh
+v.tron@ed.ac.uk
+Da?niel Varga
+Media Research and Education Center
+Stoczek u. 2
+H-1111 Budapest
+daniel@mokk.bme.hu
+Abstract
+Frequency dictionaries play an important
+role both in psycholinguistic experiment
+design and in language technology. The
+paper describes a new, freely available,
+web-based frequency dictionary of Hun-
+garian that is being used for both purposes,
+and the language-independent techniques
+used for creating it.
+0 Introduction
+In theoretical linguistics introspective grammati-
+cality judgments are often seen as having method-
+ological primacy over conclusions based on what
+is empirically found in corpora. No doubt the
+main reason for this is that linguistics often studies
+phenomena that are not well exemplified in data.
+For example, in the entire corpus of written En-
+glish there seems to be only one attested example,
+not coming from semantics papers, of Bach-Peters
+sentences, yet the grammaticality (and the pre-
+ferred reading) of these constructions seems be-
+yond reproach. But from the point of view of the
+theoretician who claims that quantifier meanings
+can be computed by repeat substitution, even this
+one example is one too many, since no such theory
+can account for the clearly relevant (though barely
+attested) facts.
+In this paper we argue that ordinary corpus
+size has grown to the point that in some areas
+of theoretical linguistics, in particular for is-
+sues of inflectional morphology, the dichotomy
+between introspective judgments and empirical
+observations need no longer be maintained: in
+this area at least, it is now nearly possible to
+make the leap from zero observed frequency to
+zero theoretical probability i.e. ungrammaticality.
+In many other areas, most notably syntax, this
+is still untrue, and here we argue that facts of
+derivational morphology are not yet entirely
+within the reach of empirical methods. Both
+for inflectional and derivational morphology
+we base our conclusions on recent work with
+a gigaword web-based corpus of Hungarian
+(Hala?csy et al2004) which goes some way
+towards fulfilling the goals of the WaCky project
+(http://wacky.sslmit.unibo.it, see
+also Lu?deling et al2005) inasmuch as the infras-
+tructure used in creating it is applicable to other
+medium-density languages as well. Section 1
+describes the creation of the WFDH Web-based
+Frequency Dictionary of Hungarian from the raw
+corpus. The critical disambiguation step required
+for lemmatization is discussed in Section 2,
+and the theoretical implications are presented in
+Section 3. The rest of this Introduction is devoted
+to some terminological clarification and the
+presentation of the elementary probabilistic model
+used for psycholinguistic experiment design.
+0.1 The range of data
+Here we will distinguish three kinds of corpora:
+small-, medium-, and large-range, based on the in-
+ternal coherence of the component parts. A small-
+range corpus is one that is stylistically homoge-
+neous, generally the work of a single author. The
+largest corpora that we could consider small-range
+are thus the oeuvres of the most prolific writers,
+rarely above 1m, and never above 10m words. A
+medium-range corpus is one that remains within
+the confines of a few text types, even if the au-
+thorship of individual documents can be discerned
+e.g. by detailed study of word usage. The LDC
+gigaword corpora, composed almost entirely of
+news (journalistic prose), are from this perspec-
+1
+tive medium range. Finally, a large-range corpus
+is one that displays a variety of text types, gen-
+res, and styles that approximates that of overall
+language usage ? the Brown corpus at 1m words
+has considerably larger range than e.g. the Reuters
+corpus at 100m words.
+The fact that psycholinguistic experiments need
+to control for word frequency has been known at
+least since Thorndike (1941) and frequency ef-
+fects also play a key role in grammaticization (By-
+bee, 2003). Since the principal source of variabil-
+ity in word (n-gram) frequencies is the choice of
+topic, we can subsume overall considerations of
+genre under the selection of topics, especially as
+the former typically dictates the latter ? for ex-
+ample, we rarely see literary prose or poetry deal-
+ing with undersea sedimentation rates. We assume
+a fixed inventory of topics T1, T2, . . . , Tk, with
+k on the order 104, similar in granularity to the
+Northern Light topic hierarchy (Kornai et al2003)
+and reserve T0 to topicless texts or ?General Lan-
+guage?. Assuming that these topics appear in the
+language with frequency q1, q2, . . . , qk, summing
+to 1 ? q0 ? 1, the ?average? topic is expected to
+have frequency about 1/k (and clearly, q0 is on the
+same order, as it is very hard to find entirely topi-
+cless texts).
+As is well known, the salience of different
+nouns and noun phrases appearing in the same
+structural position is greatly impacted not just by
+frequency (generally, less frequent words are more
+memorable) but also by stylistic value. For ex-
+ample, taboo words are more salient than neutral
+words of the same overall frequency. But style is
+also closely associated with topic, and if we match
+frequency profiles across topics we are therefore
+controlling for genre and style as well. Present-
+ing psycholinguistical experiments is beyond the
+scope of this paper: here we put the emphasis on
+creating the computational resource, the frequency
+dictionary, that allows for detail matching of fre-
+quency profiles.
+Defining the range r of a corpus C simply
+as
+?
+j qj where the sum is taken over all topics
+touched by documents in C, single-author cor-
+pora typically have r < 0.1 even for encyclope-
+dic writers, and web corpora have r > 0.9. Note
+that r just measures the range, it does not mea-
+sure how representative a corpus is for some lan-
+guage community. Here we discuss results con-
+cerning all three ranges. For small range, we use
+the Hungarian translation of Orwell?s 1984 ? 98k
+words including punctuation tokens, (Dimitrova et
+al., 1998). For mid-range, we consider four topi-
+cally segregated subcorpora of the Hungarian side
+of our Hungarian-English parallel corpus ? 34m
+words, (Varga et al, 2005). For large-range we
+use our webcorpus ? 700m words, (Hala?csy et al,
+2004).
+1 Collecting and presenting the data
+Hungarian lags behind ?high density? languages
+like English and German but is hugely ahead of
+minority languages that have no significant ma-
+chine readable material. Varga et al(2005) es-
+timated there to be about 500 languages that fit
+in the same ?medium density? category, together
+accounting for over 55% of the world?s speakers.
+Halacsy et al(2004) described how a set of open
+source tools can be exploited to rapidly clean the
+results of web crawls to yield high quality mono-
+lingual corpora: the main steps are summarized
+below.
+Raw data, preprocessing The raw dataset
+comes from crawling the top-level domain, e.g.
+.hu, .cz, .hr, .pl etc. Pages that con-
+tain no usable text are filtered out, and all text is
+converted to a uniform character encoding. Iden-
+tical texts are dropped by checksum compari-
+son of page bodies (a method that can handle
+near-identical pages, usually automatically gener-
+ated, which differ only in their headers, datelines,
+menus, etc.)
+Stratification A spellchecker is used to stratify
+pages by recognition error rates. For each page we
+measure the proportion of unrecognized (either in-
+correctly spelled or out of the vocabulary of the
+spellchecker) words. To filter out non-Hungarian
+(non-Czech, non-Croatian, non-Polish, etc.) docu-
+ments, the threshold is set at 40%. If we lower the
+threshold to 8%, we also filter out flat native texts
+that employ Latin (7-bit) characters to denote their
+accented (8 bit) variants (these are still quite com-
+mon due to the ubiquity of US keyboards). Finally,
+below the 4% threshold, webpages typically con-
+tain fewer typos than average printed documents,
+making the results comparable to older frequency
+counts based on traditional (printed) materials.
+Lemmatization To turn a given stratum of the
+corpus into a frequency dictionary, one needs to
+collect the wordforms into lemmas based on the
+2
+same stem: we follow the usual lexicographic
+practice of treating inflected, but not derived,
+forms of a stem as belonging to the same lemma.
+Inflectional stems are computed by a morphologi-
+cal analyzer (MA), the choice between alternative
+morphological analyses is resolved using the out-
+put of a POS tagger (see Section 2 below). When
+there are several analyses that match the output of
+the tagger, we choose one with the least number of
+identified morphemes. For now, words outside the
+vocabulary of the MA are not lemmatized at all ?
+this decision will be revisited once the planned ex-
+tension of the MA to a morphological guesser is
+complete.
+Topic classification Kornai et al(2003) pre-
+sented a fully automated system for the classifica-
+tion of webpages according to topic. Combining
+this method with the methods described above en-
+ables the automatic creation of topic-specific fre-
+quency dictionaries and further, the creation of a
+per-topic frequency distribution for each lemma.
+This enables much finer control of word selection
+in psycholinguistic experiments than was hitherto
+possible.
+1.1 How to present the data?
+For Hungarian, the highest quality (4% thresh-
+old) stratum of the corpus contains 1.22m unique
+pages for a total of 699m tokens, already exceed-
+ing the 500m predicted in (Kilgarriff and Grefen-
+stette, 2003). Since the web has grown consid-
+erably since the crawl (which took place in 2003),
+their estimate was clearly on the conservative side.
+Of the 699m tokens some 4.95m were outside the
+vocabulary of the MA (7% OOV in this mode,
+but less than 3% if numerals are excluded and the
+analysis of compounds is turned on). The remain-
+ing 649.7m tokens fall in 195k lemmas with an
+average 54 form types per lemma. If all stems are
+considered, the ratio is considerably lower, 33.6,
+but the average entropy of the inflectional distri-
+butions goes down only from 1.70 to 1.58 bits.
+As far as the summary frequency list (which is
+less than a megabyte compressed) is concerned,
+this can be published trivially. Clearly, the avail-
+ability of large-range gigaword corpora is in the
+best interest of all workers in language technology,
+and equally clearly, only open (freely download-
+able) materials allow for replicability of experi-
+ments. While it is possible to exploit search engine
+queries for various NLP tasks (Lapata and Keller,
+2004), for applications which use corpora as unsu-
+pervised training material downloadable base data
+is essential.
+Therefore, a compiled webcorpus should con-
+tain actual texts. We believe all ?cover your be-
+hind? efforts such as publishing only URLs to be
+fundamentally misguided. First, URLs age very
+rapidly: in any given year more than 10% be-
+come stale (Cho and Garcia-Molina, 2000), which
+makes any experiment conducted on such a ba-
+sis effectively irreproducible. Second, by present-
+ing a quality-filtered and characterset-normalized
+corpus the collectors actually perform a service to
+those who are less interested in such mundane is-
+sues. If everybody has to start their work from the
+ground up, many projects will exhaust their fund-
+ing resources and allotted time before anything in-
+teresting could be done with the data. In contrast,
+the Free and Open Source Software (FOSS) model
+actively encourages researchers to reuse data.
+In this regard, it is worth mentioning that dur-
+ing the crawls we always respected robots.txt
+and in the two years since the publication of the gi-
+gaword Hungarian web corpus, there has not been
+a single request by copyright holders to remove
+material. We do not advocate piracy: to the con-
+trary, it is our intended policy to comply with re-
+moval requests from copyright holders, analogous
+to Google cache removal requests. Finally, even
+with copyright material, there are easy methods
+for preserving interesting linguistic data (say un-
+igram and bigram models) without violating the
+interests of businesses involved in selling the run-
+ning texts. 1
+2 The disambiguation of morphological
+analyses
+In any morphologically complex language, the
+MA component will often return more than one
+possible analysis. In order to create a lemma-
+tized frequency dictionary it is necessary to de-
+cide which MA alternative is the correct one, and
+in the vast majority of cases the context provides
+sufficient information for this. This morphologi-
+cal disambiguation task is closely related to, but
+not identical with, part of speech (POS) tagging,
+a term we reserve here for finding the major parts
+1This year, we are publishing smaller pilot corpora for
+Czech (10m words), Croatian (4m words), and Polish (12m
+words), and we feel confident in predicting that these will
+face as little actual opposition from copyright holders as the
+Hungarian Webcorpus has.
+3
+of speech (N, V, A, etc). A full tag contains both
+POS information and morphological annotation:
+in highly inflecting languages the latter can lead
+to tagsets of high cardinality (Tufis? et al, 2000).
+Hungarian is particularly challenging in this re-
+gard, both because the number of ambiguous to-
+kens is high (reaching 50% in the Szeged Cor-
+pus according to (Csendes et al, 2004) who use
+a different MA), and because the ratio of tokens
+that are not seen during training (unseen) can be
+as much as four times higher than in comparable
+size English corpora. But if larger training corpora
+are available, significant disambiguation is possi-
+ble: with a 1 m word training corpus (Csendes et
+al., 2004) the TnT (Brants, 2000) architecture can
+achieve 97.42% overall precision.
+The ratio of ambiguous tokens is usually cal-
+culated based on alternatives offered by a mor-
+phological lexicon (either built during the training
+process or furnished by an external application;
+see below). If the lexicon offers alternative anal-
+yses, the token is taken as ambiguous irrespective
+of the probability of the alternatives. If an exter-
+nal resource is used in the form of a morphological
+analyzer (MA), this will almost always overgener-
+ate, yielding false ambiguity. But even if the MA
+is tight, a considerable proportion of ambiguous
+tokens will come from legitimate but rare analyses
+of frequent types (Church, 1988). For example the
+word nem, can mean both ?not? and ?gender?, so
+both ADV and NOUN are valid analyses, but the ad-
+verbial reading is about five orders of magnitude
+more frequent than the noun reading, (12596 vs. 4
+tokens in the 1 m word manually annotated Szeged
+Korpusz (Csendes et al, 2004)).
+Thus the difficulty of the task is better mea-
+sured by the average information required for dis-
+ambiguating a token. If word w is assigned
+the label Ti with probability P (Ti|w) (estimated
+as C(Ti, w)/C(w) from a labeled corpus) then
+the label entropy for a word can be calculated
+as H(w) = ?
+?
+i P (Ti|w) logP (Ti|w), and the
+difficulty of the labeling task as a whole is the
+weighted average of these entropies with respect
+to the frequencies of words w:
+?
+w P (w)H(w).
+As we shall see in Section 3, according to this
+measure the disambiguation task is not as difficult
+as generally assumed.
+A more persistent problem is that the ratio of
+unseen items has very significant influence on the
+performance of the disambiguation system. The
+problem is more significant with smaller corpora:
+in general, if the training corpus has N tokens and
+the test corpus is a constant fraction of this, say
+N/10, we expect the proportion of new words to
+be cN q?1, where q is the reciprocal of the Zipf
+constant (Kornai, 1999). But if the test/train ra-
+tio is not kept constant because the training corpus
+is limited (manual tagging is expensive), the num-
+ber of tokens that are not seen during training can
+grow very large. Using the 1.2 m words of Szeged
+Corpus for training, in the 699 m word webcor-
+pus over 4% of the non-numeric tokens will be un-
+seen. Given that TnT performs rather dismally on
+unseen items (Oravecz and Dienes, 2002) it was
+clear from the outset that for lemmatizing the we-
+bcorpus we needed something more elaborate.
+The standard solution to constrain the prob-
+abilistic tagging model for some of the unseen
+items is the application of MA (Hakkani-Tu?r et al,
+2000; Hajic? et al, 2001; Smith et al, 2005). Here
+a distinction must be made between those items
+that are not found in the training corpus (these we
+have called unseen tokens) and those that are not
+known to the MA ? we call these out of vocabulary
+(OOV). As we shall see shortly, the key to the best
+tagging architecture we found was to follow dif-
+ferent strategies in the lemmatization and morpho-
+logical disambiguation of OOV and known (in-
+vocabulary) tokens.
+The first step in tagging is the annotation of
+inflectional features, with lemmatization being
+postponed to later processing as in (Erjavec and
+Dz?eroski, 2004). This differs from the method of
+(Hakkani-Tu?r et al, 2000), where all syntactically
+relevant features (including the stem or lemma) of
+word forms are determined in one pass. In our ex-
+perience, the choice of stem depends so heavily
+on the type of linguistic information that later pro-
+cessing will need that it cannot be resolved in full
+generality at the morphosyntactic level.
+Our first model (MA-ME) is based on disam-
+biguating the MA output in the maximum entropy
+(ME) framework (Ratnaparkhi, 1996). In addi-
+tion to the MA output, we use ME features coding
+the surface form of the preceding/following word,
+capitalization information, and different charac-
+ter length suffix strings of the current word. The
+MA used is the open-source hunmorph ana-
+lyzer (Tro?n et al, 2005) with the morphdb.hu
+Hungarian morphological resource, the ME is the
+OpenNLP package (Baldridge et al, 2001). The
+4
+MA-ME model achieves 97.72% correct POS tag-
+ging and morphological analysis on the test corpus
+(not used in training).
+Maximum entropy or other discriminative
+Markov models (McCallum et al, 2000) suffer
+from the label bias problem (Lafferty et al, 2001),
+while generative models (most notably HMMs)
+need strict independence assumptions to make the
+task of sequential data labeling tractable. Con-
+sequently, long distance dependencies and non-
+independent features cannot be handled. To cope
+with these problems we designed a hybrid archi-
+tecture, in which a trigramHMM is combined with
+the MA in such a way that for tokens known to the
+MA only the set of possible analyses are allowed
+as states in the HMM whereas for OOVs all states
+are possible. Lexical probabilities P (wi|ti) for
+seen words are estimated from the training corpus,
+while for unseen tokens they are provided by the
+the above MA-ME model. This yields a trigram
+HMM where emission probabilities are estimated
+by a weighted MA, hence the model is called
+WMA-T3. This improves the score to 97.93%.
+Finally, it is possible to define another archi-
+tecture, somewhat similar to Maximum Entropy
+Markov Models, (McCallum et al, 2000), using
+the above components. Here states are also the
+set of analyses the MA allows for known tokens
+and all analyses for OOVs, while emission prob-
+abilities are estimated by the MA-ME model. In
+the first pass TnT is run with default settings over
+the data sequence, and in the second pass the ME
+receives as features the TnT label of the preced-
+ing/following token as well as the one to be ana-
+lyzed. This combined system (TnT-MA-ME) in-
+corporates the benefits of all the submodules and
+reaches an accuracy of 98.17% on the Szeged Cor-
+pus. The results are summarized in Table 1.
+model accuracy
+TnT 97.42
+MA+ME 97.72
+WMA+T3 97.93
+TnT+MA+ME 98.17
+Table 1: accuracy of morphological
+disambiguation
+We do not consider these results to be final:
+clearly, further enhancements are possible e.g. by
+a Viterbi search on alternative sentence taggings
+using the T3 trigram tag model or by handling
+OOVs on a par with known unseen words using
+the guesser function of our MA. But, as we dis-
+cuss in more detail in Halacsy et al2005, we are
+already ahead of the results published elsewhere,
+especially as these tend to rely on idealized MA
+systems that have their morphological resources
+extended so as to have no OOV on the test set.
+3 Conclusions
+Once the disambiguation of morphological anal-
+yses is under control, lemmatization itself is a
+mechanical task which we perform in a database
+framework. This has the advantage that it sup-
+ports a rich set of query primitives, so that we
+can easily find e.g. nouns with back vowels that
+show stem vowel elision and have approximately
+the same frequency as the stem orvos ?doctor?.
+Such a database has obvious applications both in
+psycholinguistic experiments (which was one of
+the design goals) and in settling questions of the-
+oretical morphology. But there are always nag-
+ging doubts about the closed world assumption be-
+hind databases, famously exposed in linguistics by
+Chomsky?s example colorless green ideas sleep
+furiously: how do we distinguish this from *green
+sleep colorless furiously ideas if the observed fre-
+quency is zero for both?
+Clearly, a naive empirical model that assigns
+zero probability to each unseen word form makes
+the wrong predictions. Better estimates can be
+achieved if unseen words which are known to be
+possible morphologically complex forms of seen
+lemmas are assigned positive probability. This can
+be done if the probability of a complex form is in
+some way predictable from the probabilities of its
+component parts. A simple variant of this model
+is the positional independence hypothesis which
+takes the probabilities of morphemes in separate
+positional classes to be independent of each other.
+Here we follow Antal (1961) and Kornai (1992) in
+establishing three positional classes in the inflec-
+tional paradigm of Hungarian nouns.
+# Position 1 parameters
+FAM 0.0001038986
+PLUR 0.1372398793
+PLUR_POSS 0.0210927964
+PLUR_POSS<1> 0.0011609442
+PLUR_POSS<1><PLUR> 0.0028751247
+PLUR_POSS<2> 0.0004958278
+PLUR_POSS<2><PLUR> 0.0000740203
+PLUR_POSS<PLUR> 0.0023850120
+POSS 0.1461635946
+5
+POSS<1> 0.0073305415
+POSS<1><PLUR> 0.0073652648
+POSS<1>_FAM 0.0000092294
+POSS<2> 0.0027628071
+POSS<2><PLUR> 0.0003006440
+POSS<2>_FAM 0.0000030591
+POSS<PLUR> 0.0069613929
+POSS_FAM 0.0000000001
+ZERO1 0.6636759634
+# Position 2 parameters
+ANP 0.0007780001
+ANP<PLUR> 0.0000248301
+ZERO2 0.9991971698
+# Position 3 parameters
+CAS<ABL> 0.0078638013
+CAS<ACC> 0.1346412632
+CAS<ADE> 0.0045132704
+CAS<ALL> 0.0138677701
+CAS<CAU> 0.0037332025
+CAS<DAT> 0.0301123636
+CAS<DEL> 0.0128222999
+CAS<ELA> 0.0118596792
+CAS<ESS> 0.0010230505
+CAS<FOR> 0.0031204983
+CAS<ILL> 0.0154186683
+CAS<INE> 0.0582887516
+CAS<INS> 0.0406197868
+CAS<SBL> 0.0386519707
+CAS<SUE> 0.0357416253
+CAS<TEM> 0.0013095685
+CAS<TER> 0.0034032438
+CAS<TRA> 0.0017860054
+ZERO3 0.5812231804
+Table 3: marginal probabilities in noun inflection
+The innermost class is used for number and pos-
+sessive, with a total of 18 choices including the
+zero morpheme (no possessor and singular). The
+second positional class is for anaphoric posses-
+sives with a total of three choices including the
+zero morpheme, and the third (outermost) class
+is for case endings with a total of 19 choices
+including the zero morpheme (nominative) for a
+total of 1026 paradigmatic forms. The parame-
+ters were obtained by downhill simplex minimiza-
+tion of absolute errors. The average absolute er-
+ror is of the values computed by the independece
+hypothesis from the observed values is 0.000099
+(mean squared error is 9.18 ? 10?7), including the
+209 paradigmatic slots for which no forms were
+found in the webcorpus at all (but the indepen-
+dence model will assign positive probability to any
+of them as the product of the component probabil-
+ities). When checking the independence hypoth-
+esis with ? statistics in the webcorpus for every
+nominal inflectional morpheme pair the members
+of which are from different dimensions, the ? co-
+efficient remained less than 0.1 for each pair but
+3. For these 3 the coefficient is under 0.2 (which
+means that the shared variance of these pairs is be-
+tween 1% and 2%) so we have no reason to discard
+the independence hypothesis. If we run the same
+test on the 150 million words Hungarian National
+Corpus, which was analyzed and tagged by differ-
+ent tools, we also get the same result (Nagy, 2005).
+It is very easy to construct low probability com-
+binations using this model. Taking a less frequent
+possessive ending such as the 2nd singular poses-
+sor familiar plural -ode?k, the anaphoric plural -e?i,
+and a rarer case ending such as the formalis -ke?nt
+we obtain combinations such as bara?tode?ke?ike?nt
+?as the objects owned by your friends? company?.
+The model predicts we need a corpus with about
+4.2 ? 1012 noun tokens to see this suffix combina-
+tion (not necessarily with the stem bara?t ?friend?)
+or about ten trillion tokens. While the current cor-
+pus falls short by four orders of magnitude, this
+is about the contribution of the anaphoric plural
+(which we expect to see only once in about 40k
+noun tokens) so for any two of the three position
+classes combined the prediction that valid inflec-
+tional combinations will actually be attested is al-
+ready testable.
+Using the fitted distribution of the position
+classes, the entropy of the nominal paradigm is
+computed simply as the sum of the class entropies,
+1.554 + 0.0096 + 2.325 or 3.888 bits. Since the
+nominal paradigm is considerably more complex
+than the verbal paradigm (which has a total of
+52 forms) or the infinitival paradigm (7 forms),
+this value can serve as an upper bound on the in-
+flectional entropy of Hungarian. In Table 3 we
+present the actual values, computed on a variety
+of frequency dictionaries. The smallest of these
+is based on a single text, the Hungarian transla-
+tion of Orwell?s 1984. The mid-range corpora
+used in this comparison are segregated in broad
+topics: law (EU laws and regulations), literature,
+movie subtitles, and software manuals: all were
+collected from the web as part of building a bilin-
+gual English-Hungarian corpus. Finally, the large-
+range is the full webcorpus at the best (4% reject)
+quality stratum.
+6
+1984 law literature subtitles software webcorpus
+token 98292 2310742 7971157 2667420 839339 69926550
+type 20343 110040 431615 188131 81729 2083023
+OOV token 3141 266368 335660 181292 140551 4951743
+OOV type 1132 39467 87574 50078 45799 994890
+lemma 10644 60602 165259 85491 58939 1189471
+lemma excl. OOV 9513 21136 77686 35414 13141 194589
+lemma entropy 1.14282 1.04118 1.54922 1.41374 1.14516 1.57708
+lemma entropy excl. OOV 1.18071 1.17687 1.61753 1.51718 1.37559 1.69743
+Table 3: inflectional entropy of Hungarian computed on a variety of frequency dictionaries
+Our overall conclusion is that for many pur-
+poses a web-based corpus has significant advan-
+tages over more traditional corpora. First, it is
+cheap to collect. Second, it is sufficiently hetero-
+geneous to ensure that language models based on
+it generalize better on new texts of arbitrary topics
+than models built on (balanced) manual corpora.
+As we have shown, automatically tagged and lem-
+matized webcorpora can be used to obtain large
+coverage stem and wordform frequency dictionar-
+ies. While there is a significant portion of OOV
+entries (about 3% for our current MA), in the de-
+sign of psycholinguistic experiments it is gener-
+ally sufficient to consider stems already known to
+the MA, and the variety of these (over three times
+the stem lexicon of the standard Hungarian fre-
+quency dictionary) enables many controlled exper-
+iments hitherto impossible.
+References
+La?szlo? Antal. 1961. A magyar esetrendszer. Nyelvtu-
+doma?nyi E?rtekeze?sek, 29.
+Jason Baldridge, Thomas Morton, and Gann Bierner.
+2001. The opennlp maximum entropy package.
+http://maxent.sourceforge.net.
+Thorsten Brants. 2000. TnT ? a statistical part-of-
+speech tagger. In Proceedings of the Sixth Applied
+Natural Language Processing Conference (ANLP-
+2000), Seattle, WA.
+Joan Bybee. 2003. Mechanisms of change in gram-
+maticization: the role of frequency. In Brian Joseph
+and Richard Janda, editors, Handbook of Historical
+Linguistics, pages 602?623. Blackwell.
+Junghoo Cho and Hector Garcia-Molina. 2000. The
+evolution of the web and implications for an incre-
+mental crawler. In VLDB ?00: Proceedings of the
+26th International Conference on Very Large Data
+Bases, pages 200?209, San Francisco, CA, USA.
+Morgan Kaufmann Publishers Inc.
+Kenneth Ward Church. 1988. A stochastic parts pro-
+gram and noun phrase parser for unrestricted text.
+In Proceedings of the second conference on Applied
+natural language processing, pages 136?143, Mor-
+ristown, NJ, USA. Association for Computational
+Linguistics.
+Do?ra Csendes, Ja?no?s Csirik, and Tibor Gyimo?thy.
+2004. The Szeged Corpus: A POS tagged and syn-
+tactically annotated Hungarian natural language cor-
+pus. In Karel Pala Petr Sojka, Ivan Kopecek, editor,
+Text, Speech and Dialogue: 7th International Con-
+ference, TSD, pages 41?47.
+Ludmila Dimitrova, Tomaz Erjavec, Nancy Ide,
+Heiki Jaan Kaalep, Vladimir Petkevic, and Dan
+Tufis?. 1998. Multext-east: Parallel and comparable
+corpora and lexicons for six central and eastern euro-
+pean languages. In Christian Boitet and Pete White-
+lock, editors, Proceedings of the Thirty-Sixth Annual
+Meeting of the Association for Computational Lin-
+guistics and Seventeenth International Conference
+on Computational Linguistics, pages 315?319, San
+Francisco, California. Morgan Kaufmann Publish-
+ers.
+Tomaz? Erjavec and Sas?o Dz?eroski. 2004. Machine
+learning of morphosyntactic structure: Lemmatizing
+unknown Slovene words. Applied Artificial Intelli-
+gence, 18(1):17?41.
+Jan Hajic?, Pavel Krbec, Karel Oliva, Pavel Kve?ton?,
+and Vladim??r Petkevic?. 2001. Serial combination
+of rules and statistics: A case study in Czech tag-
+ging. In Proceedings of the 39th Association of
+Computational Linguistics Conference, pages 260?
+267, Toulouse, France.
+Dilek Z. Hakkani-Tu?r, Kemal Oflazer, and Go?khan
+Tu?r. 2000. Statistical morphological disambigua-
+tion for agglutinative languages. In Proceedings of
+the 18th conference on Computational linguistics,
+pages 285?291, Morristown, NJ, USA. Association
+for Computational Linguistics.
+Pe?ter Hala?csy, Andra?s Kornai, La?szlo? Ne?meth, Andra?s
+Rung, Istva?n Szakada?t, and Viktor Tro?n. 2004. Cre-
+ating open language resources for Hungarian. In
+Proceedings of Language Resources and Evalua-
+tion Conference (LREC04). European Language Re-
+sources Association.
+7
+Pe?ter Hala?csy, Andra?s Kornai, and Da?niel Varga.
+2005. Morfolo?giai egye?rtelmu?s??te?s maximum
+entro?pia mo?dszerrel (morphological disambiguation
+with the maxent method). In Proc. 3rd Hungar-
+ian Computational Linguistics Conf. Szegedi Tu-
+doma?nyegyetem.
+Adam Kilgarriff and Gregory Grefenstette. 2003. In-
+troduction to the special issue on the web as corpus.
+Computational Linguistics, 29(3):333?348.
+Andra?s Kornai, Marc Krellenstein, Michael Mulligan,
+David Twomey, Fruzsina Veress, and Alec Wysoker.
+2003. Classifying the hungarian web. In A. Copes-
+take and J. Hajic, editors, Proc. EACL, pages 203?
+210.
+Andra?s Kornai. 1992. Frequency in morphology. In
+I. Kenesei, editor, Approaches to Hungarian, vol-
+ume IV, pages 246?268.
+Andra?s Kornai. 1999. Zipf?s law outside the middle
+range. In J. Rogers, editor, Proc. Sixth Meeting on
+Mathematics of Language, pages 347?356. Univer-
+sity of Central Florida.
+John Lafferty, Andrew McCallum, and Fernando
+Pereira. 2001. Conditional random fields: Prob-
+abilistic models for segmenting and labeling se-
+quence data. In Proceedings of the 18th Interna-
+tional Conference on Machine Learning, pages 282?
+289. Morgan Kaufmann, San Francisco, CA.
+Mirella Lapata and Frank Keller. 2004. The web
+as a baseline: Evaluating the performance of un-
+supervised web-based models for a range of NLP
+tasks. In Daniel Marcu Susan Dumais and Salim
+Roukos, editors, HLT-NAACL 2004: Main Proceed-
+ings, pages 121?128, Boston, Massachusetts, USA,
+May 2 - May 7. Association for Computational Lin-
+guistics.
+Anke Luedeling, Stefan Evert, and Marco Baroni.
+2005. Using web data for linguistic purposes. In
+Marianne Hundt, Caroline Biewer, and Nadjia Nes-
+selhauf, editors, Corpus linguistics and the Web.
+Rodopi.
+Andrew McCallum, Dayne Freitag, and Fernando
+Pereira. 2000. Maximum entropy Markov mod-
+els for information extraction and segmentation. In
+Proceedings of the 17th International Conference on
+Machine Learning, pages 591?598. Morgan Kauf-
+mann, San Francisco, CA.
+Viktor Nagy. 2005. A magyar fo?ne?vi inflexio?
+statisztikai modellje (statistical model of nominal
+inflection in hungarian. In Proc. Kodola?nyi-ELTE
+Conf.
+Csaba Oravecz and Pe?ter Dienes. 2002. Effi-
+cient stochastic part-of-speech tagging for Hungar-
+ian. In Proceedings of the Third International
+Conference on Language Resources and Evaluation
+(LREC2002), pages 710?717.
+Adwait Ratnaparkhi. 1996. A maximum entropy
+model for part-of-speech tagging. In Karel Pala
+Petr Sojka, Ivan Kopecek, editor, Proceedings of
+the Conference on Empirical Methods in Natural
+Language Processing, pages 133?142, University of
+Pennsylvania.
+Noah A. Smith, David A. Smith, and Roy W. Tromble.
+2005. Context-based morphological disambiguation
+with random fields. In Proceedings of the Confer-
+ence on Human Language Technology and Empiri-
+cal Methods in Natural Language Processing, Van-
+couver.
+Edward L. Thorndike. 1941. The Teaching of English
+Suffixes. Teachers College, Columbia University.
+Viktor Tro?n, Gyo?rgy Gyepesi, Pe?ter Hala?csy, Andra?s
+Kornai, La?szlo? Ne?meth, and Da?niel Varga. 2005.
+Hunmorph: open source word analysis. In Proceed-
+ing of the ACL 2005 Workshop on Software.
+Dan Tufis?, Pe?ter Dienes, Csaba Oravecz, and Tama?s
+Va?radi. 2000. Principled hidden tagset design for
+tiered tagging of Hungarian. In Proceedings of the
+Second International Conference on Language Re-
+sources and Evaluation.
+Da?niel Varga, La?szlo? Ne?meth, Pe?ter Hala?csy, Andra?s
+Kornai, Viktor Tro?n, and Viktor Nagy. 2005. Paral-
+lel corpora for medium density languages. In Pro-
+ceedings of the Recent Advances in Natural Lan-
+guage Processing 2005 Conference, pages 590?596,
+Borovets. Bulgaria.
+8
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 11?13,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+The mathematics of language learning
+Andra?s Kornai
+Computer and Automation Research Institute
+Hungarian Academy of Sciences
+andras@kornai.com
+Gerald Penn
+Department of Computer Science
+University of Toronto
+gpenn@cs.utoronto.edu
+James Rogers
+Computer Science Department
+Earlham College
+jrogers@cs.earlham.edu
+Anssi Yli-Jyra?
+Department of Modern Languages
+University of Helsinki
+anssi.yli-jyra@helsinki.fi
+Over the past decade, attention has gradu-
+ally shifted from the estimation of parameters to
+the learning of linguistic structure (for a survey
+see Smith 2011). The Mathematics of Language
+(MOL) SIG put together this tutorial, composed of
+three lectures, to highlight some alternative learn-
+ing paradigms in speech, syntax, and semantics in
+the hopes of accelerating this trend.
+Compounding the enormous variety of formal
+models one may consider is the bewildering range
+of ML techniques one may bring to bear. In addi-
+tion to the surprisingly useful classical techniques
+inherited from multivariate statistics such as Prin-
+cipal Component Analysis (PCA, Pearson 1901)
+and Linear Discriminant Analysis (LDA, Fisher
+1936), computational linguists have experimented
+with a broad range of neural net, nearest neighbor,
+maxent, genetic/evolutionary, decision tree, max
+margin, boost, simulated annealing, and graphical
+model learners. While many of these learners be-
+came standard in various domains of ML, within
+CL the basic HMM approach proved surprisingly
+resilient, and it is only very recently that deep
+learning techniques from neural computing are be-
+coming competitive not just in speech, but also
+in OCR, paraphrase, sentiment analysis, parsing
+and vector-based semantic representations. The
+first lecture will provide a mathematical introduc-
+tion to some of the fundamental techniques that
+lie beneath these linguistic applications of neural
+networks, such as: BFGS optimization, finite dif-
+ference approximations of Hessians and Hessian-
+free optimization, contrastive divergence and vari-
+ational inference.
+Lecture 1: The mathematics of
+neural computing ? Penn
+Recent results in acoustic modeling, OCR, para-
+phrase, sentiment analysis, parsing and vector-
+based semantic representations have shown that
+natural language processing, like so many other
+corners of artificial intelligence, needs to pay more
+attention to neural computing.
+I Gaussian Mixture Models
+? Lagrange?s theorem
+? Stochastic gradient descent
+? typical acoustic models using GMMs and
+HMMs
+II Optimization theory
+? Hessian matrices
+? Broyden-Fletcher-Goldfarb-Shanno theory
+? finite difference approximations of Hessians
+? Hessian-free optimization
+? Krylov methods
+III Application: Product models
+? products of Gaussians vs. GMMs
+? products of ?experts?
+? Gibbs sampling and Markov-chain Monte
+Carlo
+? contrastive divergence
+IV Experimentation: Deep NNs for acoustic
+modeling
+? intersecting product models with Boltzmann
+machines
+? ?generative pre-training?
+? acoustic modeling with Deep Belief Networks
+? why DBNs work well
+V Variational inference
+? variational Bayes for HMMs
+In spite of the enormous progress brought by
+ML techniques, there remains a rather significant
+range of tasks where automated learners cannot
+yet get near human performance. One such is the
+unsupervised learning of word structure addressed
+by MorphoChallenge, another is the textual entail-
+ment task addressed by RTE.
+The second lecture recasts these and similar
+problems in terms of learning weighted edges in a
+sparse graph, and presents learning techniques that
+seem to have some potential to better find spare fi-
+nite state and near-FS models than EM. We will
+provide a mathematical introduction to the Min-
+imum Description Length (MDL) paradigm and
+11
+spectral learning, and relate these to the better-
+known techniques based on (convex) optimization
+and (data-oriented) memorization.
+Lecture 2: Lexical structure
+detection ? Kornai
+While modern syntactic theory focuses almost en-
+tirely on productive, rule-like regularities with
+compositional semantics, the vast bulk of the infor-
+mation conveyed by natural language, over 85%,
+is encoded by improductive, irregular, and non-
+compositional means, primarily by lexical mean-
+ing. Morphology and the lexicon provide a rich
+testing ground for comparing structure learning
+techniques, especially as inferences need to be
+based on very few examples, often just one.
+I Motivation
+? Why study structure?
+? Why study lexical structure?
+II Lexical structure
+? Function words, content words
+? Basic vocabulary (Ogden 1930, Swadesh 1950,
+Yasseri et al2012)
+? Estimation style
+III Formal models of lexical semantics
+? Associative (Findler 1979, Dumais 2005, CVS
+models)
+? Combinatorial (FrameNet)
+? Algebraic (Kornai 2010)
+IV Spectral learning
+? Case frames and valency
+? Spectral learning as data cleaning (Ng 2001)
+? Brew and Schulte im Walde 2002 (German),
+Nemeskey et al(Hungarian)
+? Optionality in case frames
+V Models with zeros
+? Relating ungrammaticality and low probabil-
+ity (Pereira 2000, Stefanowitsch 2006)
+? Estimation errors, language distances (Kornai
+1998, 2011)
+? Quantization error
+VI Minimum description length
+? Kolmogorov complexity and universal gram-
+mar (Clark 1994)
+? MDL in morphology (Goldsmith 2000, Creutz
+and Lagus 2002, 2005,...)
+? MDL for weighted languages
+? Ambiguity
+? Discarding data ? yes, you can!
+? Collapsing categories
+VII New directions
+? Spectral learning of HMMs (Hsu et al2009,
+2012)
+? of weighted automata (Balle and Mohri 2012)
+? Feature selection, LASSO (Pajkossy 2013)
+? Long Short-Term Memory (Monner and Reg-
+gia 2012)
+? Representation learning (Bengio et al2013)
+Given the broad range of competing formal
+models such as templates in speech, PCFGs and
+various MCS models in syntax, logic-based and
+association-based models in semantics, it is some-
+what surprising that the bulk of the applied work
+is still performed by HMMs. A particularly signifi-
+cant case in point is provided by PCFGs, which
+have not proved competitive with straight tri-
+gram models. Undergirding the practical failure
+of PCFGs is a more subtle theoretical problem,
+that the nonterminals in better PCFGs cannot be
+identified with the kind of nonterminal labels that
+grammarians assume, and conversely, PCFGs em-
+bodying some form of grammatical knowledge tend
+not to outperform flatly initialized models that
+make no use of such knowledge. A natural response
+to this outcome is to retrench and use less power-
+ful formal models, and the last lecture will be spent
+in the subregular space of formal models even less
+powerful than finite state automata.
+Lecture 3: Subregular Languages
+and Their Linguistic Relevance ?
+Rogers and Yli-Jyra?
+The difficulty of learning a regular or context-free
+language in the limit from positive data gives a
+motivation for studying non-Chomskyan language
+classes. The lecture gives an overview of the tax-
+onomy of the most important subregular classes of
+languages and motivate their linguistic relevance
+in phonology and syntax.
+I Motivation
+? Some classes of (sub)regular languages
+? Learning (finite descriptions of) languages
+? Identification in the limit from positive data
+? Lattice leaners
+II Finer subregular language classes
+? The dot-depth hierarchy and the local and
+piecewise hierarchies
+? k-Local and k-Piecewise Sets
+III Relevance to phonology
+? Stress patterns
+? Classifying subregular constraints
+IV Probabilistic models of language
+? Strictly Piecewise Distributions (Heinz and
+Rogers 2010)
+V Relevance to syntax
+? Beyond the inadequate right-linear grammars
+? Parsing via intersection and inverse morphism
+12
+? Subregular constraints on the structure anno-
+tations
+? Notions of (parameterized) locality in syntax.
+The relevance of some parameterized subregular
+language classes is shown through machine learn-
+ing and typological arguments. Typological results
+on a large set of languages (Heinz 2007, Heinz et al
+2011) relate language types to the theory of sub-
+regular language classes.
+There are finite-state approaches to syn-
+tax showing subregular properties. Although
+structure-assigning syntax differs from phonotac-
+tical constraints, the inadequacy of right-linear
+grammars does not generalize to all finite-state
+representations of syntax. The linguistic relevance
+and descriptive adequacy are discussed, in particu-
+lar, in the context of intersection parsing and con-
+junctive representations of syntax.
+Instructors
+Anssi Yli-Jyra? is Academy Research Fellow of the
+Academy of Finland and Visiting Fellow at Clare
+Hall, Cambridge. His research focuses on finite-
+state technology in phonology, morphology and
+syntax. He is interested in weighted logic, depen-
+dency complexity and machine learning.
+James Rogers is Professor of Computer Science at
+Earlham College, currently on sabbatical at the
+Department of Linguistics and Cognitive Science,
+University of Delaware. His primary research in-
+terests are in formal models of language and for-
+mal language theory, particularly model-theoretic
+approaches to these, and in cognitive science.
+Gerald Penn teaches computer science at the Uni-
+versity of Toronto, and is a Senior Member of
+the IEEE. His research interests are in spoken
+language processing, human-computer interaction,
+and mathematical linguistics.
+Andra?s Kornai teaches at the Algebra Depart-
+ment of the Budapest Institute of Technology,
+and leads the HLT group at the Computer and
+Automation Research Institute of the Hungarian
+Academy of Sciences. He is interested in ev-
+erything in the intersection of mathematics and
+linguistics. For a list of his publications see
+http://kornai.com/pub.html.
+Online resources
+Slides for the tutorial:
+http://molweb.org/acl13tutorial.pdf
+Bibliography:
+http://molweb.org/acl13refs.pdf
+Software:
+http://molweb.org/acl13sw.pdf
+13
+Proceedings of the 6th Workshop on Building and Using Comparable Corpora, pages 52?58,
+Sofia, Bulgaria, August 8, 2013. c?2013 Association for Computational Linguistics
+Building basic vocabulary across 40 languages
+Judit A?cs Katalin Pajkossy
+HAS Computer and Automation Research Institute
+H-1111 Kende u 13-17, Budapest
+{judit.acs,pajkossy,kornai}@sztaki.mta.hu
+Andra?s Kornai
+Abstract
+The paper explores the options for build-
+ing bilingual dictionaries by automated
+methods. We define the notion ?ba-
+sic vocabulary? and investigate how well
+the conceptual units that make up this
+language-independent vocabulary are cov-
+ered by language-specific bindings in 40
+languages.
+Introduction
+Globalization increasingly brings languages in
+contact. At the time of the pioneering IBM work
+on the Hansard corpus (Brown et al, 1990), only
+two decades ago, there was no need for a Basque-
+Chinese dictionary, but today there is (Saralegi et
+al., 2012). While the methods for building dic-
+tionaries from parallel corpora are now mature
+(Melamed, 2000), there is a dearth of bilingual or
+even monolingual material (Zse?der et al, 2012),
+hence the increased interest in comparable cor-
+pora.
+Once we find bilingual speakers capable of car-
+rying out a manual evaluation of representative
+samples, it is relatively easy to measure the pre-
+cision of a dictionary built by automatic meth-
+ods. But measuring recall remains a challenge, for
+if there existed a high quality machine-readable
+dictionary (MRD) to measure against, building a
+new one would largely be pointless, except per-
+haps as a means of engineering around copyright
+restrictions. We could measure recall against Wik-
+tionary, but of course this is a moving target, and
+more importantly, the coverage across language
+pairs is extremely uneven.
+What we need is a standardized vocabulary re-
+source that is equally applicable to all language
+pairs. In this paper we describe our work toward
+creating such a resource by extending the 4lang
+conceptual dictionary (Kornai and Makrai, 2013)
+to the top 40 languages (by Wikipedia size) using
+a variety of methods. Since some of the resources
+studied here are not available for the initial list of
+40 languages, we extended the original list to 50
+languages so as to guarantee at least 40 languages
+for every method. Throughout the paper, results
+are provided for all 50 languages, indicating miss-
+ing data as needed.
+Section 1 outlines the approach taken toward
+defining the basic vocabulary and translational
+equivalence. Section 2 describes how Wiktionary
+itself measures up against the 4lang resource
+directly and after triangulation across language
+pairs. Section 2.3 and Section 2.4 deals with ex-
+traction from multiply parallel and near-parallel
+corpora, and Section 3 offers some conclusions.
+1 Basic vocabulary
+The idea that there is a basic vocabulary composed
+of a few hundred or at most a few thousand ele-
+ments has a long history going back to the Renais-
+sance ? for a summary, see Eco (1995). The first
+modern efforts in this direction are Thorndike?s
+(1921) Word Book, based entirely on frequency
+counts (combining TF and DF measures), and
+Ogden?s (1944) Basic English, based primarily
+on considerations of definability. Both had last-
+ing impact, with Thorndike?s approach forming
+the basis of much subsequent work on readabil-
+ity (Klare 1974, Kanungo and Orr 2009) and
+Ogden?s forming the basis of the Simple En-
+glish Wikipedia1. An important landmark is the
+Swadesh (1950) list, which puts special emphasis
+on cross-linguistic definability, as its primary goal
+is to support glottochronological studies.
+Until the advent of large MRDs, the frequency-
+based method was much easier to follow, and
+Thorndike himself has extended his original list of
+ten thousand words to twenty thousand (Thorndike
+1http://simple.wikipedia.org
+52
+1931) and thirty thousand (Thorndike and Lorge
+1944). For a recent example see Davies and Gard-
+ner (2010), for a historical survey see McArthur
+(1998). The main problem with this approach is
+the lack of clear boundaries both at the top of the
+list, where function words dominate, and at the
+bottom, where it seems quite arbitrary to cut the
+list off after the top three hundred words (Diedrich
+1938), the top thousand, as is common in foreign
+language learning, or the top five thousand, es-
+pecially as the frequency curves are generally in
+good agreement with Zipf?s law and thus show no
+obvious inflection point. The problem at the top
+is perhaps more significant, since any frequency-
+based listing will start with the function words
+of the language, characterizing more its grammar
+than its vocabulary. For this reason, the list is
+highly varied across languages, and what is a word
+(free form) in one language, like English the, often
+ends up as an affix (bound form) in another, like
+the Romanian suffix -ul. By choosing a frequency-
+based approach, we inevitably put the emphasis on
+comparing grammars and morphologies, instead
+of comparing vocabularies.
+The definitional method is based on the assump-
+tion that dictionaries will attempt to define the
+more complex words by simpler ones. Therefore,
+starting with any word list L, the list D(L) ob-
+tained by collecting the words appearing on the
+right-hand side of the dictionary definitions will
+be simpler, the list D(D(L)) obtained by repeat-
+ing the method will be yet simpler, and so on, un-
+til we arrive at an irreducible list of basic words
+that can no longer be further simplified. Mod-
+ern MRDs, starting with the Longman Dictionary
+of Contemporary English (LDOCE), generally en-
+force a strict list of words and word senses that can
+appear in definitions, which guarantees that the ba-
+sic list will be a subset of this defining vocabulary.
+This method, while still open to charges of arbi-
+trariness at the high end, in regards to the separa-
+tion of function words from basic words, creates a
+bright line at the low end: no word, no matter how
+frequent, needs to be included as long as it is not
+necessary for defining other words.
+In creating the 4lang conceptual dictionary
+(Kornai and Makrai, 2013), we took advantage
+of the fact that the definitional method is robust
+in terms of choosing the seed list L, and built a
+seed of approximately 3,500 entries composed of
+the Longman Defining Vocabulary (2,200 entries),
+the most frequent 2,000 words according to the
+Google unigram count (Brants and Franz 2006)
+and the BNC, as well as the most frequent 2,000
+words from Polish (Hala?csy et al2004) and Hun-
+garian (Kornai et al2006). Since Latin is one of
+the four languages supported by 4lang (the other
+three being English, Polish, and Hungarian), we
+added the classic Diederich (1938) list and Whit-
+ney?s (1885) Roots.
+The basic list emerging from the iteration has
+1104 elements (including two bound morphemes
+but excluding technical terms of the formal seman-
+tic model that have no obvious surface reflex). We
+will refer to this as the basic or uroboros set as it
+has the property that each of its members can be
+defined in terms of the others, and we reserve the
+name 4lang for the larger set of 3,345 elements
+from which it was obtained. Since 4lang words
+can be defined using only the uroboros vocabu-
+lary, and every word in the Longman Dictionary
+of Contemporary English can be defined using the
+4lang vocabulary (since this is a superset of LDV),
+we have full confidence that every sense of every
+non-technical word can be defined by the uroboros
+vocabulary. In fact, the Simple English Wikipedia
+is an attempt to do this (Yasseri et al, 2012) based
+on Ogden?s Basic English, which overlaps with the
+uroboros set very significantly (Dice 0.527).
+The lexicographic principles underlying 4lang
+have been discussed elsewhere (Kornai, 2012;
+Kornai and Makrai, 2013), here we just summa-
+rize the most salient points. First, the system is
+intended to capture everyday vocabulary. Once
+the boundaries of natural language are crossed,
+and goats are defined by their set of genes (rather
+than an old-fashioned taxonomic description in-
+volving cloven hooves and the like), or derivative
+is defined as lim??0(f(x + ?) ? f(x))/?, the
+uroboros vocabulary loses its grip. But for the
+non-technical vocabulary, and even the part of the
+technical vocabulary that rests on natural language
+(e.g. legal definitions or the definitions in philos-
+ophy and discursive prose in general), coverage
+of the uroboros set promises a strategy of grad-
+ually extending the vocabulary from the simple
+to the more complex. Thus, to define Jupiter as
+?the largest planet of the Sun?, we need to define
+planet, but not large as this item is already listed in
+the uroboros set. Since planet is defined ?as a large
+body in space that moves around a star?, by substi-
+tution we will obtain for Jupiter the definition ?the
+53
+largest body in space that moves around the Sun?
+where all the key items large, body, space, move,
+around are part of the uroboros set. Proper nouns
+like Sun are discussed further in (Kornai, 2010),
+but we note here that they constitute a very small
+proportion (less than 6%) of the basic vocabulary.
+Second, the ultimate definitions of the uroboros
+elements are given in the formal language of ma-
+chines (Eilenberg, 1974), and at that level the En-
+glish words serve only a mnemonic purpose, and
+could in principle be replaced by any arbitrary
+names or even numbers. Because this would make
+debugging next to impossible, as in purposely ob-
+fuscated code, we resort to using English print-
+names for each concept, but it is important to keep
+in mind that these are only weakly reflective of
+the English word. For example, the system relies
+heavily on an element has that indicates the pos-
+sessive relation both in the direct sense, as in the
+Sun?s planet, the planet of the Sun and in its more
+indirect uses, as in John?s favorite actress where
+there is no question of John being in possession
+of the actress. In other languages, has will gen-
+erally be translated by morphemes (often bound
+morphemes) indicating possession, but there is no
+attempt to cross-link all relevant uses. The el-
+ement has will appear in the definition of Latin
+meus and noster alike, but of course there is no
+claim that English has underlies the Latin senses.
+If we know how to express the basic vocabulary
+elements in a given language, which is the task we
+concentrate on here, and how to combine the ex-
+pressions in that language, we are capable of defin-
+ing all remaining words of the language.
+In general, matching up function words cross-
+linguistically is an extremely hard task, especially
+as they are often expressed by inflectional mor-
+phology and our workflow, which includes stem-
+ming, just strips off the relevant elements. Even
+across languages where morphological analysis is
+a solved task, it will take a great deal of man-
+ual work to establish some form of translational
+equivalence, and we consider the issue out of
+scope here. But for content words, the use of
+language-independent concepts simplifies matters
+a great deal: instead of finding
+(40
+2
+)
+translation
+pairs for the 3,384 concepts that already have man-
+ual bindings in four languages (currently, Latin
+and Polish are only 90% complete), our goal is
+only to find reasonable printnames for the 1,104
+basic concepts in all 40 languages. Translation
+pairs are only obtained indirectly, through the con-
+ceptual pivot, and thus do not amount to fully valid
+bilingual translation pairs. For example, he-goat
+in one language may just get mapped to the con-
+cept goat, and if billy-goat is present in another
+language, the strict translational equivalence be-
+tween the gendered forms will be lost because
+of the poverty of the pivot. Nevertheless, rough
+equivalence at the conceptual level is already a
+useful notion, especially for filtering out candidate
+pairs produced by more standard bilingual dictio-
+nary building methods, to which we now turn.
+2 Wiktionary
+Wiktionary is a crowdsourced dictionary with
+many language editions that aim at eventually
+defining ?all words?. Although Wiktionary is pri-
+marily for human audience, since editors are ex-
+pected to follow fairly strict formatting standards,
+we can automate the data extraction to a cer-
+tain degree. While not a computational linguistic
+task par excellence, undoing the MediaWiki for-
+mat, identifying the templates and simply detect-
+ing the translation pairs requires a great deal of
+scripting. Some Wiktionaries, among others the
+Bulgarian, Chinese, Danish, German, Hungarian,
+Korean, and Russian, are formatted so heteroge-
+neously that automated extraction of translation
+pairs is very hard, and our results could be further
+improved.
+Table 1 summarizes the coverage of Wiktionary
+on the basic vocabulary from the perspective of
+translation pairs with one manual member, En-
+glish, Hungarian, Latin, and Polish respectively.
+The last column represents the overall coverage
+combining all four languages. As can be seen,
+the better resourced languages fare better in Wik-
+tionary as well, with the most translations found
+using English as the source language (64.9% on
+the smaller basic set, and 64% on the larger 4lang
+vocabulary), Polish and Hungarian faring about
+Table 1: 4lang coverage of Wiktionary data.
+Based on
+en hu la pl all
+4lang 59.43 22.09 7.9 19.6 64.01
+uroboros 60.29 22.88 9.11 21.09 64.91
+54
+equally well, although the Polish list of 4lang has
+more missing bindings, and the least resourced
+Latin faring the worst.
+Another measure of coverage is obtained by
+seeing how many language bindings are found on
+the average for each concept: 65% on 4lang and
+64% for the basic set (32 out of the 50 languages
+considered here).
+2.1 Triangulating
+Next we used a simple triangulation method to
+expand the collection of translation pairs, which
+added new translation pairs if they had been linked
+with the same word in a third language. An ex-
+ample, the English:Romanian pair guild:breasla?,
+obtained through a Hungarian pivot, is shown in
+Figure 1.
+hu:ce?h
+en:guild ro:breasla?
+Figure 1: The non-dashed edge represents transla-
+tion pairs extracted directly from the Wiktionaries.
+The pair guild?breasla? were found via triangulat-
+ing.
+While direct translation pairs come from the
+manually built Wiktionaries and can be consid-
+ered gold (not entirely without reservations, but
+clearly over 90% correct in most language pairs
+we could manually spot-check), indirect pairs
+must be viewed with considerable suspicion, as
+multiple word senses bring in false positives quite
+often. Using 3,317,861 pairs extracted from 40
+Wiktionaries, we obtained a total of 126,895,236
+indirect pairs, but in the following table we con-
+sider only those that were obtained through at least
+two different third-language pivots with the pairs
+originating from different Wiktionaries, and dis-
+carded the vast majority, leaving 5,720,355 pairs
+that have double confirmation. Manual checking
+proved that the quality of these pairs is compara-
+ble to that of the original data (see Table 7). A
+similar method, within one dictionary rather than
+Table 2: 4lang coverage of triangulating.
+Based on
+en hu la pl all
+4lang 76.09 64.91 43.25 53.74 85.81
+basic 77.81 64.74 48.07 58.55 86.97
+Table 3: 4lang coverage of Wiktionary data and
+triangulating.
+Based on
+en hu la pl all
+4lang 80.77 65.69 43.63 54.30 86.80
+basic 82.07 65.47 48.41 59.13 87.81
+across several, was used in (Saralegi et al, 2012)
+to remove triangulation noise. Since recall would
+be considerably improved by some less aggres-
+sive filtering method, in the future we will also
+consider improving the similarity scores of our
+corpus-based methods using the single triangles
+we now discard.
+Triangulating by itself improves coverage from
+65% to 85.8% (4lang) and from 64% to 87% (ba-
+sic), see Table 2. Table 3 shows the combined cov-
+erage which is not much different from Table 2 but
+considering that the triangulating used the Wik-
+tionary data as input, we expected a very large in-
+tersection (it turned out to be more than 40% of
+the pairs acquired through triangulating). The av-
+erage number of language bindings also improves
+significantly, to 43.5/50 (4lang) and 44/50 (basic).
+2.2 Wikipedia titles
+Another crowdsourced method that promises great
+precision is comparing Wikipedia article titles
+across languages: we extracted over 187m poten-
+tial translation pairs this way. Yet the raw data is
+quite noisy, for example French chambre points to
+English Ca?mara, an article devoted to the fact that
+?Ca?mara (meaning ?chamber?) is a common sur-
+name in the Portuguese language? rather than to
+some article on bedroom, room, or chamber. We
+filtered this data in several ways. First, we dis-
+carded all pairs that contain words that appear five
+or fewer times in the frequency count generated
+from the language in question. This reduced the
+55
+Table 4: 4lang coverage of Wikipedia interwiki
+links (langlinks).
+Based on
+en hu la pl all
+4lang 21.51 14.4 9.54 12.26 31.74
+basic 20.7 13.0 10.22 13.43 31.32
+number of pairs to 15m. Most of these, unfortu-
+nately, are string-identical across languages, leav-
+ing us with a total of 6.15m nontrivial translation
+pairs. A large portion of these are named entities
+that do not always add meaningfully to a bilingual
+dictionary.
+The average number of language bindings is
+16.5 and 12.6 respectively. The combined results
+improve slightly as shown in Table 8.
+2.3 Parallel texts
+Using the Bible as a parallel text in dictionary
+building has a long tradition (Resnik et al, 1999).
+Somewhat surprisingly in the age of parallel
+corpora, the only secular text available in all
+our languages is the Universal Declaration of
+Human Rights, which is simply too short to add
+meaningfully to the coverage obtained on the
+Bible. In addition to downloading the collection
+at http://homepages.inf.ed.ac.uk/s0787820/bible,
+we used http://www.jw.org (for Dutch, Ar-
+menian and Korean), www.gospelgo.com (for
+Catalan, Kazakh, Macedonian, Malay and
+Persian), http://www.biblegateway.com (for
+Czech), http://biblehub.com (for English) and
+http://www.mek.oszk.hu (for Hungarian). To the
+extent feasible we tried to use modern Bible
+translations, resorting to more traditional trans-
+lations only where we could not identify a more
+contemporary version.
+The average number of languages with transla-
+tions found is 19 (basic) and 17.8 (4lang). These
+Table 5: 4lang coverage of the Bible data.
+Based on
+en hu la pl all
+4lang 19.64 15.17 13.78 14.13 35.49
+basic 21.47 17.12 15.67 15.78 38.13
+numbers are considerably weaker than the crowd-
+sourced results, suggesting that the dearth of mul-
+tiply parallel texts, even in the best resourced
+group of 40 languages, needs to be addressed.
+2.4 Comparable texts
+Comparable corpora were built from Wikipedia ar-
+ticles in the following manner. For each language
+pair, we considered those articles that mutually
+linked each other, and took the first 50 words, ex-
+cluding the title itself. Article pairs whose length
+differed drastically (more than a factor of five)
+were discarded.
+Table 6: 4lang coverage of the dictionary extracted
+from Wikipedia as comparable corpora.
+Based on
+en hu la pl all
+4lang 5.58 5.66 4.30 4.96 16.00
+basic 5.70 5.86 4.93 5.39 16.77
+The 4lang coverage based solely on the trans-
+lations acquired from comparable corpora is pre-
+sented in Table 6. The average number of lan-
+guages with translations found is 8 (basic) and 8.4
+(4lang).
+2.5 Evaluation
+We used manual evaluation for a small subset of
+language pairs. Human annotators received a sam-
+ple of 100 translation candidate-per-method. The
+samples were selected from translations that were
+found by only one method, as we suspect that
+translations found by several methods are more
+likely to be correct. Using this strict data selection
+Table 7: Manual evaluation of extracted pairs that
+do not appear in more than one dictionary.
+Wikt Tri Title Par Comp
+cs-hu 82 81 95 41 40
+de-hu 92 87 96 46 68
+fr-hu 76 80 89 43 54
+fr-it 79 79 92 43 36
+hu-en 87 75 92 28 63
+hu-it 94 93 93 35 61
+hu-ko 87 85 99 N/A N/A
+avg 85.3 82.9 93.7 39.3 53.7
+56
+criterion we evaluated the added quality of each
+method. Results are presented in Table 7. It is
+clear that set next to the crowdsourced methods,
+dictionary extraction from either parallel or com-
+parable corpora cannot add new translations with
+high precision. When high quality input data is
+available, triangulating appears to be a powerful
+yet simple method.
+3 Conclusions and future work
+The major lesson emerging from this work is that
+currently, crowdsourced methods are considerably
+more powerful than the parallel and comparable
+corpora-based methods that we started with. The
+reason is simply the lack of sufficiently large par-
+allel and near-parallel data sets, even among the
+most commonly taught languages. If one is actu-
+ally interested in creating a resource, even a small
+resource such as our basic vocabulary set, with
+bindings for all 40 languages, one needs to engage
+the crowd.
+Table 8: Summary of the increase in 4lang cover-
+age achieved by each method. Wikt: Wiktionary,
+Tri: triangulating, WPT: Wikipedia titles, Par: the
+Bible as parallel corpora, WPC: Wikipedia articles
+as comparable corpora
+Src Set
+Based on
+en hu la pl all
+Wikt
+4lang 59.43 22.09 7.90 19.6 64.01
+basic 60.29 22.88 9.11 21.09 64.91
+Tri
+4lang 80.77 65.69 43.63 54.3 86.8
+basic 82.07 65.47 48.41 59.13 87.81
+WPT
+4lang 81.39 66.27 44.2 54.66 87.39
+basic 82.51 65.86 48.89 59.53 88.17
+Par
+4lang 82.22 67.35 45.99 55.4 88.22
+basic 83.27 67.04 50.62 60.25 88.91
+WPC
+4lang 81.56 66.49 44.42 54.77 87.58
+basic 82.66 66.06 49.14 59.62 88.33
+The resulting 40lang resource, cur-
+rently about 88% complete, is available
+for download at http://hlt.sztaki.hu. The
+Wiktionary extraction tool is available at
+https://github.com/juditacs/wikt2dict. 40lang,
+while not 100% complete and verified, can
+already serve as an important addition to existing
+MRDs in several applications. In comparing
+corpora the extent vocabulary is shared across
+them is a critical measure, yet the task is not
+trivial even when these corpora are taken from the
+same language. We need to compare vocabularies
+at the conceptual level, and checking the shared
+40lang content between two texts is a good first
+cut. Automated dictionary building itself can
+benefit from the resource, since both aligners
+and dictionary extractors benefit from known
+translation pairs.
+Acknowledgments
+The results presented here have improved since
+A?cs (2013). A?cs did the work on Wik-
+tionary and Wikipedia titles, Pajkossy on par-
+allel corpora, Kornai supplied the theory and
+advised. The statistics were created by A?cs.
+We thank Attila Zse?der, whose HunDict system
+(see https://github.com/zseder/hundict) was used
+on the (near)parallel data, for his constant sup-
+port at every stage of the work. We also thank
+our annotators: Kla?ra Szalay, E?va Novai, Ange-
+lika Sa?ndor, and Ga?bor Recski.
+The research reported in the paper was con-
+ducted with the support of the EFNILEX project
+http://efnilex.efnil.org of the European Feder-
+ation of National Institutions for Language
+http://www.efnil.org, and OTKA grant #82333.
+References
+Judit A?cs. 2013. Intelligent multilingual dictionary
+building. MSc Thesis, Budapest University of Tech-
+nology and Economics.
+Thorsten Brants and Alex Franz. 2006. Web 1T 5-
+gram version 1.
+Peter Brown, John Cocke, Stephen Della Pietra, Vin-
+cent J. Della Pietra, Fredrick Jelinek, John D. Laf-
+ferty, Robert L. Mercer, and Paul S. Roossin. 1990.
+A statistical approach to machine translation. Com-
+putational Linguistics, 16:79?85.
+M. Davies and D. Gardner. 2010. A Frequency Dic-
+tionary of Contemporary American English: Word
+Sketches, Collocates, and Thematic Lists. Rout-
+ledge Frequency Dictionaries Series. Routledge.
+Paul Bernard Diederich. 1939. The frequency of Latin
+words and their endings. The University of Chicago
+press.
+Umberto Eco. 1995. The Search for the Perfect Lan-
+guage. Blackwell, Oxford.
+Samuel Eilenberg. 1974. Automata, Languages, and
+Machines, volume A. Academic Press.
+Pe?ter Hala?csy, Andra?s Kornai, La?szlo? Ne?meth, Andra?s
+Rung, Istva?n Szakada?t, and Viktor Tro?n. 2004. Cre-
+ating open language resources for Hungarian. In
+57
+Proceedings of the 4th international conference on
+Language Resources and Evaluation (LREC2004),
+pages 203?210.
+Tapas Kanungo and David Orr. 2009. Predicting the
+readability of short web summaries. In 2nd ACM
+Int. Conf. on Web Search and Data Mining.
+George R. Klare. 1974. Assessing readability. Read-
+ing Research Quarterly, 10(1):62?102.
+Andra?s Kornai and Ma?rton Makrai. 2013. A 4lang
+fogalmi szo?ta?r [the 4lang concept dictionary]. In
+A. Tana?cs and V. Vincze, editors, IX. Magyar
+Sza?mito?ge?pes Nyelve?szeti Konferencia [Ninth Con-
+ference on Hungarian Computational Linguistics],
+pages 62?70.
+A. Kornai, P. Hala?csy, V. Nagy, Cs. Oravecz, V. Tro?n,
+and D. Varga. 2006. Web-based frequency dictio-
+naries for medium density languages. In A. Kilgar-
+iff and M. Baroni, editors, Proc. 2nd Web as Corpus
+Wkshp (EACL 2006 WS01), pages 1?8.
+Andra?s Kornai. 2010. The algebra of lexical seman-
+tics. In Christian Ebert, Gerhard Ja?ger, and Jens
+Michaelis, editors, Proceedings of the 11th Mathe-
+matics of Language Workshop, LNAI 6149, pages
+174?199. Springer.
+Andra?s Kornai. 2012. Eliminating ditransitives. In
+Ph. de Groote and M-J Nederhof, editors, Revised
+and Selected Papers from the 15th and 16th Formal
+Grammar Conferences, LNCS 7395, pages 243?
+261. Springer.
+Tom McArthur. 1998. Living Words: Language, Lex-
+icography, and the Knowledge Revolution. Exeter
+Language and Lexicography Series. University of
+Exeter Press.
+I Dan Melamed. 2000. Models of translational equiv-
+alence among words. Computational Linguistics,
+26(2):221?249.
+C.K. Ogden. 1944. Basic English: A General Intro-
+duction with Rules and Grammar. Psyche minia-
+tures: General Series. Kegan Paul, Trench, Trubner.
+Philip Resnik, Mari Broman Olsen, and Mona Diab.
+1999. The bible as a parallel corpus: Annotating
+the ?Book of 2000 Tongues?. Computers and the
+Humanities, 33(1-2):129?153.
+Xabier Saralegi, Iker Manterola, and In?aki San Vicente.
+2012. Building a basque-chinese dictionary by us-
+ing english as pivot. In Nicoletta Calzolari (Con-
+ference Chair), Khalid Choukri, Thierry Declerck,
+Mehmet Ug?ur Dog?an, Bente Maegaard, Joseph Mar-
+iani, Jan Odijk, and Stelios Piperidis, editors, Pro-
+ceedings of the Eight International Conference on
+Language Resources and Evaluation (LREC?12), Is-
+tanbul, Turkey, may. European Language Resources
+Association (ELRA).
+Morris Swadesh. 1950. Salish internal relation-
+ships. International Journal of American Linguis-
+tics, pages 157?167.
+Edward L. Thorndike and Irving Lorge. 1944. The
+teacher?s word book of 30,000 words. Teachers Col-
+lege Bureau of Publications.
+Edward L. Thorndike. 1921. The teacher?s word book.
+New York Teachers College, Columbia University.
+E.L. Thorndike. 1931. A teacher?s word book. New
+York Teachers College, Columbia University.
+William Dwight Whitney. 1885. The roots of the San-
+skrit language. Transactions of the American Philo-
+logical Association (1869-1896), 16:5?29.
+Taha Yasseri, Andra?s Kornai, and Ja?nos Kerte?sz. 2012.
+A practical approach to language complexity: a
+wikipedia case study. PLoS ONE, 7(11):e48386.
+doi:10.1371/journal.pone.0048386.
+Attila Zse?der, Ga?bor Recski, Da?niel Varga, and Andra?s
+Kornai. 2012. Rapid creation of large-scale corpora
+and frequency dictionaries. In Proceedings to LREC
+2012.
+58
+Structure Learning in Weighted Languages
+Andra?s Kornai, Attila Zse?der, Ga?bor Recski
+HAS Computer and Automation Research Institute
+H-1111 Kende u 13-17, Budapest
+{kornai,zseder,recski}@sztaki.mta.hu
+Abstract
+We present Minimum Description Length
+techniques for learning the structure of
+weighted languages. MDL is already
+widely used both for segmentation and
+classification tasks, and here we show it
+can be used to formalize further important
+tools in the descriptive linguists? toolbox,
+including the distinction between acciden-
+tal and systematic gaps in the data, the de-
+tection of ambiguity, the selective discard-
+ing of data, and the merging of categories.
+Introduction
+The Minimum Description Length (MDL, see Ris-
+sanen 1978) framework is primarily about data
+compression: if we are given some data D, our
+goal is to find a modelM, and a correction term
+E , such that the model output and the correction
+term together describe the data, and transmitting
+M and E takes fewer bits than transmitting any
+competingM? and E ?.
+From the very beginning, starting with Pa?n. ini,
+linguists have put a premium on brevity. The hope
+is that the shortest theory is the best theory (see
+Vitanyi and Li 2000), at least if we are willing
+to posit a theory of Universal Grammar (UG) that
+will let us specifyM briefly, since we can assume
+UG to be amortized over many languages.
+In this paper we study the problem of com-
+pressing weighted languages by presenting them
+via weighted finite state automata (WFSA). The
+theoretical approach we discuss here has a long
+history: the founding paper of Kolmogorov com-
+plexity, Solomonoff (1964), already studied the
+problem of inferring a grammar from data, and
+Gru?nwald (1996) uses MDL to infer CFGs from
+corpora, there conceived of as long strings over a
+finite alphabet. It is fair to say that this theory has
+not had much impact on computational practice,
+where grammatical inference is dominated by the
+standard n-gram based language modeling meth-
+ods, see Jelinek (1997) for an excellent summary
+of the basic ideas and techniques, most of which
+are still in wide use.
+While the two approaches may coincide in cer-
+tain cases (see Gru?nwald 1996), and in theory n-
+gram models are just a special case of the general
+WFSA, in practice they are divided by a funda-
+mental difference in modeling unseen data. From
+an engineering standpoint, Church et al(2007) are
+entirely right in saying:
+No matter how much data we have, we
+never have enough. Nothing has zero
+probability.
+Linguists, starting perhaps with Chomsky (1965),
+draw a bright line between accidentally and sys-
+tematically missing data, and would prefer to re-
+strict backoff techniques to the accidental gaps.
+The distinction is often lost in applied work, be-
+cause the models need to be built in a noisy envi-
+ronment, where frequent typos like *teh and simi-
+lar performance errors can easily overwhelm gen-
+uine items like boisterous or mopeds by an order
+of magnitude or even more. In the eyes of many
+linguists, this observation alone is sufficient to rob
+probabilistic models of grammatical content, since
+this makes it impossible to define a single thresh-
+old g such that all and only strings with weight
+greater than g are grammatical.
+Aside from this subtle but important distinc-
+tion between accidental and systematic gaps, both
+kinds of language modeling can be cast in the
+same formal terms: we fit a model M that min-
+imizes some function E (typically, the squared
+sum) of the error E . Obviously, the more pa-
+rameters M has, the better fit we can obtain.
+Much of contemporary computational linguistics
+follows the route of training simple models such
+as Hidden Markov Models (HMMs) and proba-
+bilistic context-free grammars (PCFGs) with very
+many parameters, and stops adding more only
+when compressing the memory footprint is of
+paramount importance. As (Church et al, 2007)
+notes, applications like the contextual speller of
+Microsoft Office simply could not ship without
+keeping the language model within reasonable
+size limits. In such cases, we are quite willing to
+trade in E for gains in the size M ofM, and con-
+siderations of optimizing the sum of the two are
+simply irrelevant.
+In contrast, our strategy is to search for model
+which measures both M and E in bits, and opti-
+mizes the sum M + E, not because we put such
+a premium on data compression, but rather be-
+cause we follow in Pa?n. ini?s footsteps. Our goal is
+finding structural models capable of distinguish-
+ing structurally excluded (ungrammatical) strings
+like furiously sleep ideas green colorless from low
+probability but grammatical strings like colorless
+green ideas sleep furiously (Pereira, 2000). For
+this more ambitious goal comparing models with
+different number of parameters is a key issue, and
+this is precisely where MDL is helpful.
+The rest of this Introduction provides the basic
+definitions, notation, and terminology, all fairly
+standard except for the use of Moore rather than
+Mealy machines ? the significance of this choice
+will be discussed in Section 2. In Section 1
+we bring a fundamental idea of signal process-
+ing, quantization error, to bear on the problem
+of model selection, illustrating the issue on a real
+example, the proquant system of Hungarian. In
+Section 2 we show how one of the most power-
+ful tools at disposal of the linguist, ambiguity, can
+be detected by MDL, bringing another standard
+idea, signal to noise ratio to bear. In Section 3
+we discuss another real example, Hungarian mor-
+photactics, and show that two methods widely (but
+shamefacedly) used in practice, discarding data
+and merging descriptive categories, can be used
+on a principled basis within MDL. Our goal is
+to show that by consistent application of MDL
+principles we can automatically set up the kind
+of models that linguists would set up. Ultimately,
+both man and machine work toward the same goal,
+optimization of grammar elegance or, what is the
+same, brevity.
+Definition 1. Given some finite alphabet ?, a
+weighted language p over this alphabet is defined
+as a mapping p : ?? ? R taking non-negative val-
+ues such that
+?
+???? p(?) = 1. This is less gen-
+eral than the standard notion of noncommutative
+power series with weights taken in arbitrary semir-
+ings (Eilenberg 1974, Salomaa 1978) but will suf-
+fice here. The stringset {?|p(?) > 0} is called the
+support of p and will be denoted by S(p).
+Definition 2. Given two weighted languages
+p and q, we say the Kullback-Leibler (KL)
+approximation error Q of q relative to p is
+?
+??S(q) p(?) log(p(?)/q(?)). The entropy of p
+is defined as ?
+?
+??S(p) p(?) log(p(?)).
+Definition 3. A WFSAM is defined by a square
+transition matrix M whose element mij give the
+probability of transition from state i to state j, an
+emission list h that gives a string hi ? ?? for each
+i 6= 0, and an acceptance vector ~awhose i-th com-
+ponent is 1 if i is an accepting state and 0 other-
+wise. There is a unique initial state which starts
+the state numbering at 0, and we permit states with
+empty outputs. Rows of M must sum to 1. Thus
+we have defined WFSA as normalized probability-
+weighted nondeterministic Moore machines.
+Definition 4. The weight a WFSA assigns to a
+generation path is the product of the weights on
+the edges traversed, and the weight it assigns to a
+string ? is the sum of the weights assigned to all
+paths that generate ?.
+1 Quantization error
+The notions of quantization error and quantiza-
+tion noise, while well known in the signal pro-
+cessing literature (for a monographic treatment,
+see Widrow and Kolla?r 2008), and widely used
+in speech processing (Makhoul et al, 1985), have
+had little impact on language processing. Yet
+MDL description of even the simplest weighted
+language brings up a significant problem that can-
+not be addressed without approximation.
+Let p be a non-computable real number between
+0 and 1, and let us define the language A as con-
+taining only two strings, a and b, with probability
+p and 1 ? p respectively. Since p is incompress-
+ible, the only way Alice can send A to Bob is by
+sending all bits of p. By Alice sending only the
+first n bits, Bob obtains a language An that ap-
+proximatesA with error of 2?n. Since sending the
+strings {a, b} has only a small constant cost, the
+overall MDL cost is dominated by the error term
+E, which is just as incompressible as the original
+p was.
+As long as the weights themselves are treated
+as information objects of arbitrary capacity, there
+is no way out of this conundrum (de Leeuw 1956).
+On the other hand, the weighted languages we en-
+counter in practice are generally abstracted from
+gigaword or smaller corpora, and as such their in-
+herent precision is less than 32 bits. For weighted
+languages with finite support (corpora and lan-
+guage models without smoothing) p is simply a
+list containing strings and probabilities. The cost
+of transmitting this list comes from two sources:
+the cost of transmitting the probabilities, and the
+cost of transmitting the strings. As a first approx-
+imation, let us assume the two are independent, a
+matter we shall return to in Section 2.
+We begin by investigating the inherent
+cost/error tradeoff of transmitting a discrete
+probability distribution {pj |1 ? j ? k} by
+uniform quantization to b bits. We divide the unit
+interval in n = 2b equal parts. For our theorems
+we will use a value b large enough so that we
+have pj ? 2?(b?2) for all j, leaving at least the
+first 4 bins empty. Usually 32 bits suffice for
+this, and as we shall see shortly, often a lot fewer
+are truly needed, though standard modeling tools
+like SRILM often use 64-bit quantities. For each
+probability, Alice sends b bits (the bin number).
+Bob, who knows b, reconstructs a value based on
+the center of the bin.
+Since this process does not guarantee that the
+reconstructed values sum to 1, Bob takes the ad-
+ditional step of renormalizing these values: if
+?
+qi = r, he will use q = qi/r instead of the
+qi that were transmitted by Alice. When b is large,
+the pi will be distributed uniformly mod 2?b. In
+this case, the expected values E(pi ? qi) are zero
+for all i, so E(
+?
+qi) =
+?
+E(qi) =
+?
+E(pi) =
+E(
+?
+pi) = 1 or, in other words, E(r) = 1. Since
+Var(r ? 1) =
+?
+i Var(pi ? qi) = k/12n
+2 is on
+the order 1/n2, in the following estimate we can
+safely ignore the effects of renormalization. By
+Definition 2, the KL approximation error is
+Q =
+n?1?
+i=0
+?
+i/n?pj?(i+1)/n
+pj?(p
+i
+j) (1)
+where ?(pij) = log(2npj/(2i + 1)) is the dif-
+ference between the logarithms of the actual pj
+and the centerpoint of the interval [i/n, (i+ 1)/n)
+where pj falls. In absolute value, this is maximal
+when pj is at the lower end of this interval, where
+?(pij) is log(
+2i+1
+2i ). Using the standard estimate
+log(1 + x) ? x this will be less than 12i ? 1/8
+since i ? 4 . Since the ?(pij) are now estimated
+uniformly, and the pj sum to 1, we obtain
+Theorem 1. The approximation error Qn of uni-
+form quantization into n bins [i/n, (i+1)/n) such
+that the first 4 bins are empty satisfies
+Qn ?
+1
+8 log 2
+? 0.18 (2)
+bits independent of n (the computation was in base
+e rather than base 2, hence the factor log 2). With
+growing n the number of bins that remain empty
+will grow, and the estimate 12i of ? can be im-
+proved accordingly.
+Theorem 1 of course gives just an upper bound,
+and a rather crude one, the expected value of Qn
+is considerably less. Instead of using the max
+value ?(pij) we can consider the expected abso-
+lute value, which is log(1 + 12i)/n, so equation (2)
+could be reformulated as
+E(Qn) ?
+1
+8n log 2
+(3)
+It is evident from the foregoing that the crux of
+the matter are the small pi values, and at any rate,
+there can only be a handful of relatively large val-
+ues, since the sum is 1. Experience shows that
+probabilities obtained from corpora span many or-
+ders of magnitude, which justifies the use of a log
+scale. Instead of the simple uniform quantization
+of Theorem 1, we will use a two-parameter quan-
+tization scheme, whereby first log pj are cut off at
+?C, and the rest, which are on the (?C, 0) inter-
+val, are sorted in n = 2b bins ?b-bit quantization?.
+In effect, all probabilities below e?C are as-
+sumed to be below measurement precision, and
+the log of the rest are uniformly quantized. We
+experimented with two simple techniques: repre-
+senting the class (??,?C) with a very low fixed
+value (10?50) or with one set to e?2C based on
+the parameter C of the encoding. As there was
+no appreciable difference (which is not surprising
+given limx?0 x log x = 0), from here on we sim-
+ply speak of zero weights for weights below e?C .
+We emphasize that ?being below measurement
+precision? is not the same as ?being zero? in the
+above sense. First, in any corpus of size N the
+smallest number we can measure is 1/N , yet we
+know that further strings that were not in our
+sample are not necessarily probability zero. It
+is therefore common to reserve a small fraction,
+? a aka?r ba?r egyvala ma?s ma?svala minden se vala
+ha?ny 72383 9502 2432 55 21 4584
+hogy 7781539 213687 3173 1839 4570 123 4138 31873
+hol 117231 399052 1037 9845 16066 16009 20521 34081
+honnan 24777 18628 296 1205 2482 1321 627 4274
+honne?t 1598 1197 12 25 78 33 23 236
+hova? 17589 21073 486 1753 1 5073 1 1859 2249 3966
+hova 17360 10591 309 1166 1788 1381 2105 3036
+ki 1309618 1464744 3933 60923 884 814 308508 165230 221175
+meddig 11879 8171 189 225 74 252
+mely 761277 1586913 166 74262 3 4 40601
+melyik 68051 47564 1996 34477 2 939 48274
+mennyi 76429 25805 657 1415 517 96184
+mi 1626013 1303820 6500 52480 1337 161 275773 355690
+mie?rt 251120 20672 58 205 4 1810 13552
+mikor 173652 555325 679 33516 15892 11288 206 18235
+milyen 343643 38921 8217 68033 1618 1 55603 81155
+Table 1: Frequencies of proquants in the Hungarian Webcorpus
+generally 1-5% of the probability mass, to un-
+seen events, and use calculated numbers, instead
+of measured values, to smooth the distribution.
+Unfortunately, the engineering philosophy behind
+the various backoff schemes (which often utilize
+MDL stopping criteria both in speech and lan-
+guage modeling, see e.g. Shinoda and Watanabe
+2000, Seymore and Rosenfeld 1996) is diametri-
+cally opposed to the the method of inquiry pre-
+ferred by linguists, whose primary interest is with
+generalization, i.e. with models that make falsifi-
+able predictions, rather than furnishing descriptive
+statistics. In particular, negative generalizations,
+that something is forbidden by some rule of gram-
+mar, are just as interesting from their standpoint as
+positive generalizations. But how do we express a
+negative generalization?
+Definition 5. A string will be deemed ungrammat-
+ical or structurally excluded iff every generation
+path includes at least one zero weight in the above
+sense.
+If scores from different sources are multiplied
+together, the use of zero weights as markers of
+ungrammaticality is implicit in the semantics of
+WFSA.1 Still, there are significant difficulties in
+implementing the idea. If we want to maintain
+the commonsensical assumption that *teh is not
+a word (has zero unigram weight) and also ac-
+count for the data that makes it the 34,174th most
+common string in English text, we will need to
+1We owe this observation to an anonymous MOL referee.
+model typos. Once we learn that the log price of
+the /the/teh/ substitution is about -9.8, we can pre-
+dict not just the frequency of teh, but also those
+of weatehr, otehr, tehy, tehre, tehft, and so forth,
+without adding these to the lexicon. Since such a
+model is based on computed frequencies of letter
+substitution and exchange rather than on the typos
+directly, the engineer has to give up the enterprise
+of building the entire language model in a single
+sweep directly on the data.
+At the same time, the linguist has to give up
+the attractive simplicity of ?zero weight iff un-
+grammatical?: the misspelling model will assign
+a low but nonzero weight to everything, and if
+this model is compiled together with a unigram
+model that contains only grammatical words, the
+simple world-view of Definition 5 will no longer
+work. Rather, we will have to say that it is zero
+weight in the grammatical subautomaton (visible
+only prior to getting compiled together with the se-
+mantic, spelling, stylistic, and possibly other sub-
+automata) that defines grammaticality. We have
+to build an explicit noise model to make sense of
+the raw data, but this is not particularly surprising
+from the perspective of other sciences like astron-
+omy where noise reduction is common practice.
+The specific contribution of the MDL approach
+is that zero weights in the model are a lot
+cheaper than using low probabilities would be: the
+paradigm encourages both sparseness and struc-
+tural decomposition. But before we can establish
+these points in Sections 2 and 3, we need to as-
+similate another piece of computational practice,
+the use of log probabilities. When quantization is
+uniform on the log scale, the expected value of the
+binning error is no longer zero, given our assump-
+tion of uniformity on the linear scale, but rather
+?C log in?
+?C log i+1n
+ex ? e?C
+i+0.5
+n dx ? C3/8n3 (4)
+which yields an expected r ? kC3/8n3, still neg-
+ligible compared to the bound given in Theorem 2,
+which is obtained by methods similar to those used
+above.
+Theorem 2. For C, n sufficiently large for the
+first 4 bins to remain empty, the approximation
+error LCn of log-uniform quantization with cutoff
+?C into n = 2b bins [?C(i + 1)/n,?Ci/n) is
+bounded by
+LCn ?
+C
+2n log 2
+(5)
+and the expected value E(LCn ) is bounded by
+C2/4n2 log 2.
+Figure 1: Error of log-scale uniform quantization
+Let us see on an example how these error
+bounds compare to values obtained numerically.
+Our first example will explore what we will call,
+for want of a better name, the proquant system
+of Hungarian that covers both pro-forms (pro-
+nouns, proadjectives, proadverbials) and quan-
+tifiers. Given the prefixes a-, minden-, vala-,
+egyvala-, ma?svala-, se-, aka?r-, ma?s-, ba?r- and
+zero, and suffixes -ki, -mi, -hol, -hogy, -hova,
+etc. we can create forms such as valaki ?some-
+one?, valami ?something?, aka?rki ?anyone?, sehol
+?nowhere? and so on. Clearly, many of what we
+call prefixes and suffixes could be analyzed fur-
+ther, e.g. ma?svala as ma?s+vala, but we don?t want
+to prejudge the issue by presenting a maximally
+detailed analysis.
+In a corpus of over 40 million sentences (Hun-
+garian Webcorpus, Hala?csy et al 2004) we ob-
+served the frequencies in Table 1. Many of these
+proquant forms take inflectional suffixes (case,
+number, etc.), and the numbers presented here al-
+ready include these, so that the 814 occurrences of
+ma?svalaki include forms like ma?svalakivel ?with
+someone else?, ma?svalakinek ?to someone else?
+etc. If we think of the (stemmed) Hungarian vo-
+cabulary as a weighted language h, the set of
+prefixes (suffixes) as an unweighted language Pre
+(resp. Suff), the data is a sample from S(h)?
+Pre?Suff with the weights renormalized. Alto-
+gether, we have 121 nonzero values plus 39 ze-
+ros, the entropy of the distribution is H = 3.677.
+Figure 1 plots the log of the observed quantiza-
+tion noise as a function of the number of bits b and
+the cutoff ?C. Notice that once C is sufficiently
+large, no further gains are made by increasing it
+further. As expected from Theorem 2, the log of
+the error is roughly linear in b = log2 n (the ob-
+served values are of course better than the bounds).
+Definition 6. The inherent noise of a dataset D
+is the KL approximation error between a random
+subsample and its complement.
+Ideally, we would want to compare another sam-
+ple D? to D, but in many cases launching a com-
+parable data collection effort is simply not feasi-
+ble, and we must content ourselves with the sim-
+ple procedure suggested by this definition. By ran-
+domly cutting the 40m sentence corpus on which
+the proquant dataset is based in 10m sentence parts
+and computing the KL divergence between any
+two, we obtain numbers in the 7-8?10?5 range,
+which means it makes little sense to approximate
+D with better precision than 10?5. How to handle
+the singular cases when some qj becomes 0 (as
+happens with half of the hapaxes when we cut the
+sample in two) is an issue we defer to Section 3.
+Since the smallest pj in this data is about
+5?10?8, by taking C = 20 we guarantee that no
+log probability is less than the cutoff point ?C.
+Trivial ?list? automata consisting of an initial state,
+a final state, and a separate Mealy arc (or Moore
+state) for each of the 121 nonzero observations al-
+ready generate a weighted language within the in-
+herent noise of the data at 10 bits, where the KL
+divergence is at 8 ?10?6. At 12 bits, the divergence
+is below 1.4 ? 10?6, and at 16 bits, below 5 ? 10?9.
+As we shall see in the next Section, the MDL size
+of these models, between 2k and 7k bits, is domi-
+nated by factors unrelated to the precision b of the
+encoding.
+Figure 2: Model fit to observed probabilities
+Figure 2 shows the 80 largest observed proquant
+probabilities (in black) in descending order, and
+the probabilities of the same strings as computed
+from several models. The 10 and 12-bit list au-
+tomata are not plotted, as the computed values are
+graphically indistinguishable from the observed
+values, the rest will be discussed in the text.
+2 Detecting ambiguity
+Before turning to the actual MDL learning pro-
+cess, let us summarize what we have for the Hun-
+garian proquant system so far. We have a weighted
+language of about 120 strings. When transmit-
+ting a weighted automaton, Alice is sending not
+strings and weights, but rather weight-labeled arcs
+and string-labeled states of a WFSA. In Defini-
+tion 3 we used Moore machines, but in the liter-
+ature Mealy automata, where inputs/outputs and
+weights are both tied to arcs are more common
+(see e.g. Mohri 2009). The rationale for preferring
+Moore over Mealy in the MDL context is that no
+gains can be obtained from joint compression of
+strings and probabilities (even though Mealy ma-
+chines couple the two), while sharing of strings
+has very significant impact on MDL length, as we
+shall see shortly. For the simple ?list? automata
+this means adding extra states in the middle of a
+Mealy arc, and we need to take some precautions
+to guarantee that the representation is just as com-
+pact as it would be for a Mealy machine.
+Let us now see in some detail how compact
+these encodings can get. With s states, and b bits
+for probability, an arc requires 2 log2 s + b bits.
+However, Bob can reasonably assume that Alice
+is only sending trimmed machines, with states that
+cannot be reached from the initial state or with no
+path to an accepting state already removed. There-
+fore, if Bob sees a state with no outbound path
+he supplies an outgoing arc, with probability 1, to
+the final state ? such arcs need not be sent by Al-
+ice to begin with. Similarly, Bob can assume that
+all states except for the last one are non-accepting,
+and Alice will transmit information only to over-
+ride this default when needed.
+As for emissions, in a Moore machine each state
+emits a string (but no guarantees that different
+states emit different strings), so Alice needs to en-
+code the strings somehow. If we assume that there
+is a character table shared between Alice and Bob,
+e.g. the character frequencies of Hungarian, with
+entropy H , encoding a string ? costs simply |?|H
+bits. (We could take this also to be a case of trans-
+mitting a weighted language, but we assume that
+the cost of transmitting this language can be amor-
+tized over many WFSA that deal with Hungarian.)
+b l M cs ca KL Hq
+1 121 5210 4306 904 2.1883 6.833
+2 121 5386 4306 1080 1.1207 3.487
+3 121 5507 4306 1201 0.268 2.889
+4 121 5628 4306 1322 0.041436 4.044
+5 121 5749 4306 1443 0.016117 3.424
+6 121 5870 4306 1564 0.002409 3.667
+7 121 5991 4306 1685 0.000676 3.653
+8 121 6112 4306 1806 0.000288 3.647
+9 121 6233 4306 1927 5.905e-5 3.681
+10 121 6354 4306 2048 8.003e-6 3.678
+11 121 6475 4306 2169 3.999e-6 3.678
+12 121 6596 4306 2290 1.387e-6 3.678
+16 121 7080 4306 2774 4.660e-9 3.676
+Table 2: List models with character-based string
+encoding
+Table 2 summarizes the relevant values for the triv-
+ial models where each weight gets its own train-
+able parameter. b is the number of bits, l is the
+number of trainable parameters (weights associ-
+ated to arcs), ca is the cost of transmitting the arcs.
+Note that this is less than l(b+2 log2 s), because of
+the redundancy assumptions shared by Alice and
+Bob. cs is the cost of transmitting the emissions,
+and the total model cost is M = ca + cs. We
+would, ideally, also need to add to M a dozen bits
+or so to encode the major parameters of the cod-
+ing scheme itself, such as the values b = 10 and
+C = 20, but these turn out to be negligible com-
+pared to the basic cost. Also, these major param-
+eters are shared across the alternatives we com-
+pare, so whatever we do to minimize M will not
+be affected by uniformly adding (or uniformly ig-
+noring) this constant cost. KL gives the KL di-
+vergence between the model and the training data.
+This measures the expected extra message length
+per arc weight, so that the error residual E is k
+times this value, where k is the number of values
+being modeled. We emphasize that k = l only
+in the listing format, where all values are treated
+as independent ? in the ?hub? model we shall dis-
+cuss shortly l is only 26 (10 prefix and 16 suffix
+weights) but k is still 121.
+The main components of the total MDL cost,
+M , l ?KL, l(KL+Hq), and the totalM+l(KL+
+Hq) are plotted on Figure 3.
+Figure 3: MDL cost components
+All models with b ? 10 are within the inter-
+nal noise of the data, and it takes over 6kb to de-
+scribe such a model. However, the bulk of these
+bits come from encoding the output strings char-
+acter by character ? if we assume that Alice and
+Bob share a morpheme table, the results improve
+a great deal, by over 3,600 bits. If the system rec-
+ognizes what we already anticipated in Table 1,
+that each string can be expressed as the concate-
+nation of a prefix and suffix, encoding the strings
+becomes drastically cheaper. Using MDL for seg-
+mentation is a well-explored area (see in particular
+Goldsmith 2001, Creutz and Lagus 2002, 2005),
+and we are satisfied by pointing out that using
+the morphemes in the first row and column of
+Table 1 we drastically reduce cs, to about 708
+bits, below the cost ca of encoding the probabil-
+ities. The 3-bit list model providing the MDL op-
+timum (dark blue in Figure 2) requires 1,900 bits
+with this string encoding, and is noticeably better
+than the SRILM bigram/trigram (turquoise) which
+takes around 12kb.
+By encoding the emissions in a more clever
+fashion, we have not changed the structure of the
+model: the same states are still linked by the
+same arcs carrying the same probabilities, it is just
+the state labels that are now encoded differently.
+When expressed as a Mealy automaton, a listing
+of probabilities corresponds to a two-state WFSA
+with as many arcs as we have list elements (in our
+case, 121), while the arrangement of Table 1 is
+suggestive of a different model, one with 10 prefix
+arcs from the initial state to a central ?hub? state,
+and 16 suffix arcs from this hub to the final state.
+We have trained such ?hub? models using KL,
+Euclidean (L2), and absolute value (L1) minimiza-
+tion techniques. Of these, direct minimization of
+KL divergence works best, obtaining 0.325 bits at
+b = 10, and 0.298 at b = 12 (red and green in Fig-
+ure 2). While the difference, about 0.027 bits, is
+still perceptible compared to the noise level, with
+a signal to noise ratio (SNR) of 8 dB, it simply
+does not amortize over the 26 model probabilities
+we need to encode. Adding 2 bits for encoding one
+value requires a total of adding 52 bits to our spec-
+ification ofM, while the gain of the error residual
+E, computed over the 121 observed values, is just
+2.074 bits. In short, there is not much to be gained
+by going from 10 to 12 bits, and we need to look
+elsewhere for further compression.
+Definition 7. For a weighted language p a model
+transform X is learnable in principle (LIP) if (i)
+both M and X(M) are part of the hypothesis
+space and (ii) the total MDL cost of describing p
+by X(M) is significantly below that of describing
+p byM.
+In a critical sense, LIP is weaker than MDL learn-
+ability, since the space itself can be very large, and
+testing all hypothetical transforms X that fit the
+bill may not be feasible. The difference between
+LIP and practical MDL learnability is precisely the
+difference between existence proofs and construc-
+tive proofs. Our interest here is with the former:
+our goal is to demonstrate that structurally sound
+models are LIP. So far, we have seen that struc-
+turally valid segmentations can be effectively ob-
+tained by MDL. Our next task is to show that am-
+biguity is LIP.
+As linguists, we know that the weakest point of
+the hub model is that hogy, accounting for almost
+40% of the data, is not just a proquant ?how? but
+also a subordinating conjunction ?that?. To encode
+this ambiguity, we add another arc emitting hogy
+directly. Table 3 compares list models (lines 1-
+3, emissions encoded over morphemes rather than
+characters), simple hub models (lines 4-6), and
+hub models with this extra arc (lines 7-9).
+b l M cs ca KLe5 M+E
+3 121 1907 705 1202 26800 2289
+10 121 2754 705 2049 0.8 3199
+12 121 2999 705 2290 0.14 3441
+3 26 473 81 392 42343 1305
+10 26 662 81 581 32593 1201
+12 26 716 81 635 29827 1249
+3 27 480 81 400 23094 1052
+10 27 676 81 596 11268 1161
+12 27 733 81 652 10022 1198
+Table 3: Hub models with/out ambiguous hogy
+As can be seen from the table, the best model
+again takes only 3 bits, but must include the ex-
+tra parameter for handling the ambiguity of hogy.
+To learn this, at least in principle, without relying
+on the human knowledge that drove the heuristic
+search, consider the leading terms of the KL error.
+Arranging the pi log(pi/qi) in order of decreasing
+absolute value we obtain mi 0.0192; minden+ki
+0.0175; a+mely 0.0169; mely -0.0147; a+mikor
+0.0135; hogy -0.0128; and so forth. Of all the 121
+strings we may consider for direct emission, only
+hogy is worth adding a separate arc for. Further, if
+we repeat the process, adding a second direct arc
+never results in sufficient entropy gain compared
+to adding hogy alone.
+To summarize, list models can approximate the
+original data within its inherent noise level, but
+incur a very significant MDL cost, even if they
+use an efficient string encoding because they keep
+many parameters, see the first three lines of Ta-
+ble 3 above. The hub models, which build struc-
+ture similar to the one used in the string encoding,
+recognizing prefixes and suffixes for what they are,
+are far more compact, at 470-730 bits, even though
+they have a KL error of about .1-.4 bits. Finally,
+the hub+ambiguity model, with 27 parameters, re-
+duces the total MDL cost to 1052 bits, less than
+half of the best list model.
+Currently we lack the kind of detailed under-
+standing of the description length surface over
+the WFSA?stringencoding space that would let
+us say with absolute certainty that e.g. the hub
+model with ambiguous hogy is the global mini-
+mum, and we cannot muster the requisite com-
+putational power to exhaustively search the space
+of all WFSA with 27 arcs or less. Further gains
+could quite possibly made with even cruder quan-
+tization, e.g. to n = 6 levels (powers of 2 are
+convenient, but not essential for the model), or by
+bringing in non-uniform quantization.
+On the one hand, we are virtually certain that
+the only encoding of emissions worth studying
+is the morpheme-based one, since the economy
+brought by this is tremendous, 3,600 bits over the
+proquants alone, and no doubt further gains else-
+where, as we extend the scope to other words that
+contain the same morphemes ? in this regard, our
+findings simply confirm what Goldsmith, Creutz,
+Lagus, and others have already demonstrated. On
+the other hand, finding the right segmentation is
+only the first step, we also need a good model of
+the tactics. As we said at the beginning, the en-
+coding of arcs and probabilities can to a signifi-
+cant extent be independent of the encoding of the
+emissions. Here the remarkable fact is that a bet-
+ter emission model could to a large extent drive the
+search for structuring the WFSA itself.
+Given a segmentation of a string ? = ?1?2, the
+hypothesis space includes both a single arc from
+some r to some t where we emit ?, or the con-
+catenation of two arcs r ? s and s ? t with s
+and t emitting ?1 and ?2 respectively. This brings
+in a bit of ambiguity in regards to the distribution
+of the probabilities, for if ? had weight p the new
+arcs could be assigned any values p1, p2 as long as
+p1p2 = p, at least if the sum of outgoing proba-
+bilities from s remains 1. If s has no other arcs
+outgoing than s ? t this forces p1 = p, but if
+we collapse the intermediate states from several
+bimorphemic words, there is room for joint opti-
+mization. In our example, collapsing all interme-
+diate states in a single ?hub? halves the MDL cost.
+3 Decomposition
+For our next example we consider Hungarian
+stem-internal morphotactics. The Analytic Dic-
+tionary of Hungarian (Kiss et al2011) provides,
+for each stem like beleilleszt ?fit in? an analysis
+like preverb+root+suffix wherein bele is one of a
+closed set of Hungarian preverbal particles, ill is
+the root, and eszt is a verb-forming suffix. There
+are six analytic categories: Stem S; sUffix U ;
+Preverb P ; root E; Modified M ; and foreIgn I;
+so that each stem gets mapped on a string over
+? = {S,U, P,E,M, I}. We have two weighted
+languages: the tYpe-weighted language Y where
+each string is counted as many times as there are
+word types corresponding to it (so that e.g. for
+SUU we have 3,739 stems from a?bra?ndozik ?day-
+dream? to zuhanyozo? ?shower stall?, and the tOken-
+weighted language O where the same pattern has
+weight 18,739,068 because these words together
+appeared that many times in the Hungarian Web-
+corpus (Hala?csy et al, 2004).
+Since the inherent noise of O is about 0.0474
+bits, we are interested in automata that approxi-
+mate it within this limit. This is easily achieved
+with HMM-like WFSA that have arcs between any
+two states, using b = 11 bits or more, the smallest
+requiring only 781 bits. For Y the inherent noise is
+less, 0.011 bits, and the complete graph architec-
+ture, which only has 49 parameters (6 states, plus
+arcs from an initial state and arcs to a final state) is
+not capable of getting this close to the data, with
+the best models, from b = 11 onwards, remain-
+ing at KL distance 0.3. The two languages differ
+quite markedly in other respects as well, as can be
+seen from the fact that the character entropy of O
+is 0.933, that of Y is 1.567. Type frequency is not
+a good predictor of token frequency: the KL ap-
+proximation error of O relative to Y is 2.11 bits.
+An important aspect of the MDL calculus is the
+treatment of the singularities which arise when-
+ever some of the qi in Definition 2 are 0. In the
+case at hand, we find both types that are not at-
+tested in the corpus, and tokens whose type was
+not listed in the Analytic Dictionary, a situation
+that would theoretically render it impossible to
+compute the KL divergence in either direction. In
+practice, tokens with no dictionary type are either
+collected in a single ?unknown? type or are silently
+discarded. Both techniques have merit. The catch-
+all ?unknown? type can simply be assumed to fol-
+low the distribution of the known types, so a model
+that captures the data enshrined in the dictionary
+should, at least in principle, be also ideal for the
+data not seen by the lexicographer. Surprises may
+of course lurk in the unseen data, but as long as
+coverage is high, say P (unseen)? 0.05, surprises
+will really be restricted to this 5% of the unseen,
+or what is the same, will be at order P 2. In general
+we may consider two distributions {pi} and {qi}
+as in Definition 2, and compute P =
+?
+qi=0
+pi,
+the proportion of q-singular data in p.
+Theorem 3. The total cost L of transmitting an
+item from the p-distribution is bound by
+L ? (1?P )(KL(p, q)+Hq)+P (1+log2 n) (6)
+Proof We use, with probability (1 ? P ), the q-
+based codebook: this will have cost Hq plus the
+modeling loss KL(p, q). In the remaining cases
+(probability P ) we should use a codebook based
+on the q-singular portion of p, but we resort to uni-
+form coding at cost log2 n, where n is the number
+of singular cases. We need to transmit some infor-
+mation as to which codebook is used: this requires
+an extra H(P, 1 ? P ) ? P bits ? collecting these
+terms gives (6). 2
+Theorem 3 gives a principled basis for discard-
+ing data within the MDL framework: when P is
+small, the second term of (6) can be absorbed in
+the noise. To give an example, consider the uni-
+gram frequencies listed in columns fO and fY of
+Table 4. Some letters are quite rare, in particu-
+lar, I makes up less than 0.06% of O and 0.013%
+of Y . Columns KLO and KLY show the KL di-
+vergence of O and Y from models obtained by by
+discarding words containing the letter in question,
+columns PO and PY show the weight of the strings
+that are getting discarded.
+fO PO KLO fY PY KLY
+S .7967 .9638 4.7887 .5342 .9122 3.5092
+U .1638 .1464 0.2284 .3443 .5699 1.2174
+M .0083 .0103 0.0149 .0255 .0623 0.0928
+E .0114 .0141 0.0205 .0331 .0804 0.1209
+P .0198 .0248 0.0362 .0623 .1531 0.2397
+I .0001 .0001 0.0002 .0006 .0010 0.0006
+Table 4: Divergence caused by discarding data
+In the case of Y , only I can be discarded while
+keeping below the inherent noise of the data, but
+for O we have three other symbols M, E, and P,
+that could be removed. Further, removing both let-
+ters M,E only produces a KL loss of 0.036 bits;
+removing M, I a loss of 0.015 bits; E, I 0.021
+bits; P, I 0.036 bits; and even removing all three
+of M,E, I only 0.036 bits.
+Figure 4: MS merge-split model
+In the case of I , again as linguists we under-
+stand quite well what discarding this data means:
+we are excluding foreign stems. This is quite jus-
+tified, not because foreign words like paperback,
+pacemaker or baseball are in any way inferior, but
+because their internal analysis is not transparent to
+the Hungarian reader (it is telling that the editors
+of the Analytic Dictionary coded the stem bound-
+ary in paper+back but not in base+ball).
+Discarding M , a category that differs from S
+only in that the stem undergoes some automatic
+morphophonological change such as vowel eli-
+sion, is also a sensible step in that the fundamen-
+tal morphotactics are not at all affected by these
+changes, but how is this learnable, even in princi-
+ple? Here we introduce another model transform
+called XY merge-split composed of two steps: first
+we replace all letters (or strings) X by Y and train
+a model, and next we split up the emission states
+of Y in the merged model to X and Y -emissions
+according to the relative proportions of X and Y
+in the original data.
+For LIP, the key observation is that models con-
+structed by XY merge-split have a transmission
+cost composed of two parts, the length of the
+smaller merged model (given in black in Figure 2),
+plus transmitting the pairX,Y and the probability
+of the split, which is exactly the cost of a single
+arc, even though the actual split model will have
+many more arcs (given in red in Figure 4). Once
+this is taken into account, we can systematically
+investigate all 6?5 merge-split possibilities. The
+results confirm the educated linguistic guess quite
+remarkably. The best compression rates are ob-
+tained by merging I with any of the minor cate-
+gories or, if I is already discarded or merged in,
+merging M into S. The smallest O model before
+these steps took 781 bits, this is now reduced to
+502 bits. If we start by discarding I , and merging
+M to S afterwards, this can be reduced to 349 bits.
+In the end we merge the morphophonologically af-
+fected forms with the ones not so affected not be-
+cause our training as linguists tells us we should
+do this, but because that is what brevity demands.
+4 Conclusions
+In this paper we have developed an MDL-based
+framework for structure detection based on simple
+notions mostly borrowed from signal processing:
+quantization noise, inherent noise level, and cut-
+offs. Standard n-gram models fare rather poorly
+compared either in size or in model accuracy to
+the WFSA results obtained here: for example on
+the morphotactics data a straight SRILM trigram
+model has over 200 parameters and has KL diver-
+gence 1.09 bits. Most of the 64 bits per n-gram
+parameter are wasted (if we assume only 12 bits
+per parameter, the WFSA we use requires only
+49 parameters and gets within 0.03 bits of the ob-
+served data) and further, the general-purpose back-
+off scheme built into SRILM just makes matters
+worse.
+Similarly, on the proquant data an SRILM bi-
+gram model has 175 parameters (including the
+26 unigram weights but excluding the backoff
+weights), yet it is farther from the data at 64 bits
+resolution than our best 27-parameter model at 3
+bits. More important, the bigram structure of the
+proquant data has to be hand-fed into the standard
+model, while the MDL approach can discover this,
+together with other linguistically relevant observa-
+tions such that hogy was ambiguous.
+This is not to say that n-gram models are no
+longer competitive, for our current MDL meth-
+ods, based on a simulated annealing learner, use
+too much CPU and will not scale to the gigaword
+regime without much further work. Yet if for-
+mal grammar and information theory are to get to-
+gether again, as (Pereira, 2000) suggests, we must
+direct effort towards recapitulating linguistic prac-
+tice, including the ?dirty? parts such as discarding
+data strategically. The main thrust of the work pre-
+sented here is that the data manipulation methods
+that are the stock in trade of the descriptive linguist
+are LIP, and Universal Grammar is simply a short
+list of the permissible model transformations in-
+cluding path duplication for ambiguity, state merg-
+ing for position class effects, and merge-split for
+collapsing categories.
+Acknowledgments
+We thank Da?niel Varga (Prezi) and Viktor Nagy
+(Prezi) for the first version of the simulated an-
+nealing WFSA learner. Zse?der wrote the version
+used in this study, Recski collected the data and
+ran the HMM baseline, Kornai advised. The cur-
+rent version benefited greatly from the remarks of
+anonymous referees. Work supported by OTKA
+grants #77476 and #82333.
+References
+Noam Chomsky and Morris Halle. 1965a. Some con-
+troversial questions in phonological theory. Journal
+of Linguistics, 1:97?138.
+Kenneth Church, Ted Hart, and Jianfeng Gao. 2007.
+Compressing trigram language models with Golomb
+coding. In Proceedings of the Joint Conference on
+Empirical Methods in Natural Language Process-
+ing and Computational Natural Language Learning,
+pages 199?207, Prague. ACL.
+Mathias Creutz and Krista Lagus. 2002. Unsupervised
+discovery of morphemes. In Proc. 6th SIGPHON,
+pages 21?30.
+Mathias Creutz and Krista Lagus. 2005. Unsupervised
+morpheme segmentation and morphology induction
+from text corpora using Morfessor 1.0. Technical
+Report A81, Helsinki University of Technology.
+Karel de Leeuw, Edward F. Moore, Claude E. Shannon,
+and N. Shapiro. 1956. Computability by probabilis-
+tic machines. In C.E. Shannon and J. McCarthy, ed-
+itors, Automata studies, pages 185?212. Princeton
+University Press.
+Samuel Eilenberg. 1974. Automata, Languages, and
+Machines, volume A. Academic Press.
+John A. Goldsmith. 2001. Unsupervised learning of
+the morphology of a natural language. Computa-
+tional Linguistics, 27(2):153?198.
+Peter Gru?nwald. 1996. A minimum description
+length approach to grammar inference. In Stefan
+Wermter, Ellen Riloff, and Gabriele Scheler, editors,
+Conectionist, statistical, and symbolic approaches
+to learning for natural language processing, LNCS
+1040, pages 203?216. Springer.
+Pe?ter Hala?csy, Andra?s Kornai, La?szlo? Ne?meth, Andra?s
+Rung, Istva?n Szakada?t, and Viktor Tro?n. 2004. Cre-
+ating open language resources for Hungarian. In
+Proceedings of the 4th international conference on
+Language Resources and Evaluation (LREC2004),
+pages 203?210.
+Frederick Jelinek. 1997. Statistical Methods for
+Speech Recognition. MIT Press.
+Ga?bor Kiss, Ma?rton Kiss, Bala?zs Sa?fra?ny-Kovalik,
+and Dorottya To?th. 2011. A magyar szo?elemta?r
+megalkota?sa e?s a magyar gyo?kszo?ta?r elo?ke?szt?o?
+munka?latai. In A. Tana?cs and V. Vincze, editors,
+MSZNY 2012, pages 102 ? 112.
+John Makhoul, Salim Roucos, and Herbert Gish. 1985.
+Vector quantization in speech coding. Proceedings
+of the IEEE, 73(11):1551?1588.
+Mehryar Mohri. 2009. Weighted automata algo-
+rithms. In Manfred Droste, Werner Kuich, and
+Heiko Vogler, editors, Handbook of Weighted Au-
+tomata, Monographs in Theoretical Computer Sci-
+ence, pages 213?254. Springer.
+Fernando Pereira. 2000. Formal grammar and in-
+formation theory: Together again? Philosophi-
+cal Transactions of the Royal Society, A 358:1239?
+1253.
+Jorma Rissanen. 1978. Modeling by the shortest data
+description. Automatica, 14:465?471.
+Arto Salomaa and Matti Soittola. 1978. Automata-
+Theoretic Aspects of Formal Power Series. Springer,
+Texts and Monographs in Computer Science.
+Kristie Seymore and Ronald Rosenfeld. 1996. Scal-
+able backoff language models. In Spoken Language,
+1996. ICSLP 96. Proceedings., Fourth International
+Conference on, volume 1, pages 232?235. IEEE.
+Koichi Shinoda and Takao Watanabe. 2000. MDL-
+based context-dependent subword modeling for
+speech recognition. Journal of the Acoustical So-
+ciety of Japan (Eenglish edition), 21(2):79?86.
+Ray J. Solomonoff. 1964. A formal theory of inductive
+inference. Information and Control, 7:1?22, 224?
+254.
+Paul M. B. Vitanyi and Ming Li. 2000. Minimum
+description length induction, Bayesianism, and Kol-
+mogorov complexity. IEEE Transactions on Infor-
+mation Theory, 46(2):446?464.
+Bernard Widrow and Istva?n Kolla?r. 2008. Quantiza-
+tion Noise: Roundoff Error in Digital Computation,
+Signal Processing, Control, and Communications.
+Cambridge University Press.
+Proceedings of the Workshop on Continuous Vector Space Models and their Compositionality, pages 59?63,
+Sofia, Bulgaria, August 9 2013. c?2013 Association for Computational Linguistics
+Applicative structure in vector space models
+Ma?rton Makrai Da?vid Nemeskey
+HAS Computer and Automation Research Institute
+H-1111 Kende u 13-17, Budapest
+{makrai,ndavid,kornai}@sztaki.hu
+Andra?s Kornai
+Abstract
+We introduce a new 50-dimensional em-
+bedding obtained by spectral clustering of
+a graph describing the conceptual struc-
+ture of the lexicon. We use the embedding
+directly to investigate sets of antonymic
+pairs, and indirectly to argue that func-
+tion application in CVSMs requires not
+just vectors but two transformations (cor-
+responding to subject and object) as well.
+1 Introduction
+Commutativity is a fundamental property of vec-
+tor space models. As soon as we encode king by
+~k, queen by ~q, male by ~m, and female by ~f , if we
+expect ~k ? ~q ? ~m ? ~f , as suggested in Mikolov
+et al (2013), we will, by commutativity, also ex-
+pect ~k ? ~m ? ~q ? ~f ?ruler, gender unspecified?.
+When the meaning decomposition involves func-
+tion application, commutativity no longer makes
+sense: consider Victoria as ~qmEngland and Victor
+as ~kmItaly. If the function application operator m
+is simply another vector to be added to the rep-
+resentation, the same logic would yield that Italy
+is the male counterpart of female England. To
+make matters worse, performing the same oper-
+ations on Albert, ~kmEngland and Elena, ~qmItaly
+would yield that Italy is the female counterpart of
+male England.
+Section 2 offers a method to treat antonymy in
+continuous vector space models (CVSMs). Sec-
+tion 3 describes a new embedding, 4lang, obtained
+by spectral clustering from the definitional frame-
+work of the Longman Dictionary of Contempo-
+rary English (LDOCE, see Chapter 13 of McArtur
+1998), and Section 4 shows how to solve the prob-
+lem outlined above by treating m and n not as a
+vectors but as transformations.
+2 Diagnostic properties of additive
+decomposition
+The standard model of lexical decomposition
+(Katz and Fodor, 1963) divides lexical meaning in
+a systematic component, given by a tree of (gener-
+ally binary) features, and an accidental component
+they call the distinguisher. Figure 1 gives an ex-
+ample.
+bachelor
+noun
+(Animal)
+(Male)
+[young fur
+seal when
+without a mate
+during the
+breeding time]
+(Human)
+[who has the
+first or lowest
+academic
+degree]
+(Male)
+[young knight
+serving under
+the standard of
+another knight]
+[who
+has never
+married]
+Figure 1: Decomposition of lexical items to fea-
+tures (Katz and Fodor, 1963)
+This representation has several advantages: for
+example bachelor3 ?holder of a BA or BSc de-
+gree? neatly escapes being male by definition. We
+tested which putative semantic features like GEN-
+DER are captured by CVSMs. We assume that the
+difference between two vectors, for antonyms, dis-
+tills the actual property which is the opposite in
+each member of a pair of antonyms. So, for ex-
+ample, for a set of male and female words, such
+as xking, queeny, xactor, actressy, etc., the differ-
+ence between words in each pair should represent
+the idea of gender. To test the hypothesis, we as-
+59
+GOOD VERTICAL
+safe out raise level
+peace war tall short
+pleasure pain rise fall
+ripe green north south
+defend attack shallow deep
+conserve waste ascending descending
+affirmative negative superficial profound
+...
+...
+...
+...
+Table 1: Word pairs associated to features GOOD
+and VERTICAL
+sociated antonymic word pairs from the WordNet
+(Miller, 1995) to 26 classes e.g. END/BEGINNING,
+GOOD/BAD, . . . , see Table 1 and Table 3 for ex-
+amples. The intuition to be tested is that the first
+member of a pair relates to the second one in the
+same way among all pairs associated to the same
+feature. For k pairs ~xi, ~yi we are looking for a
+common vector ~a such that
+~xi ? ~yi ? ~a (1)
+Given the noise in the embedding, it would be
+naive in the extreme to assume that (1) can be a
+strict identity. Rather, our interest is with the best
+~a which minimizes the error
+Err ?
+?
+i
+||~xi ? ~yi ? ~a||
+2 (2)
+As is well known, E will be minimal when ~a is
+chosen as the arithmetic mean of the vectors ~xi ?
+~yi. The question is simply the following: is the
+minimal Em any better than what we could expect
+from a bunch of random ~xi and ~yi?
+Since the sets are of different sizes, we took 100
+random pairings of the words appearing on either
+sides of the pairs to estimate the error distribution,
+computing the minima of
+Errrand ?
+?
+i
+||~xi
+1 ? ~y1i ? ~a||
+2 (3)
+For each distribution, we computed the mean
+and the variance ofErrrand, and checked whether
+the error of the correct pairing, Err is at least 2 or
+3 ?s away from the mean.
+Table 2 summarizes our results for three embed-
+dings: the original and the scaled HLBL (Mnih
+and Hinton, 2009) and SENNA (Collobert et al,
+2011). The first two columns give the number of
+pairs considered for a feature and the name of the
+PRIMARY ANGULAR
+leading following square round
+preparation resolution sharp flat
+precede follow curved straight
+intermediate terminal curly straight
+antecedent subsequent angular rounded
+precede succeed sharpen soften
+question answer angularity roundness
+...
+...
+...
+...
+Table 3: Features that fail the test
+feature. For each of the three embeddings, we re-
+port the errorErr of the unpermuted arrangement,
+the mean m and variance ? of the errors obtained
+under random permutations, and the ratio
+r ?
+|m? Err|
+?
+.
+Horizontal lines divide the features to three
+groups: for the upper group, r ? 3 for at least
+two of the three embeddings, and for the middle
+group r ? 2 for at least two.
+For the features above the first line we conclude
+that the antonymic relations are well captured by
+the embeddings, and for the features below the
+second line we assume, conservatively, that they
+are not. (In fact, looking at the first column of Ta-
+ble 2 suggests that the lack of significance at the
+bottom rows may be due primarily to the fact that
+WordNet has more antonym pairs for the features
+that performed well on this test than for those fea-
+tures that performed badly, but we didn?t want to
+start creating antonym pairs manually.) For exam-
+ple, the putative sets in Table 3 does not meet the
+criterion and gets rejected.
+3 Embedding based on conceptual
+representation
+The 4lang embedding is created in a manner that
+is notably different from the others. Our input is a
+graph whose nodes are concepts, with edges run-
+ning from A to B iff B is used in the definition of
+A. The base vectors are obtained by the spectral
+clustering method pioneered by (Ng et al, 2001):
+the incidence matrix of the conceptual network is
+replaced by an affinity matrix whose ij-th element
+is formed by computing the cosine distance of the
+ith and jth row of the original matrix, and the first
+few (in our case, 100) eigenvectors are used as a
+basis.
+Since the concept graph includes the entire
+Longman Defining Vocabulary (LDV), each LDV
+60
+# feature HLBL original HLBL scaled SENNA
+pairs name Err m ? r Err m ? r Err m ? r
+156 good 1.92 2.29 0.032 11.6 4.15 4.94 0.0635 12.5 50.2 81.1 1.35 22.9
+42 vertical 1.77 2.62 0.0617 13.8 3.82 5.63 0.168 10.8 37.3 81.2 2.78 15.8
+49 in 1.94 2.62 0.0805 8.56 4.17 5.64 0.191 7.68 40.6 82.9 2.46 17.2
+32 many 1.56 2.46 0.0809 11.2 3.36 5.3 0.176 11 43.8 76.9 3.01 11
+65 active 1.87 2.27 0.0613 6.55 4.02 4.9 0.125 6.99 50.2 84.4 2.43 14.1
+48 same 2.23 2.62 0.0684 5.63 4.82 5.64 0.14 5.84 49.1 80.8 2.85 11.1
+28 end 1.68 2.49 0.124 6.52 3.62 5.34 0.321 5.36 34.7 76.7 4.53 9.25
+32 sophis 2.34 2.76 0.105 4.01 5.05 5.93 0.187 4.72 43.4 78.3 2.9 12
+36 time 1.97 2.41 0.0929 4.66 4.26 5.2 0.179 5.26 51.4 82.9 3.06 10.3
+20 progress 1.34 1.71 0.0852 4.28 2.9 3.72 0.152 5.39 47.1 78.4 4.67 6.7
+34 yes 2.3 2.7 0.0998 4.03 4.96 5.82 0.24 3.6 59.4 86.8 3.36 8.17
+23 whole 1.96 2.19 0.0718 3.2 4.23 4.71 0.179 2.66 52.8 80.3 3.18 8.65
+18 mental 1.86 2.14 0.0783 3.54 4.02 4.6 0.155 3.76 51.9 73.9 3.52 6.26
+14 gender 1.27 1.68 0.126 3.2 2.74 3.66 0.261 3.5 19.8 57.4 5.88 6.38
+12 color 1.2 1.59 0.104 3.7 2.59 3.47 0.236 3.69 46.1 70 5.91 4.04
+17 strong 1.41 1.69 0.0948 2.92 3.05 3.63 0.235 2.48 49.5 74.9 3.34 7.59
+16 know 1.79 2.07 0.0983 2.88 3.86 4.52 0.224 2.94 47.6 74.2 4.29 6.21
+12 front 1.48 1.95 0.17 2.74 3.19 4.21 0.401 2.54 37.1 63.7 5.09 5.23
+22 size 2.13 2.69 0.266 2.11 4.6 5.86 0.62 2.04 45.9 73.2 4.39 6.21
+10 distance 1.6 1.76 0.0748 2.06 3.45 3.77 0.172 1.85 47.2 73.3 4.67 5.58
+10 real 1.45 1.61 0.092 1.78 3.11 3.51 0.182 2.19 44.2 64.2 5.52 3.63
+14 primary 2.22 2.43 0.154 1.36 4.78 5.26 0.357 1.35 59.4 80.9 4.3 5
+8 single 1.57 1.82 0.19 1.32 3.38 3.83 0.32 1.4 40.3 70.7 6.48 4.69
+8 sound 1.65 1.8 0.109 1.36 3.57 3.88 0.228 1.37 46.2 62.7 6.17 2.67
+7 hard 1.46 1.58 0.129 0.931 3.15 3.41 0.306 0.861 42.5 60.4 8.21 2.18
+10 angular 2.34 2.45 0.203 0.501 5.05 5.22 0.395 0.432 46.3 60 6.18 2.2
+Table 2: Error of approximating real antonymic pairs (Err), mean and standard deviation (m,?) of error
+with 100 random pairings, and the ratio r ? |Err?m|? for different features and embeddings
+element wi corresponds to a base vector bi. For
+the vocabulary of the whole dictionary, we sim-
+ply take the Longman definition of any word w,
+strip out the stopwords (we use a small list of 19
+elements taken from the top of the frequency dis-
+tribution), and form V pwq as the sum of the bi for
+the wis that appeared in the definition of w (with
+multiplicity).
+We performed the same computations based on
+this embedding as in Section 2: the results are pre-
+sented in Table 4. Judgment columns under the
+four three embeddings in the previous section and
+4lang are highly correlated, see table 5.
+Unsurprisingly, the strongest correlation is be-
+tween the original and the scaled HLBL results.
+Both the original and the scaled HLBL correlate
+notably better with 4lang than with SENNA, mak-
+ing the latter the odd one out.
+4 Applicativity
+So far we have seen that a dictionary-based em-
+bedding, when used for a purely semantic task, the
+analysis of antonyms, does about as well as the
+more standard embeddings based on cooccurrence
+data. Clearly, a CVSM could be obtained by the
+same procedure from any machine-readable dic-
+# feature 4lang
+pairs name Err m ? r
+49 in 0.0553 0.0957 0.00551 7.33
+156 good 0.0589 0.0730 0.00218 6.45
+42 vertical 0.0672 0.1350 0.01360 4.98
+34 yes 0.0344 0.0726 0.00786 4.86
+23 whole 0.0996 0.2000 0.02120 4.74
+28 end 0.0975 0.2430 0.03410 4.27
+32 many 0.0516 0.0807 0.00681 4.26
+14 gender 0.0820 0.2830 0.05330 3.76
+36 time 0.0842 0.1210 0.00992 3.74
+65 active 0.0790 0.0993 0.00553 3.68
+20 progress 0.0676 0.0977 0.00847 3.56
+18 mental 0.0486 0.0601 0.00329 3.51
+48 same 0.0768 0.0976 0.00682 3.05
+22 size 0.0299 0.0452 0.00514 2.98
+16 know 0.0598 0.0794 0.00706 2.77
+32 sophis 0.0665 0.0879 0.00858 2.50
+12 front 0.0551 0.0756 0.01020 2.01
+10 real 0.0638 0.0920 0.01420 1.98
+8 single 0.0450 0.0833 0.01970 1.95
+7 hard 0.0312 0.0521 0.01960 1.06
+10 angular 0.0323 0.0363 0.00402 0.999
+12 color 0.0564 0.0681 0.01940 0.600
+8 sound 0.0565 0.0656 0.01830 0.495
+17 strong 0.0693 0.0686 0.01111 0.0625
+14 primary 0.0890 0.0895 0.00928 0.0529
+10 distance 0.0353 0.0351 0.00456 0.0438
+Table 4: The results on 4lang
+61
+HLBL HLBL SENNA 4lang
+original scaled
+HLBL original 1 0.925 0.422 0.856
+HLBL scaled 0.925 1 0.390 0.772
+SENNA 0.422 0.390 1 0.361
+4lang 0.856 0.772 0.361 1
+Table 5: Correlations between judgments based on
+different embeddings
+tionary. Using LDOCE is computationally advan-
+tageous in that the core vocabulary is guaranteed
+to be very small, but finding the eigenvectors for
+an 80k by 80k sparse matrix would also be within
+CPU reach. The main advantage of starting with a
+conceptual graph lies elsewhere, in the possibility
+of investigating the function application issue we
+started out with.
+The 4lang conceptual representation relies on a
+small number of basic elements, most of which
+correspond to what are called unary predicates in
+logic. We have argued elsewhere (Kornai, 2012)
+that meaning of linguistic expressions can be for-
+malized using predicates with at most two argu-
+ments (there are no ditransitive or higher arity
+predicates on the semantic side). The x and y
+slots of binary elements such as x has y or x kill
+y, (Kornai and Makrai 2013) receive distinct la-
+bels called NOM and ACC in case grammar (Fill-
+more, 1977); 1 and 2 in relational grammar (Perl-
+mutter, 1983); or AGENT and PATIENT in linking
+theory (Ostler, 1979). The label names themselves
+are irrelevant, what matters is that these elements
+are not part of the lexicon the same way as the
+words are, but rather constitute transformations of
+the vector space.
+Here we will use the binary predicate x has y
+to reformulate the puzzle we started out with, an-
+alyzing queen of England, king of Italy etc. in a
+compositional (additive) manner, but escaping the
+commutativity problem. For the sake of concrete-
+ness we use the traditional assumption that it is
+the king who possesses the realm and not the other
+way around, but what follows would apply just as
+well if the roles were reversed. What we are inter-
+ested in is the asymmetry of expressions like Al-
+bert has England or Elena has Italy, in contrast to
+largely symmetric predicates. Albert marries Vic-
+toria will be true if and only if Victoria marries
+Albert is true, but from James has a martini it does
+not follow that ?A martini has James.
+While the fundamental approach of CVSM is
+quite correct in assuming that nouns (unaries)
+and verbs (binaries) can be mapped on the same
+space, we need two transformations T1 and T2
+to regulate the linking of arguments. A form
+like James kills has James as agent, so we com-
+pute V (James)`T1V (kill), while kills James is ob-
+tained as V (James)`T2V (kill). The same two
+transforms can distinguish agent and patient rel-
+atives as in the man that killed James versus the
+man that James killed.
+Such forms are compositional, and in languages
+that have overt case markers, even ?surface com-
+positional? (Hausser, 1984). All input and outputs
+are treated as vectors in the same space where the
+atomic lexical entries get mapped, but the applica-
+tive paradox we started out with goes away. As
+long as the transforms T1 (n) and T2 (m) take dif-
+ferent values on kill, has, or any other binary, the
+meanings are kept separate.
+Acknowledgments
+Makrai did the work on antonym set testing,
+Nemeskey built the embedding, Kornai advised.
+We would like to thank Zso?fia Tardos (BUTE) and
+the anonymous reviewers for useful comments.
+Work supported by OTKA grant #82333.
+References
+R. Collobert, J. Weston, L. Bottou, M. Karlen,
+K. Kavukcuoglu, and P. Kuksa. 2011. Natural lan-
+guage processing (almost) from scratch. Journal of
+Machine Learning Research (JMLR).
+Charles Fillmore. 1977. The case for case reopened.
+In P. Cole and J.M. Sadock, editors, Grammatical
+Relations, pages 59?82. Academic Press.
+Roland Hausser. 1984. Surface compositional gram-
+mar. Wilhelm Fink Verlag, Mu?nchen.
+J. Katz and Jerry A. Fodor. 1963. The structure of a
+semantic theory. Language, 39:170?210.
+Andra?s Kornai and Ma?rton Makrai. 2013. A 4lang
+fogalmi szo?ta?r [the 4lang concept dictionary]. In
+A. Tana?cs and V. Vincze, editors, IX. Magyar
+Sza?mito?ge?pes Nyelve?szeti Konferencia [Ninth Con-
+ference on Hungarian Computational Linguistics],
+pages 62?70.
+Andra?s Kornai. 2012. Eliminating ditransitives. In
+Ph. de Groote and M-J Nederhof, editors, Revised
+and Selected Papers from the 15th and 16th Formal
+Grammar Conferences, LNCS 7395, pages 243?
+261. Springer.
+62
+Tom McArthur. 1998. Living Words: Language, Lex-
+icography, and the Knowledge Revolution. Exeter
+Language and Lexicography Series. University of
+Exeter Press.
+Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey
+Dean. to appear. Efficient estimation of word repre-
+sentations in vector space. In Y. Bengio, , and Y. Le-
+Cun, editors, Proc. ICLR 2013.
+George A. Miller. 1995. Wordnet: a lexical
+database for english. Communications of the ACM,
+38(11):39?41.
+Andriy Mnih and Geoffrey E Hinton. 2009. A scalable
+hierarchical distributed language model. Advances
+in neural information processing systems, 21:1081?
+1088.
+Andrew Y. Ng, Michael I. Jordan, and Yair Weiss.
+2001. On spectral clustering: Analysis and an algo-
+rithm. In Advances in neural information processing
+systems, pages 849?856. MIT Press.
+Nicholas Ostler. 1979. Case-Linking: a Theory of
+Case and Verb Diathesis Applied to Classical San-
+skrit. PhD thesis, MIT.
+David M. Perlmutter. 1983. Studies in Relational
+Grammar. University of Chicago Press.
+63

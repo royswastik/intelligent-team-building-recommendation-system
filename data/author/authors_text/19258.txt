@@ -1,0 +1,3612 @@
+Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: Technical Papers,
+pages 1556?1566, Dublin, Ireland, August 23-29 2014.
+Analysis and Refinement of Temporal Relation Aggregation
+Taylor Cassidy
+IBM Research
+Army Research Laboratory
+Adelphi, MD 20783, USA
+taylor.cassidy.ctr@mail.mil
+Heng Ji
+Computer Science Department
+Rensselaer Polytechnic Institute
+Troy, NY 12180, USA
+jih@rpi.edu
+Abstract
+To obtain a complete temporal picture of a relation it is necessary to aggregate fragments of tem-
+poral information across relation instances in text. This process is non-trivial even for humans
+because temporal information can be imprecise and inconsistent, and systems face the additional
+challenge that each of their classifications is potentially false. Even a small amount of incorrect
+proposed temporal information about a relation can severely affect the resulting aggregate tempo-
+ral knowledge. We motivate and evaluate three methods to modify temporal relation information
+prior to aggregation to address this challenge.
+1 Introduction
+Temporal information about relations is conveyed in text at varying levels of completeness and speci-
+ficity. A sentence may indicate that a relation starts, ends, or that it is ongoing at a particular time.
+Furthermore, a time expression may be expressed at a variety of granularity levels (e.g., hour, day, or
+year). For instance, ?Collins, ..., is a 61-year-old veteran who went 444-434 in six seasons as a man-
+ager, 1994-1996 with Houston? provides bounds on both the start and end date of the a relation but
+at a coarse granularity. Conversely, ?Ivory Coast President Laurent Gbagbo on state television Friday
+dissolved parliament? conveys temporal information about an arbitrary part of Gbagbo?s presidency at a
+finer granularity: the relation simply holds true at the document creation time (DCT). Single instances in
+which a relation of interest is related to a time expression often fail to convey complete, fine-grained tem-
+poral information. Thus, it is necessary to aggregate information from multiple relation-time temporal
+relationship mentions to gain a complete temporal picture of a relation.
+We focus on the aggregation of temporal information about relations within the context of the Tem-
+poral Slot-Filling (TSF) Task (Ji et al., 2011; Surdeanu, 2013). TSF focusses on a class of relations
+called fluents (Russell and Norvig, 2010), which are properties of named entities whose values may
+vary over time. Systems must succinctly describe all temporal information about each query relationR ?
+e.g., title(Gbagbo, President) ? available in a source document collection by assigning it a single, final
+temporal four-tuple (Amigo et al., 2011). Given a relation mention r ofR and a time expression ?, a four-
+tuple T
+r
+?
+=
+?
+t
+(1)
+, t
+(2)
+, t
+(3)
+, t
+(4)
+?
+characterizes their temporal relationship; namely, t
+(1)
+and t
+(2)
+represent
+the earliest and latest possible start date forR, while t
+(3)
+and t
+(4)
+represent the earliest and latest possible
+end dates, as inferred from the relation mention?s context (sec. 3). For instance, a sentence indicating
+that Gbagbo was President on 2010-02-12 yields
+?
+??, 2010-02-12, 2010-02-12,+?
+?
+, while the sen-
+tence ?Gbagbo has been in power since 2000? yields
+?
+2000-01-01, 2000-12-31, 2000-01-31,+?
+?
+. The
+intuitively best aggregation of these four-tuples expresses what we learn from both texts, that the relation
+started in 2000 and remained ongoing at 2010-02-12, i.e.
+?
+2000-01-01, 2010-02-12, 2010-02-12,+?
+?
+,
+with no clear indication as to its end. Straightforward cases like these were used to justify the simple
+aggregation methods used by all TSF systems to date (Surdeanu, 2013; Ji et al., 2011). However, in real-
+ity even humans often must deal with vague and/or conflicting temporal information across documents,
+This work is licenced under a Creative Commons Attribution 4.0 International License. Page numbers and proceedings footer
+are added by the organizers. License details: http://creativecommons.org/licenses/by/4.0/
+1556
+and systems must furthermore deal with the fact that each of their temporal relationship classifications is
+potentially false.
+To address the various properties of text and temporal representation that influence aggregation and
+affect final four-tuple quality, we first improve an existing gold standard dataset (sec. 4.1). We then
+describe two key factors affecting systems? aggregation performance: (1) erroneous classifications at-
+tributed high confidence by systems, and (2) a lack of relation-bounding classifications (sec. 4.2). We
+propose three methods to better prepare a relation?s multiple mention context derived four-tuples for ag-
+gregation into a final four-tuple. The first applies simple rules to predicative nominal titles with explicit
+time information (e.g., ?former President?), the second filters and re-labels four-tuples based on entity
+lifespan (sec. 5.3), and the third adds four-tuples based on mentions of relations other than, but tempo-
+rally linked to, the query relation (sec. 5.4). We then discuss results and identify remaining challenges
+for aggregating temporal information across relation mentions (sec. 6 and 7). A Glossary of selected
+terms can be found in the appendix.
+2 Related Work
+The most similar work on temporal relation information aggregation are Wang et al. (2012), who use an
+Integer Linear Programming framework to enforce the validity of induced temporal relation information
+as well as enforce inter-relation constraints, and Dylla et al. (2013), who collect temporal information
+about relations, mostly about start and end times, using a temporal probabilistic data base framework
+to aggregate and enforce constraints based on relation argument existence. All TSF systems we are
+aware of have used either max-constrain or Validity-Ensured Incremental max-constrain aggregation
+algorithms (Surdeanu, 2013; Ji et al., 2011), which we cover in section 4. None we are aware of have
+applied background knowledge to constrain intermediate four-tuples (sec. 3) before or after aggregation.
+In this work we modified our previous work CUNYTSF (Artiles et al., 2011), which is the only publicly
+available TSF system we are aware of. CUNYTSF employs two supervised models, one based on a string
+kernel defined in terms of dependency paths between named entities involved in a relation and context
+time expressions, and the other based on bags-of-words derived from small windows surrounding these
+tokens and shallow dependency relations. CUNYTSF achieved the highest and second-highest scores of
+five systems in two TSF shared tasks (Surdeanu, 2013; Ji et al., 2011).
+3 Temporal Slot Filling (TSF)
+The 2013 Temporal Slot-Filling (TSF) (Surdeanu, 2013) task was part of the Knowledge Base Popula-
+tion (KBP) track of the Text Analysis Conference (TAC). Systems were given a list of 273 fluent relation
+instances as queries, each with a supporting document. Query relations were evenly distributed across re-
+lation types, which consisted of people?s titles, marriages, employments or memberships, and residences
+(city, state, and country), and companies? top members or employees. The task was to obtain a final four-
+tuple T
+R
+for each query relationR =
+?
+q, s
+?
+using the source corpus for provenance. For each element in
+T
+R
+a system must provide a document in which R is entailed, and offsets for the relation arguments (the
+query-entity q and slot-filler s) and the normalized time expression from which the four-tuple element is
+derived.
+The KBP source collection consists of about 1 million newswire, 1 million web text, and 100,000
+discussion forum documents. Gold standard annotation was obtained by annotators who, using a tool,
+searched the source corpus for documents that provide temporal information about each query relation.
+Given a mention r of R in a document d for which temporal information about R could be inferred,
+annotators assigned an intermediate temporal relationship label (Table 1) (Ji et al., 2011) to
+?
+r, ?
+?
+, where
+? is viewed as an interval of dates [?
+s
+, ?
+e
+] derived either based on (1) a normalized time expression in
+d, or (2) the document creation time of d. We denote the temporal extension of R at the day granularity
+R
+ex
+= [R
+s
+, R
+e
+], where R
+s
+and R
+e
+are the start and end dates of R. The intermediate label l mediates the
+relationship between ? and R
+ex
+, characterizing a possible relationship between R and ?.
+1
+After systems
+submitted results for the shared task, any corresponding document not included in the original annotation
+1
+We add AFTER END* and BEFORE START* but omit motivation due to space constraints.
+1557
+that were determined to express R was exhaustively annotated for temporal information about R. A gold
+standard final four-tupleG
+R
+is obtained for eachR by applying an aggregation procedure (sec. 4.1) to the
+intermediate temporal relationship labels assigned to mention-time classification instances (Surdeanu,
+2013).
+In this work we adopt the evaluation metric used for the TSF shared task (Ji et al., 2011; Surdeanu,
+2013).
+Intermediate Relation four-tuple
+BEGINNING
+?
+?
+s
+, ?
+e
+, ?
+s
+,?
+?
+ENDING
+?
+??, ?
+e
+, ?
+s
+, ?
+e
+?
+BEG AND END
+?
+?
+s
+, ?
+e
+, ?
+s
+, ?
+e
+?
+WITHIN
+?
+??, ?
+e
+, ?
+s
+,?
+?
+THROUGHOUT
+?
+??, ?
+s
+, ?
+e
+,?
+?
+BEFORE START
+?
+?
+e
+,?, ?
+e
+,?
+?
+AFTER END
+?
+??, ?
+s
+,??, ?
+s
+?
+BEFORE START*
+?
+?
+s
+,?, ?
+s
+,?
+?
+AFTER END*
+?
+??, ?
+e
+,??, ?
+e
+?
+NONE
+?
+??,?,??,?
+?
+Table 1: Intermediate temporal relationship func-
+tion for
+?
+r, ?
+?
+Invalidity Source Frequency
+Conflicting Information 13
+Multiple Instances 7
+Wrong Intermediate Label 20
+Vague Time Normalization 8
+Other 8
+Table 2: Reasons for Invalidity in Gold Standard
+Final Four-Tuples
+4 Aggregating Intermediate Relations
+Temporal information about instances of R must be aggregated to yield a complete temporal picture of
+the relation with respect to the background corpus. We denote with I(R) the set of intermediate four-
+tuples associated with R. The purpose of the four-tuple representation is to be as accurate as possible
+in representing the extent to which a given corpus provides information about the start and end time of
+R, R
+s
+and R
+e
+, while preserving the vagueness inherent in the text. Each four-tuple element of I(R)
+represents temporal information about R
+s
+and/or R
+e
+, most often with respect to the context associated
+with a particular mention r of R. Temporal information at a corpus level is derived via a process of
+aggregation over the elements of I(R). In this section we describe how both human annotators and
+systems have approached aggregation.
+4.1 Aggregating Manually Annotated Intermediate Relations
+Gold standard four-tuples were obtained by applying the Max-Constrain (MC) algorithm (Equation 1) to
+each I(R) obtained via manual annotation using the labels in Table 1 (Surdeanu, 2013; Ji et al., 2011).
+2
+T
+R
+=
+?
+max(t
+(1)
+),min(t
+(2)
+),max(t
+(3)
+),min(t
+(4)
+)
+?
+(1)
+Here, max(t
+(k)
+) is the greatest t
+(k)
+from any intermediate four-tuple T
+r
+? I(R), while min(t
+(k)
+) is the
+least.
+Let a four-tuple T be valid iff. t
+(1)
+? t
+(2)
+? t
+(3)
+? t
+(4)
+? t
+(1)
+? t
+(4)
+, and correct if t
+(1)
+? R
+s
+?
+t
+(2)
+? t
+(3)
+? R
+e
+? t
+(4)
+. If R has only one start and one end date, and R
+s
+? R
+e
+, and each intermediate
+four-tuple T
+?
+r
+? I(R) is valid and correct, then the final four-tuple obtained via MC is guaranteed to be
+valid and correct. Fifty-six gold standard final four-tuples were invalid and therefore discarded prior to
+evaluation (Surdeanu, 2013). We analyzed them by hand to determine the source of their invalidity (see
+Table 2).
+3
+We corrected instances until IMC (Algorithm 1) yielded a valid four-tuple.
+2
+See http://surdeanu.info/kbp2013 for more details.
+3
+Note that there may be more instances of each type described in table 2
+4
+Here, max(t
+(i)
+? x
+(i)
+) := max(
+{
+t
+(i)
+? t
+(i)
+?
+?
+?t
+(i)
+? x
+(i)
+}
+), where t
+(i)
+:=
+{
+t
+(i)
+? T
+?
+?
+?T ? I(R)
+}
+1558
+Algorithm 1 Inclusive Max-Constrain (IMC)
+4
+Require: I(R) = {T
+0
+, T
+1
+, . . . , T
+N?1
+}
+Ensure: T
+R
+X ? max-constrain(I(R)) =
+?
+x
+(1)
+, x
+(2)
+, x
+(3)
+, x
+(4)
+?
+Y ?
+?
+max(t
+(1)
+? x
+(2)
+),min(t
+(2)
+? x
+(1)
+),max(t
+(3)
+? x
+(4)
+),min(t
+(4)
+? x
+(3)
+)
+?
+T
+R
+?
+?
+max(t
+(1)
+? y
+(2)
+),min(t
+(2)
+? y
+(1)
+),max(t
+(3)
+? y
+(4)
+)
+?
+,min(t
+(4)
+? y
+(3)
+)
+return T
+R
+4.2 System Derived Intermediate Relations
+As suggested in section 4.1, MC is sensitive to inconsistent four-tuples. In response to this all prior
+work that has not used MC to combine system-produced I(R) has used an algorithm similar to Validity-
+Ensured Incremental (VEI) Max-Constrain (Algorithm 2) (Artiles et al., 2011). Here, I(R) is ordered
+by classifier confidence and T
+R
+is initialized as the trivial four-tuple and updated incrementally. Starting
+with the highest-confidence four-tuple T
+R,0
+? I(R), MC is applied to {T
+R
+, T
+R,i
+} to yield T
+?
+. In a given
+iteration, T
+?
+is only accepted as the updated T
+R
+if it is valid. Intuitively, higher confidence intermediate
+four-tuples are more likely to be correct, thus the incremental algorithm tries to ensure that erroneous
+low-confidence four-tuples are less likely to be aggregated. In practice, however, a single high-confidence
+incorrect label can derail the entire process (sec. 5).
+Algorithm 2 Validity-Ensured Incremental (VEI) Max-Constrain Aggregation to yield final four-tuple
+Require: I(R) = {T
+0
+, T
+1
+, . . . , T
+N?1
+}
+Ensure: T
+R
+=
+?
+t
+(1)
+, t
+(2)
+, t
+(3)
+, t
+(4)
+?
+T
+R
+?
+?
+??,?,??,?
+?
+i? 0
+while i < N do
+T
+?
+?
+?
+max(t
+(1)
+, t
+(1)
+i
+),min(t
+(2)
+, t
+(2)
+i
+),max(t
+(3)
+, t
+(3)
+i
+),max(t
+(4)
+, t
+(4)
+i
+)
+?
+{Pairwise MC}
+if t
+?(1)
+? t
+?(2)
+? t
+?(3)
+? t
+?(4)
+? t
+?(1)
+? t
+?(4)
+then
+T
+R
+? T
+?
+{Validity Check}
+end if
+end while
+return T
+R
+5 Challenges and Solutions
+This section outlines our modifications to CUNYTSF, inspired by a preliminary error analysis. We
+implement three methods geared toward better preparing I(R) for aggregation into a final four-tuple..
+5.1 Preliminary Error Analysis
+We ran the publicly available system CUNYTSF described in (Artiles et al., 2011) on the queries used
+in TSF2013, using the KBP2013 source collection, and evaluated against the corrected gold standard
+described in section 4.1.
+5
+Error analysis revealed the main source of errors to be WITHIN labels with high confidence. To be
+exact, the final four-tuple for 116 queries (of 271) was influenced by a WITHIN label that yielded a t
+(3)
+later than the g
+(4)
+date, while 20 were influenced by WITHIN dates that were too early. Under VEI,
+once a labeled instance
+?
+r, ?,WITHIN
+?
+is aggregated into T
+R
+, if ? > R
+e
+then any correctly labeled
+instance
+?
+r, ?, ENDING
+?
+will yield an invalid four-tuple and thus be rejected. (Similarly, correct BEGIN-
+NING labels will be blocked by incorrect WITHIN labels that are too early). Even correct WITHIN labels
+cannot set the corrupted aggregation back on track, since pairwise MC will always take the later t
+(3)
+5
+System downloaded from http://nlp.cs.rpi.edu/software.html
+1559
+(algorithm 2). That said, WITHIN labels are often required to retrieve a complete temporal picture of
+a relation conveyed in a corpus. WITHIN is the most common intermediate label in the source collec-
+tion, constituting 44% of correct labels, and furthermore, over half of the query relations require at least
+one WITHIN label to achieve the gold standard final four-tuple, with 10% relying solely on instances
+labeled WITHIN. To make matters worse, almost all TSF systems to date (except Garrido et al. (2013))
+use neither the BEFORE START* nor AFTER END* labels in their intermediate temporal relationships
+classification models, even though high-confidence instances with those labels could prevent the sort of
+erroneous WITHIN labels alluded to above.
+This analysis motivated three methods to curtail the extent to which aggregation-derailing four-tuples
+were included in I(R) described in sections 5.2, 5.3, and 5.4. We favor VEI over IMC for system-derived
+I(R) because IMC strongly relies on the assumption that there is a high probability of correctness for
+each intermediate relationship annotation.
+5.2 Title Time of Predication
+Nominal predicates are commonly used in English to refer to fluents. For example, attribution of a title
+to a person can be performed using a transitive verb or copula as in ?Serra was elected Governor?,
+or ?Serra is the Governor?, or as a Noun Phrase (NP) within a clause, as in ?Governor Jose Serra?
+or ?Jose Serra, Governor, ...? (among other ways). We refer to cases in which the subject and object
+of the relation are contained within a phrase headed by a Noun as Relational NP?s (RNP).
+6
+For RNP
+that are mentions of fluent relations, there is a time of predication (TOP), i.e. a time at which the
+relation conveyed is asserted to hold, though this time is not overtly marked by tense or aspect (in
+English) as in the case of VP?s. Tonhauser (2002)?s analysis assumes that the verbal time of predication
+(VTOP) is the ?most salient? time in an utterance, thus relational NP?s take their containing clause?s
+verbal time of predication by default though contextual justification may override this tendency. We
+propose that in news the DCT is just as salient a time since the focus is centered on current affairs, an
+important entities are often ?already introduced? into the discourse by virtue of being public figures. Ad-
+hoc analysis of the instances considered by CUNYTSF indicate that a compelling reason is required to
+override RNP?s from taking both DCT and VTOP. For instance, in, ?O?Donnell ... suggested Wednesday
+that the Obama administration - particularly Vice President Joe Biden, who represented Delaware in
+the Senate for decades - was behind them?, ?Vice President? holds true at DCT, and rejects the VTOP
+of ?represented?, presumably only based on logical inference: no person is both Vice President and
+represents (a state) in the Senate at the same time. Similarly, we know that the DCT (2010-08-04) is
+an invalid TOP in ?In November 2000, Chinese President Jiang Zemin paid a state visit to Laos, the
+first visit to Laos by a Chinese president?, only because of world knowledge, or, ?The following is a
+chronology of major events in China- Laotian relations since 1990:?, earlier in the document.
+Though NP?s lack tense and aspect, overt temporal modifiers such as former, then-, and ex- make
+explicit a post-relational state directly following an RNP?s relation (Tonhauser, 2002).
+7
+The tendency
+for RNP?s to take both the verbal predication time as well as the DCT extends to post-relational states.
+There are many examples in the corpus similar to the following: ?Former US President Bill Clinton and
+US journalists Euna Lee and Laura Ling returned Wednesday from North Korea, one day after North
+Korea?s leader Kim Jong-Il pardoned the two women?. Each RNP holds at the DCT, and ?Wednesday?,
+as well as the day before that (the VTOP of ?pardoned?). However, as for VTOP?s further into the
+past, whether the post-relational state holds is less clear. For example, in, ?Secretary of State Hillary
+Rodham Clinton says former Philippines President Corazon Aquino ?helped bring democracy back? to
+her country after years of authoritarian rule?, we cannot rule out the possibility that Aquino helped
+bring democracy back as President; whether she did so as former President is left open, to be resolved
+by historical knowledge. This is likely because, unless the relation is of the ?Grover Cleveland? type,
+once the relation becomes a ?former? relation it will remain so thereafter.
+6
+We adopt a Noun Phrase rather than a Determiner Phrase framework for simplicity.
+7
+In this work we omit similar constructions that indicate a pre-relational state at the time of verbal predication, such as
+?future-?, ?soon-to-be?, and ?-elect?. These words to not occur often in our data. That said, the extent to which their meanings
+are analogous to the overt temporal modifiers that introduce post-relational states is not clear, and requires further investigation.
+1560
+The nature of the contexts that override default TOP for RNP?s is complicated, and not well under-
+stood. In addition, determining VTOP automatically remains a difficult problem in and of itself (Uz-
+Zaman et al., 2012). We have shown that newswire data contains relational NP?s whose default times
+of predication - both DCT and verbal - are overridden by context. In addition, even post-relation states
+of modified RNP?s may reject VTOP?s. Post-relational states introduced by RNP?s modified with ?for-
+mer?, ?then?, and ?ex-?, however, do appear to unambiguously take the DCT as a time of predication.
+Furthermore, we observe that CUNYTSF often incorrectly classifies modified RNP?s introducing a post-
+relational state as expressing
+?
+r,DCT,WITHIN
+?
+. To correct these errors we apply hand-written Title
+Time of Predication Fix rules to change the label for all such classification instances to AFTER END*
+when the associated time expression is (or is closely related to) the DCT, and attribute 100% confidence
+to this new label. This correction both removes erroneous WITHIN labels and introduces labeled instances
+that bound query relations.
+5.3 Entity Existence
+VEI suffers when confidence values are inaccurate. For the relation spouse(Marylin Monroe, Arthur
+Miller), given the sentence, ?Editor Courtney Hodell said the book would include poems , photographs ,
+reflections on third husband Arthur Miller and other men in Monroe ?s life ?, a system is likely to mislabel
+?
+r, ?
+?
+as WITHIN, where ? is the document creation time 2010-04-27. The pattern ?husband s? is a
+strong indicator of the WITHIN relationship for the spouse relation, so confidence for the resulting four-
+tuple
+?
+??, 2010-04-27, 2010-04-27,?
+?
+is likely to be high. Once aggregated, it would be impossible
+to later aggregate
+?
+??, 1961-12-31, 1961-01-01, 1961-12-31
+?
+upon learning of the couple?s divorce in
+1961, since the proposed T
+?
+=
+?
+??, 1961-12-31, 2010-04-27, 1961-12-31
+?
+is invalid. A basic clue that
+a WITHIN label should be changed to AFTER END* is that q or s no longer exists (either the person has
+died or the business has dissolved).
+To address this challenge we propose Existence-based Correction and Filtering. For each relation
+R we obtain the existence four-tuple E
+R
+, by applying MC aggregation to the set of birth and death
+times in a knowledge base (KB) for the query-entity and slot-filler.
+8
+The KB is obtained via the Free-
+base API and scraping Wikipedia Infoboxes. We use a four-tuple instead of an interval of dates be-
+cause birth and/or death information may not be available at the date granularity. Given the relation
+spouse(Jennifer Jones, Norton Simon) and the KB excerpt in Table 3, we obtain an existence con-
+straint four-tuple
+?
+1919-03-02, 1919-03-02, 1993-06-02, 1993-06-02
+?
+.
+Entity Birth Death
+Jennifer Jones 1919-03-02 2009-12-17
+Norton Simon 1907-02-05 1993-06-02
+Table 3: Existence Information
+We apply algorithm 3, where C contains classifier confidence for each labeled instance in I(R).
+Above, I(R) was introduced as a list of intermediate four-tuples for a relation R. In our approach,
+each of these four-tuples is derived deterministically (see Table 1). From here on (as in Algorithm 3) we
+allow a slightly abuse of notation in which I(R) is viewed as a set of labeled classification instances,
+each of which yields a four-tuple for R. We omit pseudo-code to handle the analogous cases where
+instances are re-labeled BEFORE START* based on the relative position of ? and 
+1
+.
+5.4 Relation Precedence
+The context of a relation mention often contains temporal information not explicitly tied to a time ex-
+pression. For example, in, ?Myasnikovich will replace Sergei Sidorsky, who was prime minister since
+2003?, there is no date explicitly tied to the transition of power. Many titles are held by one person after
+another, in succession, without overlap. Intuitively, if we know the order in which several individuals
+held the same title then temporal information about one such relation can be used to constrain the other.
+8
+For organization query-entities their foundation and defunct dates are considered their ?birth? and ?death? dates.
+1561
+Algorithm 3 Existence Based Correction & Filtering Algorithm
+Require: I(R) =
+{?
+?
+0
+, l
+0
+?
+, . . . ,
+?
+?
+k
+, l
+k
+?}
+; C = {c
+0
+, . . . , c
+k
+}; E
+R
+=
+?
+
+(1)
+, 
+(2)
+, 
+(3)
+, 
+(4)
+?
+while i < N do
+if ?
+i
+.s ? 
+4
+? ?(l
+i
+= NONE) then
+if l
+i
+= ENDING ? ?.s? 
+4
+? 31 then
+c
+i
+? 1.0 {Most likely R holds at the time of death}
+else
+l
+i
+? AFTER END*; c
+i
+? 1.0
+end if
+else if ?
+i
+.s ? 
+4
+? ?
+i
+.e ? ?(l
+i
+= NONE) then
+if l
+i
+= ENDING then
+c
+i
+? 1.0 {Most likely R holds at the time of death}
+else
+l
+i
+? AFTER END*; c
+i
+? 1.0
+end if
+end if
+end while
+return I(R)
+To address this challenge we propose Precedence-based Query Expansion and Re-labeling. The
+title relation is well-represented in Wikipedia, and the infobox for many political title holders contains
+fields for preceded by and succeeded by, which specify the person that held the same title before and after
+the title holder in question. Given a title query R, we extracted the person who preceded and succeeded
+the query entity from the query entity?s infobox (when available). Additional title relation supporter
+queries ? R
+pre
+and R
+suc
+, respectively ? were generated using these names, and the same title name as in
+the official query.
+9
+After all classification instances are labeled and existence based correction is applied, we transform
+all labeled instances for supporter queries into labeled instances for official queries. Given a labeled
+instance
+?
+r
+x
+, ?, l
+?
+, where x = pre or suc, we apply the mapping in Table 4 to yield the transformed
+labeled classification instance
+?
+r, ?, l
+?
+?
+. Labeled supporter instances transformed into labeled official
+query instances are added to I(R), the set of labeled instances for R. The set I(R) is then passed to
+Aggregation (see Algorithm 2).
+Supporter Label l Official label l
+?
+(x = pre) Official label l
+?
+(when x = suc)
+NONE NONE NONE
+BEFORE START* BEFORE START* NONE
+AFTER END* NONE AFTER END*
+All Others BEFORE START* AFTER END*
+Table 4: Mapping to convert
+?
+r
+x
+, ?, l
+?
+to
+?
+r, ?, l
+?
+?
+, where x indicates whether the supporter query pre-
+cedes or succeeds the official query
+Just about any instance
+?
+r
+pre
+, ?, l
+?
+yields
+?
+r, ?, BEFORE START*
+?
+because R
+pre
+is known to both start
+and end before R starts. (And conversely
+?
+r
+suc
+, ?
+?
+tends to yield AFTER END* for
+?
+r, ?
+?
+.) This is
+because the last (first) day of R
+pre
+and all days before (after) it are guaranteed to be before (after) the
+start (end) of R. However, note that a AFTER END* label for
+?
+r
+pre
+, ?
+?
+yields NONE for R since dates
+after the end of R
+pre
+may be before, during, or after R. For example, the headline, ?Former President
+9
+In general, knowing that two relations stand in a particular interval relation to one another allows us to posit constraints
+on one relation upon discovering temporal information about the other. We apply this intuition to the title relation in this work
+since the information is readily available in a structured form (i.e., the preceded by and succeeded by fields in Wikipedia info
+boxes).
+1562
+Lee Teng-hui on visit in Japan Tokyo?, while clearly indicating AFTER END* for R
+pre
+tells us very little
+about the relationship between the document creation time and R.
+6 Results and Analysis
+We scored the output for five conditions using the modified gold standard (section 4.1). TF means that
+title time of predication fix was applied (section 5.2), EC means existence corrections were applied, and
+Pr means that precedence-based query expansion was applied (section 5.4).
+System P R F
+CUNYTSF .337 .294 .314
+CUNYTSF + TF .341 .298 .318
+CUNYTSF + EC .349 .305 .326
+CUNYTSF + TF + EC .353 .309 .329
+CUNYTSF + TF + EC + Pr .360 .315 .336
+Table 5: Results calculated using official TSF2013 scorer against corrected gold standard (sec. 4.1), with
+anydoc and ignore-offsets parameters set to true, augmented to calculate recall and precision
+6.1 Title Time of Predication Fix
+The gold standard for title had 142 non-infinity tuple element outputs of the form
+?
+R, i, t
+(i)
+?
+. The
+baseline output had 80 values while baseline + TF had 91. Applying TF, 10 baseline outputs were
+replaced while 11 were added. In most cases erroneous WITHIN labels are corrected by inserting high-
+confidence AFTER END* into I(R). In some cases this allows a correct t
+(3)
+to replace a later, incorrect
+t
+(3)
+that came from an erroneous WITHIN label. It is important to note that while some changes barely af-
+fect F-measure, they are important because they allow for correct information that would have otherwise
+been blocked to be aggregated. For example, a bad baseline WITHIN for ?General Prosecutor ?s Office
+of Kyrgyzstan on Tuesday charged the country?s former Prime Minister Igor Chudinov with abuse of
+power? had blocked a correct WITHIN for ?Kyrgyz Prime Minister Igor Chudinov left Beijing Thursday
+evening? - removing this block allowed t
+(3)
+to change from 2010-05-04 to 2009-10-14, which is the gold
+standard value.
+6.2 Existence-based Correction and Filtering
+Most changes made from existence constraints are beneficial both in terms of an increase in F-measure
+and in blocking the aggregation of incorrect information. For instance, it is difficult to prevent labeling
+the following sentence with WITHIN for DCT: ?The London home of composer George Frideric Handel
+is holding an exhibition about its other famous resident ? Jimi Hendrix?, but the document context per-
+mits AFTER END*, given ?Hendrix died in London on Sept. 18 , 1970?. Given the existence constraint
+we label the instance AFTER END*.
+On the other hand, in some cases we erroneously change WITHIN to BEFORE START* using existence
+constraints, but this type of change does little damage. For example, the fact that CNN was founded on
+1980-06-01 changes the label on 1980 from WITHIN to BEFORE START* for EMPLOYEE(Novak, CNN),
+given ?Novak , editor of the Evans-Novak Political Report , is perhaps best known as a co-host of several
+of CNN ?s political talk shows , where he often jousted with liberal guests from 1980 to 2005?. We set
+t
+(1)
+= 1980-01-01 which does not block later inclusion of a correct
+?
+R, 1980, BEGINNING
+?
+, which
+would set t
+(1)
+= 1980-01-01 if it were not already set, and does set t
+(2)
+= 1980-12-31. Changing this
+relation?s label from WITHIN to START is not a catastrophic error because it allows for a finer grained,
+correct start date to be aggregated using VEI (see Algorithm 2) to yield a superior final four-tuple (though
+CUNYTSF finds no suitable candidates to facilitate this).
+1563
+6.3 Precedence-based Query Expansion & Re-labeling
+Output for affected official queries were improved simply because supporter queries were accurately
+labeled. For example, ?Kim Choongsoo, Korea?s Central Bank Governor, said here on Thursday his na-
+tion?s economic situation was getting better? provides a t
+(4)
+value for title(Lee Seong-tae, Governor)
+due given the successor relation.
+Some gains from label transformation are only possible given the title time of predication fix. For ex-
+ample, multiple instances of ?former president Chen Shui-bian? and ?Former President Lee Teng-hui?
+were converted from WITHIN to AFTER END* for their respective relations. Because Chen succeeded
+Lee, the latter instances were transformed to NONE instances for title(Chen, President) using Ta-
+ble 4.
+10
+Changing these labels to NONE made room for a valid t
+(3)
+= 2000-01-01 based converting the
+WITHIN for title(Lee, President) to BEFORE START* for title(Chen, President) given, ?... since
+former President Lee Teng-hui promulgated it 19 years ago, Wang said, and the [DPP] did not try to
+make any changes to the framework during its eight-year rule between 2000 and 2008 either?.
+Label transformation is robust to misclassification. For example, any of BEFORE START*, BEGIN-
+NING, WITHIN, or ENDING for a predecessor relation R
+pre
+will map to before start* for R. But other
+types of errors propagate and can lead to disastrous results. For example, due to a normalization quirk
+?Utatu President George Strauss? is recognized as ?Johannes Rau?, thus the relation title(Rau, Pres-
+ident) was assigned WITHIN at DCT, which is converted to a BEFORE START* for Horst Kohler, Rau?s
+successor.
+A deeper problem that can lead to error propagation is that fact one person can have the same title in
+different contexts. When a title is attributed to a person there is often a geo-political or organization en-
+tity involved. Mentions that fail to include this third entity are ambiguous; often, this information needs
+to be inferred from other context sentences. Such errors may be propagated from supporter to official
+queries. For example, ?Francophonie president Abdou Diouf of Senegal ... ? appears to support the
+title(Abdou Diouf, President). Diouf preceded Abdoulaye Wade as President of Senegal, but the con-
+text in question (inaccurately) refers to Diouf?s leadership position of Secretary-General (not President)
+of Organisation internationale de la Francophonie, thus an erroneous BEFORE START* is aggregated,
+blocking a correctly labeled (less confident)
+?
+r, 2000, START
+?
+.
+7 Conclusion
+We have analyzed within the particular context of TSF the process of aggregating partially-specified
+temporal information about relations across documents. Our analysis and and results indicate that text
+mentions of relations often ground only a portion of the referent relation in time and that correct in-
+terpretation relies on background knowledge about relation participants. In future work we plan a more
+rigorous data-driven study of nominal time of predication and to attack more ambiguous context-sensitive
+cases. In addition we aim to induce relation order from text automatically to multiple relation types as
+well as events.
+Acknowledgments
+This work was supported by the U.S. Army Research Laboratory under Cooperative Agreement No.
+W911NF-09-2-0053 (NS-CTA), and in addition the U.K. Ministry of Defense under Agreement No.
+W911NF-06-3-0001 (ITA), U.S. NSF CAREER Award under Grant IIS-0953149, U.S. DARPA Award
+No. FA8750-13-2-0041 in the Deep Exploration and Filtering of Text (DEFT) Program, IBM Faculty
+Award, Google Research Award and RPI faculty start-up grant. The views and conclusions contained in
+this document are those of the authors and should not be interpreted as representing the official policies,
+either expressed or implied, of the U.S. Government. The U.S. Government is authorized to reproduce
+and distribute reprints for Government purposes notwithstanding any copyright notation here on.
+10
+Had the title fix not been applied these WITHIN labels would have been converted to BEFORE START*.
+1564
+References
+Enrique Amigo, Artiles Javier, Qi Li, and Heng Ji. 2011. An evaluation framework for aggregated temporal
+information extraction. In Pric SIGIR2011 Workshop on Entity-Oriented Search.
+Javier Artiles, Qi Li, Taylor Cassidy, and Heng Ji. 2011. Temporal slot filling system description. In Proc. Text
+Analytics Conference (TAC2011).
+Maximilian Dylla, Iris Miliaraki, and Martin Theobald. 2013. A temporal-probabilistic database model for infor-
+mation extraction. Proceedings of the VLDB Endowment, 6(14):1810?1821.
+Guillermo Garrido, Anselmo Penas, and Bernardo Cabaleiro. 2013. Uned slot filling and temporal slot filling
+systems at tac kbp 2013. system description. In Proc. Text Analytics Conference (TAC2013).
+Heng Ji, Ralph Grishman, and Hoa Trang Dang. 2011. An overview of the tac2011 knowledge base population
+track. In Proc. Text Analytics Conference (TAC2011).
+Stuart J. Russell and Peter Norvig. 2010. Artificial Intelligence - A Modern Approach (3. internat. ed.). Pearson
+Education.
+Mihai Surdeanu. 2013. An overview of the tac2013 knowledge base population track. In Proc. Text Analytics
+Conference (TAC2013).
+Judith Tonhauser. 2002. A dynamic semantic account of the temporal interpretation of noun phrases. In Proceed-
+ings of SALT, volume 12, pages 286?305.
+Naushad UzZaman, Hector Llorens, James F. Allen, Leon Derczynski, Marc Verhagen, and James Pustejovsky.
+2012. Tempeval-3: Evaluating events, time expressions, and temporal relations. CoRR, abs/1206.5333.
+Yafang Wang, Maximilian Dylla, Marc Spaniol, and Gerhard Weikum. 2012. Coupling label propagation and
+constraints for temporal fact extraction. In Proceedings of the 50th Annual Meeting of the Association for
+Computational Linguistics: Short Papers-Volume 2, pages 233?237. Association for Computational Linguistics.
+Appendix A. Glossary of Selected Terms
+Fluent Relation: A property of a person or organization whose value may change over time. For
+example, a person?s employer.
+Temporal Extension: For a relation R, the temporal extension is the interval [R
+s
+, R
+e
+], which represents
+the period of time between and including the start date R
+s
+and end date R
+e
+of the relation.
+Relation Mention: An excerpt of text that expresses a relation.
+Time Expression: An excerpt of text that refers to a portion of time, such as ?Tuesday? or ?next year?.
+Normalized Time Expression: The portion of time indicated by a time expression expressed in a
+standard form.
+Granularity: The level at which a portion of time is expressed, in terms of calendar and clock units.
+For example, years are of a coarser granularity than days.
+Temporal Four-tuple: For a relation R, a temporal four-tuple T
+R
+=
+?
+t
+(1)
+, t
+(2)
+, t
+(3)
+, t
+(4)
+?
+represents an
+assertion that, based on some evidence, the start date for R is between t
+(1)
+and t
+(2)
+, and its end date is
+between t
+(3)
+and t
+(4)
+.
+Final Temporal Four-tuple: The four-tuple assigned to R (by an annotator or system) after aggregating
+all temporal information about R.
+Valid Temporal Four-tuple: A four-tuple T =
+?
+t
+(1)
+, t
+(2)
+, t
+(3)
+, t
+(4)
+?
+is valid if and only if iff.
+t
+(1)
+? t
+(2)
+? t
+(3)
+? t
+(4)
+? t
+(1)
+? t
+(4)
+.
+Correct Temporal Four-tuple: A temporal four-tuple T
+R
+=
+?
+t
+(1)
+, t
+(2)
+, t
+(3)
+, t
+(4)
+?
+if and only if
+t
+(1)
+? R
+s
+? t
+(2)
+? t
+(3)
+? R
+e
+? t
+(4)
+Intermediate Temporal Relationship: Given a relation mention r of relation R and a normalized time
+expression ? (viewed as a temporal interval), the intermediate temporal relationship between the two
+characterizes the relationships between the end points of ? and the endpoints of the temporal extension
+of R, namely ?
+s
+, ?
+e
+, R
+s
+, and R
+e
+. In this work, each intermediate temporal relationship used serves as
+a mapping from temporal interval to four-tuple (see Table 1 for the relationships used in this work and
+their mappings).
+1565
+Intermediate Temporal Four-tuple Set: For a relation R, a system or annotator may derive an
+intermediate temporal four-tuple for each relation mention r and a corresponding time expression ?
+by based on an intermediate temporal relationship expressed between the two. The elements of each
+intermediate four-tuple are derived using the mapping in Table 1. We denote the set of intermediate
+temporal four-tuples for R as I(R).
+Query Relation: A relation that serves as input to a TSF system tasked with returning a final temporal
+four-tuple for that relation.
+Relational Noun Phrase: A noun phrase that expresses a relation. For example, ?President Obama?
+expresses a relation that ?Obama??s title is ?President?.
+Time of Predication: For a given predicate, the time of predication is a time interval for which the
+predicate is asserted to apply to a specified set of arguments.
+Post-relational State: A state immediately following the end of a relation characterized by the relation
+now longer holding. For example, prepending a title with ?former?, as in ?former President X?,
+introduces a state characterized by X no longer holding the title President.
+Temporally Linked Relations: Two relations are temporally linked if their temporal extensions are not
+independent. For example, if it is known that one?s end precedes the other?s start.
+Provenance: The relevant text that supports the output.
+1566
+Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: Technical Papers,
+pages 1567?1578, Dublin, Ireland, August 23-29 2014.
+The Wisdom of Minority: Unsupervised Slot Filling Validation based on
+Multi-dimensional Truth-Finding
+Dian Yu
+1
+, Hongzhao Huang
+1
+, Taylor Cassidy
+2,3
+, Heng Ji
+1
+Chi Wang
+4
+, Shi Zhi
+4
+, Jiawei Han
+4
+, Clare Voss
+2
+, Malik Magdon-Ismail
+1
+1
+Computer Science Department, Rensselaer Polytechnic Institute
+2
+U.S. Army Research Lab
+3
+IBM T. J. Watson Research Center
+4
+Computer Science Department, Univerisity of Illinois at Urbana-Champaign
+1
+{yud2,huangh9,jih,magdon}@rpi.edu,
+2,3
+{taylor.cassidy.ctr,clare.r.voss.civ}@mail.mil
+4
+{chiwang1,shizhi2,hanj}@illinois.edu
+Abstract
+Information Extraction using multiple information sources and systems is beneficial due to multi-
+source/system consolidation and challenging due to the resulting inconsistency and redundancy.
+We integrate IE and truth-finding research and present a novel unsupervised multi-dimensional
+truth finding framework which incorporates signals from multiple sources, multiple systems and
+multiple pieces of evidence by knowledge graph construction through multi-layer deep linguistic
+analysis. Experiments on the case study of Slot Filling Validation demonstrate that our approach
+can find truths accurately (9.4% higher F-score than supervised methods) and efficiently (finding
+90% truths with only one half the cost of a baseline without credibility estimation).
+1 Introduction
+Traditional Information Extraction (IE) techniques assess the ability to extract information from
+individual documents in isolation. However, similar, complementary or conflicting information may
+exist in multiple heterogeneous sources. We take the Slot Filling Validation (SFV) task of the NIST Text
+Analysis Conference Knowledge Base Population (TAC-KBP) track (Ji et al., 2011) as a case study. The
+Slot Filling (SF) task aims at collecting from a large-scale multi-source corpus the values (?slot fillers?)
+for certain attributes (?slot types?) of a query entity, which is a person or some type of organization. KBP
+2013 has defined 25 slot types for persons (per) (e.g., age, spouse, employing organization) and 16 slot
+types for organizations (org) (e.g., founder, headquarters-location, and subsidiaries). Some slot types
+take only a single slot filler (e.g., per:birthplace), whereas others take multiple slot fillers (e.g., org:top
+employees).
+We call a combination of query entity, slot type, and slot filler a claim. Along with each claim, each
+system must provide the ID of a source document and one or more detailed context sentences as evidence
+which supports the claim. A response (i.e., a claim, evidence pair) is correct if and only if the claim is
+true and the evidence supports it.
+Given the responses produced by multiple systems from multiple sources in the SF task, the goal of
+the SFV task is to determine whether each response is true or false. Though it?s a promising line of
+research, it raises two complications: (1) different information sources may generate claims that vary
+This work is licenced under a Creative Commons Attribution 4.0 International License. Page numbers and proceedings footer
+are added by the organizers. License details: http://creativecommons.org/licenses/by/4.0/
+1567
+in trustability; and (2) a large-scale number of SF systems using different resources and algorithms may
+generate erroneous, conflicting, redundant, complementary, ambiguously worded, or inter-dependent
+claims from the same set of documents. Table 1 presents responses from four SF systems for the query
+entity Ronnie James Dio and the slot type per:city of death. Systems A, B and D return Los Angeles
+with different pieces of evidence
+1
+extracted from different information sources, though the evidence of
+System D does not decisively support the claim. System C returns Atlantic City, which is neither true
+nor supported by the corresponding evidence.
+Such complications call for ?truth finding?: determining the veracity of multiple conflicting claims
+from various sources and systems. We propose a novel unsupervised multi-dimensional truth finding
+framework to study credibility perceptions in rich and wide contexts. It incorporates signals from
+multiple sources and systems, using linguistic indicators derived from knowledge graphs constructed
+from multiple evidences using multi-layer deep linguistic analysis. Experiments demonstrate that our
+approach can find truths accurately (9.4% higher F-score than supervised methods) and efficiently (find
+90% truths with only one half cost of a baseline without credibility estimation).
+System Source Slot Filler Evidence
+A Agence France-
+Presse, News
+Los Angeles The statement was confirmed by publicist Maureen O?Connor, who said Dio
+died in Los Angeles.
+B New York
+Times, News
+Los Angeles Ronnie James Dio, a singer with the heavy-metal bands Rainbow, Black
+Sabbath and Dio, whose semioperatic vocal style and attachment to demonic
+imagery made him a mainstay of the genre, died on Sunday in Los Angeles.
+C Discussion Fo-
+rum
+Atlantic City Dio revealed last summer that he was suffering from stomach cancer shortly
+after wrapping up a tour in Atlantic City.
+D Associated
+Press
+Worldstream,
+News
+Los Angeles LOS ANGELES 2010-05-16 20:31:18 UTC Ronnie James Dio, the metal god
+who replaced Ozzy Osbourne in Black Sabbath and later piloted the bands
+Heaven, Hell and Dio, has died, according to his wife and manager.
+Table 1: Conflicting responses across different SF systems and different sources (query entity = Ronnie
+James Dio, slot type = per:city of death).
+2 Related Work & Our Novel Contributions
+Most previous SFV work (e.g., (Tamang and Ji, 2011; Li and Grishman, 2013)) focused on filtering
+incorrect claims from multiple systems by simple heuristic rules, weighted voting, or costly supervised
+learning to rank algorithms. We are the first to introduce the truth finding concept to this task.
+The ?truth finding? problem has been studied in the data mining and database communities (e.g., (Yin
+et al., 2008; Dong et al., 2009a; Dong et al., 2009b; Galland et al., 2010; Blanco et al., 2010; Pasternack
+and Roth, 2010; Yin and Tan, 2011; Pasternack and Roth, 2011; Vydiswaran et al., 2011; Ge et al.,
+2012; Zhao et al., 2012; Wang et al., 2012; Pasternack and Roth, 2013)). Compared with the previous
+work, our truth finding problem is defined under a unique setting: each response consists of a claim and
+supporting evidence, automatically generated from unstructured natural language texts by a SF system.
+The judgement of a response concerns both the truth of the claim and whether the evidence supports
+the claim. This has never been modeled before. We mine and exploit rich linguistic knowledge from
+multiple lexical, syntactic and semantic levels from evidence sentences for truth finding. In addition,
+previous truth finding work assumed most claims are likely to be true. However, most SF systems have
+hit a performance ceiling of 35% F-measure, and false responses constitute the majority class (72.02%)
+due to the imperfect algorithms as well as the inconsistencies of information sources. Furthermore,
+certain truths might only be discovered by a minority of good systems or from a few good sources. For
+example, 62% of the true responses are produced only by 1 or 2 of the 18 SF systems.
+1
+Hereafter, we refer to ?pieces of evidence? with the shorthand ?evidences?. Note that SF systems may include multiple
+sentences as ?evidence? within their responses.
+1568
+r1 
+      Response 
+<Claim, Evidence> 
+t1 
+t2 
+System 
+s1 
+r2 
+r3 
+s2 
+Source 
+t3 
+r4 t4 
+s3 
+r5 
+Figure 1: Heterogeneous networks for MTM.
+3 MTM: A Multi-dimensional Truth-Finding Model
+MTM Construction
+A response is trustworthy if its claim is true and its evidence supports the claim. A trusted
+source always supports true claims by giving convincing evidence, and a good system tends to extract
+trustworthy responses from trusted sources. We propose a multi-dimensional truth-finding model (MTM)
+to incorporate and compute multi-dimensional credibility scores.
+Consider a set of responses R = {r
+1
+, . . . , r
+m
+} extracted from a set of sources S = {s
+1
+, . . . , s
+n
+} and
+provided by a set of systems T = {t
+1
+, . . . , t
+l
+}. A heterogeneous network is constructed as shown in
+Fig. 1. Let weight matrices be W
+rs
+m?n
+= {w
+rs
+ij
+} and W
+rt
+m?l
+= {w
+rt
+ik
+}. A link w
+rs
+ij
+= 1 is generated
+between r
+i
+and s
+j
+when response r
+i
+is extracted from source s
+j
+, and a link w
+rt
+ik
+= 1 is generated between
+r
+i
+and t
+k
+when response r
+i
+is provided by system t
+k
+.
+Credibility Initialization
+Each source is represented as a combination of publication venue and genre. The credibility scores
+of sources S are initialized uniformly as
+1
+n
+, where n is the number of sources. Given the set of systems
+T = {t
+1
+, . . . , t
+l
+}, we initialize their credibility scores c
+0
+(t) based on their interactions on the predicted
+responses. Suppose each system t
+i
+generates a set of responses R
+t
+i
+. The similarity between two systems
+t
+i
+and t
+j
+is defined as similarity(t
+i
+, t
+j
+) =
+|R
+t
+i
+?R
+t
+j
+|
+log (|R
+t
+i
+|)+log (|R
+t
+j
+|)
+(Mihalcea, 2004). Then we construct a
+weighted undirected graph G = ?T,E?, where T (G) = {t
+1
+, . . . , t
+l
+} and E(G) = {?t
+i
+, t
+j
+?}, ?t
+i
+, t
+j
+? =
+similarity(t
+i
+, t
+j
+), and apply the TextRank algorithm (Mihalcea, 2004) on G to obtain c
+0
+(t).
+We got negative results by initializing system credibility scores uniformly. We also got negative results
+by initializing system credibility scores using system metadata, such as the algorithms and resources the
+system used at each step, its previous performance in benchmark tests, and the confidence values it
+produced for its responses. We found the quality of an SF system depends on many different resources
+instead of any dominant one. For example, an SF system using a better dependency parser does not
+necessarily produce more truths. In addition, many systems are actively being improved, rendering
+previous benchmark results unreliable. Furthermore, most SF systems still lack reliable confidence
+estimation.
+The initialization of the credibility scores for responses relies on deep linguistic analysis of the
+evidence sentences and the exploitation of semantic clues, which will be described in Section 4.
+Credibility Propagation
+1569
+We explore the following heuristics in MTM.
+HEURISTIC 1: A response is more likely to be true if derived from many trustworthy sources. A source
+is more likely to be trustworthy if many responses derived from it are true.
+HEURISTIC 2: A response is more likely to be true if it is extracted by many trustworthy systems. A
+system is more likely to be trustworthy if many responses generated by it are true.
+Based on these two heuristics we design the following credibility propagation approach to mutually
+reinforce the trustworthiness of linked objects in MTM.
+By extension of Co-HITS (Deng et al., 2009), designed for bipartite graphs, we develop a propagation
+method to handle heterogeneous networks with three types of objects: source, response and system. Let
+the weight matrices beW
+rs
+(between responses and sources) andW
+rt
+(between responses and systems),
+and their transposes beW
+sr
+andW
+tr
+. We can obtain the transition probability that vertex s
+i
+in S reaches
+vertex r
+j
+in R at the next iteration, which can be formally defined as a normalized weight p
+sr
+ij
+=
+w
+sr
+ij?
+k
+w
+sr
+ik
+such that
+?
+r
+j
+?R
+p
+sr
+ij
+= 1. We compute the transition probabilities p
+rs
+ji
+, p
+rt
+jk
+and p
+tr
+kj
+in an analogous
+fashion.
+Given the initial credibility scores c
+0
+(r), c
+0
+(s) and c
+0
+(t), we aim to obtain the refined credibility scores
+c(r), c(s) and c(t) for responses, sources, and systems, respectively. Starting with sources, the update
+process considers both the initial score c
+0
+(s) and the propagation from connected responses, which we
+formulated as:
+c(s
+i
+) = (1? ?
+rs
+)c
+0
+(s
+i
+) + ?
+rs
+?
+r
+j
+?R
+p
+rs
+ji
+c(r
+j
+) (1)
+Similarly, the propagation from responses to systems is formulated as:
+c(t
+k
+) = (1? ?
+rt
+)c
+0
+(t
+k
+) + ?
+rt
+?
+r
+j
+?R
+p
+rt
+jk
+c(r
+j
+) (2)
+Each response?s score c(r
+j
+) is influenced by both linked sources and systems:
+c(r
+j
+) = (1? ?
+sr
+? ?
+tr
+)c
+0
+(r
+j
+) + ?
+sr
+?
+s
+i
+?S
+p
+sr
+ij
+c(s
+i
+) + ?
+tr
+?
+t
+k
+?T
+p
+tr
+kj
+c(t
+k
+) (3)
+where ?
+rs
+, ?
+rt
+, ?
+sr
+and ?
+tr
+? [0, 1]. These parameters control the preference for the propagated over
+initial score for every type of random walk link. The larger they are, the more we rely on link structure
+2
+.
+The propagation algorithm converges (10 iterations in our experimental settings) and a similar theoretical
+proof to HITS (Peserico and Pretto, 2009) can be constructed. Algorithm 1 summarizes MTM.
+4 Response Credibility Initialization
+Each evidence along with a claim is expressed as a few natural language sentences that include the query
+entity and the slot filler, along with semantic content to support the claim. We analyze the evidence of
+each response in order to initialize that response?s credibility score. This is done using heuristic rules
+defined in terms of the binary outputs of various linguistic indicators (Section 4.1).
+4.1 Linguistic Indicators
+We encode linguistic indicators based on deep linguistic knowledge acquisition and use them to
+determine whether responses provide supporting clues or carry negative indications (Section 4.3). These
+indicators make use of linguistic features on varying levels - surface form, sentential syntax, semantics,
+and pragmatics - and are defined in terms of knowledge graphs (Section 4.2). We define a heuristic rule
+for each slot type in terms of the binary-valued linguistic indicator outputs to yield a single binary value
+(1 or 0) for each response. If a response?s linguistic indicator value is 1, the credibility score of a response
+is initialized at 1.0, and 0.5 otherwise.
+2
+We set ?
+rs
+= 0.9, ?
+sr
+= 0.1, ?
+rt
+= 0.3 and ?
+tr
+= 0.2, optimized from a development set. See Section 5.1.
+1570
+Input: A set of responses (R), sources (S) and systems (T ).
+Output: Credibility scores (c(r)) for R.
+1: Initialize the credibility scores c
+0
+(s) for S as c
+0
+(s
+i
+) =
+1
+|S|
+;
+2: Use TextRank to compute initial credibility scores c
+0
+(t) for T ;
+3: Initialize the credibility scores c
+0
+(r) using linguistic indicators (Section 4);
+4: Construct heterogeneous networks across R, S and T ;
+5: k ? 0, diff? 10e6;
+6: while k < MaxIteration and diff > MinThreshold do
+7: Use Eq. (1) to compute c
+k+1
+(s);
+8: Use Eq. (2) to compute c
+k+1
+(t);
+9: Use Eq. (3) to compute c
+k+1
+(r);
+10: Normalize c
+k+1
+(s), c
+k+1
+(t), and c
+k+1
+(r);
+11: diff?
+?
+(|c
+k+1
+(r)? c
+k
+(r)|);
+12: k ? k + 1
+13: end while
+Algorithm 1:Multi-dimensional Truth-Finding.
+4.2 Knowledge Graph Construction
+A semantically rich knowledge graph is constructed that links a query entity, all of its relevant slot
+filler nodes, and nodes for other intermediate elements excerpted from evidence sentences. There is one
+knowledge graph per sentence.
+Fig. 2 shows a subregion of the knowledge graph built from the sentence: ?Mays, 50, died in his sleep
+at his Tampa home the morning of June 28.?. It supports 3 claims: [Mays, per: city of death, Tampa],
+[Mays, per: date of death, 06/28/2009] and [Mays, per: age, 50].
+Formally, a knowledge graph is an annotated graph of entity mentions, phrases and their links. It must
+contain one query entity node and one or more slot filler nodes. The annotation of a node includes its
+entity type, subtype, mention type, referent entities, and semantic category (though not every node has
+each type of annotation). The annotation of a link includes a dependency label and/or a semantic relation
+between the two linked nodes.
+The knowledge graph is constructed using the following procedure. First, we annotate the evidence
+text using dependency parsing (Marneffe et al., 2006) and Information Extraction (entity, relation and
+event) (Li et al., 2013; Li and Ji, 2014). Two nodes are linked if they are deemed related by one of the
+annotation methods (e.g., [Mays, 50] is labeled with the dependency type amod, and [home, Tampa] is
+labeled with the semantic relation located in). The annotation output is often in terms of syntactic heads.
+Thus, we extend the boundaries of entity, time, and value mentions (e.g., people?s titles) to include an
+entire phrase where possible. We then enrich each node with annotation for entity type, subtype and
+mention type. Entity type and subtype refer to the role played by the entity in the world, the latter being
+more fine-grained, whereas mention type is syntactic in nature (it may be pronoun, nominal, or proper
+name). For example, ?Tampa? in Fig. 2 is annotated as a Geopolitical (entity type) Population-Center
+(subtype) Name (mention type) mention. Every time expression node is annotated with its normalized
+reference date (e.g., ?June, 28? in Fig. 2 is normalized as ?06/28/2009?).
+Second, we perform co-reference resolution, which introduces implicit links between nodes that refer
+to the same entity. Thus, an entity mention that is a nominal or pronoun will often be co-referentially
+linked to a mention of a proper name. This is important because many queries and slot fillers are
+expressed only as nominal mentions or pronouns in evidence sentences, their canonical form appearing
+elsewhere in the document.
+Finally, we address the fact that a given relation type may be expressed in a variety of ways. For
+example, ?the face of ? indicates the membership relation in the following sentence: ?Jennifer Dunn was
+the face of the Washington state Republican Party for more than two decades.? We mined a large
+1571
+Mays 
+had 
+died 
+sleep 
+his 
+home 
+Tampa 
+50 
+June,28 
+amod 
+nsubj 
+aux 
+prep_in 
+poss 
+prep_at 
+prep_of 
+nn 
+poss 
+  located_in 
+{PER.Individual, NAM, Billy Mays} 
+?Query? 
+{NUM } 
+?Per:age? 
+{Death-Trigger} 
+{PER.Individual.PRO, Mays} 
+{GPE.Population-Center.NAM, FL-USA} 
+? Per:place_of_death? 
+{FAC.Building-Grounds.NOM} 
+{06/28/2009, TIME-WITHIN}  
+? per:date_of_death? 
+Figure 2: Knowledge Graph Example.
+number of trigger phrases for each slot type by mapping various knowledge bases, including Wikipedia
+Infoboxes, Freebase (Bollacker et al., 2008), DBPedia (Auer et al., 2007) and YAGO (Suchanek et
+al., 2007), into the Gigaword corpus
+3
+and Wikipedia articles via distant supervision (Mintz et al.,
+2009)
+4
+. Each intermediate node in the knowledge graph that matches a trigger phrase is then assigned a
+corresponding semantic category. For example, ?died? in Fig. 2 is labeled a Death-Trigger.
+4.3 Knowledge Graph-Based Verification
+We design linguistic indicators in terms of the properties of nodes and paths that are likely to be bear on
+the response?s veracity. Formally, a path consists of the list of nodes and links that must be traversed
+along a route from a query node to a slot filler node.
+Node indicators contribute information about a query entity or slot filler node in isolation, that
+may bear on the trustworthiness of the containing evidence sentence. For instance, a slot filler for the
+per:date of birth slot type must be a time expression.
+Node Indicators
+1. Surface: Whether the slot filler includes stop words; whether it is lower cased but appears in news.
+These serve as negative indicators.
+2. Entity type, subtype and mention type: For example, the slot fillers for ?org:top employees? must be
+person names; and fillers for ?org:website? must match the url format. Besides the entity extraction
+system, we also exploited the entity attributes mined by the NELL system (Carlson et al., 2010)
+from the KBP source corpus.
+Each path contains syntactic and/or semantic relational information that may shed light on the manner
+in which the query entity and slot filler are related, based on dependency parser output, IE output,
+and trigger phrase labeling. Path indicators are used to define properties of the context in which
+which query-entity and slot-filler are related in an evidence sentence. For example, whether the path
+3
+http://catalog.ldc.upenn.edu/LDC2011T07
+4
+Under the distant supervision assumption, sentences that appear to mention both entities in a binary relation contained in
+the knowledge base were assumed to express that relation.
+1572
+associated with a claim about an organization?s top employee includes a title commonly associated with
+decision-making power can be roughly represented using the trigger phrases indicator.
+Path Indicators
+1. Trigger phrases: Whether the path includes any trigger phrases as described in Section 4.2.
+2. Relations and events: Whether the path includes semantic relations or events indicative of the slot
+type. For example, a ?Start-Position? event indicates a person becomes a ?member? or ?employee?
+of an organization.
+3. Path length: Usually the length of the dependency path connecting a query node and a slot filler
+node is within a certain range for a given slot type. For example, the path for ?per:title? is usually
+no longer than 1. A long dependency path between the query entity and slot filler indicates a lack
+of a relationship. In the following evidence sentence, which does not entail the ?per:religion?
+relation between ?His? and the religion ?Muslim?, there is a long path (?his-poss-moment-nsubj-
+came-advcl-seized-militant-acmod-Muslim?): ?His most noticeable moment in the public eye came
+in 1979, when Muslim militants in Iran seized the U.S. Embassy and took the Americans stationed
+there hostage.?.
+Detecting and making use of interdependencies among various claims is another unique challenge in
+SFV. After initial response credibility scores are calculated by combining linguistic indicator values, we
+identify responses that have potentially conflicting or potentially supporting slot-filler candidates. For
+such responses, their credibility scores are changed in accordance with the binary values returned by the
+following indicators.
+Interdependent Claims Indicators
+1. Conflicting slot fillers: When fillers for two claims with the same query entity and slot type appear
+in the same evidence sentence, we apply an additional heuristic rule designed for the slot type in
+question. For example, the following evidence sentence indicates that compared to ?Cathleen P.
+Black?, ?Susan K. Reed? is more likely to be in a ?org:top employees/members? relation with ?The
+Oprah Magazine? due to the latter pair?s shorter dependency path: ?Hearst Magazine?s President
+Cathleen P. Black has appointed Susan K. Reed as editor-in-chief of the U.S. edition of The
+Oprah Magazine.?. The credibility scores are accordingly changed (or kept at) 0.5 for responses
+associated with the former claim, and 1.0 for those associated with the latter.
+2. Inter-dependent slot types: Many slot types are inter-dependent, such as ?per:title? and
+?per:employee of ?, and various family slots. After determining initial credibility scores for each
+response, we check whether evidence exists for any implied claims. For example, given initial
+credibility scores of 1.0 for two responses supporting the claims that (1)?David? is ?per:children?
+of ?Carolyn Goodman? and (2)?Andrew? is ?per:sibling? of ?David?, we check for any responses
+supporting the claim that (3)?Andrew? is ?per:children? of ?Carolyn Goodman?, and set their
+credibility scores to 1.0. For example, a response supporting this claim included the evidence
+sentence, ?Dr. Carolyn Goodman, her husband, Robert, and their son, David, said goodbye to
+David?s brother, Andrew.?.
+5 Experimental Results
+This section presents the experiment results and analysis of our approach.
+5.1 Data
+The data set we use is from the TAC-KBP2013 Slot Filling Validation (SFV) task, which consists of the
+merged responses returned by 52 runs (regarded as systems in MTM) from 18 teams submitted to the Slot
+1573
+Methods Precision Recall F-measure Accuracy Mean Average Precision
+1.Random 28.64% 50.48% 36.54% 50.54% 34%
+2.Voting 42.16% 70.18% 52.68% 62.54% 62%
+3.Linguistic Indicators 50.24% 70.69% 58.73% 72.29% 60%
+4.SVM (3 + System + Source) 56.59% 48.72% 52.36% 75.86% 56%
+5.MTM (3 + System + Source) 53.94% 72.11% 61.72% 81.57% 70%
+Table 2: Overall Performance Comparison.
+Filling (SF) task. The source collection has 1,000,257 newswire documents, 999,999 web documents
+and 99,063 discussion forum posts, which results in 10 different sources (combinations of publication
+venues and genres) in our experiment. There are 100 queries: 50 person and 50 organization entities.
+After removing redundant responses within each single system run, we use 45,950 unique responses as
+the input to truth-finding. Linguistic Data Consortium (LDC) human annotators manually assessed all
+of these responses and produced 12,844 unique responses as ground truth. In order to compare with
+state-of-the-art supervised learning methods for SFV (Tamang and Ji, 2011; Li and Grishman, 2013), we
+trained a SVMs classifier
+5
+as a counterpart, incorporating the same set of linguistic indicators, sources
+and systems as features. We picked 10% (every 10th line) to compose the development set for MTM and
+the training set for the SVMs. The rest is used for blind test.
+5.2 Overall Performance
+Table 2 shows the overall performance of various truth finding methods on judging each response as true
+or false. MTM achieves promising results and even outperforms supervised learning approach. Table 3
+presents some examples ranked at the top and the bottom based on the credibility scores produced by
+MTM.
+We can see that majority voting across systems performs much better than random assessment, but its
+accuracy is still low. For example, the true claim T5 was extracted by only one system because most
+systems mistakenly identified ?Briton Stuart Rose? as a person name. In comparison, MTM obtained
+much better accuracy by also incorporating multiple dimensions of source and evidence information.
+Method 3 using linguistic indicators alone, already achieved promising results. For example, many
+claims are judged as truths through trigger phrases (T1 and T5), event extraction (T2), coreference (T4),
+and node type indicators (T3). On the other hand, many claims are correctly judged as false because
+their evidence sentences did not include the slot filler (F1, F4, F5) or valid knowledge paths to connect
+the query entity and the slot filler (F2, F3). The performance gain (2.99% F-score) from Method 3 to
+Method 5 shows the need for incorporating system and source dimensions. For example, most truths are
+from news while many false claims are from newsgroups and discussion forum posts (F1, F2, F5).
+The SVMs model got very low recall because of the following two reasons: (1) It ignored the inter-
+dependency between multiple dimensions; (2) the negative instances are dominant in the training data,
+so the model is biased towards labeling responses as false.
+5.3 Truth Finding Efficiency
+Table 3 shows that some truths (T1) are produced from low-ranked systems whereas some false responses
+from high-ranked systems (F1, F2). Note that systems are ranked by their performance in KBP SF task.
+In order to find all the truths, human assessors need to go through all the responses returned by multiple
+systems. This process was proven very tedious and costly (Ji et al., 2010; Tamang and Ji, 2011).
+Our MTM approach can expedite this process by ranking responses based on their credibility scores
+and asking human to assess the responses with high credibility first. Traditionally, when human assess
+responses, they follow an alphabetical order or system IDs in a ?passive learning? style. This is set as
+our baseline. For comparison, we also present the results using only linguistic indicators, using voting
+in which the responses which get more votes across systems are assessed first, and the oracle method
+assessing all correct responses first. Table 2 shows our model can successfully rank trustworthy responses
+at high positions compared with other approaches.
+5
+We used the LIBSVM toolkit (Chang and Lin, 2011) with Gaussian radial basis function kernel.
+1574
+Response Ranked by MTM
+Source
+System
+Rank
+Claim
+Evidence
+Query Entity Slot Type Slot Filler
+Top
+Truths
+T1 China
+Banking
+Regulatory
+Commission
+org:top
+member-
+s/employees
+Liu
+Mingkang
+Liu Mingkang, the chairman of
+the China Banking Regulatory
+Commission
+Central
+News
+Agency
+of Taiwan
+News
+News 15
+T2 Galleon
+Group
+org:founded
+by
+Raj
+Rajaratnam
+Galleon Group, founded by bil-
+lionaire Raj Rajaratnam
+New York
+Times
+News 9
+T3 Mike Penner per:age 52 L.A. Times Sportswriter Mike
+Penner, 52, Dies
+New York
+Times
+News 1
+T4 China
+Banking
+Regulatory
+Commission
+org:alternate
+names
+CBRC ...China Banking Regulatory Com-
+mission said in the notice. The five
+banks ... according to CBRC.
+Xinhua,
+News
+News 5
+T5 Stuart Rose per:origin Briton Bolland, 50, will replace Briton
+Stuart Rose at the start of 2010.
+Agence
+France-
+Presse
+News 3
+Bottom
+False
+Claims
+F1 American
+Association
+for the Ad-
+vancement of
+Science
+org:top
+members
+employees
+Freedman erica.html &gt; American Library
+Association, President: Maurice
+Freedman &lt; http://www.aft.org
+&gt; American Federation of
+Teachers ...
+Google Newsgroup4
+F2 Jade Goody per:origin Britain because Jade Goody?s the only
+person to ever I love Britain
+Discussion Forum 3
+F3 Don Hewitt per:spouse Swap ...whether ?Wife Swap? on ABC
+or ?Jon &amp; Kate? on TLC
+New York
+Times
+News 7
+F4 Council of
+Mortgage
+Lenders
+org:website www.cml.org.ukme purchases in the U.K. jumped
+by 16 percent in April, suggesting
+the property market slump may
+have bottomed out
+Associated
+Press
+World-
+stream
+News 18
+F5 Don Hewitt per:alternate
+names
+Hewitt M-
+chen
+US DoMIna THOMPson LACtaTe
+haVeD [3866 words]
+Google Newsgroup13
+Table 3: Top and Bottom Response Examples Ranked by MTM.
+Fig. 3 summarizes the results from the above 6 approaches. The common end point of all curves
+represents the cost and benefit of assessing all system responses. We can see that the baseline is very
+inefficient at finding the truths. If we employ linguistic indicators, the process can be dramatically
+expedited. MTM provides further significant gains, with performance close to the Oracle. With only half
+the cost of the baseline, MTM can already find 90% truths.
+5.4 Enhance Individual SF Systems
+Finally, as a by-product, our MTM approach can also be exploited to validate the responses from each
+individual SF system based on their credibility scores. For fair comparison with the official KBP
+evaluation, we use the same ground-truth in KBP2013 and standard precision, recall and F-measure
+metrics as defined in (Ji et al., 2011). To increase the chance of including truths which may be particularly
+difficult for a system to find, LDC prepared a manual key which was assessed and included in the final
+ground truth. According to the SF evaluation setting, F-measure is computed based on the number of
+unique true claims. After removing redundancy across multiple systems, there are 1,468 unique true
+claims. The cutoff criteria for determining whether a response is true or not was optimized from the
+development set.
+Fig. 4 presents the F-measure scores of the best run from each individual SF system. We can see that
+our MTM approach consistently improves the performance of almost all SF systems, in an absolute gain
+range of [-1.22%, 5.70%]. It promotes state-of-the-art SF performance from 33.51% to 35.70%. Our
+MTM approach provides more gains to SF systems which mainly rely on lexical or syntactic patterns
+than other systems using distant supervision or logic rules.
+1575
+1 
+0 10000 20000 30000 40000
+0
+2000
+4000
+6000
+8000
+10000
+12000
+14000
+13 2
+4
+5
+#tr
+uth
+s
+ 6 Oracle 
+ 5 MTM
+ 4 SVM
+ 3 Linguistic Indicator
+ 2 Voting
+ 1 Baseline
+#total responses
+6
+Figure 3: Truth Finding Efficiency.
+0 2 4 6 8 10 12 14 16 18 20
+0
+5
+10
+15
+20
+25
+30
+35
+F-m
+es
+au
+re 
+(%
+)
+System
+ Before
+ After
+Figure 4: Impact on Individual SF Systems.
+1576
+6 Conclusions and Future Work
+Truth finding has received attention from both Natural Language Processing (NLP) and Data Mining
+communities. NLP work has mostly explored linguistic analysis of the content, while Data Mining
+work proposed advanced models in resolving conflict information from multiple sources. They have
+relative strengths and weaknesses. In this paper we leverage the strengths of these two distinct,
+but complementary research paradigms and propose a novel unsupervised multi-dimensional truth-
+finding framework incorporating signals both from multiple sources, multiple systems and multiple
+evidences based on knowledge graph construction with multi-layer linguistic analysis. Experiments on
+a challenging SFV task demonstrated that this framework can find high-quality truths efficiently. In the
+future we will focus on exploring more inter-dependencies among responses such as temporal and causal
+relations.
+Acknowledgments
+This work was supported by the U.S. Army Research Laboratory under Cooperative Agreement
+No. W911NF-09-2-0053 (NS-CTA), the U.S. Army Research Office under Cooperative Agreement
+No. W911NF-13-1-0193, U.S. National Science Foundation grants IIS-0953149, CNS-0931975,
+IIS-1017362, IIS-1320617, IIS-1354329, U.S. DARPA Award No. FA8750-13-2-0041 in the Deep
+Exploration and Filtering of Text (DEFT) Program, IBM Faculty Award, Google Research Award,
+DTRA, DHS and RPI faculty start-up grant. The views and conclusions contained in this document are
+those of the authors and should not be interpreted as representing the official policies, either expressed
+or implied, of the U.S. Government. The U.S. Government is authorized to reproduce and distribute
+reprints for Government purposes notwithstanding any copyright notation here on.
+References
+S. Auer, C. Bizer, G. Kobilarov, J. Lehmann, and Z. Ives. 2007. Dbpedia: A nucleus for a web of open data. In
+Proc. the 6th International Semantic Web Conference.
+L. Blanco, V. Crescenzi, P. Merialdo, and P. Papotti. 2010. Probabilistic models to reconcile complex data
+from inaccurate data sources. In Proc. Int. Conf. on Advanced Information Systems Engineering (CAiSE?10),
+Hammamet, Tunisia, June.
+K. Bollacker, R. Cook, and P. Tufts. 2008. Freebase: A shared database of structured general human knowledge.
+In Proc. National Conference on Artificial Intelligence.
+A. Carlson, J. Betteridge, B. Kisiel, B. Settles, Estevam R Hruschka Jr, and Tom M Mitchell. 2010. Toward an
+architecture for never-ending language learning. In AAAI.
+C. Chang and C. Lin. 2011. Libsvm: a library for support vector machines. ACM Transactions on Intelligent
+Systems and Technology (TIST), 2(3):27.
+H. Deng, M. R. Lyu, and I. King. 2009. A generalized co-hits algorithm and its application to bipartite graphs. In
+Proceedings of the 15th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining,
+KDD ?09, pages 239?248, New York, NY, USA. ACM.
+X. L. Dong, L. Berti-Equille, and D. Srivastavas. 2009a. Integrating conflicting data: The role of source
+dependence. In Proc. 2009 Int. Conf. Very Large Data Bases (VLDB?09), Lyon, France, Aug.
+X. L. Dong, L. Berti-Equille, and D. Srivastavas. 2009b. Truth discovery and copying detection in a dynamic
+world. In Proc. 2009 Int. Conf. Very Large Data Bases (VLDB?09), Lyon, France, Aug.
+A. Galland, S. Abiteboul, A. Marian, and P. Senellart. 2010. Corroborating information from disagreeing views.
+In Proc. ACM Int. Conf. on Web Search and Data Mining (WSDM?10), New York, NY, Feb.
+L. Ge, J. Gao, X. Yu, W. Fan, and A. Zhang. 2012. Estimating local information trustworthiness via multi-
+source joint matrix factorization. In Data Mining (ICDM), 2012 IEEE 12th International Conference on, pages
+876?881. IEEE.
+1577
+H. Ji, R. Grishman, H. T. Dang, K. Griffitt, and J. Ellis. 2010. An overview of the tac2010 knowledge base
+population track. In Proc. Text Analytics Conf. (TAC?10), Gaithersburg, Maryland, Nov.
+H. Ji, R. Grishman, and H.T. Dang. 2011. Overview of the tac 2011 knowledge base population track. In Text
+Analysis Conf. (TAC) 2011.
+X. Li and R. Grishman. 2013. Confidence estimation for knowledge base population. In Proc. Recent Advances
+in Natural Language Processing (RANLP).
+Q. Li and H. Ji. 2014. Incremental joint extraction of entity mentions and relations.
+Q. Li, H. Ji, and L. Huang. 2013. Joint event extraction via structured prediction with global features.
+M. D. Marneffe, B. Maccartney, and C. D. Manning. 2006. Generating typed dependency parses from phrase
+structure parses. In LREC, pages 449,454.
+R. Mihalcea. 2004. Graph-based ranking algorithms for sentence extraction, applied to text summarization. In
+Proc. ACL2004.
+M. Mintz, S. Bills, R. Snow, and D. Jurafsky. 2009. Distant supervision for relation extraction without labeled
+data. In Proc. ACL2009.
+J. Pasternack and D. Roth. 2010. Knowing what to believe (when you already know something). In
+Proceedings of the 23rd International Conference on Computational Linguistics, pages 877?885. Association
+for Computational Linguistics.
+J. Pasternack and D. Roth. 2011. Making better informed trust decisions with generalized fact-finding. In Proc.
+2011 Int. Joint Conf. on Artificial Intelligence (IJCAI?11), Barcelona, Spain, July.
+J. Pasternack and D. Roth. 2013. Latent credibility analysis. In Proc. WWW 2013.
+E. Peserico and L. Pretto. 2009. Score and rank convergence of hits. In Proceedings of the 32nd international
+ACM SIGIR conference on Research and development in information retrieval, pages 770?771. ACM.
+Fabian M. Suchanek, Gjergji Kasneci, and Gerhard Weikum. 2007. Yago: A Core of Semantic Knowledge. In
+16th international World Wide Web conference (WWW 2007), New York, NY, USA. ACM Press.
+S. Tamang and H. Ji. 2011. Adding smarter systems instead of human annotators: Re-ranking for slot filling
+system combination. In Proc. CIKM2011 Workshop on Search & Mining Entity-Relationship data, Glasgow,
+Scotland, UK, Oct.
+VG Vydiswaran, C.X. Zhai, and D. Roth. 2011. Content-driven trust propagation framework. In Proceedings
+of the 17th ACM SIGKDD international conference on Knowledge discovery and data mining, pages 974?982.
+ACM.
+D. Wang, L. Kaplan, H. Le, and T. Abdelzaher. 2012. On truth discovery in social sensing: A maximum likelihood
+estimation approach. In Proc. ACM/IEEE Int. Conf. on Information Processing in Sensor Networks (IPSN?12),
+pages 233?244, Beijing, China, April.
+X. Yin and W. Tan. 2011. Semi-supervised truth discovery. In Proc. 2011 Int. World Wide Web Conf. (WWW?11),
+Hyderabad, India, March.
+X. Yin, J. Han, and P. S. Yu. 2008. Truth discovery with multiple conflicting information providers on the Web.
+IEEE Trans. Knowledge and Data Engineering, 20:796?808.
+B. Zhao, B. I. P. Rubinstein, J. Gemmell, and J. Han. 2012. A Bayesian approach to discovering truth from
+conflicting sources for data integration. In Proc. 2012 Int. Conf. Very Large Data Bases (VLDB?12), Istanbul,
+Turkey, Aug.
+1578
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Short Papers), pages 501?506,
+Baltimore, Maryland, USA, June 23-25 2014.
+c?2014 Association for Computational Linguistics
+An Annotation Framework for Dense Event Ordering
+Taylor Cassidy
+IBM Research
+taylor.cassidy.ctr@mail.mil
+Bill McDowell
+Carnegie Mellon University
+forkunited@gmail.com
+Nathanael Chambers
+US Naval Academy
+nchamber@usna.edu
+Steven Bethard
+Univ. of Alabama at Birmingham
+bethard@cis.uab.edu
+Abstract
+Today?s event ordering research is heav-
+ily dependent on annotated corpora. Cur-
+rent corpora influence shared evaluations
+and drive algorithm development. Partly
+due to this dependence, most research fo-
+cuses on partial orderings of a document?s
+events. For instance, the TempEval com-
+petitions and the TimeBank only annotate
+small portions of the event graph, focusing
+on the most salient events or on specific
+types of event pairs (e.g., only events in the
+same sentence). Deeper temporal reason-
+ers struggle with this sparsity because the
+entire temporal picture is not represented.
+This paper proposes a new annotation pro-
+cess with a mechanism to force annotators
+to label connected graphs. It generates 10
+times more relations per document than the
+TimeBank, and our TimeBank-Dense cor-
+pus is larger than all current corpora. We
+hope this process and its dense corpus en-
+courages research on new global models
+with deeper reasoning.
+1 Introduction
+The TimeBank Corpus (Pustejovsky et al, 2003)
+ushered in a wave of data-driven event ordering
+research. It provided for a common dataset of re-
+lations between events and time expressions that
+allowed the community to compare approaches.
+Later corpora and competitions have based their
+tasks on the TimeBank setup. This paper ad-
+dresses one of its shortcomings: sparse annotation.
+We describe a new annotation framework (and a
+TimeBank-Dense corpus) that we believe is needed
+to fulfill the data needs of deeper reasoners.
+The TimeBank includes a small subset of all
+possible relations in its documents. The annota-
+tors were instructed to label relations critical to the
+document?s understanding. The result is a sparse la-
+beling that leaves much of the document unlabeled.
+The TempEval contests have largely followed suit
+and focused on specific types of event pairs. For
+instance, TempEval (Verhagen et al, 2007) only
+labeled relations between events that syntactically
+dominated each other. This paper is the first attempt
+to annotate a document?s entire temporal graph.
+A consequence of focusing on all relations is a
+shift from the traditional classification task, where
+the system is given a pair of events and asked only
+to label the type of relation, to an identification task,
+where the system must determine for itself which
+events in the document to pair up. For example, in
+TempEval-1 and 2 (Verhagen et al, 2007; Verha-
+gen et al, 2010), systems were given event pairs
+in specific syntactic positions: events and times in
+the same noun phrase, main events in consecutive
+sentences, etc. We now aim for a shift in the com-
+munity wherein all pairs are considered candidates
+for temporal ordering, allowing researchers to ask
+questions such as: how must algorithms adapt to
+label the complete graph of pairs, and if the more
+difficult and ambiguous event pairs are included,
+how must feature-based learners change?
+We are not the first to propose these questions,
+but this paper is the first to directly propose the
+means by which they can be addressed. The stated
+goal of TempEval-3 (UzZaman et al, 2013) was to
+focus on relation identification instead of classifica-
+tion, but the training and evaluation data followed
+the TimeBank approach where only a subset of
+event pairs were labeled. As a result, many systems
+focused on classification, with the top system clas-
+sifying pairs in only three syntactic constructions
+501
+There were four or five people inside, 
+and they just started firing 
+ 
+Ms. Sanders was hit several times and 
+was  pronounced dead at the scene. 
+ 
+The other customers fled, and the 
+police said it did not appear that anyone 
+else was injured. 
+There were four or five people inside, 
+and they just started firing 
+ 
+Ms. Sanders was hit several times and 
+was pronounced dead at the scene. 
+ 
+The other customers fled, and the 
+police said it did not appear that anyone 
+else was injured. 
+Current Systems & Evaluations This Proposal 
+Figure 1: A TimeBank annotated document is on the left, and this paper?s TimeBank-Dense annotation is
+on the right. Solid arrows indicate BEFORE relations and dotted arrows indicate INCLUDED IN relations.
+(Bethard, 2013). We describe the first annotation
+framework that forces annotators to annotate all
+pairs
+1
+. With this new process, we created a dense
+ordering of document events that can properly eval-
+uate both relation identification and relation anno-
+tation. Figure 1 illustrates one document before
+and after our new annotations.
+2 Previous Annotation Work
+The majority of corpora and competitions for event
+ordering contain sparse annotations. Annotators for
+the original TimeBank (Pustejovsky et al, 2003)
+only annotated relations judged to be salient by
+the annotator. Subsequent TempEval competitions
+(Verhagen et al, 2007; Verhagen et al, 2010; Uz-
+Zaman et al, 2013) mostly relied on the TimeBank,
+but also aimed to improve coverage by annotating
+relations between all events and times in the same
+sentence. However, event tokens that were men-
+tioned fewer than 20 times were excluded and only
+one TempEval task considered relations between
+events in different sentences. In practical terms, the
+resulting evaluations remained sparse.
+A major dilemma underlying these sparse tasks
+is that the unlabeled event/time pairs are ambigu-
+ous. Each unlabeled pair holds 3 possibilities:
+1. The annotator looked at the pair of events and
+decided that no temporal relation exists.
+2. The annotator did not look at the pair of
+events, so a relation may or may not exist.
+3. The annotator failed to look at the pair of
+events, so a single relation may exist.
+Training and evaluation of temporal reasoners is
+hampered by this ambiguity. To combat this, our
+1
+As discussed below, all pairs in a given window size.
+Events Times Rels R
+TimeBank 7935 1414 6418 0.7
+Bramsen 2006 627 ? 615 1.0
+TempEval-07 6832 1249 5790 0.7
+TempEval-10 5688 2117 4907 0.6
+TempEval-13 11145 2078 11098 0.8
+Kolomiyets-12 1233 ? 1139 0.9
+Do 2012
+2
+324 232 3132 5.6
+This work 1729 289 12715 6.3
+Table 1: Events, times, relations and the ratio of
+relations to events + times (R) in various corpora.
+annotation adopts the VAGUE relation introduced
+by TempEval 2007, and our approach forces anno-
+tators to use it. This is the only work that includes
+such a mechanism.
+This paper is not the first to look into more dense
+annotations. Bramsen et al (2006) annotated multi-
+sentence segments of text to build directed acyclic
+graphs. Kolomiyets et al (2012) annotated ?tem-
+poral dependency structures?, though they only
+focused on relations between pairs of events. Do
+et al (2012) produced the densest annotation, but
+?the annotator was not required to annotate all pairs
+of event mentions, but as many as possible?. The
+current paper takes a different tack to annotation
+by requiring annotators to label every possible pair
+of events/times in a given window. Thus this work
+is the first annotation effort that can guarantee its
+event/time graph to be strongly connected.
+Table 1 compares the size and density of our
+corpus to others. Ours is the densest and it contains
+the largest number of temporal relations.
+2
+Do et al (2012) reports 6264 relations, but this includes
+both the relations and their inverses. We thus halve the count
+502
+3 A Framework for Dense Annotation
+Frameworks for annotating text typically have two
+independent facets: (1) the practical means of how
+to label the text, and (2) the higher-level rules about
+when something should be labeled. The first is
+often accomplished through a markup language,
+and we follow prior work in adopting TimeML here.
+The second facet is the focus of this paper: when
+should an annotator label an ordering relation?
+Our proposal starts with documents that have al-
+ready been annotated with events, time expressions,
+and document creation times (DCT). The following
+sentence serves as our motivating example:
+Police confirmed Friday that the body
+found along a highway in San Juan be-
+longed to Jorge Hernandez.
+This sentence is represented by a 4 node graph (3
+events and 1 time). In a completely annotated graph
+it would have 6 edges (relations) connecting the
+nodes. In the TimeBank, from which this sentence
+is drawn, only 3 of the 6 edges are labeled.
+The impact of these annotation decisions (i.e.,
+when to annotate a relation) can be significant. In
+this example, a learner must somehow deal with
+the 3 unlabeled edges. One option is to assume that
+they are vague or ambiguous. However, all 6 edges
+have clear well-defined ordering relations:
+belonged BEFORE confirmed
+belonged BEFORE found
+found BEFORE confirmed
+belonged BEFORE Friday
+confirmed IS INCLUDED IN Friday
+found IS INCLUDED IN Friday
+3
+Learning algorithms handle these unlabeled
+edges by making incorrect assumptions, or by ig-
+noring large parts of the temporal graph. Sev-
+eral models with rich temporal reasoners have
+been published, but since they require more con-
+nected graphs, improvement over pairwise classi-
+fiers have been minimal (Chambers and Jurafsky,
+2008; Yoshikawa et al, 2009). This paper thus
+proposes an annotation process that builds denser
+graphs with formal properties that learners can rely
+on, such as locally complete subgraphs.
+3.1 Ensuring Dense Graphs
+While the ideal goal is to create a complete graph,
+the time it would take to hand-label n(n ? 1)/2
+for accurate comparison to other corpora.
+3
+Revealed by the previous sentence (not shown here).
+edges is prohibitive. We approximate completeness
+by creating locally complete graphs over neigh-
+boring sentences. The resulting event graph for a
+document is strongly connected, but not complete.
+Specifically, the following edge types are included:
+1. Event-Event, Event-Time, and Time-Time
+pairs in the same sentence
+2. Event-Event, Event-Time, and Time-Time
+pairs between the current and next sentence
+3. Event-DCT pairs for every event in the text
+4. Time-DCT pairs for every time expression in
+the text
+Our process requires annotators to annotate the
+above edge types, enforced via an annotation tool.
+We describe the relation set and this tool next.
+3.1.1 Temporal Relations
+The TimeBank corpus uses 14 relations based on
+the Allen interval relations. The TempEval contests
+have used a small set of relations (TempEval-1) and
+the larger set of 14 relations (TempEval-3). Pub-
+lished work has mirrored this trend, and different
+groups focus on different aspects of the semantics.
+We chose a middle ground between coarse and
+fine-grained distinctions for annotation, settling on
+6 relations: before, after, includes, is included, si-
+multaneous, and vague. We do not adopt a more
+fine-grained set because we annotate pairs that are
+far more ambiguous than those considered in previ-
+ous efforts. Decisions between relations like before
+and immediately before can complicate an already
+difficult task. The added benefit of a corpus (or
+working system) that makes fine-grained distinc-
+tions is also not clear. We lean toward higher an-
+notator agreement with relations that have greater
+separation between their semantics
+4
+.
+3.1.2 Enforcing Annotation
+Imposing the above rules on annotators requires
+automated assistance. We built a new tool that
+reads TimeML formatted text, and computes the
+set of required edges. Annotators are prompted to
+assign a label for each edge, and skipping edges is
+prohibited.
+5
+The tool is unique in that it includes
+a transitive reasoner that infers relations based on
+the annotator?s latest annotations. For example,
+4
+For instance, a relation like starts is a special case of in-
+cludes if events are viewed as open intervals, and immediately
+before is a special case of before. We avoid this overlap and
+only use includes and before
+5
+Note that annotators are presented with pairs in order from
+document start to finish, starting with the first two events.
+503
+if event e
+1
+IS INCLUDED in t
+1
+, and t
+1
+BEFORE
+e
+2
+, the tool automatically labels e
+1
+BEFORE e
+2
+.
+The transitivity inference is run after each input
+label, and the human annotator cannot override
+the inferences. This prohibits the annotator from
+entering edges that break transitivity. As a result,
+several properties are ensured through this process:
+the graph (1) is a strongly connected graph, (2) is
+consistent with no contradictions, and (3) has all
+required edges labeled. These 3 properties are new
+to all current ordering corpora.
+3.2 Annotation Guidelines
+Since the annotation tool frees the annotators from
+the decision of when to label an edge, the focus is
+now what to label each edge. This section describes
+the guidelines for dense annotation.
+The 80% confidence rule: The decision to label
+an edge as VAGUE instead of a defined temporal
+relation is critical. We adopted an 80% rule that in-
+structed annotators to choose a specific non-vague
+relation if they are 80% confident that it was the
+writer?s intent that a reader infer that relation. By
+not requiring 100% confidence, we allow for alter-
+native interpretations that conflict with the chosen
+edge label as long as that alternative is sufficiently
+unlikely. In practice, annotators had different inter-
+pretations of what constitutes 80% certainty, and
+this generated much discussion. We mitigated these
+disagreements with the following rule.
+Majority annotator agreement: An edge?s la-
+bel is the relation that received a majority of an-
+notator votes, otherwise it is marked VAGUE. If a
+document has 2 annotators, both have to agree on
+the relation or it is labeled VAGUE. A document
+with 3 annotators requires 2 to agree. This agree-
+ment rule acts as a check to our 80% confidence
+rule, backing off to VAGUE when decisions are un-
+certain (arguably, this is the definition of VAGUE).
+We also encouraged consistent labelings with
+guidelines inspired by Bethard and Martin (2008).
+Modal and conditional events: interpreted with
+a possible worlds analysis. The core event was
+treated as having occurred, whether or not the text
+implied that it had occurred. For example,
+They [EVENT expect] him to [EVENT
+cut] costs throughout the organization.
+This event pair is ordered (expect before cut) since
+the expectation occurs before the cutting (in the
+possible world where the cutting occurs). Negated
+events and hypotheticals are treated similarly. One
+assumes the event does occur, and all other events
+are ordered accordingly. Negated states like ?is not
+anticipating? are interpreted as though the antici-
+pation occurs, and surrounding events are ordered
+with regard to its presumed temporal span.
+Aspectual Events: annotated as IS INCLUDED
+in their event arguments. For instance, events that
+describe the manner in which another event is per-
+formed are considered encompassed by the broader
+event. Consider the following example:
+The move may [EVENT help] [EVENT
+prevent] Martin Ackerman from making
+a run at the computer-services concern.
+This event pair is assigned the relation (help IS IN-
+CLUDED in prevent) because the help event is not
+meaningful on its own. It describes the proportion
+of the preventing accounted for by the move. In
+TimeBank, the intentional action class is used in-
+stead of the aspectual class in this case, but we still
+consider it covered by this guideline.
+Events that attribute a property: to a person
+or event are interpreted to end when the entity ends.
+For instance, ?the talk is nonsense? evokes a non-
+sense event with an end point that coincides with
+the end of the talk.
+Time Expressions: the words now and today
+were given ?long now? interpretations if the words
+could be replaced with nowadays and not change
+the meaning of their sentences. The time?s dura-
+tion starts sometime in the past and INCLUDES the
+DCT. If nowadays is not suitable, then the now was
+INCLUDED IN the DCT.
+Generic Events: can be ordered with respect to
+each other, but must be VAGUE with respect to
+nearby non-generic events.
+4 TimeBank-Dense: corpus statistics
+We chose a subset of TimeBank documents for our
+new corpus: TimeBank-Dense. This provided an
+initial labeling of events and time expressions. Us-
+ing the tool described above, we annotated 36 ran-
+dom documents with at least two annotators each.
+These 36 were annotated with 4 times as many
+relations as the entire 183 document TimeBank.
+The four authors of this paper were the four an-
+notators. All four annotated the same initial docu-
+ment, conflicts and disagreements were discussed,
+504
+Annotated Relation Count
+BEFORE 2590 INCLUDES 836
+AFTER 2104 INCLUDED IN 1060
+SIMULTAN. 215 VAGUE 5910
+Total Relations: 12715
+Table 2: Relation counts in TimeBank-Dense.
+and guidelines were updated accordingly. The rest
+of the documents were then annotated indepen-
+dently. Document annotation was not random, but
+we mixed pairs of authors where time constraints al-
+lowed. Table 2 shows the relation counts in the final
+corpus, and Table 3 gives the annotator agreement.
+We show precision (holding one annotation as gold)
+and kappa computed on the 4 types of pairs from
+section 3.1. Micro-averaged precision was 65.1%,
+compared to TimeBank?s 77%. Kappa ranged from
+.56-.64, a slight drop from TimeBank?s .71.
+The vague relation makes up 46% of the rela-
+tions. This is the first empirical count of how many
+temporal relations in news articles are truly vague.
+Our lower agreement is likely due to the more
+difficult task. Table 5 breaks down the individual
+disagreements. The most frequent pertained to the
+VAGUE relation. Practically speaking, VAGUE was
+applied to the final graph if either annotator chose
+it. This seems appropriate since a disagreement be-
+tween annotators implies that the relation is vague.
+The following example illustrates the difficulty
+of labeling edges with a VAGUE relation:
+No one was hurt, but firefighters or-
+dered the evacuation of nearby homes
+and said they?ll monitor the ground.
+Both annotators chose VAGUE to label ordered and
+said because the order is unclear. However, they
+disagreed on evacuation with monitor. One chose
+VAGUE, but the other chose IS INCLUDED. There is
+a valid interpretation where a monitoring process
+has already begun, and continues after the evacua-
+tion. This interpretation reached 80% confidence
+for one annotator, but not the other. In the face of
+such a disagreement, the pair is labeled VAGUE.
+How often do these disagreements occur? Ta-
+ble 4 shows the 3 sources: (1) mutual vague: anno-
+tators agree it is vague, (2) partial vague: one anno-
+tator chooses vague, but the other does not, and (3)
+no vague: annotators choose conflicting non-vague
+relations. Only 17% of these disagreements are due
+to hard conflicts (no vague). The released corpus
+includes these 3 fine-grained VAGUE relations.
+Annotators # Links Prec Kappa
+A and B 9282 .65 .56
+A and D 1605 .72 .63
+B and D 279 .70 .64
+C and D 1549 .65 .57
+Table 3: Agreement between different annotators.
+# Vague
+Mutual VAGUE 1657 (28%)
+Partial VAGUE 3234 (55%)
+No VAGUE 1019 (17%)
+Table 4: VAGUE relation origins. Partial vague:
+one annotator does not choose vague. No vague:
+neither annotator chooses vague.
+b a i ii s v
+b 1776 22 88 37 21 192
+a 17 1444 32 102 9 155
+i 71 34 642 45 23 191
+ii 81 76 40 826 31 230
+s 12 8 25 28 147 29
+v 500 441 289 356 64 1197
+Table 5: Relation agreement between the two main
+annotators. Most disagreements involved VAGUE.
+5 Conclusion
+We described our annotation framework that pro-
+duces corpora with formal guarantees about the an-
+notated graph?s structure. Both the annotation tool
+and the new TimeBank-Dense corpus are publicly
+available.
+6
+This is the first corpus with guarantees
+of connectedness, consistency, and a semantics for
+unlabeled edges. We hope to encourage a shift in
+the temporal ordering community to consider the
+entire document when making local decisions. Fur-
+ther work is needed to handle difficult pairs with
+the VAGUE relation. We look forward to evaluating
+new algorithms on this dense corpus.
+Acknowledgments
+This work was supported, in part, by the Johns
+Hopkins Human Language Technology Center of
+Excellence. Any opinions, findings, and conclu-
+sions or recommendations expressed in this mate-
+rial are those of the authors. We also give thanks
+to Benjamin Van Durme for assistance and insight.
+6
+http://www.usna.edu/Users/cs/nchamber/caevo/
+505
+References
+Steven Bethard, William J Corvey, Sara Klingenstein,
+and James H Martin. 2008. Building a corpus of
+temporal-causal structure. In LREC.
+Steven Bethard. 2013. Cleartk-timeml: A minimal-
+ist approach to tempeval 2013. In Second Joint
+Conference on Lexical and Computational Seman-
+tics (*SEM), Volume 2: Proceedings of the Seventh
+International Workshop on Semantic Evaluation (Se-
+mEval 2013), pages 10?14, Atlanta, Georgia, USA,
+June. Association for Computational Linguistics.
+P. Bramsen, P. Deshpande, Y.K. Lee, and R. Barzilay.
+2006. Inducing temporal graphs. In Proceedings of
+the 2006 Conference on Empirical Methods in Natu-
+ral Language Processing, pages 189?198. ACL.
+N. Chambers and D. Jurafsky. 2008. Jointly com-
+bining implicit constraints improves temporal order-
+ing. In Proceedings of the Conference on Empiri-
+cal Methods in Natural Language Processing, pages
+698?706. ACL.
+Quang Do, Wei Lu, and Dan Roth. 2012. Joint infer-
+ence for event timeline construction. In Proceedings
+of the 2012 Joint Conference on Empirical Methods
+in Natural Language Processing and Computational
+Natural Language Learning, pages 677?687, Jeju
+Island, Korea, July. Association for Computational
+Linguistics.
+Oleksandr Kolomiyets, Steven Bethard, and Marie-
+Francine Moens. 2012. Extracting narrative time-
+lines as temporal dependency structures. In Proceed-
+ings of the 50th Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Pa-
+pers), pages 88?97, Jeju Island, Korea, July. Associ-
+ation for Computational Linguistics.
+James Pustejovsky, Patrick Hanks, Roser Sauri, An-
+drew See, Robert Gaizauskas, Andrea Setzer,
+Dragomir Radev, Beth Sundheim, David Day, Lisa
+Ferro, et al 2003. The timebank corpus. In Corpus
+linguistics, volume 2003, page 40.
+Naushad UzZaman, Hector Llorens, Leon Derczyn-
+ski, James Allen, Marc Verhagen, and James Puste-
+jovsky. 2013. Semeval-2013 task 1: Tempeval-3:
+Evaluating time expressions, events, and temporal
+relations. In Second Joint Conference on Lexical
+and Computational Semantics (*SEM), Volume 2:
+Proceedings of the Seventh International Workshop
+on Semantic Evaluation (SemEval 2013), pages 1?9,
+Atlanta, Georgia, USA, June. Association for Com-
+putational Linguistics.
+Marc Verhagen, Robert Gaizauskas, Frank Schilder,
+Mark Hepple, Graham Katz, and James Pustejovsky.
+2007. Semeval-2007 task 15: Tempeval temporal re-
+lation identification. In Proceedings of the 4th Inter-
+national Workshop on Semantic Evaluations, pages
+75?80. Association for Computational Linguistics.
+Marc Verhagen, Roser Sauri, Tommaso Caselli, and
+James Pustejovsky. 2010. Semeval-2010 task 13:
+Tempeval-2. In Proceedings of the 5th International
+Workshop on Semantic Evaluation, pages 57?62. As-
+sociation for Computational Linguistics.
+K. Yoshikawa, S. Riedel, M. Asahara, and Y. Mat-
+sumoto. 2009. Jointly identifying temporal rela-
+tions with Markov Logic. In Proceedings of the
+Joint Conference of the 47th Annual Meeting of the
+ACL and the 4th International Joint Conference on
+Natural Language Processing of the AFNLP, pages
+405?413. ACL.
+506
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics: Tutorials, page 7,
+Baltimore, Maryland, USA, 22 June 2014. c?2014 Association for Computational Linguistics
+Wikification and Beyond:  
+The Challenges of Entity and Concept Grounding 
+Dan Roth Heng Ji 
+University of Illinois at Urbana-Champaign Rensselaer Polytechnic Institute 
+danr@illinois.edu jih@rpi.edu 
+  
+Ming-Wei Chang Taylor Cassidy 
+Microsoft Research Army Research Lab & IBM Research 
+minchang@microsoft.com taylor.cassidy.ctr@mail.mil 
+ 
+ 
+ 
+  
+1 Introduction 
+Contextual disambiguation and grounding of 
+concepts and entities in natural language are es-
+sential to progress in many natural language un-
+derstanding tasks and fundamental to many ap-
+plications. Wikification aims at automatically 
+identifying concept mentions in text and linking 
+them to referents in a knowledge base (KB) (e.g., 
+Wikipedia). Consider the sentence, "The Times 
+report on Blumenthal (D) has the potential to 
+fundamentally reshape the contest in the Nutmeg 
+State.". A Wikifier should identify the key enti-
+ties and concepts and map them to an encyclope-
+dic resource (e.g., ?D? refers to Democratic Par-
+ty, and ?the Nutmeg State? refers to Connecticut.  
+   Wikification benefits end-users and Natural 
+Language Processing (NLP) systems. Readers 
+can better comprehend Wikified documents as 
+information about related topics is readily acces-
+sible. For systems, a Wikified document eluci-
+dates concepts and entities by grounding them in 
+an encyclopedic resource or an ontology. Wikifi-
+cation output has improved NLP down-stream 
+tasks, including coreference resolution, user in-
+terest discovery , recommendation and search. 
+  This task has received increased attention in 
+recent years from the NLP and Data Mining 
+communities, partly fostered by the U.S. NIST 
+Text Analysis Conference Knowledge Base Pop-
+ulation (KBP) track, and several versions of it 
+has been studied. These include Wikifying all 
+concept mentions in a single text document; 
+Wikifying a cluster of co-referential named enti-
+ty mentions that appear across documents (Entity 
+Linking), and Wikifying a whole document to a 
+single concept. Other works relate this task to 
+coreference resolution within and across docu-
+ments and in the context of multiple text genres. 
+2 Content Overview 
+This tutorial will motivate Wikification as a 
+broad paradigm for cross-source linking for 
+knowledge enrichment. We will discuss multiple 
+dimensions of the task definition, present the 
+building blocks of a state-of-the-art Wikifier, 
+share key lessons learned from analysis of re-
+sults, and discuss recently proposed ideas for 
+advancing work in this area in response to key 
+challenges. We will touch on new research areas 
+including interactive Wikification, social media, 
+and censorship. The tutorial will be useful for all 
+those with interests in cross-source information 
+extraction and linking, knowledge acquisition, 
+and the use of acquired knowledge in NLP. We 
+will provide a concise roadmap of recent per-
+spectives and results, and point to some of our 
+available Wikification resources.  
+3 Outline 
+? Introduction and Motivation 
+? Methodological presentation of a skeletal Wik-
+ification system 
+o Mention and candidate identification 
+o Knowledge representation  
+o Local and global context analysis 
+o Role of Machine Learning 
+? Obstacles & Advanced Methods 
+o Joint modeling 
+o Collective inference 
+o Scarcity of supervision signals 
+o Diverse text genres and social media 
+? Remaining Challenges and Future Work 
+o Rich semantic knowledge acquisition 
+o Cross-lingual Wikification 
+References 
+http://nlp.cs.rpi.edu/kbp/2014/elreading.html 7
+Proceedings of the of the EACL 2014 Workshop on Dialogue in Motion (DM), pages 43?47,
+Gothenburg, Sweden, April 26-30 2014.
+c
+?2014 Association for Computational Linguistics
+Collaborative Exploration in Human-Robot Teams:
+What?s in Their Corpora of Dialog, Video, & LIDAR Messages?
+Clare R. Voss
+?
+Taylor Cassidy
+??
+Douglas Summers-Stay
+?
+?
+Army Research Laboratory, Adelphi, MD 20783
+?
+IBM T. J. Watson Research Center, Hawthorne, NY 10532
+{clare.r.voss.civ,taylor.cassidy.ctr,douglas.a.summers-stay.civ}@mail.mil
+Abstract
+This paper briefly sketches new work-in-
+progress (i) developing task-based scenar-
+ios where human-robot teams collabora-
+tively explore real-world environments in
+which the robot is immersed but the hu-
+mans are not, (ii) extracting and construct-
+ing ?multi-modal interval corpora? from
+dialog, video, and LIDAR messages that
+were recorded in ROS bagfiles during task
+sessions, and (iii) testing automated meth-
+ods to identify, track, and align co-referent
+content both within and across modalities
+in these interval corpora. The pre-pilot
+study and its corpora provide a unique,
+empirical starting point for our longer-
+term research objective: characterizing the
+balance of explicitly shared and tacitly as-
+sumed information exchanged during ef-
+fective teamwork.
+1 Overview
+Robots that are able to move into areas where peo-
+ple cannot during emergencies and collaboratively
+explore these environments by teaming with hu-
+mans, have tremendous potential to impact search
+and rescue operations. For human-robot teams
+to conduct such shared missions, humans need to
+trust that they will be kept apprised, at a miniu-
+Figure 1: Outside View: Video Image & LIDAR.
+mum, of where the robot is and what it is sensing,
+as it moves about without them present.
+To begin documenting the communication chal-
+lenges humans face in taking a robot?s perspective,
+we conducted a pre-pilot study
+1
+to record, iden-
+tify and track the dialog, video, and LIDAR in-
+formation that is explicitly shared by, or indirectly
+available to, members of human-robot teams when
+conducting collaborative tasks.
+1.1 Approach
+We enlisted colleagues to be the commander (C) or
+the human (R) controlling a mobile physical robot
+in such tasks. Neither could see the robot. Only
+R could ?see for? the robot, via its onboard video
+camera and LIDAR. C and R communicated by
+text chat on their computers, as in this example,
+R 41: I can see in the entrance.
+C 42: Enter and scan the first room.
+R 44: I see a door to the right and a door to the left.
+C 45: Scan next open room on left.
+Utterances R 41 & C 42 occur when the robot is
+outdoors (Fig. 1) and R 44 & C 45 occur after it
+moves indoors (Fig. 2). Although our approach re-
+sembles a Wizard and Oz paradigm (Riek, 2012),
+1
+Statisticians say pre-pilots are for ?kicking the tires,?
+early-stage tests of scenarios, equipment, and data collection.
+Figure 2: Inside View: Video Image & LIDAR.
+Brightness and contrast of video image increased
+for print publication.
+43
+with C as User and R as Wizard controlling the
+robot, there is no intent for R to deceive C.
+In these dialog snippets, notice that the doors
+mentioned in R 44 are not visible in the image
+of that utterance?s time interval and, even if they
+had been visible, their referents were context-
+dependent and ambiguous. How are the robot and
+human to refer to the same door? This challenge
+entails resolving several types of co-reference (lin-
+guistic, are they talking about the same door? vi-
+sual, are they looking at the door? navigational, is
+one backing into a door no longer in view but pre-
+viosuly stored in its map?) Successful communi-
+cation on human-robot teams, where humans send
+messages to direct robot movements and receive
+robot-processed messages as the robot navigates,
+entails effective identification of named referents
+(such as doors), both within and across available
+modalities during exploratory tasks. The research
+question is, how might the identification and align-
+ment of entities using combinations of (i) NLP
+on dialog, (ii) image processing on the video and
+LIDAR stream, with (iii) robot position, motion,
+and orientation coordinates, support more effec-
+tive human-robot missions?
+We conducted the pre-pilot study with ten trial
+sessions to collect multi-modal data from C-R and
+R-only scenarios (Table 1). Each session involved
+a single participant playing the role of R with con-
+trol over the physical robot, or two participants,
+one person playing R and one playing C.
+Team R?s Task
+R only Rotate in place and describe surroundings.
+R only Move along road, describe surroundings.
+C, R Follow C?s guidance in navigating build-
+ing?s perimeter, describe surroundings.
+C, R Follow C?s guidance in searching buildings
+for specified objects.
+Table 1: Pre-pilot Scenarios.
+Participants sat indoors and could not see the robot
+outside, roughly 30 meters away. In each session,
+R was instructed to act as though he or she were
+situated in the robot?s position and to obey C. R
+was to consider the robot?s actions as R?s own,
+and to consider available video and LIDAR point
+cloud feeds as R?s own perceptions.
+1.2 Equipment
+All participants worked from their own comput-
+ers. Each was instructed, for a given scenario, to
+be either C or R and to communicate by text only.
+On their screen they saw a dedicated dialog (chat)
+window in a Linux terminal. For sessions with
+both C and R, the same dialog content (the ongo-
+ing sequence of typed-in utterances) appeared in
+the dialog window on each of their screens.
+The physical robot ran under the Robot Operat-
+ing System (ROS) (Quigley et al., 2009), equipped
+with a video camera, laser sensors, magnetome-
+ter, GPS unit, and rotary encoders. R could ?see
+for the robot? via two ROS rviz windows with live
+feeds for video from the robot?s camera and con-
+structed 3D point cloud frames.
+2
+R had access to
+rotate and zoom functions to alter the screen dis-
+play of the point cloud. C saw only a static bird?s-
+eye-view map of the area. R remotely controlled
+over a network connection the robot?s four wheels
+and its motion, using the left joystick of an X-Box
+controller.
+1.3 Collection
+During each session, all data from the robot?s sen-
+sors and dialog window was recorded via the ros-
+bag tool and stored in a single bagfile.
+3
+A bagfile
+contains typed messages. Each message contains
+a timestamp (specified at nanosecond granularity)
+and values for that message type?s attributes. Mes-
+sage types geometry msgs/PoseStamped, for ex-
+ample, contain a time stamp, a three-dimensional
+location vector and a four-dimensional orientation
+vector that indicates an estimate of the robot?s lo-
+cation and the direction in which it is facing. The
+robot?s rotary encoders generate these messages
+as the robot moves. The primary bagfile message
+types most relevant to our initial analyses
+4
+were:
+1) instant messenger/StringStamped
+that included speaker id, text utterances
+2) sensor msgs/PointCloud2
+that included LIDAR data
+3) sensor msgs/CompressedImage
+with compressed, rectified video images
+4) sensor msgs/GPS, with robot coordinates
+Message types are packaged and published at dif-
+ferent rates: some are published automatically at
+regular intervals (e.g., image frames), while oth-
+ers depend on R, C, or robot activity (e.g., dialog
+utterances). And the specific rate of publication
+for some message types can be limited at times by
+network bandwidth constraints (e.g. LIDAR data).
+Summary statistics for our initial pre-pilot collec-
+2
+LIDAR measures distance from robot by illuminating
+targets with robot lasers and generates point cloud messages.
+3
+http://wiki.ros.org/rosbag
+4
+We omit here details of ROS topics, transformation mes-
+sages, and other sensor data collected in the pre-pilot.
+44
+tion consisting of ten task sessions conducted over
+two days, and that together spanned roughly five
+hours in real-time, are presented in Table 2.
+#bagfile msgs 15, 131K #dialog utts 434
+min per sn 140, 848 min per sn 15
+max per sn 3, 030K max per sn 116
+#tokens 3, 750 #image msgs 10, 650
+min per sn 200 min per sn 417
+max per sn 793 max per sn 1, 894
+#unique words 568 #LIDAR msgs 8, 422
+min per sn 84 min per sn 215
+max per sn 176 max per sn 2, 250
+Table 2: Collection Statistics (sn = session).
+2 From Collection to Interval Corpora
+After collecting millions of messages in the pre-
+pilot with content in different modalities, the im-
+mediate research challenge has been identifying
+the time interval that covers the messages directly
+related to the content in each utterance.
+We extracted each utterance message u and its
+corresponding time stamp t. For a given u, we ex-
+tracted the five image, five point cloud, and five
+GPS messages immediately preceding and the five
+of each immediately following u, based on mes-
+sage time-stamps, for a total of thirty sensor mes-
+sages per utterance. These message types were
+published independent of the robot?s movement,
+approximately once per second. In the second
+phase, we assigned the earliest and latest time
+stamp from the first-phase messages to delimit an
+interval [t
+s
+, t
+e
+] and conducted another extraction
+round from the bagfile, this time pulling out all
+messages with time stamps in that interval as pub-
+lished by the rotary encoders, compass, and iner-
+tial measurement unit, only when the robot moved.
+The messages from both phases constitute a ten-
+second interval corpus for u.
+These interval corpora serve as a first approx-
+imation at segmenting the massive stream pub-
+lished at nanosecond-level into units pertaining to
+commander-robot dialog during the task at hand.
+With manual inspection, we found that many
+automatically-constructed intervals do track rele-
+vant changes in the robot?s location. For exam-
+ple, the latest interval in a task?s time sequence
+that was constructed with the robot being outside a
+building is distinct from the first interval that cov-
+ers when the robot moves inside the building.
+5
+5
+This appears likely due to the paced descriptions in R?s
+utterances. Another pre-pilot is needed to test this hypothesis.
+3 Corpora Language Processing
+Each utterance collected from the sessions was
+tokenized, parsed, and semantically interpreted
+using SLURP (Brooks et al., 2012), a well-
+tested NLP front-end component of a human-robot
+system.
+6
+The progression in SLURP?s analysis
+pipeline for utterance C 45 is shown in Figure 3.
+SLURP extracts a parse tree (top-left), identifies
+a sub-tree that constitutes a verb-argument struc-
+ture, and enumerates possibly matching sense-
+specific verb frames from VerbNet (Schuler, 2005)
+(bottom-left). VerbNet provides a syntactic to se-
+mantic role mapping for each frame (top-right).
+SLURP selects the best mapping and generates a
+compact semantic representation (bottom-right).
+7
+In this example, the correct sense of ?scan? is se-
+lected (investigate-35.4) along with a frame that
+matches the syntactic parse. Overall, half the com-
+mands run through SLURP generated a semantic
+interpretation. Of the other half, roughly one quar-
+ter failed or had errors at parsing and the other
+quarter at the argument matching stage.
+Figure 3: Analyses of Scan next open room on left.
+Our next step is to augment SLURP?s lexicon
+and retrain a parser for new vocabulary so that we
+can directly map semantic structures of the pre-
+pilot corpora into ResearchCyc
+8
+, an extensive on-
+tology, for cross-reference to other events and ob-
+jects, already stored and possibly originated as vi-
+sual input. Following McFate (2010), we will test
+6
+https://github.com/PennNLP/SLURP.
+7
+Verbnet associates each frame with a conjunction of
+boolean semantic predicates that specify how and when event
+participants interact, for an event variable (not shown).
+8
+ResearchCyc and CycL are trademarks of Cycorp, Inc.
+45
+Figure 4: Outside View: Image, Zones, Overlay
+the mapping of matched VerbNet frames to Re-
+searchCyc?s semantic predicates to assess its lexi-
+cal coverage for our corpora.
+4 Image Processing
+Interval corpus images were labelled by a neu-
+ral network trained for visual scene classifica-
+tion (Munoz, 2013) of nine material classes: dirt,
+foliage, grass, road, sidewalk, sky, wall, wood, and
+ground cover (organic debris). Figures 4 and 5
+show the images from Figures 1 and 2 with two
+additional versions: one with colored zones for
+system-recognized class boundaries and another
+with colored zones as trasparent overlays on the
+original. The classes differentiate terrain types
+that work well with route-finding techniques that
+leverage them in selecting traversible paths. As the
+robot systems are enhanced with more sophisti-
+cated path planning software, that knowledge may
+be combined with recognized zones to send team
+members messages about navigation problems as
+the robot explores where they cannot go.
+Accuracy is limited at the single image level:
+the actual grass in Figure 4 is mostly mis-classified
+as dirt (blue) along with some correctly identified
+grass (green), while the floor in Figure 5 is mis-
+classified as road, although much of what shows
+through the window is correctly classified as fo-
+liage. We are experimenting with automatically
+assigning natural language (NL) labels to a range
+of objects and textures recognized in images from
+other larger datasets. We can retrieve labeled im-
+ages stored in ResearchCyc via NL query con-
+verted into CycL, allowing a commander to, for
+example, ask questions about objects and regions
+using terms related to but not necessarily equal to
+the original recognition system-provided labels.
+5 Related Work
+We are aware of no other multi-modal corpora
+obtained from human-robot teams conducting ex-
+ploratory missions with collected dialog, video
+and other sensor data. Corpora with a robot
+Figure 5: Inside View: Image, Zones, Overlay.
+Brightness and contrast of video image and over-
+lay increased for print publication.
+recording similar data modalities do exist (Green
+et al., 2006; Wienke et al., 2012; Maas et al., 2006)
+but for fundamentally different tasks. Tellex et al.
+(2011) and Matuszek et al. (2012) pair commands
+with formal plans without dialog and Zender et al.
+(2008) and Randelli et al. (2013) build multi-level
+maps but with a situated commander.
+Eberhard et al. (2010)?s CReST corpus contains
+a set-up similar to ours minus the robot; a hu-
+man task-solver wears a forward-facing camera
+instead. The SCARE corpus (Stoia et al., 2008)
+records similar modalities but in a virtual environ-
+ment, where C has full access to R?s video feed.
+Other projects yielded corpora from virtual envi-
+ronments that include route descriptions without
+dialog (Marge and Rudnicky, 2011; MacMahon et
+al., 2006; Vogel and Jurafsky, 2010) or referring
+expressions without routes (Sch?utte et al., 2010;
+Fang et al., 2013), assuming pre-existing abstrac-
+tions from sensor data.
+6 Conclusion and Ongoing Work
+We have presented our pre-pilot study with data
+collection and corpus construction phases. This
+work-in-progress requires further analysis. We are
+now processing dialog utterances for more system-
+atic semantic interpretation using disambiguated
+VerbNet frames that map into ResearchCyc pred-
+icates. We will run object recognition software
+retrained on a broader range of objects so that
+it can be applied to images that will be labelled
+and stored in ResearchCyc micro-worlds for sub-
+sequent co-reference with terms in the dialog ut-
+terances. Ultimately we want to establish in real
+time links across parts of messages in different
+modalities that refer to the same abstract enti-
+ties, so that humans and robots can share their
+separately-obtained knowledge about the entities
+and their spatial relations ? whether seen, sensed,
+described, or inferred ? when communicating on
+shared tasks in environments.
+46
+Acknowledgments
+Over a dozen engineers and researchers assisted
+us in many ways before, during, and after the pre-
+pilot, providing technical help with equipment and
+data collection, as well as participating in the pre-
+pilot. We cannot list everyone here, but special
+thanks to Stuart Young for providing clear guid-
+ance to everyone working with us.
+References
+Daniel J. Brooks, Constantine Lignos, Cameron Finu-
+cane, Mikhail S. Medvedev, Ian Perera, Vasumathi
+Raman, Hadas Kress-Gazit, Mitch Marcus, and
+Holly A. Yanco. 2012. Make it so: Continu-
+ous, flexible natural language interaction with an au-
+tonomous robot. In Proc. AAAI, pages 2?8.
+Kathleen M. Eberhard, Hannele Nicholson, Sandra
+K?ubler, Susan Gundersen, and Matthias Scheutz.
+2010. The indiana ?cooperative remote search task?
+(crest) corpus. In Proc. LREC.
+Rui Fang, Changsong Liu, Lanbo She, and Joyce Y.
+Chai. 2013. Towards situated dialogue: Revisiting
+referring expression generation. In Proc. EMNLP,
+pages 392?402.
+Anders Green, Helge Httenrauch, and Kerstin Severin-
+son Eklundh. 2006. Developing a contextualized
+multimodal corpus for human-robot interaction. In
+Proc. LREC.
+Jan F. Maas, Britta Wrede, and Gerhard Sagerer. 2006.
+Towards a multimodal topic tracking system for a
+mobile robot. In Proc. INTERSPEECH.
+Matt MacMahon, Brian Stankiewicz, and Benjamin
+Kuipers. 2006. Walk the talk: Connecting language,
+knowledge, and action in route instructions. In Proc.
+AAAI, pages 1475?1482.
+Matthew Marge and Alexander I Rudnicky. 2011.
+The teamtalk corpus: Route instructions in open
+spaces. In Proc. RSS, Workshop on Grounding
+Human-Robot Dialog for Spatial Tasks.
+Cynthia Matuszek, Evan Herbst, Luke S. Zettlemoyer,
+and Dieter Fox. 2012. Learning to parse natural
+language commands to a robot control system. In
+Proc. ISER, pages 403?415.
+Clifton McFate. 2010. Expanding verb coverage in
+cyc with verbnet. In Proc. ACL, Student Research
+Workshop, pages 61?66.
+Daniel Munoz. 2013. Inference Machines: Pars-
+ing Scenes via Iterated Predictions. Ph.D. thesis,
+Carnegie Mellon University.
+Morgan Quigley, Ken Conley, Brian Gerkey, Josh
+Faust, Tully B. Foote, Jeremy Leibs, Rob Wheeler,
+and Andrew Y. Ng. 2009. ROS: an open-source
+robot operating system. In Proc. ICRA, Workshop
+on Open Source Software.
+Gabriele Randelli, Taigo Maria Bonanni, Luca Iocchi,
+and Daniele Nardi. 2013. Knowledge acquisition
+through human?robot multimodal interaction. Intel-
+ligent Service Robotics, 6(1):19?31.
+Laurel D Riek. 2012. Wizard of oz studies in hri:
+A systematic review and new reporting guidelines.
+Journal of Human-Robot Interaction, 1(1).
+Karin Kipper Schuler. 2005. Verbnet: A Broad-
+coverage, Comprehensive Verb Lexicon. Ph.D. the-
+sis, University of Pennsylvania.
+Niels Sch?utte, John D. Kelleher, and Brian Mac
+Namee. 2010. Visual salience and reference reso-
+lution in situated dialogues: A corpus-based evalu-
+ation. In Proc. AAAI, Fall Symposium: Dialog with
+Robots.
+Laura Stoia, Darla Magdalena Shockley, Donna K. By-
+ron, and Eric Fosler-Lussier. 2008. Scare: a situ-
+ated corpus with annotated referring expressions. In
+Proc. LREC.
+Stefanie Tellex, Thomas Kollar, Steven Dickerson,
+Matthew R. Walter, Ashis Gopal Banerjee, Seth J.
+Teller, and Nicholas Roy. 2011. Understanding nat-
+ural language commands for robotic navigation and
+mobile manipulation. In Proc. AAAI.
+Adam Vogel and Daniel Jurafsky. 2010. Learning to
+follow navigational directions. In Proc. ACL, pages
+806?814.
+Johannes Wienke, David Klotz, and Sebastian Wrede.
+2012. A framework for the acquisition of mul-
+timodal human-robot interaction data sets with a
+whole-system perspective. In Proc. LREC, Work-
+shop on Multimodal Corpora for Machine Learning.
+Hendrik Zender, O Mart??nez Mozos, Patric Jensfelt, G-
+JM Kruijff, and Wolfram Burgard. 2008. Concep-
+tual spatial representations for indoor mobile robots.
+Robotics and Autonomous Systems, 56(6):493?502.
+47
+Proceedings of the 25th International Conference on Computational Linguistics, pages 9?16,
+Dublin, Ireland, August 23-29 2014.
+Joint Navigation in Commander/Robot Teams:
+Dialog & Task Performance When Vision is Bandwidth-Limited
+Douglas Summers-Stay
+Army Research Laboratory
+douglas.a.summers-stay.civ
+Taylor Cassidy
+IBM Research
+Army Research Laboratory
+taylor.cassidy.ctr@mail.mil
+Clare R. Voss
+Army Research Laboratory
+clare.r.voss.civ@mail.mil
+Abstract
+The prospect of human commanders teaming with mobile robots ?smart enough? to under-
+take joint exploratory tasks?especially tasks that neither commander nor robot could perform
+alone?requires novel methods of preparing and testing human-robot teams for these ventures
+prior to real-time operations. In this paper, we report work-in-progress that maintains face valid-
+ity of selected configurations of resources and people, as would be available in emergency cir-
+cumstances. More specifically, from an off-site post, we ask human commanders (C) to perform
+an exploratory task in collaboration with a remotely located human robot-navigator (Rn) who
+controls the navigation of, but cannot see the physical robot (R). We impose network bandwidth
+restrictions in two mission scenarios comparable to real circumstances by varying the availabil-
+ity of sensor, image, and video signals to Rn, in effect limiting the human Rn to function as an
+automation stand-in. To better understand the capabilities and language required in such con-
+figurations, we constructed multi-modal corpora of time-synced dialog, video, and LIDAR files
+recorded during task sessions. We can now examine commander/robot dialogs while replaying
+what C and Rn saw, to assess their task performance under these varied conditions.
+1 Introduction
+Our research addresses a paradoxical situation in developing a robot capable of teaming with humans.
+To know what capabilities such a robot needs, we seek to determine how a human commander would in-
+teract ? choice of vocabulary and sentence types, expected capabilities and world knowledge, resources
+used to accomplish tasks efficiently, etc. But without such a robot to interact with, we cannot know
+how a commander would behave. The prospect of human commanders teaming with mobile robots that
+are ?smart enough? to undertake joint exploratory tasks requires novel methods of preparing and testing
+actual human-robot teams for these ventures, in advance of actual real-time operations. Furthermore,
+given the need for human/robot teams during emergencies (such as Japan?s tsunami/Fukishima disaster),
+we are interested in particular in the feasibility of commander/robot shared tasks that include NL com-
+munication specifically for network contexts when bandwidth is limited by emergencies. Here we ask,
+how can multimodal data, as collected and processed by robots, and the robots themselves contribute
+real-time alerts and responses to human commanders over geographically-distributed networks?
+The first phase of our approach is to introduce a human stand-in who navigates the robot, posing as
+an intelligent control system. At this stage, following our prior work (Voss et al., 2014), we seek to
+determine how the commander communicates to accomplish different tasks with the robot, while we
+limit the information made available in passing from the robot?s sensors and camera to the commander
+by way of the stand-in. In future phases, we will progressively automate away this actor?s role, replacing
+the audio that the stand-in hears with what is ?understood? by automatic natural language semantic
+interpretation within a dialog manager, and replacing the joystick that it uses to navigate as the robot
+This work is licenced under a Creative Commons Attribution 4.0 International License. Page numbers and proceedings footer
+are added by the organizers. License details: http://creativecommons.org/licenses/by/4.0/
+9
+with ?actions? as automatically generated from micro-controller commands produced by transformation
+of semantic commands.
+In this paper, we report work-in-progress that maintains face validity of selected configurations of re-
+sources and people, as would be available in emergency circumstances. From an off-site post, we ask
+human commanders (C) to perform an exploratory task in collaboration with a remotely located human
+robot-navigator (Rn) who actually controls the navigation of, but cannot see, the physical robot (R). We
+restrict the information Rn receives from R by imposing network bandwidth restrictions comparable to
+real circumstances which limit what Rn is able to communicate to C. We then examine the comman-
+der/robot dialogs and task performance under these varied conditions.
+To better understand the capabilities and language required in such configurations, we constructed
+multi-modal corpora of time-synced dialog, video, and LIDAR files recorded during task sessions. We
+can now examine commander/robot dialogs while replaying what C and Rn saw, to identify the impact
+of varying the shared visual information on discourse, and to assess task performance under these var-
+ied conditions. We hypothesized that more explicit, mututally available information (visual or verbal)
+between participants would yield better understanding with more common ground, leading to more task
+success. We also hypothesized that exploration in a more complex physical environment would lead both
+to more dialog, as needed in resolving references to more locations, and also then on occasion, to less
+overall task success. We have found in preliminary analyses that, with more explicit visual information,
+some Cs reduce their level of communication, with fewer requests for images from Rn. In one such case,
+this led to the Rn getting lost. We also noticed that some Cs increased their level of verbal communica-
+tion, requesting far more still images from the robot when Rn could not itself see the robot?s images (as
+opposed to when Rn had access to sent images). Taken together, these observations suggest?contrary to
+our hypothesis that more information is better, especially in a complex environment?that there may be
+a ?teeter totter? effect in the communication between C and Rn as visual information varies. When Rn
+has access to more of the robot?s visual information, C communicates less with Rn, possibly assuming
+more shared information than is correct. Whereas when Rn is able to see less, C communicates more
+with Rn, possibly compensating for the lack of certainty Rn expresses.
+2 Related Work
+For human-robot communication in joint exploration tasks, we wish to understand two issues. The
+first is ?scene to text?: when exploring new locations, how do people talk about what they see, and
+how does that inform how they want robot team members to communicate about what they ?see? while
+exploring? The second is ?text to scene?: given natural language instructions, how do people move about
+in new locations, and how does that impact their expectations of robot navigation? These issues span
+both generation and understanding of spatial language. There exists a large literature on spatial language,
+starting several decades ago (Talmy, 1983; Anderson et al., 1991; Gurney et al., 1996; Bloom et al., 1996;
+Olivier and Gapp, 1998) inter alia. This work yielded linguistic insights into the underlying structure of
+spatial expressions, that has led more recently to annotation efforts like SpaceML (Morarescu, 2006) and
+spatial role labeling (Kordjamshidi et al., 2010). These results, theoretical and computational, have been
+incorporated into NLP research, such as spoken dialog systems (Meena et al., 2014).
+For ?scene to text? processing, starting from a robot?s perception of the scene or environment, ex-
+ploiting even known dependencies among objects (spatial relations, relative motion, etc.) is a central
+problem in computer vision research. In the current state of robotics, the perceived world (a.k.a. se-
+mantic perception) derived from data collected by the robot is limited by what is available within its
+immediate sensor and video reach (Hebert et al., 2012). Within computational linguistic research, (Feng
+and Lapata, 2013) have tackled going from news images to text, leveraging the news story content as
+contextual knowledge, and automatically generating captions describing the image content as relevant
+for the story. For ?text to scene? processing, a robot ?understanding? a commander?s language entails
+going beyond linguistic semantic interpretation down to the the robot controller level, as in, for example,
+Kress-Gazit et al. (2008). Within computational linguistics, Srihari and Burhans (1994) tackled going
+from text to images, exploiting the conventions and spatial language in news caption to identify people
+10
+by their relative positions in accompanying images. More recently Coyne et al. (2011) presented work
+for text-to-graphics generation, grounding conceptual knowledge in relational semantic encoding of lex-
+ical meanings from FrameNet. These one-way, directional approaches provide strong evidence that text
+and image modalities can each inform the processing of the other, and that, with concurrent audio and
+video streaming data, the alignment of time-stamped files across the two data modalities should also
+yield additional benefits in shared structural analyses and disambiguating references.
+1
+3 Approach
+In previous work, we had teams search a series of buildings, where all information from the Rn to C was
+strictly limited to text (Voss et al., 2014). While verbal descriptions of scenery were successfully elicited
+during exploratory missions, the communication was painfully slow and this scenario yielded unrealistic
+results from our stand-in: we would not expect a robot to generate the complex verbal descriptions we
+collected. Furthermore we also learned that our equipment could be adjusted for transmission of LIDAR
+map data and video stream from the robot to Rn and then to C. In this second study, we allowed individual
+map and image updates to be sent to C, but only on request. This work provides more explicitly shared
+knowledge between C and Rn, with its form and quantity more realistically varied and dynamic.
+Equipment: We used an iRobot PackBot equipped with a forward-facing Kinect camera and a Hokuyo
+LIDAR sensor.
+2
+We use GPS and inertial sensors for Simultaneous Localization and Mapping (SLAM).
+Each participant had their own laptop with speakers and separate push-to-talk microphones. For navigat-
+ing the robot, the Rn pushed a joystick on an X-box controller that was held. Additionally for transmitting
+visual information available from the robot during the missions, the Rn pushed separate buttons on the
+same controller to transfer image and map data to C, but only at C?s request.
+Pre-pilot Design: We conducted training sessions at one location and test sessions at a second loca-
+tion. A top down view of these sites is provided in Figure 1. We asked participants to perform distinct
+missions (task conditions) in the training and test sessions, with different levels of visual information
+available to Rn (vision conditions). Due to wireless networking timeouts and hardware integration diffi-
+culties, a number of sessions ended prematurely. Descriptive statistics for the sessions are in Table 1.
+Vision Condition
+Video +
+Task Condition LIDAR LIDAR + LIDAR +
+- quality of dataset only Image last-sent Image last-sent
+Mission 1 - complete ? ? 6 sessions (77 min)
+Mission 1 - partial ? ? 1 session (1 min)
+Mission 2 - complete 4 sessions (57 min) 2 sessions (28 min) 2 sessions (18 min)
+Mission 2 - partial 11 sessions (15 min) 3 sessions (3 min) ?
+Table 1: Total #sessions attempted by configuration (different task & vision conditions)
+Vision Conditions: The Rn always saw (i) a continuously updated LIDAR map built up progressively
+from the robot?s sensors as the Rn navigated the robot using the joystick on an X-box controller. On the
+map during training, the Rn could also see (ii) an avatar shape for the robot?s location based on GPS and
+(iii) an arrow for the robot?s facing direction generated by its internal components (updated intermittently
+by GPS). However the GPS signal was also sporadic during these sessions, causing confusion for Rn
+navigating the robot. As a result, during test sessions, we turned off the GPS to avoid this source of
+confusion, mirroring what actual operators do in this scenario. During test sessions, the Rn only saw
+(iii) the arrow, again within (i) the streamed LIDAR map. Beyond these Rn screen specifics, we ran
+three conditions controlling for the visual information that the C and Rn could see. During mission 1
+(training), Rn was given ?full? view of the streaming video, any specific images sent to C at C?s request,
+and the map with arrow and avatar. During mission 2 (test) in one ?partially blinded? condition, the Rn
+1
+We are also eager to learn more from recent research examining streaming multimodal data for how and where the compo-
+sition of natural language and the composition of visual scenes can inform one another (Barbu et al., 2012) and (Barbu et al.,
+2013).
+2
+iRobot, PackBot, Kinect, and Hokuyo are all trademarks or registered trademarks.
+11
+Figure 1: On left side: view of Mission 1 courtyard and building, with doorways marked. On right side:
+view of Mission 2 courtyards and buildings.
+saw no video, but could see the specific images he sent to C as well as the map with arrow, and in the
+other even ?more blinded? condition, Rn saw only the map with arrow. By contrast, the C only ever saw
+what the Rn sent (by pushing buttons) as snapshots at C?s request. During all conditions ? independent
+of what was presented to Rn (?full? view in mission 1, partially blinded or more-blinded in mission 2) ?
+C could always request an updated snapshot image from the video feed or an updated snapshot map from
+the LIDAR feed or both. As a result, Rn?s view was ?pushed? and current from the robot?s streaming
+data, whereas the C?s view had to be ?pulled,? requiring C to ask for more snapshots. Note that in Rn?s
+more-blinded condition, images were passed to C with Rn?s button push, but Rn could not see the images.
+Mission 1: Enter courtyard and building via safe doorways. We hypothesized a robot with the ability
+to carry on limited conversation regarding simple navigation and exploration, but without sufficient vi-
+sion capabilities to analyze more subtle clues about whether a doorway was safe to enter. We designed
+the task to simulate a low-bandwidth condition where constant transmission of the map and video infor-
+mation is impossible. The robot was placed in one of two undisclosed positions outside the courtyard
+surrounding a building. All sessions adopted the L+I+V vision condition. The site for this mission was a
+Figure 2: Robot-navigator?s screen during Mission 1: upper left is static Image (clip from video, most
+recently sent to Commander), upper right is video window, gray-scale background is LIDAR map
+12
+single rectangular building enclosed by a single rectangular courtyard. The site for mission 2 was more
+complex, consisting of 5 buildings in a complex series of interconnected courtyards (see Figure 1). There
+are five doorways into the courtyard and two doorways into the building. These doorways are marked as
+safe or unsafe in a way that C can recognize but Rn cannot (C is given a key to the meaning of objects
+placed just beyond open doorways as symbols). The participants are not informed about doorway loca-
+tion or safety status. Figure 2 shows Rn?s screen during a mission 1 session. The grey-scale background
+is an overhead, 2D view of a 3D map being built on the fly by combining various sensor data, which
+contains a white robot avatar and blue arrow indicating its current pose. C?s view is similar, but without
+video. Success on this task was gauged by whether the robot stayed safe in gaining entry to the house.
+Mission 2: Find and classify all building doorways within a compound.
+As noted above and shown in Figure 1, the location in this mission had a more complex layout. The
+robot?s location within the compound was not disclosed to C nor Rn (no clues were provided), so that
+the C and Rn team would need to work hard to place the robot on the map. The team was tasked with
+thoroughly exploring the compound to capture images of each building doorway. In the LIDAR-only (L)
+condition, Rn sees only the grey-scale map, whereas in the LIDAR and image condition (L+I) Rn sees
+the most recently sent image as well as the grey-scale map (same screen layout as in Figure 2 but without
+video window in upper right). Success on this mission was gauged both by the number of doors (open or
+closed) that were identified and photographed and by whether the participants were lost at some stage in
+the exploration.
+4 Observations and Preliminary Results
+We recorded rich, multi-modal datasets including: dialogue between C and Rn, video, LIDAR 3D point
+clouds, scene classification output on video frames, and robot pose. The data is used to build up a 3D
+model of the scene, and automatically align RGB images to the model by mapping pixels to 3D regions.
+Examples of scene classification performance can be seen in Figure 3. The data for each run consists of
+a ROS bag file (Quigley et al., 2009) and two audio files.
+3
+Figure 3: left: view from robot camera. right: automated scene classification. Mix of colors indicates
+probability of belonging to a particular class. Classes found in this scene include sky, foliage, building,
+grass, concrete, and asphalt. Performance degrades in lighting conditions unattested in training data.
+4.1 Results from Session Path Analysis
+Figure 4 shows an overhead 2D view of the final 3D map built using the SLAM module. An orange
+line depicts the robot?s path from mission start to finish, with ordinal numbers indicating the robot?s high
+level trajectory (the robot traveled from ?start? to ?1?, then to the location marked by ?2?, etc., finally
+ending on the location marked by ?15?). Doorways that were successfully captured in images sent to C
+are highlighted with a green solid-lined circle, whereas doorways that were passed by are indicated with
+3
+A bag file stores nano-second accuracy timestamped, discrete data messages, such as an individual video frame, the fact
+that a joystick button was pressed, or the robot?s current velocity.
+13
+Mission 1 Vision Total # Images # Images Task Success:
+Sessions Condition # Images sent with sent with Stayed Safe?
+(duration) sent (any) door safe door Gained Entry?
+1 (21 min.) L + I + V 0 0 0 S, E
+2 (5 min.) L + I + V 0 0 0 N, E
+3 (17 min.) L + I + V 3 3 2 S, E
+4 (15 min.) L + I + V 8 7 2 S, E
+5 (13 min.) L + I + V 12 7 4 S, E
+Table 2: Mission 1 sessions: These training sessions provided the robot-navigators (Rn) with ?full?
+real-time vision, i.e., their screens displayed all sensed data, as collected by the physical robot (R)
+Mission 2 Vision Total Total Total # # deictic # refs Task Success:
+Sessions Conditions #Images #Maps Im & Map refs to past # Doors id?
+(duration) (LIDAR) (sent (sent (sent one, by by Got Lost?
+(Image) w/o map) w/o img) then other) C, Rn C, Rn Recovered?
+A (21 min.) L map 27 7 5 13, 2 6, 3 9, n/a , n/a
+B (20 min.) L map + I 7 9 7 7, 2 7, 2 7, L, R
+Table 3: Mission 2 per-session events: request and reference types, task success.
+a dotted line. There is a point in the run depicted where Rn states that he is ?lost?, which is marked in
+the figure by a green dot at step 10.
+Figure 4: Robot path during Mission 2 session, doorways marked
+4.2 Language Phenomena in Dialogs
+Referring Expressions: There were few named environment features, necessitating the use of referring
+expressions. Participants often used pronouns (?behind it?), deictic expressions (?that wall?), and both
+definite and indefinite noun phrase descriptors (?a wall directly in front of you?). The frequency of
+referring expressions other than proper names highlights the need for a dialog manager to robustly handle
+human-robot dialog in our setting. In six mission 2 dialogs consisting of 6,593 words total, we annotated
+1,593 referring expressions - 1,213 definite and 380 indefinite. The most common were first and second
+person singular pronouns (287 and 245), definite expressions of the form the x (265) and indefinite
+expressions of the form a(n) x (256). Most references are to things, either in the physical (?face the
+doorway?) or software (?update your map?) environment, though there are references to events as well
+(?do that again?).
+Lexical Ambiguity: The same objects were sometimes referred to as ?doors? or ?doorways,? although by
+a dictionary definition, those refer to somewhat different things. Based on context, the robot would need
+to be able to understand which sense was intended.
+14
+Spatial Relations: Since these were navigation and observation tasks, much of the discussion involved
+spatial language pertaining to object configurations and robot paths. There were references to distances
+and angles, both specific (?turn 15 degrees to your right?) and vague (?turn around.?) The robot was asked
+to ?follow the wall?, ?go north?, and to travel ?around,? ?behind,? and ?near? various objects.
+Clarifications and Suggestions in Dialogs: When uncertain about the meaning of commands, Rn some-
+times asked for clarification. At other times, Rn reminded C of its capabilities when appropriate: ?Would
+you like me to send you an updated map??
+4.3 The Role of Shared Visual Information
+Participants were generally able to use both image and map data in conjunction with dialog to gain
+enough common ground to communicate about the environment and accomplish the tasks at hand. For
+example, after discussing environment features against the backdrop of an updated 2D map, we were
+often surprised at the extent to which C apparently kept track of R?s location using dialog alone without
+further map updates, as evidenced by C?s ability to correctly use Rn?s egocentric frame of reference in
+verbal descriptions (recall that the robot avatar remained static on C?s map between updates). In such
+cases C and R took advantage of mutually accessible visual information - their 2D maps were identical
+during discussion. The role of mutually accessible information for achieiving common ground is further
+supported by the fact that C requested significantly more images in the LIDAR-only condition, when
+Rn could not see those sent images (see Table 3). Although shared visual knowledge proved useful for
+resolving referring expressions, C and Rn rarely mentioned the media explicitly (?the building? vs ?the
+building in the image you sent me?). In this way, the transfer of visual information served to introduce
+entities into their discourse, but was taken for granted and not called out per se.
+5 Ongoing Work
+We have found in preliminary analyses that, with more explicit visual information, some Cs reduce their
+level of communication, with fewer requests for images from Rn. In one such case, this led to the Rn
+getting lost. We also noticed that some Cs increased their level of verbal communication, requesting far
+more still images from the robot when Rn could not itself see the robot?s images (as opposed to when
+Rn had access to sent images). Taken together, these observations suggest?contrary to our hypotheses
+that more information is better, especially in a complex environment?that there may be a ?teeter totter?
+effect in the communication between C and Rn as visual information varies. When Rn ?sees as the robot?
+with access to more transmitted visual information, C communicates less with Rn, possibly assuming
+more shared information than is correct. Whereas when Rn ?sees? less, C communicates more with
+Rn, possibly compensating for the lack of certainty Rn expresses. We plan to extend our analysis of
+how C and Rn communicate uncertainty, and look at how this topic is addressed in first aid and military
+manuals (US Dept. of the Army, 1993).
+We are currently developing a framework to automate many of the tasks currently performed by Rn.
+Our studies and data collections so far are best understood in the context of the capabilities and limitations
+of the overall system we are in the process of building. A crucial gap to address is associating referring
+expressions with corresponding concrete spatial structures in the 3D map. Consider one sentence spoken
+by the commander in one of the dialogues: ?When you get to the wall, turn left and drive along the wall
+until you reach either a corner or what you believe to be a door.? To interpret this correctly, the robot
+must understand an entire set of points as a single object or part of an object, so it can recognize doors,
+walls, and corners in the combined vision and point-cloud. Moreover, it needs to plan a path that obeys
+the constraint ?along the wall? and stops at some point which may be a door or a corner, that has not
+yet been observed. Thus, objects need to be represented independent of the observed world map.
+4
+At
+present, scene parsing techniques can analyze images and assign each pixel a probability of belonging to
+a particular object class (wall, stucco, road, etc.) allowing us to propagate these labels to corresponding
+points in the 3D model of the scene. In the future, we will use the 3D model to resolve visual ambiguities
+and attach labels to particular objects that persist from one video frame to the next.
+4
+Resolving references to unvisited locations is a largely unexplored problem (Williams et al., 2013; Duvallet et al., 2013).
+15
+Acknowledgements
+We thank members of the Asset Control and Behavior Branch at ARL for participation in our study and
+for continuing to provide the technical support that makes our work possible. The work of Taylor Cassidy
+was funded by IBM under the International Technology Alliance in Network & Information Sciences.
+References
+A. Anderson, M. Bader, E. Bard, E. Boyd, G.M. Doherty, S. Garrod, S. Isard, J. Kowtko, J. McAllister, C. Sotillo,
+H.S. Thompson, and R. Weinert. 1991. The HCRC Map Task Corpus. Language and Speech, 34:351?366.
+A. Barbu, A. Bridge, D. Coroian, S. J. Dickinson, S. Mussman, S. Narayanaswamy, D.l Salvi, L. Schmidt, J. Shang-
+guan, J. M. Siskind, J. W. Waggoner, S. Wang, J. Wei, Y. Yin, and Z. Zhang. 2012. Large-scale automatic
+labeling of video events with verbs based on event-participant interaction. CoRR, abs/1204.3616.
+A. Barbu, S. Narayanaswamy, and J. Siskind. 2013. Saying what you?re looking for: Linguistics meets video
+search. CoRR, abs/1309.5174.
+P. Bloom, M. Peterson, L. Madel, and M. F. Garrett, editors. 1996. Language and Space. The MIT Press.
+B. Coyne, D. Bauer, and O. Rambow. 2011. Vignet: Grounding language in graphics using frame semantics. In
+ACL Workshop on Relational Models of Semantics (RELMS 2011).
+F. Duvallet, T. Kollar, and A. Stentz. 2013. Imitation learning for natural language direction following through
+unknown environments. In IEEE Intl. Conference on Robotics and Automation (ICRA), pages 1047?1053.
+Y. Feng and M. Lapata. 2013. Automatic caption generation for news images. IEEE Transactions on Pattern
+Analysis and Machine Intelligence, 35:4:797?812.
+J. Gurney, E. Klipple, and C. Voss. 1996. Talking about what we think we see: natural language processing for a
+real-time virtual environment. IEEE International Joint Symposia on Intelligence and Systems.
+M. Hebert, J. A. Bagnell, M. Bajracharya, K. Daniilidis, L. H. Matthies, L. Mianzo, L. Navarro-Serment, J. Shi, and
+M. Wellfare. 2012. Semantic perception for ground robotics. In R. E. Karlsen; D. W. Gage; C. M. Shoemaker;
+G. R. Gerhart, editor, SPIE Proceedings Vol. 8387: Unmanned Systems Technology XIV.
+P. Kordjamshidi, M. Van Otterlo, and Marie-Francine Moens. 2010. Spatial Role Labeling: Task Definition and
+Annotation Scheme. In Proceedings of Language Resources and Evaluation Conference.
+H. Kress-Gazit, G. E. Fainekos, and G. J. Pappas. 2008. Translating Structured English to Robot Controllers.
+Advanced Robotics Special Issue on Selected Papers from IROS, Vol. 22, No. 12:1343?1359.
+R. Meena, J. Boye, G. Skantze, and J. Gustafson. 2014. Crowdsourcing street-level geographic information using
+a spoken dialogue system. In Proceedings of SIGDIAL. Association for Computational Linguistics.
+P. C. Morarescu. 2006. Principles for annotating and reasoning with spatial information. In LREC.
+P. Olivier and K-P. Gapp, editors. 1998. Representation and Processing of Spatial Expressions. Lawrence Erlbaum
+Associates, Hillsdale, NJ, USA.
+M. Quigley, K. Conley, B. Gerkey, J. Faust, T. B. Foote, J. Leibs, R. Wheeler, and A. Y. Ng. 2009. ROS: an
+open-source robot operating system. In ICRA Workshop on Open Source Software.
+R. K. Srihari and D. T. Burhans. 1994. Visual semantics: Extracting visual information from text accompanying
+pictures. In Proc. Of Twelfth National Conference on Artificial Intelligence (AAAI-94), pages 793?798.
+L. Talmy. 1983. How Language Structures Space. In Jr. H. L. Pick and L. P. Acredolo, editors, Spatial Orientation:
+Theory, Research, and Application, pages 225?282. Plenum Press, London.
+US Dept. of the Army. 1993. Physical fitness training: Field manual 3-25.26. Washington, D.C.
+C.R. Voss, T. Cassidy, and D. Summers-Stay. 2014. Collaborative Exploration in Human-Robot Teams: What?s
+in Their Corpora of Dialog, Video, & LIDAR Messages? In Proceedings of EACL Dialog in Motion Workshop.
+T. E. Williams, R. Cantrell, G. Briggs, P. W. Schermerhorn, and M. Scheutz. 2013. Grounding natural language
+references to unvisited and hypothetical locations. In AAAI.
+16

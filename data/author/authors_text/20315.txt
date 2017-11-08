@@ -1,0 +1,1879 @@
+Proceedings of the 14th Conference of the European Chapter of the Association for Computational Linguistics, pages 39?48,
+Gothenburg, Sweden, April 26-30 2014.
+c
+?2014 Association for Computational Linguistics
+A Joint Model for Quotation Attribution and Coreference Resolution
+Mariana S. C. Almeida
+??
+Miguel B. Almeida
+??
+Andr
+?
+e F. T. Martins
+??
+?
+Priberam Labs, Alameda D. Afonso Henriques, 41, 2
+o
+, 1000-123 Lisboa, Portugal
+?
+Instituto de Telecomunicac??oes, Instituto Superior T?ecnico, 1049-001 Lisboa, Portugal
+{mla,mba,atm}@priberam.pt
+Abstract
+We address the problem of automatically
+attributing quotations to speakers, which
+has great relevance in text mining and me-
+dia monitoring applications. While cur-
+rent systems report high accuracies for
+this task, they either work at mention-
+level (getting credit for detecting uninfor-
+mative mentions such as pronouns), or as-
+sume the coreferent mentions have been
+detected beforehand; the inaccuracies in
+this preprocessing step may lead to error
+propagation. In this paper, we introduce a
+joint model for entity-level quotation attri-
+bution and coreference resolution, exploit-
+ing correlations between the two tasks. We
+design an evaluation metric for attribu-
+tion that captures all speakers? mentions.
+We present results showing that both tasks
+benefit from being treated jointly.
+1 Introduction
+Quotations are a crucial part of news stories, giv-
+ing the perspectives of the participants in the nar-
+rated event, and making the news sound objective.
+The ability of extracting and organizing these quo-
+tations is highly relevant for text mining applica-
+tions, as it may aid journalists in fact-checking,
+help users browse news threads, and reduce human
+intervention in media monitoring. This involves
+assigning the correct speaker to each quote?a
+problem called quotation attribution (?2).
+There is significant literature devoted to this
+task, both for narrative genres (Mamede and
+Chaleira, 2004; Elson and McKeown, 2010) and
+newswire domains (Pouliquen et al., 2007; Sar-
+mento et al., 2009; Schneider et al., 2010). While
+the earliest works focused on devising lexical and
+syntactic rules and hand-crafting grammars, there
+has been a recent shift toward machine learning
+approaches (Fernandes et al., 2011; O?Keefe et al.,
+2012; Pareti et al., 2013), with latest works re-
+porting high accuracies for speaker identification
+in newswire (in the range 80?95% for direct and
+mixed quotes, according to O?Keefe et al. (2012)).
+Despite these encouraging results, quotation min-
+ing systems are not yet fully satisfactory, even
+when only direct quotes are considered. Part of
+the problem, as we next describe, has to do with
+inaccuracies in coreference resolution (?3).
+The ?easiest? instances of quotation attribution
+problems arise when the speaker and the quote are
+semantically connected, e.g., through a reported
+speech verb like said. However, in newswire text,
+the subject of this verb is commonly a pronoun or
+another uninformative anaphoric mention. While
+the speaker thus determined may well be correct?
+being in most cases consistent with human annota-
+tion choices (Pareti, 2012)?from a practical per-
+spective, it will be of little use without a corefer-
+ence system that correctly resolves the anaphora.
+Since the current state of the art in coreference res-
+olution is far from perfect, errors at this stage tend
+to propagate to the quote attribution system.
+Consider the following examples for illustration
+(taken from the WSJ-1057 and WSJ-0089 docu-
+ments in the Penn Treebank), where we have an-
+notated with subscripts some of the mentions:
+(a) Rivals carp at ?the principle of [Pilson]
+M
+1
+,?
+as [NBC?s Arthur Watson]
+M
+2
+once put it ?
+?[he]
+M
+3
+?s always expounding that rights are
+too high, then [he]
+M
+4
+?s going crazy.? But [the
+49-year-old Mr. Pilson]
+M
+5
+is hardly a man to
+ignore the numbers.
+(b) [English novelist Dorothy L. Sayers]
+M
+1
+de-
+scribed [ringing]
+M
+2
+as a ?passion that finds its
+satisfaction in [mathematical completeness]
+M
+3
+and [mechanical perfection]
+M
+4
+.? [Ringers]
+M
+5
+,
+[she]
+M
+6
+added, are ?filled with the solemn intox-
+ication that comes of intricate ritual faultlessly
+performed.?
+In example (a), the pronoun coreference system
+used by O?Keefe et al. (2012) erroneously clus-
+ters together mentions M
+2
+, M
+3
+and M
+4
+(instead
+of the correct clustering {M
+1
+,M
+3
+,M
+4
+}). Since it
+is unlikely that the speaker is co-referent to a third-
+39
+person pronoun he inside the quote, a pipeline sys-
+tem would likely attribute (incorrectly) this quote
+to Pilson. In example (b), there are two quotes
+with the same speaker entity (as indicated by the
+cue she added). This gives evidence that M
+1
+and
+M
+6
+should be coreferent. A pipeline approach
+would not be able to exploit these correlations.
+We argue that this type of mistakes, among
+others, can be prevented by a system that per-
+forms quote attribution and coreference resolution
+jointly (?4). Our joint model is inspired by re-
+cent work in coreference resolution that indepen-
+dently ranks the possible mention?s antecedents,
+forming a latent coreference tree structure (Denis
+and Baldridge, 2008; Fernandes et al., 2012; Dur-
+rett et al., 2013; Durrett and Klein, 2013). We con-
+sider a generalization of these structures which we
+call a quotation-coreference tree. To effectively
+couple the two tasks, we need to go beyond simple
+arc-factored models and consider paths in the tree.
+We formulate the resulting problem as a logic pro-
+gram, which we tackle using a dual decomposition
+strategy (?5). We provide an empirical compari-
+son between our method and baselines for each of
+the tasks and a pipeline system, defining suitable
+metrics for entity-level quotation attribution (?6).
+2 Quotation Attribution
+The task of quotation attribution can be formally
+defined as follows. Given a document containing
+a sequence of quotations, ?q
+1
+, . . . , q
+L
+?, and a set
+of candidate speakers, {s
+1
+, . . . , s
+M
+}, the goal is to
+a assign a speaker to every quote.
+Previous work has handled direct and mixed
+quotations (Sarmento et al., 2009; O?Keefe et al.,
+2012), easily extractable with regular expressions
+for detecting quotation marks, as well as indirect
+quotations (Pareti et al., 2013), which are more in-
+volved and require syntactic or semantic patterns.
+In this work, we resort to direct and mixed quo-
+tations. Pareti (2012) defines quotation attribu-
+tions in terms of their content span (the quotation
+text itself), their cue (a lexical anchor of the attri-
+bution relation, such as a reported speech verb),
+and the source span (the author of the quote).
+The same reference introduced the PARC dataset,
+which we use in our experiments (?6) and which
+is based on the annotation of a database of attribu-
+tion relations from the Penn Discourse Treebank
+(Prasad et al., 2008). Several machine learning
+algorithms have been applied to this task, either
+framing the problem as classification (an indepen-
+dent decision for each quote), or sequence label-
+ing (using greedy methods or linear-chain condi-
+tional random fields); see O?Keefe et al. (2012)
+for a comparison among these different methods.
+In this paper, we distinguish between mention-
+level quotation attribution, in which the candi-
+date speakers are individual mentions, and entity-
+level quotation attribution, in which they are en-
+tity clusters comprised of one or more mentions.
+With this distinction, we attempt to clarify how
+prior work has addressed this task, and design suit-
+able baselines and evaluation metrics. For exam-
+ple, O?Keefe et al. (2012) applies a coreference
+resolver before quotation attribution, whereas de
+La Clergerie et al. (2011) does it afterwards, as a
+post-processing stage. An important issue when
+evaluating quotation attribution systems is to pre-
+vent them from getting credit for detecting unin-
+formative speakers such as pronouns; we will get
+back to this topic in ?6.2.
+3 Coreference Resolution
+In coreference resolution, we are given a set of
+mentions M := {m
+1
+, . . . ,m
+K
+}, and the goal
+is to cluster them into discourse entities, E :=
+{e
+1
+, . . . , e
+J
+}, where each e
+j
+? M and e
+j
+6= ?.
+We follow Haghighi and Klein (2007) and distin-
+guish between proper, nominal, and pronominal
+mentions. Each requires different types of infor-
+mation to be resolved. Thus, the task involves de-
+termining anaphoricity, resolving pronouns, and
+identifying semantic compatibility among men-
+tions. To resolve these references, one typically
+exploits contextual and grammatical clues, as well
+as semantic information and world knowledge,
+to understand whether mentions refer to people,
+places, organizations, and so on. The importance
+of coreference resolution has led to it being the
+subject of recent CoNLL shared tasks (Pradhan et
+al., 2011; Pradhan et al., 2012).
+There has been a variety of approaches for
+this problem. Early work used local discrimina-
+tive classifiers, making independent decisions for
+each mention or pair of mentions (Soon et al.,
+2001; Ng and Cardie, 2002). Lee et al. (2011)
+proposed a competitive non-learned sieve-based
+method, which constructs clusters by aglomerat-
+ing mentions in a greedy manner. Entity-centric
+models define scores for the entire entity clusters
+(Culotta et al., 2007; Haghighi and Klein, 2010;
+40
+Rahman and Ng, 2011) and seek the set of enti-
+ties that optimize the sum of scores; this can also
+be promoted in a decentralized manner (Durrett et
+al., 2013). Pairwise models (Bengtson and Roth,
+2008; Finkel et al., 2008; Versley et al., 2008), on
+the other hand, define scores for each pair of men-
+tions to be coreferent, and define the clusters as
+the transitive closure of these pairwise relations.
+A disadvantage of these two methods is that they
+lead to intractable decoding problems, so approx-
+imate methods must be used. For comprehensive
+overviews, see Stoyanov et al. (2009), Ng (2010),
+Pradhan et al. (2011) and Pradhan et al. (2012).
+Our joint approach (to be fully described in
+?4) draws inspiration from recent work that shifts
+from entity clusters to coreference trees (Fernan-
+des et al., 2012; Durrett and Klein, 2013). These
+models define scores for each mention to link to
+its antecedent or to an artifical root symbol $ (in
+which case it is not anaphoric). The computation
+of the best tree can be done exactly with spanning
+tree algorithms, or by independently choosing the
+best antecedent (or the root) for each mention, if
+only left-to-right arcs are allowed. The same idea
+underlies the antecedent ranking approach of De-
+nis and Baldridge (2008). Once the coreference
+tree is computed, the set of entity clusters E is ob-
+tained by associating each entity set to a branch of
+the tree coming out from the root. This is illus-
+trated in Figure 1 (left).
+4 Joint Quotations and Coreferences
+In this work, we propose that quotation attribu-
+tion and coreference resolution are solved jointly
+by treating both mentions and quotations as nodes
+in a generalized structure called a quotation-
+coreference tree (Figure 1, right). The joint sys-
+tem?s decoding process consists in creating such
+a tree, from which a clustering of the nodes can
+be immediatelly obtained. The clustering is inter-
+preted as follows:
+? All mention nodes in the cluster are coreferent,
+thus they describe one single entity (just like in
+a standard coreference tree).
+? Quotation nodes that appear together with those
+mentions in a cluster will be assigned that entity
+as the speaker.
+For example, in Figure 1 (right), the en-
+tity Dorothy L. Sayers (formed by mentions
+{M
+1
+,M
+6
+}) is assigned as the speaker of quota-
+tions Q
+1
+and Q
+2
+. We forbid arcs between quotes
+and from a quote to a mention, effectively con-
+straining the quotes to be leaves in the tree, with
+mentions as parents.
+1
+We force a tree with only
+left-to-right arcs, by choosing a total ordering of
+the nodes that places all the quotations in the right-
+most positions (which implies that any arc con-
+necting a mention to a quotation will point to the
+right). The quotation-coreference tree is obtained
+as the best spanning tree that maximizes a score
+function, to be described next.
+4.1 Basic Model
+Our basic model is a feature-based linear model
+which assigns a score to each candidate arc linking
+two mentions (mention-mention arcs), or linking a
+mention to a quote (mention-quotation arcs). Our
+basic system is called QUOTEBEFORECOREF for
+reasons we will detail in section 4.2.
+4.1.1 Coreference features
+For the mention-mention arcs, we use the same
+coreference features as the SURFACE model of the
+Berkeley Coreference Resolution System (Durrett
+and Klein, 2013), plus features for gender and
+number obtained through the dataset of Bergsma
+and Lin (2006). This is a very simple lexical-
+driven model which achieves state-of-the-art re-
+sults. The features are shown in Table 1.
+4.1.2 Quotation features
+For the quote attribution features, we use features
+inspired by O?Keefe et al. (2012), shown in Ta-
+ble 2. The same set of features works for speakers
+that are individual mentions (in the model just de-
+scribed), and for speakers that are clusters of men-
+tions (used in ?6 for the baseline QUOTEAFTER-
+COREF). These features include various distances
+between the mention and the quote, the indication
+of the speaker being inside the quote span, and var-
+ious contextual features.
+4.2 Final Model
+While the basic model just described puts quo-
+tations and mentions together, it is not more ex-
+pressive than having separate models for the two
+tasks. In fact, if we just have scores for individual
+arcs, the two problems are decoupled: the optimal
+1
+This is implemented by defining ?? scores for all the
+outgoing arcs in a quotation node, as well as incoming arcs
+originating from the root.
+41
+Figure 1: Left: A typical coreference tree for the text snippet in ?1, example (b), with mentions M
+1
+and
+M
+6
+clustered together and M
+2
+and M
+3
+left as singletons. Right: A quotation-coreference tree for the
+same example. Mention nodes are depicted as green circles, and quotation nodes in shaded blue. The
+dashed rectangle represents a branch of the tree, containing the entity cluster associated with the speaker
+Dorothy L. Sayers, as well as the quotes she authored.
+Features on the child mention
+[ANAPHORIC (T/F)] + [CHILD HEAD WORD]
+[ANAPHORIC (T/F)] + [CHILD FIRST WORD]
+[ANAPHORIC (T/F)] + [CHILD LAST WORD]
+[ANAPHORIC (T/F)] + [CHILD PRECEDING WORD]
+[ANAPHORIC (T/F)] + [CHILD FOLLOWING WORD]
+[ANAPHORIC (T/F)] + [CHILD LENGTH]
+Features on the parent mention
+[PARENT HEAD WORD]
+[PARENT FIRST WORD]
+[PARENT LAST WORD]
+[PARENT PRECEDING WORD]
+[PARENT FOLLOWING WORD]
+[PARENT LENGTH]
+[PARENT GENDER]
+[PARENT NUMBER]
+Features on the pair
+[EXACT STRING MATCH (T/F)]
+[HEAD MATCH (T/F)]
+[SENTENCE DISTANCE, CAPPED AT 10]
+[MENTION DISTANCE, CAPPED AT 10]
+Table 1: Coreference features, associated to each
+candidate mention-mention arc in the tree. As in
+Durrett and Klein (2013), we also include con-
+junctions of each feature with the child and parent
+mention types (proper, nominal, or, if pronominal,
+the pronoun word).
+quotation-coreference tree can be obtained by first
+assigning the highest scored mention to each quo-
+tation, and then building a standard coreference
+tree involving only the mention nodes. This cor-
+responds to the QUOTEBEFORECOREF baseline,
+to be used in ?6.
+To go beyond separate models, we introduce
+a final JOINT model, which includes additional
+scores that depend not just on arcs, but also on
+paths in the tree. Concretely, we select certain
+Features on the quote-speaker pair
+[WORD DISTANCE]
+[SENTENCE DISTANCE]
+[# IN-BETWEEN QUOTES]
+[# IN-BETWEEN SPEAKERS]
+[SPEAKER IN QUOTE, 1ST PERS. SG. PRONOUN (T/F)]
+[SPEAKER IN QUOTE, 1ST PERS. PL. PRONOUN (T/F)]
+[SPEAKER IN QUOTE, OTHER (T/F)]
+Features on the speaker
+[PREVIOUS WORD IS QUOTE (T/F)]
+[PREVIOUS WORD IS SAME QUOTE (T/F)]
+[PREVIOUS WORD IS ANOTHER QUOTE (T/F)]
+[PREVIOUS WORD IS SPEAKER (T/F)]
+[PREVIOUS WORD IS PUNCTUATION (T/F)]
+[PREVIOUS WORD IS REPORTED SPEECH VERB (T/F)]
+[PREVIOUS WORD IS VERB (T/F)]
+[NEXT WORD IS QUOTE (T/F)]
+[NEXT WORD IS SAME QUOTE (T/F)]
+[NEXT WORD IS ANOTHER QUOTE (T/F)]
+[NEXT WORD IS SPEAKER (T/F)]
+[NEXT WORD IS PUNCTUATION (T/F)]
+[NEXT WORD IS REPORTED SPEACH VERB (T/F)]
+[NEXT WORD IS VERB (T/F)]
+Table 2: Quotation attribution features, associ-
+ated to each quote-speaker candidate. These
+features are used in the QUOTEONLY, QUOTE-
+BEFORECOREF, and JOINT systems (where the
+speaker is a mention) and in the QUOTEAFTER-
+COREF system (where the speaker is an entity).
+pairs of nodes and introduce scores for the event
+that both nodes are in the same branch of the tree.
+Rather than doing this for all pairs?which es-
+sentially would revert to the computationally de-
+manding pairwise coreference models discussed
+in ?3?we focus on a small set of pairs that are
+mostly related with the interaction between the
+two tasks we address jointly. Namely, we consider
+the mention-quotation pairs such that the mention
+42
+Mention-inside-quote features
+[MENTION IS 1ST PERSON, SING. PRONOUN (T/F)]
+[MENTION IS 1ST PERSON, PLUR. PRONOUN (T/F)]
+[OTHER MENTION (T/F)]
+Consecutive quote features
+[DISTANCE IN NUMBER OF WORDS]
+[DISTANCE IN NUMBER OF SENTENCES]
+Table 3: Features used in the JOINT system for
+mention-quote pairs (only for mentions inside
+quotes) and for quote pairs (only for consecutive
+quotes). These features are associated to pairs in
+the same branch of the quotation-coreference tree.
+span is within the quotation span (mention-inside-
+quotation pairs), and pairs of quotations that ap-
+pear consecutively in the document (consecutive-
+quotation pairs). The idea is that, if consecutive
+quotations appear on the same branch of the tree,
+they will have the same speaker (the entity class
+associated with that branch), even though they
+are not necessarily siblings. These two pairs are
+aligned with the motivating examples (a) and (b)
+shown in ?1.
+4.2.1 Mention-inside-quotation features
+The top rows of Table 3 show the features we de-
+fined for mentions inside quotes. The features in-
+dicate whether the mention is first-person singular
+pronominal (I, me, my, myself ), which provides
+strong evidence that it co-refers with the quotation
+author, whether it is first-person plural pronominal
+(we, us, our, ourselves), which provides a weaker
+evidence (but sometimes works for colective enti-
+ties that are organizations), and whether none of
+the above happens?in which case, the speaker is
+unlikely to be co-referent with the mention.
+4.2.2 Consecutive quotation features
+We show our consecutive quote features in the bot-
+tom rows of Table 3. We use only distance fea-
+tures, measuring both distance in sentences and
+in words, with binning. These simple features are
+enough to capture the trend of consecutive quotes
+that are close apart to have the same speaker.
+5 Joint Decoding and Training
+While decoding in the basic model is easy?
+as pointed out above, it can even be done
+by running a mention-level quotation attribu-
+tor and the coreference resolver independently
+(QUOTEBEFORECOREF)?exact decoding with
+the JOINT model is in general intractable, since
+this model breaks the independence assumption
+between the arcs. However, given the relatively
+small amount of node pairs that have scores (only
+mentions inside quotations and consecutive quota-
+tions), we expect this ?perturbation? to be small
+enough not to affect the quality of an approxi-
+mate decoder. The situation resembles other prob-
+lems in NLP, such as non-projective dependency
+parsing, which becomes intractable if higher order
+interactions between the arcs are considered, but
+can still be well approximated. Inspired by work
+in parsing (Martins et al., 2009) using linear re-
+laxations with multi-commodity flow models, we
+propose a similar strategy by defining auxiliary
+variables and coupling them in a logic program.
+5.1 Logic Formulation
+We next derive the logic program for joint decod-
+ing of coreferences and quotations. The input is a
+set of nodes (including an artificial node), a set of
+candidate arcs with scores, and a set of node pairs
+with scores. To make the exposition lighter, we
+index nodes by integers (starting by the root node
+0) and we do not distinguish between mention and
+quotation nodes. Only arcs from left to right are
+allowed. The variables in our logic program are:
+? Arc variables a
+i?j
+, which take the value 1 if
+there is an arc from i to j, and 0 otherwise.
+? Pair variables p
+i,j
+, which indicate that nodes i
+and j are in the same branch of the tree.
+? Path variables pi
+j?
+?
+k
+, indicating if there is a
+path from j to k.
+? Common ancestor variables ?
+i?
+?
+j,k
+, indicating
+that node i is a common ancestor of nodes j and
+k in the tree.
+Consistency among these variables is ensured by
+the following set of constraints:
+? Each node except the root has exactly one par-
+ent:
+j?1
+?
+i=0
+a
+i?j
+= 1, ?j 6= 0 (1)
+? There is a path from each node to itself:
+pi
+i?
+?
+i
+= 1, ?i (2)
+? There is a path from i to k iff there is some j
+such that i is connected to j and there is path
+43
+from j to k:
+pi
+i?
+?
+k
+=
+?
+i<j?k
+(a
+i?j
+? pi
+j?
+?
+k
+), ?i, k (3)
+? Node i is a common ancestor of k and ` iff there
+is a path from i to k and from i to `:
+?
+i?
+?
+k,`
+= pi
+i?
+?
+k
+? pi
+i?
+?
+`
+, ?i, k, ` (4)
+? Nodes k and ` are in the same branch if they
+have a common ancestor which is not the root:
+p
+k,`
+=
+?
+i 6=0
+?
+i?
+?
+k,`
+, ?k, l. (5)
+The objective to optimize is linear in the arc and
+pair variables (hence the problem can be repre-
+sented as an integer linear program by turning the
+logical constraints into linear inequalities).
+5.2 Dual Decomposition
+To decode, we employ the alternating direc-
+tions dual decomposition algorithm (AD
+3
+), which
+solves a relaxation of the ILP above. AD
+3
+has
+been used successfully in various NLP tasks, such
+as dependency parsing (Martins et al., 2011; Mar-
+tins et al., 2013), semantic role labeling (Das et al.,
+2012), and compressive summarization (Almeida
+and Martins, 2013). At test time, if the solution is
+not integer, we apply a simple rounding procedure
+to obtain an actual tree: for each node j, obtain
+the antecedent (or root) i with the highest a
+i?j
+,
+solving ties arbitrarily.
+5.3 Learning the Model
+We train the joint model with the max-loss variant
+of the MIRA algorithm (Crammer et al., 2006),
+adapted to latent variables (we simply obtain the
+best tree consistent with the gold clustering at each
+step of MIRA, before doing cost-augmented de-
+coding). The resulting algorithm is very similar
+to the latent perceptron algorithm in Fernandes
+et al. (2011), but it uses the aggressive stepsize
+of MIRA. We set the same costs for coreference
+mistakes as Durrett and Klein (2013), and a unit
+cost for missing the correct speaker of a quota-
+tion. For speeding up decoding, we first train a ba-
+sic pruner for the coreference system (using only
+the features described in ?4.1.1), limiting the num-
+ber of candidate antecedents to 10, and discarding
+scores whose difference with respect to the best
+antecedent is below a threshold. We also freeze
+the best coreference trees consistent with the gold
+clustering using the pruner model, to eliminate the
+need of latent variables in the second stage.
+6 Experiments
+6.1 Dataset
+We used the 597 documents of the Wall Street
+Journal (WSJ) corpus that were disclosed for the
+CoNLL-2011 coreference shared task (Pradhan
+et al., 2011) as a dataset for coreference resolu-
+tion. This dataset includes train, development and
+test partitions, annotated with coreference infor-
+mation, as well as gold and automatically gener-
+ated syntactic and semantic information.
+The CoNLL-2011 corpus does not contain an-
+notations of quotation attribution. For that rea-
+son, we used the WSJ quotation annotations in the
+PARC dataset (Pareti, 2012). We used the same
+version of the corpus as O?Keefe et al. (2012),
+but with different splits, to match the dataset parti-
+tions in the coreference resolution data. This attri-
+bution corpus contains 279 documents of the 597
+CoNLL-2011 files, having a total of 1199 anno-
+tated quotes. As in that work, we only consid-
+ered directed speech quotes and the direct part of
+mixed quotes (quotes with both direct and undi-
+rected speech).
+6.2 Metrics for quotation attribution
+Previous evaluations of quotation attribution sys-
+tems were designed at mention level, and are thus
+assessed by comparing the predicted speaker men-
+tion span with the gold one. This metric assesses
+the amount of speaker mentions that were cor-
+rectly identified. For compatibility with previous
+assessments, we report this score, which we call
+Exact Match (EM): this is the percentage of pre-
+dicted speakers with the same span as the gold one.
+However, for several quotations (about 30% in
+the PARC corpus) this information is of little
+value, since the gold mention is a pronoun, which
+per se does not give any useful information about
+the actual speaker entity. Considering this fact,
+we propose two other metrics that capture infor-
+mation at the entity level, reflecting the amount of
+information a system is able to extract about the
+speakers:
+? Representative Speaker Match (RSM): for each
+annotated quote, we obtain the full gold coref-
+erence set of the gold annotated speaker, and
+44
+choose a representative speaker from that clus-
+ter. We define this representative speaker as
+the proper mention which is the closest to the
+quote (if available); if the cluster does not con-
+tain proper mentions, we use the closest nom-
+inal mention; if only pronominal mentions are
+available, we use the original annotated speaker.
+The final measure is the percentage of predicted
+speakers that match the string of the correspond-
+ing representative speakers.
+? Entity Cluster F
+1
+(ECF
+1
+). Considering that a
+system outputs a set of mentions coreferent to
+the predicted speakers, we compute the F
+1
+score
+between the predicted set and the gold corefer-
+ence cluster of the correct speaker.
+The entity level metrics are not only useful for
+assessing the quality of an quotation attribution
+system?they also reflect the quality of the un-
+derlying coreference system used to cluster the re-
+lated mentions.
+6.3 Attribution baselines
+To analyze the task of entity-level quotation attri-
+bution, we implemented three baseline systems.
+? QUOTEONLY: A quotation attribution system
+trained on the representative speaker, instead of
+the gold speaker. For fairness, this baseline was
+trained with an extra feature indicating the type
+of the mention (nominal, pronominal or proper).
+? QUOTEAFTERCOREF: An attribution system
+directly applied to the output of a predicted
+coreference chain. This baseline uses a coref-
+erence pre-processing, as applied in O?Keefe et
+al. (2012).
+? QUOTEBEFORECOREF: An attribution system
+trained on the gold speaker, and post-combined
+with the output of a coreference system. This
+system should be able to provide a set of infor-
+mative mentions about a quote, post-resolving
+the problem of the pronominal speakers. This
+kind of post-coreference approach was used by
+de La Clergerie et al. (2011).
+6.4 Coreference Resolution
+We use the coreference results of our basic
+QUOTEBEFORECOREF system as a baseline for
+coreference resolution. Since this system effec-
+tively solves the two problems separately, this can
+be considered our implementation of the SURFACE
+system of Durrett and Klein (2013) . As reported
+in Table 4, the perfromance of our baseline is
+comparable with the one of the SURFACE system
+of Durrett and Klein (2013), which is denoted as
+SURFACE-DK-2013.
+2
+Table 4 also show the CoNLL metrics obtained
+for the proposed system of joint coreference reso-
+lution and quotation attribution. Our joint system
+outperformed the baseline with statistical signifi-
+cance (with p < 0.05 and according to a bootstrap
+resampling test (Koehn, 2004)) for all metrics ex-
+pect for the CEAFE F
+1
+measure, whose value was
+only slighty improved. These results confirm that
+the coreference resolution task benefits for being
+tackled jointly with quotation attribution.
+6.5 Quotation attribution
+We implemented and trained the three attribution
+systems that were described in ?6.3 and the system
+for joint coreference and author attribution that is
+detailed in ?4. For each system, Table 5 shows the
+mention-based and entity-based metrics that were
+described in ?6.2.
+Training a quotation attribution system using
+representative speakers instead of the gold speak-
+ers (QUOTEONLY) leads to rather disappointing
+results. As expected, we conclude that assigning
+the semantically related speaker is considerably
+easier than selecting another mention that is coref-
+erent with the correct speaker.
+Using (predicted) coreference information,
+both QUOTEAFTERCOREF and QUOTEBE-
+FORECOREF systems considerably increase our
+entity-based metrics. This was also expected,
+since the coreference chain allows these baselines
+to output a set of related mentions. We observed
+that, using the coreference resolution clusters as
+the attribution entity (QUOTEAFTERCOREF) in-
+fluences the results negatively when compared to
+a more basic system that runs coreference on top
+of attribution result of the QUOTEONLY system
+(QUOTEBEFORECOREF). These results indicate
+that the quotation attribution task performs better
+by looking at the speaker mention that connects
+more strongly with the quotation, instead of trying
+to match the whole cluster.
+Finally, the scores achieved by our JOINT
+2
+To make the systems comparable, we re-trained Durrett
+et al.?s coreference system (version 0.9) on the WSJ portion
+of the Ontonotes datasets (the portion which has quote anno-
+tations from Pareti et al.?s PARC dataset). For this reason, the
+values in Table 4 differ from those reported in Durrett and
+Klein (2013), which where trained and tested in the entire
+Ontonotes.
+45
+MUC F
+1
+BCUB F
+1
+CEAFE F
+1
+Avg.
+SURFACE-DK-2013 58.87 62.74 45.46 55.7
+SURFACE-OURS [QUOTEBEFORECOREF] 57.89 62.50 45.48 55.3
+JOINT 58.78 63.79 45.50 56.0
+Table 4: Coreference obtained with the CoNLL scorer (version 5) in the test partition of the WJS cor-
+pus, for the SURFACE system of Durrett and Klein (2013), our baseline implementation of the that sys-
+tem (SURFACE-OURS), and our JOINT approach. All systems were trained in the WSJ portion of the
+Ontonotes.
+EM RSM ECF
+1
+QUOTEONLY 49.1% 49.4% 41.2%
+QUOTEAFTERCOREF 76.7% 64.6% 70.0%
+QUOTEBEFORECOREF 88.7% 74.7% 73.7%
+JOINT 88.1% 76.6% 74.1%
+Table 5: Attribution results obtained, in the test
+set, for the three baseline systems and our joint
+system.
+model are slightly above the best baseline sys-
+tem QUOTEBEFORECOREF, yielding the best per-
+formance on the entity-level quotation attribution
+task. The differences, however, were not found
+statistically significant, probably due to the small
+number of quotes (159) in the test set.
+The average decoding runtime of the JOINT
+model is 1.6 sec. per document, against 0.2 sec.
+for the pipeline system. This slowdown is ex-
+pectable given the fact that the pipeline system
+only needs to make independent decisions, while
+the joint version needs to solve a harder combina-
+torial problem. Yet, this runtime is within the or-
+der of magnitude of the time necessary to prepro-
+cess the documents (which includes tagging and
+parsing the sentences).
+6.6 Error Analysis
+To understand the type of errors that are prevented
+with the JOINT system, consider the following ex-
+ample (from document WSJ-2428):
+? [Robert Dow, a partner and portfolio manager
+at Lord, Abbett & Co.]
+M
+1
+, which manages $4
+billion of high-yield bonds, says [he]
+M
+2
+doesn?t
+?think there is any fundamental economic ra-
+tionale (for the junk bond rout). It was [herd
+instinct]
+M
+3
+.? [He]
+M
+4
+adds: ?The junk market
+has witnessed some trouble and now some peo-
+ple think that if the equity market gets creamed
+that means the economy will be terrible and
+that?s bad for junk.?
+The basic QUOTEBEFORECOREF system
+wrongly clusters together M
+3
+and M
+4
+as corefer-
+ent, and wrongly assigns M
+3
+as the representative
+speaker. On the other hand, the JOINT system
+correctly clusters M
+1
+, M
+2
+and M
+4
+as coreferent.
+This is due to the presence of the consecutive
+quote features which aid in understanding that
+both quotes have the same speaker, and the
+mention-inside-quote features which prevent herd
+instinct, which is inside a quote, from being
+coreferent with He, which is very likely the author
+of the quotes due to the verb adds.
+7 Conclusions
+We presented a framework for joint coreference
+resolution and quotation attribution. We repre-
+sented the problem as finding an optimal spanning
+tree in a graph including both quotation nodes and
+mention nodes. To couple the two tasks, we intro-
+duce variables that look at paths in the tree, indi-
+cating if pairs of nodes are in the same branch, and
+we formulate decoding as a logic program. Each
+branch from the root can then be interpreted as a
+cluster containing all coreferent mentions of an en-
+tity and all quotes from that entity.
+In addition, we designed an evaluation metric
+suitable for entity-level quotation attribution that
+takes into account informative speakers. Experi-
+mental results show mutual improvements in the
+coreference resolution and quotation attribution
+tasks.
+Future work will include extensions to tackle in-
+direct quotations, possibly exploring connections
+to semantic role labeling.
+Acknowledgements
+We thank all reviewers for their valuable com-
+ments, and Silvia Pareti and Tim O?Keefe for pro-
+viding us the PARC dataset and answering sev-
+eral questions. This work was partially supported
+by the EU/FEDER programme, QREN/POR Lis-
+boa (Portugal), under the Intelligo project (con-
+tract 2012/24803) and by a FCT grant PTDC/EEI-
+SII/2312/2012.
+46
+References
+M. B. Almeida and A. F. T. Martins. 2013. Fast and ro-
+bust compressive summarization with dual decom-
+position and multi-task learning. In Proc. of the An-
+nual Meeting of the Association for Computational
+Linguistics.
+Eric Bengtson and Dan Roth. 2008. Understanding the
+value of features for coreference resolution. In Pro-
+ceedings of the Conference on Empirical Methods in
+Natural Language Processing, pages 294?303. As-
+sociation for Computational Linguistics.
+Shane Bergsma and Dekang Lin. 2006. Bootstrapping
+path-based pronoun resolution. In Proceedings of
+the 21st International Conference on Computational
+Linguistics and the 44th annual meeting of the Asso-
+ciation for Computational Linguistics, pages 33?40.
+Association for Computational Linguistics.
+K. Crammer, O. Dekel, J. Keshet, S. Shalev-Shwartz,
+and Y. Singer. 2006. Online Passive-Aggressive Al-
+gorithms. Journal of Machine Learning Research,
+7:551?585.
+Aron Culotta, Michael Wick, Robert Hall, and An-
+drew McCallum. 2007. First-order probabilistic
+models for coreference resolution. In Human Lan-
+guage Technology Conference of the North Ameri-
+can Chapter of the Association for Computational
+Linguistics (HLT/NAACL), pages 81?88.
+D. Das, A. F. T. Martins, and N. A. Smith. 2012. An
+Exact Dual Decomposition Algorithm for Shallow
+Semantic Parsing with Constraints. In Proc. of First
+Joint Conference on Lexical and Computational Se-
+mantics (*SEM).
+?
+Eric de La Clergerie, Beno??t Sagot, Rosa Stern, Pas-
+cal Denis, Ga?elle Recourc?e, and Victor Mignot.
+2011. Extracting and visualizing quotations from
+news wires. In Human Language Technology. Chal-
+lenges for Computer Science and Linguistics, pages
+522?532. Springer.
+Pascal Denis and Jason Baldridge. 2008. Specialized
+models and ranking for coreference resolution. In
+Proceedings of the Conference on Empirical Meth-
+ods in Natural Language Processing, pages 660?
+669. Association for Computational Linguistics.
+Greg Durrett and Dan Klein. 2013. Easy victories and
+uphill battles in coreference resolution. In Proceed-
+ings of the 2013 Conference on Empirical Methods
+in Natural Language Processing.
+Greg Durrett, David Hall, and Dan Klein. 2013.
+Decentralized entity-level modeling for coreference
+resolution. In Proc. of Annual Meeting of the Asso-
+ciation for Computational Linguistics.
+David K Elson and Kathleen McKeown. 2010. Auto-
+matic attribution of quoted speech in literary narra-
+tive. In AAAI.
+William Paulo Ducca Fernandes, Eduardo Motta, and
+Ruy Luiz Milidi?u. 2011. Quotation extraction for
+portuguese. In Proceedings of the 8th Brazilian
+Symposium in Information and Human Language
+Technology (STIL 2011), Cuiab?a, pages 204?208.
+Eraldo Rezende Fernandes, C??cero Nogueira dos San-
+tos, and Ruy Luiz Milidi?u. 2012. Latent structure
+perceptron with feature induction for unrestricted
+coreference resolution. In Joint Conference on
+EMNLP and CoNLL-Shared Task, pages 41?48. As-
+sociation for Computational Linguistics.
+J.R. Finkel, A. Kleeman, and C.D. Manning. 2008. Ef-
+ficient, feature-based, conditional random field pars-
+ing. Proc. of Annual Meeting on Association for
+Computational Linguistics, pages 959?967.
+Aria Haghighi and Dan Klein. 2007. Unsupervised
+coreference resolution in a nonparametric bayesian
+model. In Annual meeting-Association for Compu-
+tational Linguistics, volume 45, page 848.
+Aria Haghighi and Dan Klein. 2010. Coreference
+resolution in a modular, entity-centered model. In
+Human Language Technologies: The 2010 Annual
+Conference of the North American Chapter of the
+Association for Computational Linguistics, pages
+385?393. Association for Computational Linguis-
+tics.
+P. Koehn. 2004. Statistical signicance tests for ma-
+chine translation evaluation. In Proc. of the Annual
+Meeting of the Association for Computational Lin-
+guistics.
+Heeyoung Lee, Yves Peirsman, Angel Chang,
+Nathanael Chambers, Mihai Surdeanu, and Dan Ju-
+rafsky. 2011. Stanford?s multi-pass sieve coref-
+erence resolution system at the conll-2011 shared
+task. In Proceedings of the Fifteenth Conference on
+Computational Natural Language Learning: Shared
+Task, pages 28?34. Association for Computational
+Linguistics.
+Nuno Mamede and Pedro Chaleira. 2004. Char-
+acter identification in children stories. In Ad-
+vances in Natural Language Processing, pages 82?
+90. Springer.
+A. F. T. Martins, N. A. Smith, and E. P. Xing. 2009.
+Concise Integer Linear Programming Formulations
+for Dependency Parsing. In Proc. of Annual Meet-
+ing of the Association for Computational Linguis-
+tics.
+A. F. T. Martins, N. A. Smith, P. M. Q. Aguiar, and
+M. A. T. Figueiredo. 2011. Dual Decomposition
+with Many Overlapping Components. In Proc. of
+Empirical Methods for Natural Language Process-
+ing.
+A. F. T. Martins, M. B. Almeida, and N. A. Smith.
+2013. Turning on the turbo: Fast third-order non-
+projective turbo parsers. In Proc. of the Annual
+Meeting of the Association for Computational Lin-
+guistics.
+47
+Vincent Ng and Claire Cardie. 2002. Improving ma-
+chine learning approaches to coreference resolution.
+In Proceedings of the 40th Annual Meeting on Asso-
+ciation for Computational Linguistics, pages 104?
+111. Association for Computational Linguistics.
+V. Ng. 2010. Supervised noun phrase coreference re-
+search: The first fifteen years. In Proc. of the An-
+nual Meeting of the Association for Computational
+Linguistics.
+Tim O?Keefe, Silvia Pareti, James R Curran, Irena Ko-
+prinska, and Matthew Honnibal. 2012. A sequence
+labelling approach to quote attribution. In Pro-
+ceedings of the 2012 Joint Conference on Empirical
+Methods in Natural Language Processing and Com-
+putational Natural Language Learning, pages 790?
+799. Association for Computational Linguistics.
+Silvia Pareti, Tim O?Keefe, Ioannis Konstas, James R.
+Curran, and Irena Koprinska. 2013. Automatically
+detecting and attributing indirect quotations. In Pro-
+ceedings of the 2013 Conference on Empirical Meth-
+ods in Natural Language Processing.
+Silvia Pareti. 2012. A database of attribution relations.
+In LREC, pages 3213?3217.
+Bruno Pouliquen, Ralf Steinberger, and Clive Best.
+2007. Automatic detection of quotations in multi-
+lingual news. In Proceedings of Recent Advances in
+Natural Language Processing, pages 487?492.
+Sameer Pradhan, Lance Ramshaw, Mitchell Marcus,
+Martha Palmer, Ralph Weischedel, and Nianwen
+Xue. 2011. Conll-2011 shared task: Modeling un-
+restricted coreference in ontonotes. In Proceedings
+of the Fifteenth Conference on Computational Nat-
+ural Language Learning: Shared Task, pages 1?27.
+Association for Computational Linguistics.
+Sameer Pradhan, Alessandro Moschitti, Nianwen Xue,
+Olga Uryupina, and Yuchen Zhang. 2012. Conll-
+2012 shared task: Modeling multilingual unre-
+stricted coreference in ontonotes. In Proceedings
+of the Joint Conference on EMNLP and CoNLL:
+Shared Task, pages 1?40.
+Rashmi Prasad, Nikhil Dinesh, Alan Lee, Eleni Milt-
+sakaki, Livio Robaldo, Aravind K Joshi, and Bon-
+nie L Webber. 2008. The penn discourse treebank
+2.0. In LREC. Citeseer.
+Altaf Rahman and Vincent Ng. 2011. Narrowing the
+modeling gap: A cluster-ranking approach to coref-
+erence resolution. Journal of Artificial Intelligence
+Research, 40(1):469?521.
+Luis Sarmento, Sergio Nunes, and E Oliveira. 2009.
+Automatic extraction of quotes and topics from news
+feeds. In 4th Doctoral Symposium on Informatics
+Engineering.
+Nathan Schneider, Rebecca Hwa, Philip Gianfortoni,
+Dipanjan Das, Michael Heilman, Alan W Black,
+Frederick L Crabbe, and Noah A Smith. 2010. Vi-
+sualizing topical quotations over time to understand
+news discourse. Technical report, Technical Report
+CMU-LTI-01-103, CMU.
+Wee Meng Soon, Hwee Tou Ng, and Daniel
+Chung Yong Lim. 2001. A machine learning ap-
+proach to coreference resolution of noun phrases.
+Computational linguistics, 27(4):521?544.
+Veselin Stoyanov, Nathan Gilbert, Claire Cardie, and
+Ellen Riloff. 2009. Conundrums in noun phrase
+coreference resolution: Making sense of the state-
+of-the-art. In Proceedings of the Joint Conference
+of the 47th Annual Meeting of the ACL and the
+4th International Joint Conference on Natural Lan-
+guage Processing of the AFNLP: Volume 2-Volume
+2, pages 656?664. Association for Computational
+Linguistics.
+Yannick Versley, Simone Paolo Ponzetto, Massimo
+Poesio, Vladimir Eidelman, Alan Jern, Jason Smith,
+Xiaofeng Yang, and Alessandro Moschitti. 2008.
+Bart: A modular toolkit for coreference resolution.
+In Proceedings of the 46th Annual Meeting of the As-
+sociation for Computational Linguistics on Human
+Language Technologies: Demo Session, pages 9?12.
+Association for Computational Linguistics.
+48
+Proceedings of the 8th International Workshop on Semantic Evaluation (SemEval 2014), pages 471?476,
+Dublin, Ireland, August 23-24, 2014.
+Priberam: A Turbo Semantic Parser with Second Order Features
+Andr
+?
+e F. T. Martins
+??
+Mariana S. C. Almeida
+??
+?
+Priberam Labs, Alameda D. Afonso Henriques, 41, 2
+o
+, 1000-123 Lisboa, Portugal
+?
+Instituto de Telecomunicac??oes, Instituto Superior T?ecnico, 1049-001 Lisboa, Portugal
+{atm,mla}@priberam.pt
+Abstract
+This paper presents our contribution to
+the SemEval-2014 shared task on Broad-
+Coverage Semantic Dependency Parsing.
+We employ a feature-rich linear model, in-
+cluding scores for first and second-order
+dependencies (arcs, siblings, grandparents
+and co-parents). Decoding is performed in
+a global manner by solving a linear relax-
+ation with alternating directions dual de-
+composition (AD
+3
+). Our system achieved
+the top score in the open challenge, and the
+second highest score in the closed track.
+1 Introduction
+The last decade saw a considerable progress in sta-
+tistical modeling for dependency syntactic pars-
+ing (K?ubler et al., 2009). Models that incorporate
+rich global features are typically more accurate,
+even if pruning is necessary or decoding needs to
+be approximate (McDonald et al., 2006; Koo and
+Collins, 2010; Bohnet and Nivre, 2012; Martins et
+al., 2009, 2013). This paper applies the same ratio-
+nale to semantic dependency parsing, in which
+the output variable is a semantic graph, rather
+than a syntactic tree. We extend a recently pro-
+posed dependency parser, TurboParser (Martins et
+al., 2010, 2013), to be able to perform semantic
+parsing using any of the three formalisms consid-
+ered in this shared task (DM, PAS, and PCEDT).
+The result is TurboSemanticParser, which we re-
+lease as open-source software.
+1
+We describe here a second order model for se-
+mantic parsing (?2). We follow prior work in se-
+mantic role labeling (Toutanova et al., 2005; Jo-
+This work is licensed under a Creative Commons At-
+tribution 4.0 International Licence. Page numbers and pro-
+ceedings footer are added by the organisers. Licence details:
+http://creativecommons.org/licenses/by/4.0/
+1
+http://labs.priberam.com/Resources/
+TurboSemanticParser
+Figure 1: Example of a semantic graph in the DM
+formalism (sentence #22006003). We treat top
+nodes as a special semantic role TOP whose predi-
+cate is a dummy root symbol.
+hansson and Nugues, 2008; Das et al., 2012; Flani-
+gan et al., 2014), by adding constraints and model-
+ing interactions among arguments within the same
+frame; however, we go beyond such sibling in-
+teractions to consider more complex grandpar-
+ent and co-parent structures, effectively correlat-
+ing different predicates. We formulate parsing as
+a global optimization problem and solve a relax-
+ation through AD
+3
+, a fast dual decomposition al-
+gorithm in which several simple local subprob-
+lems are solved iteratively (?3). Through a rich
+set of features (?4), we arrive at top accuracies at
+parsing speeds around 1,000 tokens per second, as
+described in the experimental section (?5).
+2 A Second Order Model for Parsing
+Figure 1 depicts a sentence and its semantic graph.
+We cast semantic parsing as a structured predic-
+tion problem. Let x be a sentence and Y(x) the
+set of possible dependency graphs. We assume
+each candidate graph y ? Y(x) can be repre-
+sented as a set of substructures (called parts) in
+an underlying set S (e.g., predicates, arcs, pairs
+of adjacent arcs). We design a score function f
+which decomposes as a sum over these substruc-
+tures, f(x, y) :=
+?
+s?S
+f
+s
+(x, y
+s
+). We parametrize
+this function using a weight vector w, and write
+each atomic function as f
+s
+(x, y
+s
+) := w??
+s
+(x, y
+s
+),
+where ?
+s
+(x, y
+s
+) is a vector of local features. The
+decoding problem consists in obtaining the best-
+471
+Algorithm 1 Decoding in an Arc-Factored Model
+1: input: Predicate scores ?
+P
+(p), arc scores ?
+A
+(p ? a),
+labeled arc scores ?
+LA
+(p
+r
+? a).
+2: Initialize semantic graph G? ?
+3: for p = 0 to L do
+4: Initialize ? ? ?
+P
+(p), frame A(p)? ?
+5: for a = 1 to L do
+6: Set r
+?
+? argmax
+r
+?
+LA
+(p
+r
+? a)
+7: if ?
+A
+(p? a) + ?
+LA
+(p
+r
+?
+? a) > 0 then
+8: A(p)? A(p) ? {?p, a, r
+?
+?}
+9: ? ? ? + ?
+A
+(p? a) + ?
+LA
+(p
+r
+?
+? a)
+10: end if
+11: end for
+12: if ? > 0 then set G? G ? {?p,A(p)?}
+13: end for
+14: output: semantic graph G.
+scored semantic graph y? given a sentence x:
+y? = arg max
+y?Y(x)
+f(x, y). (1)
+Our choice of parts is given in Figure 2. The sec-
+ond order parts are inspired by prior work in syn-
+tactic parsing, modeling interactions for pairs of
+(unlabeled) dependency arcs, such as grandpar-
+ents (Carreras, 2007) and siblings (Smith and Eis-
+ner, 2008; Martins et al., 2009). The main novelty
+is co-parent parts, which, to the best of our knowl-
+edge, were never considered before, as they only
+make sense when multiple parents are allowed.
+If all parts were basic, decoding could be done
+independently for each predicate p, as illustrated
+in Algorithm 1. The total runtime, for a sentence
+with L words, is O(L
+2
+|R|), where R is the set
+of semantic roles. Adding consecutive siblings
+still permits independent decoding for each pred-
+icate, but dynamic programming is necessary to
+decode the best argument frame, increasing the
+runtime to O(L
+3
+|R|). The addition of consec-
+utive co-parents, grandparents, and arbitrary sib-
+lings and co-parents breaks this independency and
+sets a demand for approximate decoding. Even
+without second-order parts, the inclusion of hard
+constraints (such as requiring some roles to be
+unique, see ?3) also makes the problem harder.
+2
+Rather than looking for a model in which exact
+decoding is tractable, which could be even more
+stringent for parsing semantic graphs than for de-
+pendency trees, we embrace approximate decod-
+ing strategies. Namely, our approach is based on
+2
+Albeit the dynamic program could still incorporate con-
+straints for unique roles (by appending a bit-string to the state
+to mark semantic roles that have been filled), runtime be-
+comes exponential in the number of unique roles, only being
+feasible when this number is small.
+Figure 2: Parts considered in this paper. The
+top row illustrate the basic parts, representing the
+event that a word is a predicate, or the existence of
+an arc between a predicate and an argument, even-
+tually labeled with a semantic role. Our second-
+order model looks at some pairs of arcs: arcs bear-
+ing a grandparent relationship, arguments of the
+same predicate, predicates sharing the same argu-
+ment, and consecutive versions of these two.
+dual decomposition, a class of optimization tech-
+niques that tackle the dual of combinatorial prob-
+lems in a modular and extensible manner (Ko-
+modakis et al., 2007; Rush et al., 2010). We em-
+ploy alternating directions dual decomposition
+(AD
+3
+; Martins et al., 2011). Like the subgradi-
+ent algorithm of Rush et al. (2010), AD
+3
+splits
+the original problem into local subproblems, and
+seeks an agreement on the overlapping variables.
+The difference is that the AD
+3
+subproblems have
+an additional quadratic term to accelerate con-
+sensus, achieving a faster convergence rate both
+in theory and in practice (Martins et al., 2012,
+2013). For several factors (such as logic factors
+representing AND, OR and XOR constraints, bud-
+get constraints, and binary pairwise factors), these
+quadratic subproblems can be solved efficiently.
+For dense or structured factors, the quadratic sub-
+problems can be solved as a sequence of local
+Viterbi decoding steps, via an active set method
+(Martins, 2014); this local decoding operation is
+the same that needs to be performed in the subgra-
+dient algorithm. We describe these subproblems
+in detail in the next section.
+3 Solving the Subproblems
+Predicate and Arc-Factored Parts. We capture
+all the basic parts with a single component. As
+stated in ?2, local decoding in this component has
+a runtime of O(L
+2
+|R|), by using Algorithm 1.
+Unique Roles. We assume some roles are
+unique, i.e., they can occur at most once for the
+472
+same predicate.
+3
+To cope with unique roles, we
+add hard constraints of the kind
+?
+a
+I(p
+r
+? a ? y) ? 1, ?p,?r ? R
+uniq
+, (2)
+where R
+uniq
+is the set of unique roles. This set is
+obtained from the training data by looking at the
+roles that never occur multiple times in the gold
+argument frames.
+4
+The constraint above corre-
+sponds to a ATMOSTONE factor, which is built-in
+in AD
+3
+and can be decoded in linear time (ren-
+dering the runtime O(L
+2
+|R
+uniq
+|) when aggregat-
+ing all such factors). These have also been used
+by Das et al. (2012) in frame-semantic parsing.
+Grandparents, Arbitrary Siblings and Co-
+parents. The second-order parts in the middle
+row of Figure 2 all involve the simultaneous inclu-
+sion of a pair of arcs, without further dependency
+on the remaining arcs. We handle each of these
+parts using a simple pairwise factor (called PAIR
+in the AD
+3
+toolkit). The total runtime to locally
+decode these factors is O(L
+3
+).
+Predicate Automata. To handle consecutive
+siblings, we adapt the simple head automaton
+model (Alshawi, 1996; Smith and Eisner, 2008;
+Koo et al., 2010) to semantic parsing. We in-
+troduce one automaton for each predicate p and
+attachment direction (left or right). We describe
+right-side predicate automata; their left-side coun-
+terparts are analogous. Let ?a
+0
+, a
+1
+, . . . , a
+k+1
+? be
+the sequence of right modifiers of p, with a
+0
+=
+START and a
+k+1
+= END. Then, we have the fol-
+lowing component capturing consecutive siblings:
+f
+CSIB
+p,?
+(p? a
+1
+, . . . , p? a
+k
+) =
+?
+k+1
+j=1
+?
+CSIB
+(p, a
+j?1
+, a
+j
+). (3)
+Maximizing f
+CSIB
+p,?
+via dynamic programming has
+a cost of O(L
+2
+), yielding O(L
+3
+) total runtime.
+Argument Automata. For consecutive co-
+parents, we introduce another automaton which is
+analogous to the predicate automaton, but where
+arrows are reversed. Let ?p
+0
+, p
+1
+, . . . , p
+k+1
+? be
+the sequence of right predicates that take a as
+argument (the left-side case is analagous), with
+p
+0
+= START and p
+k+1
+= END. We define:
+f
+CCP
+a,?
+(a? p
+1
+, . . . , a? p
+k
+) =
+?
+k+1
+j=1
+?
+CCP
+(a, p
+j?1
+, p
+j
+). (4)
+3
+Such roles have been called ?deterministic? by Flanigan
+et al. (2014).
+4
+For PAS, all 43 roles were found unique; for DM, this
+number is 40 out of 52, and for PCEDT only 3 out of 69.
+The total runtime is also O(L
+3
+).
+4 Features
+We define binary features for each part represented
+in Figure 2. Most of the features are taken from
+TurboParser (Martins et al., 2013), while others
+are inspired by the semantic parser of Johansson
+and Nugues (2008). Those features marked with
+?
+require information from the dependency syntactic
+parser, and are only used in the open track.
+5
+Predicate Features. Our predicate features are:
+? PREDWORD, PREDLEMMA, PREDPOS. Lexi-
+cal form, lemma, and POS tag of the predicate.
+? PREDREL.
+?
+Syntactic dependency relation be-
+tween the predicate and its head.
+? PREDHEADWORD/POS.
+?
+Form and POS tag
+of the predicate syntactic head, conjoined with
+the predicate word and POS tag.
+? PREDMODWORD/POS/REL.
+?
+Form, POS tag,
+and dependency relation of the predicate syn-
+tactic dependents, conjoined with the predicate
+word and POS tag.
+Arc Features. All features above, plus the fol-
+lowing (conjoined with arc direction and label):
+? ARGWORD, ARGLEMMA, ARGPOS. The lex-
+ical form, lemma, and POS tag of the argument.
+? ARGREL.
+?
+Syntactic dependency relation be-
+tween the argument and its head.
+? LEFTWORD/POS,
+?
+RIGHTWORD/POS.
+?
+Form/POS tag of the leftmost/rightmost de-
+pendent of the argument, conjoined with the
+predicate word and POS tag.
+? LEFTSIBWORD/POS,
+?
+RIGHTSIBWORD/POS.
+?
+Form/POS tag of the left/right sibling of the
+argument, conjoined with the predicate tag.
+? PREDCONTEXTWORD, PREDCONTEXTPOS,
+PREDCONTEXTLEMMA. Word, POS, and
+lemma on the left and right context of the pred-
+icate (context size is 2).
+? PREDCONTEXTPOSBIGRAM/TRIGRAM. Bi-
+gram and trigram of POS tags on the left and
+right side of the predicate.
+? PREDVOICE.
+?
+Predicate voice: active, passive,
+or none. Determined from the syntactic depen-
+dency tree as in Johansson and Nugues (2008).
+5
+For the open track, the only external information used by
+our system were the provided automatic dependency trees.
+473
+? PREDWORDARGWORD, PREDWORDARG-
+POS, PREDPOSARGWORD, PREDPOSARG-
+POS. Predicate word/tag conjoined with
+argument word/tag.
+? PREDARGPOSCONTEXT. Several features
+conjoining the POS of words surrounding the
+predicate and argument (similar to the contex-
+tual features in McDonald et al. (2005)).
+? EXACTARCLENGTH, BINNEDARCLENGTH.
+Exact and binned arc length (distance between
+predicate and argument), conjoined with the
+predicate and argument POS tags.
+? POSINBETWEEN, WORDINBETWEEN. POS
+and forms between the predicate and argument,
+conjoined with their own POS tags and forms.
+? RELPATH,
+?
+POSPATH.
+?
+Path in the syntactic
+dependency tree between the predicate and the
+argument. The path is formed either by depen-
+dency relations or by POS tags.
+Second Order Features. These involve a pred-
+icate, an argument, and a ?companion word?
+(which can be a second argument, in the case of
+siblings, a second predicate, for co-parents, or the
+argument of another argument, for grandparents).
+In all cases, features are of the following kind:
+? POSTRIPLET. POS tags of the predicate, the
+argument, and the companion word.
+? UNILEXICAL. One word form (for the predi-
+cate/argument/companion) and two POS tags.
+? BILEXICAL. One POS tag (for the predi-
+cate/argument/companion) and two word forms.
+? PAIRWISE. Backed-off pair features for the
+companion word form/POS tag and the word
+form/POS of the predicate/argument.
+5 Experimental Results
+All models were trained by running 10 epochs of
+max-loss MIRA with C = 0.01 (Crammer et al.,
+2006). The cost function takes into account mis-
+matches between predicted and gold dependen-
+cies, with a cost c
+P
+on labeled arcs incorrectly
+predicted (false positives) and a cost c
+R
+on gold
+labeled arcs that were missed (false negatives).
+These values were set through cross-validation in
+the dev set, yielding c
+P
+= 0.4 and c
+R
+= 0.6 in all
+runs, except for the DM and PCEDT datasets in the
+closed track, for which c
+P
+= 0.3 and c
+R
+= 0.7.
+To speed up decoding, we discard arcs whose
+posterior probability is below 10
+?4
+, according to a
+probabilistic unlabeled first-order pruner. Table 1
+shows a significant reduction of the search space
+with a very small drop in recall.
+Table 2 shows our final results in the test set,
+for a model trained in the train and development
+partitions. Our system achieved the best score in
+the open track (an LF score of 86.27%, averaged
+over DM, PAS, and PCEDT), and the second best in
+the closed track, after the Peking team. Overall,
+we observe that the precision and recall in PCEDT
+are far below the other two formalisms, but this
+difference is much smaller when looking at unla-
+beled scores. Comparing the results in the closed
+and open tracks, we observe a consistent improve-
+ment in the three formalisms of around 1% in F
+1
+from using syntactic information. While this con-
+firms previous findings that syntactic features are
+important in semantic role labeling (Toutanova et
+al., 2005; Johansson and Nugues, 2008), these im-
+provements are less striking than expected. We
+conjecture this is due to the fact that our model in
+the closed track already incorporates a variety of
+contextual features which are nearly as informa-
+tive as those extracted from the dependency trees.
+Finally, to assess the importance of the second
+order features, Table 3 reports experiments in the
+dev-set that progressively add several groups of
+features, along with runtimes. We can see that
+siblings, co-parents, and grandparents all provide
+valuable information that improves the final scores
+(with the exception of the PCEDT labeled scores,
+where the difference is negligible). This comes
+at only a small cost in terms of runtime, which is
+around 1,000 tokens per second for the full mod-
+els.
+UR # UA/tok LR # LA/tok
+DM 99.33 3.5 (13.4%) 99.22 34.4 (2.5%)
+PAS 99.53 3.3 (12.5%) 99.49 20.8 (1.9%)
+PCEDT 99.03 2.1 (8.2%) 98.77 54.5 (3.0%)
+Table 1: Pruner statistics in the dev-set, for the
+open track. Shown are oracle recall scores, consid-
+ering both unlabeled (UR) and labeled arcs (LR);
+and the averaged number of unlabeled and la-
+beled arcs per token that remained after the prun-
+ing stage (# UA/tok and # LA/tok). In brackets,
+we show the fraction of unlabeled/labeled arcs that
+survived the pruning.
+474
+UP UR UF LP LR LF
+DM, closed 90.14 88.65 89.39 88.82 87.35 88.08
+PAS, closed 93.18 91.12 92.14 91.95 89.92 90.93
+PCEDT, closed 90.21 85.51 87.80 78.80 74.70 76.70
+average, closed ? ? 89.77 ? ? 85.24
+DM, open 91.41 89.26 90.32 90.23 88.11 89.16
+PAS, open 93.62 92.01 92.81 92.56 90.97 91.76
+PCEDT, open 91.58 86.61 89.03 80.14 75.79 77.90
+average, open ? ? 90.72 ? ? 86.27
+Table 2: Submitted results for the closed and open
+tracks. For comparison, the best-performing sys-
+tem in the closed track (Peking) obtained averaged
+UF and LF scores of 91.03% and 85.91%, respec-
+tively.
+UF LF Tok/sec
+DM, arc-factored 89.90 88.96 1,681
+DM, arc-factored, pruned 89.85 88.90 2,642
++siblings 90.34 89.34 1,838
++co-parents 90.80 89.76 1,073
++grandparent (full) 90.95 89.90 955
+PAS, arc-factored 92.34 91.40 1,927
+PAS, arc-factored, pruned 92.35 91.40 2,914
++siblings 92.45 91.45 2,106
++co-parents 92.71 91.71 1,104
++grandparent (full) 92.87 91.87 1,043
+PCEDT, arc-factored 87.90 79.90 1,558
+PCEDT, arc-factored, pruned 87.74 79.83 2,906
++siblings 88.46 79.98 2,066
++co-parents 90.17 79.90 1,531
++grandparent (full) 90.18 80.03 1,371
+Table 3: Results in the dev-set for the open track,
+progressively adding several groups of features,
+until the full model is obtained. We report un-
+labeled/labeled F
+1
+and parsing speeds in tokens
+per second. Our speeds include the time necessary
+for pruning, evaluating features, and decoding, as
+measured on a Intel Core i7 processor @3.4 GHz.
+6 Conclusions
+We have described a system for broad-coverage
+semantic dependency parsing. Our system, which
+is inspired by prior work in syntactic parsing, im-
+plements a linear model with second-order fea-
+tures, being able to model interactions between
+siblings, grandparents and co-parents. We have
+shown empirically that second-order features have
+an impact in the final scores. Approximate de-
+coding was performed via alternating directions
+dual decomposition (AD
+3
+), yielding fast runtimes
+of around 1,000 tokens per second.
+Acknowledgements
+We would like to thank the reviewers for
+their helpful comments. This work was par-
+tially supported by the EU/FEDER programme,
+QREN/POR Lisboa (Portugal), under the Intelligo
+project (contract 2012/24803) and by a FCT grant
+PTDC/EEI-SII/2312/2012.
+References
+Hiyan Alshawi. 1996. Head automata and bilingual
+tiling: Translation with minimal representations. In
+Proc. of Annual Meeting of the Association for Com-
+putational Linguistics, pages 167?176.
+Bernd Bohnet and Joakim Nivre. 2012. A transition-
+based system for joint part-of-speech tagging and la-
+beled non-projective dependency parsing. In Proc.
+of the Empirical Methods in Natural Language Pro-
+cessing, pages 1455?1465.
+Xavier Carreras. 2007. Experiments with a higher-
+order projective dependency parser. In International
+Conference on Natural Language Learning, pages
+957?961.
+Koby Crammer, Ofer Dekel, Joseph Keshet, Shai
+Shalev-Shwartz, and Yoram Singer. 2006. On-
+line Passive-Aggressive Algorithms. Journal of Ma-
+chine Learning Research, 7:551?585.
+Dipanjan Das, Andr?e F. T. Martins, and Noah A. Smith.
+2012. An Exact Dual Decomposition Algorithm
+for Shallow Semantic Parsing with Constraints. In
+Proc. of First Joint Conference on Lexical and Com-
+putational Semantics (*SEM), pages 209?217.
+Jeffrey Flanigan, Sam Thomson, Jaime Carbonell,
+Chris Dyer, and Noah A. Smith. 2014. A discrim-
+inative graph-based parser for the abstract mean-
+ing representation. In Proc. of the Annual Meet-
+ing of the Association for Computational Linguis-
+tics, pages 1426?1436.
+Richard Johansson and Pierre Nugues. 2008.
+Dependency-based syntactic?semantic analysis with
+PropBank and NomBank. International Conference
+on Natural Language Learning, pages 183?187.
+Nikos Komodakis, Nikos Paragios, and Georgios Tzir-
+itas. 2007. MRF optimization via dual decompo-
+sition: Message-passing revisited. In Proc. of In-
+ternational Conference on Computer Vision, pages
+1?8.
+Terry Koo and Michael Collins. 2010. Efficient third-
+order dependency parsers. In Proc. of Annual Meet-
+ing of the Association for Computational Linguis-
+tics, pages 1?11.
+Terry Koo, Alexander M. Rush, Michael Collins,
+Tommi Jaakkola, and David Sontag. 2010. Dual
+decomposition for parsing with non-projective head
+automata. In Proc. of Empirical Methods for Natu-
+ral Language Processing, pages 1288?1298.
+475
+Sandra K?ubler, Ryan McDonald, and Joakim Nivre.
+2009. Dependency parsing. Morgan & Claypool
+Publishers.
+Andr?e F. T. Martins, Noah A. Smith, and Eric P. Xing.
+2009. Concise Integer Linear Programming Formu-
+lations for Dependency Parsing. In Proc. of Annual
+Meeting of the Association for Computational Lin-
+guistics, pages 342?350.
+Andr?e F. T. Martins, Noah A. Smith, Eric P. Xing,
+Pedro M. Q. Aguiar, and M?ario A. T. Figueiredo.
+2010. Turbo Parsers: Dependency Parsing by Ap-
+proximate Variational Inference. In Proc. of Em-
+pirical Methods for Natural Language Processing,
+pages 34?44.
+Andr?e F. T. Martins, Noah A. Smith, Pedro M. Q.
+Aguiar, and M?ario A. T. Figueiredo. 2011. Dual De-
+composition with Many Overlapping Components.
+In Proc. of Empirical Methods for Natural Language
+Processing, pages 238?249.
+Andr?e F. T. Martins, M?ario A. T. Figueiredo, Pedro
+M. Q. Aguiar, Noah A. Smith, and Eric P. Xing.
+2012. Alternating directions dual decomposition.
+Arxiv preprint arXiv:1212.6550.
+Andr?e F. T. Martins, Miguel B. Almeida, and Noah A.
+Smith. 2013. Turning on the turbo: Fast third-order
+non-projective turbo parsers. In Proc. of the Annual
+Meeting of the Association for Computational Lin-
+guistics, pages 617?622.
+Andr?e F. T. Martins. 2014. AD
+3
+: A Fast Decoder
+for Structured Prediction. In S. Nowozin, P. Gehler,
+J. Jancsary, and C. Lampert, editors, Advanced
+Structured Prediction. MIT Press, Cambridge, MA,
+USA.
+Ryan McDonald, Koby Crammer, and Fernando
+Pereira. 2005. Online large-margin training of de-
+pendency parsers. In Proc. of Annual Meeting of the
+Association for Computational Linguistics, pages
+91?98.
+Ryan McDonald, Kevin Lerman, and Fernando Pereira.
+2006. Multilingual dependency analysis with a two-
+stage discriminative parser. In Proc. of International
+Conference on Natural Language Learning, pages
+216?220.
+Alexander M. Rush, David Sontag, Michael Collins,
+and Tommi Jaakkola. 2010. On dual decomposi-
+tion and linear programming relaxations for natural
+language processing. In Proc. of Empirical Methods
+for Natural Language Processing.
+David A. Smith and Jason Eisner. 2008. Dependency
+parsing by belief propagation. In Proc. of Empirical
+Methods for Natural Language Processing, pages
+145?156.
+Kristina Toutanova, Aria Haghighi, and Christopher
+Manning. 2005. Joint learning improves semantic
+role labeling. In ACL, pages 589?596.
+476

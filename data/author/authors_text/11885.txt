@@ -1,0 +1,2530 @@
+Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing, pages 62?71,
+Singapore, 6-7 August 2009. c?2009 ACL and AFNLP
+Cube Pruning as Heuristic Search
+Mark Hopkins and Greg Langmead
+Language Weaver, Inc.
+4640 Admiralty Way, Suite 1210
+Marina del Rey, CA 90292
+{mhopkins,glangmead}@languageweaver.com
+Abstract
+Cube pruning is a fast inexact method for
+generating the items of a beam decoder.
+In this paper, we show that cube pruning
+is essentially equivalent to A* search on a
+specific search space with specific heuris-
+tics. We use this insight to develop faster
+and exact variants of cube pruning.
+1 Introduction
+In recent years, an intense research focus on ma-
+chine translation (MT) has raised the quality of
+MT systems to the degree that they are now viable
+for a variety of real-world applications. Because
+of this, the research community has turned its at-
+tention to a major drawback of such systems: they
+are still quite slow. Recent years have seen a flurry
+of innovative techniques designed to tackle this
+problem. These include cube pruning (Chiang,
+2007), cube growing (Huang and Chiang, 2007),
+early pruning (Moore and Quirk, 2007), clos-
+ing spans (Roark and Hollingshead, 2008; Roark
+and Hollingshead, 2009), coarse-to-fine methods
+(Petrov et al, 2008), pervasive laziness (Pust and
+Knight, 2009), and many more.
+This massive interest in speed is bringing rapid
+progress to the field, but it comes with a certain
+amount of baggage. Each technique brings its own
+terminology (from the cubes of (Chiang, 2007)
+to the lazy lists of (Pust and Knight, 2009)) into
+the mix. Often, it is not entirely clear why they
+work. Many apply only to specialized MT situ-
+ations. Without a deeper understanding of these
+methods, it is difficult for the practitioner to com-
+bine them and adapt them to new use cases.
+In this paper, we attempt to bring some clarity
+to the situation by taking a closer look at one of
+these existing methods. Specifically, we cast the
+popular technique of cube pruning (Chiang, 2007)
+in the well-understood terms of heuristic search
+(Pearl, 1984). We show that cube pruning is essen-
+tially equivalent to A* search on a specific search
+space with specific heuristics. This simple obser-
+vation affords a deeper insight into how and why
+cube pruning works. We show how this insight en-
+ables us to easily develop faster and exact variants
+of cube pruning for tree-to-string transducer-based
+MT (Galley et al, 2004; Galley et al, 2006; DeN-
+ero et al, 2009).
+2 Motivating Example
+We begin by describing the problem that cube
+pruning addresses. Consider a synchronous
+context-free grammar (SCFG) that includes the
+following rules:
+A ? ?A 0 B 1 , A 0 B 1 ? (1)
+B ? ?A 0 B 1 , B 1 A 0 ? (2)
+A ? ?B 0 A 1 , c B 0 b A 1 ? (3)
+B ? ?B 0 A 1 , B 0 A 1 ? (4)
+Figure 1 shows CKY decoding in progress. CKY
+is a bottom-up algorithm that works by building
+objects known as items, over increasingly larger
+spans of an input sentence (in the context of SCFG
+decoding, the items represent partial translations
+of the input sentence). To limit running time, it is
+common practice to keep only the n ?best? items
+per span (this is known as beam decoding). At
+this point in Figure 1, every span of size 2 or less
+has already been filled, and now we want to fill
+span [2, 5] with the n items of lowest cost. Cube
+pruning addresses the problem of how to compute
+the n-best items efficiently.
+We can be more precise if we introduce some
+terminology. An SCFG rule has the form X ?
+??, ?,??, where X is a nonterminal (called the
+postcondition), ?, ? are strings that may contain
+terminals and nonterminals, and ? is a 1-1 corre-
+spondence between equivalent nonterminals of ?
+and ?.
+62
+Figure 1: CKY decoding in progress. We want to
+fill span [2,5] with the lowest cost items.
+Usually SCFG rules are represented like the ex-
+ample rules (1)-(4). The subscripts indicate cor-
+responding nonterminals (according to ?). Define
+the preconditions of a rule as the ordered sequence
+of its nonterminals. For clarity of presentation, we
+will henceforth restrict our focus to binary rules,
+i.e. rules of the form: Z ? ?X 0 Y 1 , ??. Observe
+that all the rules of our example are binary rules.
+An item is a triple that contains a span and two
+strings. We refer to these strings as the postcon-
+dition and the carry, respectively. The postcon-
+dition tells us which rules may be applied to the
+item. The carry gives us extra information re-
+quired to correctly score the item (in SCFG decod-
+ing, typically it consists of boundary words for an
+n-gram language model). 1 To flatten the notation,
+we will generally represent items as a 4-tuple, e.g.
+[2, 4,X, a ? b].
+In CKY, new items are created by applying rules
+to existing items:
+r : Z ? ?X 0 Y 1 , ?? [?, ?,X, ?1] [?, ?,Y, ?2]
+[?, ?,Z, carry(r, ?
+1
+, ?
+2
+)]
+(5)
+In other words, we are allowed to apply a
+rule r to a pair of items ?
+1
+, ?
+2
+if the item
+spans are complementary and preconditions(r) =
+?postcondition(?
+1
+), postcondition(?
+2
+)?. The new
+item has the same postcondition as the applied
+rule. We form the carry for the new item through
+an application-dependent function carry that com-
+bines the carries of its subitems (e.g. if the carry is
+n-gram boundary words, then carry computes the
+1Note that the carry is a generic concept that can store any
+kind of non-local scoring information.
+new boundary words). As a shorthand, we intro-
+duce the notation ?
+1
+? r ? ?
+2
+to describe an item
+created by applying formula (5) to rule r and items
+?
+1
+, ?
+2
+.
+When we create a new item, it is scored using
+the following formula: 2
+cost(?
+1
+? r ? ?
+2
+) , cost(r)
++ cost(?
+1
+)
++ cost(?
+2
+)
++ interaction(r, ?
+1
+, ?
+2
+)
+(6)
+We assume that each grammar rule r has an
+associated cost, denoted cost(r). The interac-
+tion cost, denoted interaction(r, ?
+1
+, ?
+2
+), uses the
+carry information to compute cost components
+that cannot be incorporated offline into the rule
+costs (again, for our purposes, this is a language
+model score).
+Cube pruning addresses the problem of effi-
+ciently computing the n items of lowest cost for
+a given span.
+3 Item Generation as Heuristic Search
+Refer again to the example in Figure 1. We want to
+fill span [2,5]. There are 26 distinct ways to apply
+formula (5), which result in 10 unique items. One
+approach to finding the lowest-cost n items: per-
+form all 26 distinct inferences, compute the cost of
+the 10 unique items created, then choose the low-
+est n.
+The 26 different ways to form the items can be
+structured as a search tree. See Figure 2. First
+we choose the subspans, then the rule precondi-
+tions, then the rule, and finally the subitems. No-
+tice that this search space is already quite large,
+even for such a simple example. In a realistic situ-
+ation, we are likely to have a search tree with thou-
+sands (possibly millions) of nodes, and we may
+only want to find the best 100 or so goal nodes.
+To explore this entire search space seems waste-
+ful. Can we do better?
+Why not perform heuristic search directly on
+this search space to find the lowest-cost n items?
+In order to do this, we just need to add heuristics
+to the internal nodes of the space.
+Before doing so, it will help to elaborate on
+some of the details of the search tree. Let
+rules(X,Y) be the subset of rules with precondi-
+tions ?X,Y?, sorted by increasing cost. Similarly,
+2Without loss of generality, we assume an additive cost
+function.
+63
+Figure 2: Item creation, structured as a search
+space. rule(X,Y, k) denotes the kth lowest-cost
+rule with preconditions ?X,Y?. item(?, ?,X, k)
+denotes the kth lowest-cost item of span [?, ?]
+with postcondition X.
+let items(?, ?,X) be the subset of items with span
+[?, ?] and postcondition X, also sorted by increas-
+ing cost. Finally, let rule(X,Y, k) denote the kth
+rule of rules(X,Y) and let item(?, ?,X, k) denote
+the kth item of items(?, ?,X).
+A path through the search tree consists of the
+following sequence of decisions:
+1. Set i, j, k to 1.
+2. Choose the subspans: [?, ?], [?, ?].
+3. Choose the first precondition X of the rule.
+4. Choose the second precondition Y of the
+rule.
+5. While rule not yet accepted and i <
+|rules(X,Y)|:
+(a) Choose to accept/reject rule(X,Y, i). If
+reject, then increment i.
+6. While item not yet accepted for subspan
+[?, ?] and j < |items(?, ?,X)|:
+(a) Choose to accept/reject item(?, ?,X, j).
+If reject, then increment j.
+7. While item not yet accepted for subspan [?, ?]
+and k < |items(?, ?,Y)|:
+(a) Choose to accept/reject item(?, ?,Y, k).
+If reject, then increment k.
+Figure 3: The lookahead heuristic. We set the
+heuristics for rule and item nodes by looking
+ahead at the cost of the greedy solution from that
+point in the search space.
+Figure 2 shows two complete search paths for
+our example, terminated by goal nodes (in black).
+Notice that the internal nodes of the search space
+can be classified by the type of decision they
+govern. To distinguish between these nodes, we
+will refer to them as subspan nodes, precondition
+nodes, rule nodes, and item nodes.
+We can now proceed to attach heuristics to the
+nodes and run a heuristic search protocol, say A*,
+on this search space. For subspan and precondition
+nodes, we attach trivial uninformative heuristics,
+i.e. h = ??. For goal nodes, the heuristic is the
+actual cost of the item they represent. For rule and
+item nodes, we will use a simple type of heuristic,
+often referred to in the literature as a lookahead
+heuristic. Since the rule nodes and item nodes are
+ordered, respectively, by rule and item cost, it is
+possible to ?look ahead? at a greedy solution from
+any of those nodes. See Figure 3. This greedy so-
+lution is reached by choosing to accept every de-
+cision presented until we hit a goal node.
+If these heuristics were admissible (i.e. lower
+bounds on the cost of the best reachable goal
+node), this would enable us to exactly generate the
+n-best items without exhausting the search space
+(assuming the heuristics are strong enough for A*
+to do some pruning). Here, the lookahead heuris-
+tics are clearly not admissible, however the hope
+is that A* will generate n ?good? items, and that
+the time savings will be worth sacrificing exact-
+ness for.
+64
+4 Cube Pruning as Heuristic Search
+In this section, we will compare cube pruning with
+our A* search protocol, by tracing through their
+respective behaviors on the simple example of Fig-
+ure 1.
+4.1 Phase 1: Initialization
+To fill span [?, ?], cube pruning (CP) begins by
+constructing a cube for each tuple of the form:
+?[?, ?], [?, ?], X , Y?
+where X and Y are nonterminals. A cube consists
+of three axes: rules(X,Y) and items(?, ?,X) and
+items(?, ?,Y). Figure 4(left) shows the nontrivial
+cubes for our example scenario.
+Contrast this with A*, which begins by adding
+the root node of our search space to an empty heap
+(ordered by heuristic cost). It proceeds to repeat-
+edly pop the lowest-cost node from the heap, then
+add its children to the heap (we refer to this op-
+eration as visiting the node). Note that before A*
+ever visits a rule node, it will have visited every
+subspan and precondition node (because they all
+have cost h = ??). Figure 4(right) shows the
+state of A* at this point in the search. We assume
+that we do not generate dead-end nodes (a simple
+matter of checking that there exist applicable rules
+and items for the chosen subspans and precondi-
+tions). Observe the correspondence between the
+cubes and the heap contents at this point in the A*
+search.
+4.2 Phase 2: Seeding the Heap
+Cube pruning proceeds by computing the ?best?
+item of each cube ?[?, ?], [?, ?], X , Y?, i.e.
+item(?, ?,X, 1)? rule(X,Y, 1)? item(?, ?,Y, 1)
+Because of the interaction cost, there is no guaran-
+tee that this will really be the best item of the cube,
+however it is likely to be a good item because the
+costs of the individual components are low. These
+items are added to a heap (to avoid confusion, we
+will henceforth refer to the two heaps as the CP
+heap and the A* heap), and prioritized by their
+costs.
+Consider again the example. CP seeds its heap
+with the ?best? items of the 4 cubes. There is now
+a direct correspondence between the CP heap and
+the A* heap. Moreover, the costs associated with
+the heap elements also correspond. See Figure 5.
+4.3 Phase 3: Finding the First Item
+Cube pruning now pops the lowest-cost item from
+the CP heap. This means that CP has decided to
+keep the item. After doing so, it forms the ?one-
+off? items and pushes those onto the CP heap. See
+Figure 5(left). The popped item is:
+item (viii) ? rule (1) ? item (xii)
+CP then pushes the following one-off successors
+onto the CP heap:
+item (viii) ? rule (2) ? item (xii)
+item (ix) ? rule (1) ? item (xii)
+item (viii) ? rule (1) ? item (xiii)
+Contrast this with A*, which pops the lowest-
+cost search node from the A* heap. Here we need
+to assume that our A* protocol differs slightly
+from standard A*. Specifically, it will practice
+node-tying, meaning that when it visits a rule node
+or an item node, then it also (atomically) visits all
+nodes on the path to its lookahead goal node. See
+Figure 5(right). Observe that all of these nodes
+have the same heuristic cost, thus standard A* is
+likely to visit these nodes in succession without
+the need to enforce node-tying, but it would not
+be guaranteed (because the heuristics are not ad-
+missible). A* keeps the goal node it finds and adds
+the successors to the heap, scored with their looka-
+head heuristics. Again, note the direct correspon-
+dence between what CP and A* keep, and what
+they add to their respective heaps.
+4.4 Phase 4: Finding Subsequent Items
+Cube pruning and A* continue to repeat Phase
+3 until k unique items have been kept. While
+we could continue to trace through the example,
+by now it should be clear: cube pruning and our
+A* protocol with node-tying are doing the same
+thing at each step. In fact, they are exactly the
+same algorithm. We do not present a formal proof
+here; this statement should be regarded as confi-
+dent conjecture.
+The node-tying turns out to be an unnecessary
+artifact. In our early experiments, we discovered
+that node-tying has no impact on speed or qual-
+ity. Hence, for the remainder of the paper, we
+view cube pruning in very simple terms: as noth-
+ing more than standard A* search on the search
+space of Section 3.
+65
+Figure 4: (left) Cube formation for our example. (right) The A* protocol, after all subspan and precon-
+dition nodes have been visited. Notice the correspondence between the cubes and the A* heap contents.
+Figure 5: (left) One step of cube pruning. (right) One step of the A* protocol. In this figure,
+cost(r, ?
+1
+, ?
+2
+) , cost(?
+1
+? r ? ?
+2
+).
+66
+5 Augmented Cube Pruning
+Viewed in this light, the idiosyncracies of cube
+pruning begin to reveal themselves. On the one
+hand, rule and item nodes are associated with
+strong but inadmissible heuristics (the short expla-
+nation for why cube pruning is an inexact algo-
+rithm). On the other hand, subspan and precondi-
+tion nodes are associated with weak trivial heuris-
+tics. This should be regarded neither as a surprise
+nor a criticism, considering cube pruning?s origins
+in hierarchical phrase-based MT models (Chiang,
+2007), which have only a small number of distinct
+nonterminals.
+But the situation is much different in tree-
+to-string transducer-based MT (Galley et al,
+2004; Galley et al, 2006; DeNero et al, 2009).
+Transducer-based MT relies on SCFGs with large
+nonterminal sets. Binarizing the grammars (Zhang
+et al, 2006) further increases the size of these sets,
+due to the introduction of virtual nonterminals.
+A key benefit of the heuristic search viewpoint
+is that it is well positioned to take advantage of
+such insights into the structure of a particular de-
+coding problem. In the case of transducer-based
+MT, the large set of preconditions encourages us
+to introduce a nontrivial heuristic for the precon-
+dition nodes. The inclusion of these heuristics into
+the CP search will enable A* to eliminate cer-
+tain preconditions from consideration, giving us a
+speedup. For this reason we call this strategy aug-
+mented cube pruning.
+5.1 Heuristics on preconditions
+Recall that the total cost of a goal node is given by
+Equation (6), which has four terms. We will form
+the heuristic for a precondition node by creating
+a separate heuristic for each of the four terms and
+using the sum as the overall heuristic.
+To describe these heuristics, we will make intu-
+itive use of the wildcard operator ? to extend our
+existing notation. For instance, items(?, ?, *) will
+denote the union of items(?, ?,X) over all possi-
+ble X, sorted by cost.
+We associate the heuristic h(?,X,Y) with the
+search node reached by choosing subspans [?, ?],
+[?, ?], precondition X (for span [?, ?]), and precon-
+dition Y (for span [?, ?]). The heuristic is the sum
+of four terms, mirroring Equation (6):
+h(?,X,Y) = cost(rule(X,Y, 1))
++ cost(item(?, ?,X, 1))
++ cost(item(?, ?,Y, 1))
++ ih(?,X,Y)
+The first three terms are admissible because
+each is simply the minimum possible cost of
+some choice remaining to be made. To con-
+struct the interaction heuristic ih(?,X,Y), con-
+sider that in a translation model with an inte-
+grated n-gram language model, the interaction
+cost interaction(r, ?
+1
+, ?
+2
+) is computed by adding
+the language model costs of any new complete n-
+grams that are created by combining the carries
+(boundary words) with each other and with the
+lexical items on the rule?s target side, taking into
+account any reordering that the rule may perform.
+We construct a backoff-style estimate of these
+new n-grams by looking at item(?, ?,X, 1) =
+[?, ?,X, ?
+1
+], item(?, ?,Y, 1) = [?, ?,Y, ?
+2
+], and
+rule(X,Y, 1). We set ih(?,X,Y) to be a linear
+combination of the backoff n-grams of the carries
+?
+1
+and ?
+2
+, as well as any n-grams introduced by
+the rule. For instance, if
+?
+1
+= a b ? c d
+?
+2
+= e f ? g h
+rule(X,Y, 1) = Z ? ?X 0 Y 1 , X 0 g h i Y 1 ?
+then
+ih(?,X,Y) = ?
+1
+? LM(a) + ?
+2
+? LM(a b)
++ ?
+1
+? LM(e) + ?
+2
+? LM(e f)
++ ?
+1
+? LM(g) + ?
+2
+? LM(g h)
++ ?
+3
+? LM(g h i)
+The coefficients of the combination are free pa-
+rameters that we can tune to trade off between
+more pruning and more admissability. Setting the
+coefficients to zero gives perfect admissibility but
+is also weak.
+The heuristic for the first precondition node is
+computed similarly:
+h(?,X, ?) = cost(rule(X, ?, 1))
++ cost(item(?, ?,X, 1))
++ cost(item(?, ?, ?, 1))
++ ih(?,X, ?)
+67
+Standard CP Augmented CP
+nodes (k) BLEU time nodes (k) BLEU time
+80 34.9 2.5 52 34.7 1.9
+148 36.1 3.9 92 35.9 2.4
+345 37.2 7.9 200 37.3 5.4
+520 37.7 13.4 302 37.7 8.5
+725 38.2 17.1 407 38.0 10.7
+1092 38.3 27.1 619 38.2 16.3
+1812 38.6 45.9 1064 38.5 27.7
+Table 1: Results of standard and augmented cube
+pruning. The number of (thousands of) search
+nodes visited is given along with BLEU and av-
+erage time to decode one sentence, in seconds.
+0 500000 1x1
+06
+1.
+5
+x1
+06 2
+x1
+06
+Search nodes visited
+35
+36
+37
+38
+BL
+EU
+S
+tandard C
+P
+A
+ugme
+nt
+e
+d C
+P
+Figure 6: Nodes visited by standard and aug-
+mented cube pruning.
+We also apply analogous heuristics to the subspan
+nodes.
+5.2 Experimental setup
+We evaluated all of the algorithms in this paper on
+a syntax-based Arabic-English translation system
+based on (Galley et al, 2006), with rules extracted
+from 200 million words of parallel data from NIST
+2008 and GALE data collections, and with a 4-
+gram language model trained on 1 billion words
+of monolingual English data from the LDC Giga-
+word corpus. We evaluated the system?s perfor-
+mance on the NIST 2008 test corpus, which con-
+sists of 1357 Arabic sentences from a mixture of
+newswire and web domains, with four English ref-
+erence translations. We report BLEU scores (Pa-
+pineni et al, 2002) on untokenized, recapitalized
+output.
+5.3 Results for Augmented Cube Pruning
+The results for augmented cube pruning are com-
+pared against cube pruning in Table 1. The data
+0 10 20 30 40 50
+A
+verage time per sentence (s)
+35
+36
+37
+38
+BL
+EU
+S
+tandard C
+P
+A
+ugme
+nt
+e
+d C
+P
+Figure 7: Time spent by standard and augmented
+cube pruning, average seconds per sentence.
+Standard CP Augmented CP
+subspan 12936 12792
+precondition 851458 379954
+rule 33734 33331
+item 119703 118889
+goal 74618 74159
+TOTAL 1092449 619125
+BLEU 38.33 38.22
+Table 2: Breakdown of visited search nodes by
+type (for a fixed beam size).
+from that table are also plotted in Figure 6 and
+Figure 7. Each line gives the number of nodes
+visited by the heuristic search, the average time
+to decode one sentence, and the BLEU of the out-
+put. The number of items kept by each span (the
+beam) is increased in each subsequent line of the
+table to indicate how the two algorithms differ at
+various beam sizes. This also gives a more com-
+plete picture of the speed/BLEU tradeoff offered
+by each algorithm. Because the two algorithms
+make the same sorts of lookahead computations
+with the same implementation, they can be most
+directly compared by examining the number of
+visited nodes. Augmenting cube pruning with ad-
+missible heuristics on the precondition nodes leads
+to a substantial decrease in visited nodes, by 35-
+44%. The reduction in nodes converges to a con-
+sistent 40% as the beam increases. The BLEU
+with augmented cube pruning drops by an average
+of 0.1 compared to standard cube pruning. This is
+due to the additional inadmissibility of the interac-
+tion heuristic.
+To see in more detail how the heuristics affect
+the search, we give in Table 2 the number of nodes
+of each type visited by both variants for one beam
+68
+size. The precondition heuristic enables A* to
+prune more than half the precondition nodes.
+6 Exact Cube Pruning
+Common wisdom is that the speed of cube prun-
+ing more than compensates for its inexactness (re-
+call that this inexactness is due to the fact that it
+uses A* search with inadmissible heuristics). Es-
+pecially when we move into transducer-based MT,
+the search space becomes so large that brute-force
+item generation is much too slow to be practi-
+cal. Still, within the heuristic search framework
+we may ask the question: is it possible to apply
+strictly admissible heuristics to the cube pruning
+search space, and in so doing, create a version of
+cube pruning that is both fast and exact, one that
+finds the n best items for each span and not just
+n good items? One might not expect such a tech-
+nique to outperform cube pruning in practice, but
+for a given use case, it would give us a relatively
+fast way of assessing the BLEU drop incurred by
+the inexactness of cube pruning.
+Recall again that the total cost of a goal node
+is given by Equation (6), which has four terms. It
+is easy enough to devise strong lower bounds for
+the first three of these terms by extending the rea-
+soning of Section 5. Table 3 shows these heuris-
+tics. The major challenge is to devise an effective
+lower bound on the fourth term of the cost func-
+tion, the interaction heuristic, which in our case is
+the incremental language model cost.
+We take advantage of the following observa-
+tions:
+1. In a given span, many boundary word pat-
+terns are repeated. In other words, for a par-
+ticular span [?, ?] and carry ?, we often see
+many items of the form [?, ?,X, ?], where
+the only difference is the postcondition X.
+2. Most rules do not introduce lexical items. In
+other words, most of the grammar rules have
+the form Z ? ?X
+0
+Y
+1
+, X
+0
+Y
+1
+? (concatena-
+tion rules) or Z ? ?X
+0
+Y
+1
+, Y
+1
+X
+0
+? (inver-
+sion rules).
+The idea is simple. We split the search into three
+searches: one for concatenation rules, one for in-
+version rules, and one for lexical rules. Each
+search finds the n?best items that can be created
+using its respective set of rules. We then take these
+3n items and keep the best n.
+10 20 30 40 50 60 70
+A
+verage time per sentence (s)
+35
+36
+37
+38
+BL
+EU
+S
+tandard C
+P
+E
+x
+act C
+P
+Figure 8: Time spent by standard and exact cube
+pruning, average seconds per sentence.
+Doing this split enables us to precompute a
+strong and admissible heuristic on the interaction
+cost. Namely, for a given span [?, ?], we pre-
+compute ih
+adm
+(?,X,Y), which is the best LM
+cost of combining carries from items(?, ?,X)
+and items(?, ?,Y). Notice that this statistic is
+only straightforward to compute once we can as-
+sume that the rules are concatenation rules or
+inversion rules. For the lexical rules, we set
+ih
+adm
+(?,X,Y) = 0, an admissible but weak
+heuristic that we can fortunately get away with be-
+cause of the small number of lexical rules.
+6.1 Results for Exact Cube Pruning
+Computing the ih
+adm
+(?,X,Y) heuristic is not
+cheap. To be fair, we first compare exact CP to
+standard CP in terms of overall running time, in-
+cluding the computational cost of this overhead.
+We plot this comparison in Figure 8. Surprisingly,
+the time/quality tradeoff of exact CP is extremely
+similar to standard CP, suggesting that exact cube
+pruning is actually a practical alternative to stan-
+dard CP, and not just of theoretical value. We
+found that the BLEU loss of standard cube prun-
+ing at moderate beam sizes was between 0.4 and
+0.6.
+Another surprise comes when we contrast the
+number of visited search nodes of exact CP and
+standard CP. See Figure 9. While we initially ex-
+pected that exact CP must visit fewer nodes to
+make up for the computational overhead of its ex-
+pensive heuristics, this did not turn out to be the
+case, suggesting that the computational cost of
+standard CP?s lookahead heuristics is just as ex-
+pensive as the precomputation of ih
+adm
+(?,X,Y).
+69
+heuristic components
+subspan precondition1 precondition2 rule item1 item2
+h(?) h(?,X) h(?,X,Y) h(?,X,Y, i) h(?,X,Y, i, j) h(?,X,Y, i, j, k)
+r rule(?, ?, 1) rule(X, ?, 1) rule(X,Y, 1) rule(X,Y, i) rule(X,Y, i) rule(X,Y, i)
+?
+1
+item(?, ?, ?, 1) item(?, ?,X, 1) item(?, ?,X, 1) item(?, ?,X, 1) item(?, ?,X, j) item(?, ?,X, j)
+?
+2
+item(?, ?, ?, 1) item(?, ?, ?, 1) item(?, ?,Y, 1) item(?, ?,Y, 1) item(?, ?,Y, 1) item(?, ?,Y, k)
+ih ih
+adm
+(?, ?, ?) ih
+adm
+(?,X, ?) ih
+adm
+(?,X,Y) ih
+adm
+(?,X,Y) ih
+adm
+(?,X,Y) ih
+adm
+(?,X,Y)
+Table 3: Admissible heuristics for exact CP. We attach heuristic h(?,X,Y, i, j, k) to the search node
+reached by choosing subspans [?, ?], [?, ?], preconditions X and Y, the ith rule of rules(X,Y), the jth
+item of item(?, ?,X), and the kth item of item(?, ?,Y). To form the heuristic for a particular type of
+search node (column), compute the following: cost(r) + cost(?
+1
+) + cost(?
+2
+) + ih
+500000 1x1
+06
+1.
+5
+x1
+06 2
+x1
+06
+Search nodes visited
+35
+36
+37
+38
+BL
+EU
+S
+tandard C
+P
+E
+x
+act C
+P
+Figure 9: Nodes visited by standard and exact
+cube pruning.
+7 Implications
+This paper?s core idea is the utility of framing
+CKY item generation as a heuristic search prob-
+lem. Once we recognize cube pruning as noth-
+ing more than A* on a particular search space
+with particular heuristics, this deeper understand-
+ing makes it easy to create faster and exact vari-
+ants for other use cases (in this paper, we focus
+on tree-to-string transducer-based MT). Depend-
+ing on one?s own particular use case, a variety of
+possibilities may present themselves:
+1. What if we try different heuristics? In this pa-
+per, we do some preliminary inquiry into this
+question, but it should be clear that our minor
+changes are just the tip of the iceberg. One
+can easily imagine clever and creative heuris-
+tics that outperform the simple ones we have
+proposed here.
+2. What if we try a different search space? Why
+are we using this particular search space?
+Perhaps a different one, one that makes de-
+cisions in a different order, would be more
+effective.
+3. What if we try a different search algorithm?
+A* has nice guarantees (Dechter and Pearl,
+1985), but it is space-consumptive and it is
+not anytime. For a use case where we would
+like a finer-grained speed/quality tradeoff, it
+might be useful to consider an anytime search
+algorithm, like depth-first branch-and-bound
+(Zhang and Korf, 1995).
+By working towards a deeper and unifying under-
+standing of the smorgasbord of current MT speed-
+up techniques, our hope is to facilitate the task of
+implementing such methods, combining them ef-
+fectively, and adapting them to new use cases.
+Acknowledgments
+We would like to thank Abdessamad Echihabi,
+Kevin Knight, Daniel Marcu, Dragos Munteanu,
+Ion Muslea, Radu Soricut, Wei Wang, and the
+anonymous reviewers for helpful comments and
+advice. Thanks also to David Chiang for the use
+of his LaTeX macros. This work was supported in
+part by CCS grant 2008-1245117-000.
+References
+David Chiang. 2007. Hierarchical phrase-based trans-
+lation. Computational Linguistics, 33(2):201?228.
+Rina Dechter and Judea Pearl. 1985. Generalized best-
+first search strategies and the optimality of a*. Jour-
+nal of the ACM, 32(3):505?536.
+John DeNero, Mohit Bansal, Adam Pauls, and Dan
+Klein. 2009. Efficient parsing for transducer gram-
+mars. In Proceedings of the Human Language Tech-
+nology Conference of the NAACL, Main Conference.
+70
+Michel Galley, Mark Hopkins, Kevin Knight, and
+Daniel Marcu. 2004. What?s in a translation rule?
+In Proceedings of HLT/NAACL.
+Michel Galley, Jonathan Graehl, Kevin Knight, Daniel
+Marcu, Steve DeNeefe, Wei Wang, and Ignacio
+Thayer. 2006. Scalable inference and training of
+context-rich syntactic models. In Proceedings of
+ACL-COLING.
+Liang Huang and David Chiang. 2007. Forest rescor-
+ing: Faster decoding with integrated language mod-
+els. In Proceedings of ACL.
+Robert C. Moore and Chris Quirk. 2007. Faster
+beam-search decoding for phrasal statistical ma-
+chine translation. In Proceedings of MT Summit XI.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic
+evaluation of machine translation. In Proceedings
+of 40th Annual Meeting of the Association for Com-
+putational Linguistics, pages 311?318.
+Judea Pearl. 1984. Heuristics. Addison-Wesley.
+Slav Petrov, Aria Haghighi, and Dan Klein. 2008.
+Coarse-to-fine syntactic machine translation using
+language projections. In Proceedings of EMNLP.
+Michael Pust and Kevin Knight. 2009. Faster mt de-
+coding through pervasive laziness. In Proceedings
+of NAACL.
+Brian Roark and Kristy Hollingshead. 2008. Classi-
+fying chart cells for quadratic complexity context-
+free inference. In Proceedings of the 22nd Inter-
+national Conference on Computational Linguistics
+(Coling 2008), pages 745?752.
+Brian Roark and Kristy Hollingshead. 2009. Lin-
+ear complexity context-free parsing pipelines via
+chart constraints. In Proceedings of Human Lan-
+guage Technologies: The 2009 Annual Conference
+of the North American Chapter of the Associa-
+tion for Computational Linguistics, pages 647?655,
+Boulder, Colorado, June. Association for Computa-
+tional Linguistics.
+Weixiong Zhang and Richard E. Korf. 1995. Perfor-
+mance of linear-space search algorithms. Artificial
+Intelligence, 79(2):241?292.
+Hao Zhang, Liang Huang, Daniel Gildea, and Kevin
+Knight. 2006. Synchronous binarization for ma-
+chine translation. In Proceedings of the Human Lan-
+guage Technology Conference of the NAACL, Main
+Conference, pages 256?263.
+71
+Proceedings of the 2010 Conference on Empirical Methods in Natural Language Processing, pages 646?655,
+MIT, Massachusetts, USA, 9-11 October 2010. c?2010 Association for Computational Linguistics
+SCFG Decoding Without Binarization
+Mark Hopkins and Greg Langmead
+SDL Language Weaver, Inc.
+6060 Center Drive, Suite 150
+Los Angeles, CA 90045
+{mhopkins,glangmead}@languageweaver.com
+Abstract
+Conventional wisdom dictates that syn-
+chronous context-free grammars (SCFGs)
+must be converted to Chomsky Normal Form
+(CNF) to ensure cubic time decoding. For ar-
+bitrary SCFGs, this is typically accomplished
+via the synchronous binarization technique of
+(Zhang et al, 2006). A drawback to this ap-
+proach is that it inflates the constant factors as-
+sociated with decoding, and thus the practical
+running time. (DeNero et al, 2009) tackle this
+problem by defining a superset of CNF called
+Lexical Normal Form (LNF), which also sup-
+ports cubic time decoding under certain im-
+plicit assumptions. In this paper, we make
+these assumptions explicit, and in doing so,
+show that LNF can be further expanded to
+a broader class of grammars (called ?scope-
+3?) that also supports cubic-time decoding.
+By simply pruning non-scope-3 rules from a
+GHKM-extracted grammar, we obtain better
+translation performance than synchronous bi-
+narization.
+1 Introduction
+At the heart of bottom-up chart parsing (Younger,
+1967) is the following combinatorial problem. We
+have a context-free grammar (CFG) rule (for in-
+stance, S ? NP VP PP) and an input sentence of
+length n (for instance, ?on the fast jet ski of mr
+smith?). During chart parsing, we need to apply the
+rule to all relevant subspans of the input sentence.
+See Figure 1. For this particular rule, there are
+(n+1
+4
+)
+application contexts, i.e. ways to choose the sub-
+spans. Since the asymptotic running time of chart
+parsing is at least linear in this quantity, it will take
+on the fast jet ski of mr smithNP VP PPNP VP PP
+NP VP PP
+NP VP PPNP VP PP
+choice point choice point choice point choice point
+?
+?
+Figure 1: A demonstration of application contexts. There
+are
+(n+1
+4
+)
+application contexts for the CFG rule ?S? NP
+VP PP?, where n is the length of the input sentence.
+at least O(
+(n+1
+4
+)
+) = O(n4) time if we include this
+rule in our grammar.
+Fortunately, we can take advantage of the fact that
+any CFG has an equivalent representation in Chom-
+sky Normal Form (CNF). In CNF, all rules have
+the form X ? Y Z or X ? x, where x is a termi-
+nal and X, Y, Z are nonterminals. If a rule has the
+form X ? Y Z, then there are only
+(n+1
+3
+)
+applica-
+tion contexts, thus the running time of chart parsing
+is O(
+(n+1
+3
+)
+) = O(n3) when applied to CNF gram-
+mars.
+A disadvantage to CNF conversion is that it in-
+creases both the overall number of rules and the
+overall number of nonterminals. This inflation of
+the ?grammar constant? does not affect the asymp-
+totic runtime, but can have a significant impact on
+the performance in practice. For this reason, (DeN-
+646
+the NPB of NNP
+on the fast jet ski of mr smiththe NPB of NNP
+on the fast jet ski of mr smiththe JJ NPB of NNPthe JJ NPB of NNPthe JJ NPB of NNPthe JJ NPB of NNP
+choice point
+choice point choice point
+Figure 2: A demonstration of application contexts for
+rules with lexical anchors. There are O(n) application
+contexts for CFG rule ?S ? the NPB of NNP?, and
+O(n2) application contexts for CFG rule ?S ? the JJ
+NPB of NNP?, if we assume that the input sentence has
+length n and contains no repeated words.
+ero et al, 2009) provide a relaxation of CNF called
+Lexical Normal Form (LNF). LNF is a superclass of
+CNF that also allows rules whose right-hand sides
+have no consecutive nonterminals. The intuition is
+that the terminals provide anchors that limit the ap-
+plicability of a given rule. For instance, consider the
+rule NP? the NPB of NNP. See Figure 2. Because
+the terminals constrain our choices, there are only
+two different application contexts. The implicit as-
+sumption is that input sentences will not repeat the
+same word more than a small constant number of
+times. If we make the explicit assumption that all
+words of an input sentence are unique, then there
+are O(n2) application contexts for a ?no consecu-
+tive nonterminals? rule. Thus under this assumption,
+the running time of chart parsing is stillO(n3) when
+applied to LNF grammars.
+But once we make this assumption explicit, it be-
+comes clear that we can go even further than LNF
+and still maintain the cubic bound on the runtime.
+Consider the rule NP ? the JJ NPB of NNP. This
+rule is not LNF, but there are still only O(n2) ap-
+plication contexts, due to the anchoring effect of the
+terminals. In general, for a rule of the form X? ?,
+there are at most O(np) application contexts, where
+p is the number of consecutive nonterminal pairs in
+the string X ??? X (where X is an arbitrary nontermi-
+nal). We refer to p as the scope of a rule. Thus chart
+parsing runs in time O(nscope(G)), where scope(G)
+is the maximum scope of any of the rules in CFG G.
+Specifically, any scope-3 grammar can be decoded
+in cubic time.
+Like (DeNero et al, 2009), the target of our in-
+terest is synchronous context-free grammar (SCFG)
+decoding with rules extracted using the GHKM al-
+gorithm (Galley et al, 2004). In practice, it turns out
+that only a small percentage of the lexical rules in
+our system have scope greater than 3. By simply re-
+moving these rules from the grammar, we can main-
+tain the cubic running time of chart parsing without
+any kind of binarization. This has three advantages.
+First, we do not inflate the grammar constant. Sec-
+ond, unlike (DeNero et al, 2009), we maintain the
+synchronous property of the grammar, and thus can
+integrate language model scoring into chart parsing.
+Finally, a system without binarized rules is consid-
+erably simpler to build and maintain. We show that
+this approach gives us better practical performance
+than a mature system that binarizes using the tech-
+nique of (Zhang et al, 2006).
+2 Preliminaries
+Assume we have a global vocabulary of symbols,
+containing the reserved substitution symbol ?. De-
+fine a sentence as a sequence of symbols. We will
+typically use space-delimited quotations to represent
+example sentences, e.g. ?the fast jet ski? rather than
+?the, fast, jet, ski?. We will use the dot operator to
+represent the concatenation of sentences, e.g. ?the
+fast? ? ?jet ski? = ?the fast jet ski?.
+Define the rank of a sentence as the count
+of its ? symbols. We will use the no-
+tation SUB(s, s1, ..., sk) to denote the substitu-
+tion of k sentences s1, ..., sk into a k-rank sen-
+tence s. For instance, if s = ?the ? ? of
+??, then SUB(s, ?fast?, ?jet ski?, ?mr smith?) =
+?the fast jet ski of mr smith?.
+To refer to a subsentence, define a span as a pair
+[a, b] of nonnegative integers such that a < b. For
+a sentence s = ?s1, s2, ..., sn? and a span [a, b] such
+that b ? n, define s[a,b] = ?sa+1, ..., sb?.
+647
+NP -> the JJ NN of NNP
+PP -> on NP
+JJ -> fast NN -> jet ski NNP -> mr smith
+NP -> < the JJ1 NN2 of NNP3, le NN2 JJ1 de NNP3 >
+PP -> < on NP1, sur NP1>
+JJ -> < fast, vite > NN -> < jet ski, jet ski > NNP -> < mr smith, m smith >
+Figure 3: An example CFG derivation (above) and an ex-
+ample SCFG derivation (below). Both derive the sen-
+tence SUB(?on ??, SUB( ?the ? ? of ??, ?fast?, ?jet
+ski?, ?mr smith?) ) = ?on the fast jet ski of mr smith?.
+The SCFG derivation simultaneously derives the auxil-
+iary sentence ?sur le jet ski vite de m smith?.
+3 Minimum Derivation Cost
+Chart parsing solves a problem which we will re-
+fer to as Minimum Derivation Cost. Because we
+want our results to be applicable to both CFG decod-
+ing and SCFG decoding with an integrated language
+model, we will provide a somewhat more abstract
+formulation of chart parsing than usual.
+In Figure 3, we show an example of a CFG deriva-
+tion. A derivation is a tree of CFG rules, constructed
+so that the preconditions (the RHS nonterminals) of
+any rule match the postconditions (the LHS nonter-
+minal) of its child rules. The purpose of a derivation
+is to derive a sentence, which is obtained through
+recursive substitution. In the example, we substitute
+?fast?, ?jet ski?, and ?mr smith? into the lexical pat-
+tern ?the ? ? of ?? to obtain ?the fast jet ski of mr
+smith?. Then we substitute this result into the lexi-
+cal pattern ?on ?? to obtain ?on the fast jet ski of mr
+smith?.
+The cost of a derivation is simply the sum of the
+base costs of its rules. Thus the cost of the CFG
+derivation in Figure 3 is C1 + C2 + C3 + C4 + C5,
+where C1 is the base cost of rule ?PP? on NP?, etc.
+Notice that this cost can be distributed locally to the
+nodes of the derivation (Figure 4).
+An SCFG derivation is similar to a CFG deriva-
+NP -> the JJ NN of NNP
+PP -> on NP
+JJ -> fast NN -> jet ski NNP -> mr smith
+C 3
+C 4
+C 5
+C 2
+C 1
+Figure 4: The cost of the CFG derivation in Figure 3 is
+C1 + C2 + C3 + C4 + C5, where C1 is the base cost
+of rule ?PP ? on NP?, etc. Notice that this cost can be
+distributed locally to the nodes of the derivation.
+tion, except that it simultaneously derives two sen-
+tences. For instance, the SCFG derivation in Fig-
+ure 3 derives the sentence pair ? ?on the fast jet ski
+of mr smith?, ?sur le jet ski vite de m smith? ?. In
+machine translation, often we want the cost of the
+SCFG derivation to include a language model cost
+for this second sentence. For example, the cost of the
+SCFG derivation in Figure 3 might beC1+C2+C3+
+C4+C5+LM(sur le)+LM(le jet)+LM(jet ski)+
+LM(ski de) + LM(de m) + LM(m smith), where
+LM is the negative log of a 2-gram language model.
+This new cost function can also be distributed lo-
+cally to the nodes of the derivation, as shown in Fig-
+ure 5. However, in order to perform the local com-
+putations, we need to pass information (in this case,
+the LM boundary words) up the tree. We refer to
+this extra information as carries. Formally, define a
+carry as a sentence of rank 0.
+In order to provide a chart parsing formulation
+that applies to both CFG decoding and SCFG de-
+coding with an integrated language model, we need
+abstract definitions of rule and derivation that cap-
+ture the above concepts of pattern, postcondition,
+preconditions, cost, and carries.
+3.1 Rules
+Define a rule as a tuple ?k, s?, X, pi,?, c?, where k is
+a nonnegative integer called the rank, s? is a rank-k
+648
+NP -> < the JJ1 NN2 of NNP3, le NN2 JJ1 de NNP3 >
+PP -> < on NP1, sur NP1>
+JJ -> < fast, vite > NN -> < jet ski, jet ski > NNP -> < mr smith, m smith >
+m * smith
+C 5 + LM(m smith)C 4 + LM(jet ski)C 3
+vite * vite jet * ski
+le * smith
+C 2 + LM(le jet) + LM(ski vite) + LM( vite de) + LM(de m)C 1 + LM ( sur le)
+Figure 5: The cost of the SCFG derivation in Figure 3
+(with an integrated language model score) can also be dis-
+tributed to the nodes of the derivation, but to perform the
+local computations, information must be passed up the
+tree. We refer to this extra information as a carry.
+sentence called the pattern 1, X is a symbol called
+the postcondition, pi is a k-length sentence called the
+preconditions, ? is a function (called the carry func-
+tion) that maps a k-length list of carries to a carry,
+and c is a function (called the cost function) that
+maps a k-length list of carries to a real number. Fig-
+ure 6 shows a CFG and an SCFG rule, deconstructed
+according to this definition. 2 Note that the CFG rule
+has trivial cost and carry functions that map every-
+thing to a constant. We refer to such rules as simple.
+We will use post(r) to refer to the postcondition
+of rule r, and pre(r, i) to refer to the ith precondition
+of rule r.
+Finally, define a grammar as a finite set of rules.
+A grammar is simple if all its rules are simple.
+3.2 Derivations
+For a grammarR, define deriv(R) as the smallest set
+that contains every tuple ?r, ?1, ..., ?k? satisfying the
+following conditions:
+1For simplicity, we also impose the condition that ??? is not
+a valid pattern. This is tantamount to disallowing unary rules.
+2One possible point of confusion is why the pattern of the
+SCFG rule refers only to the primary sentence, and not the aux-
+iliary sentence. To reconstruct the auxiliary sentence from an
+SCFG derivation in practice, one would need to augment the
+abstract definition of rule with an auxiliary pattern. However
+this is not required for our theoretical results.
+NP -> < the JJ1 NN2 of NNP3, le NN2 JJ1 de NNP3 >
+postcondition preconditions rank
+pattern the ??of ?carry function ?( ?u*v? , ?w*x? , ?y*z? )= ??????cost function c( ?u*v? , ?w*x? , ?y*z? ) = C + LM( w|le ) + LM( u|x ) + LM( de|v ) + LM( y |de )
+NP -> the JJ NN of NNP
+postcondition preconditions
+pattern the ??of ?carry function ?( ?? , ?? , ?? ) = ??cost function c( ?? , ?? , ?? ) = C
+rank = 3
+Figure 6: Deconstruction of a CFG rule (left) and SCFG
+rule (right) according to the definition of rule in Sec-
+tion 3.1. The carry function of the SCFG rule computes
+boundary words for a 2-gram language model. In the cost
+functions, C is a real number and LM returns the negative
+log of a language model query.
+? r ? R is a k-rank rule
+? ?i ? deriv(R) for all 1 ? i ? k
+? pre(r, i) = post(ri) for all 1 ? i ? k, where ri
+is the first element of tuple ?i.
+An R?derivation is an element of deriv(R). Con-
+sider a derivation ? = ?r, ?1, ..., ?k?, where rule
+r = ?k, s?, X, pi,?, c?. Define the following prop-
+erties:
+post(?) = post(r)
+sent(?) = SUB(s?, sent(?1), ..., sent(?k))
+carry(?) = ?(carry(?1), ..., carry(?k))
+cost(?) = c(carry(?1), ..., carry(?k)) +
+k?
+j=1
+cost(?j)
+In words, we say that derivation ? derives sen-
+tence sent(?). If for some span ? of a particular sen-
+tence s, it holds that sent(?) = s?, then we will say
+that ? is a derivation over span ?.
+3.3 Problem Statement
+The Minimum Derivation Cost problem is the fol-
+lowing. Given a set R of rules and an input sentence
+649
+on the fast jet ski of mr smith
+the ? ? of ?
+0 1 2 3 4 5 6 7 8
+Figure 7: An application context for the pattern ?the ? ?
+of ?? and the sentence ?on the fast jet ski of mr smith?.
+s, find the minimum cost of any R?derivation that
+derives s. In other words, compute:
+MinDCost(R, s) , min
+??deriv(R)|sent(?)=s
+cost(?)
+4 Application Contexts
+Chart parsing solves Minimum Derivation Cost via
+dynamic programming. It works by building deriva-
+tions over increasingly larger spans of the input sen-
+tence s. Consider just one of these spans ?. How do
+we build a derivation over that span?
+Recall that a derivation takes the form
+?r, ?1, ..., ?k?. Given the rule r and its pattern
+s?, we need to choose the subderivations ?i such
+that SUB(s?, sent(?1), ..., sent(?k)) = s?. To do
+so, we must match the pattern to the span, so that
+we know which subspans we need to build the
+subderivations over. Figure 7 shows a matching
+of the pattern ?the ? ? of ?? to span [1, 8] of the
+sentence ?on the fast jet ski of mr smith?. It tells
+us that we can build a derivation over span [1, 8] by
+choosing this rule and subderivations over subspans
+[2, 3], [3, 5], and [6, 8].
+We refer to these matchings as application con-
+texts. Formally, given two sentences s? and s
+of respective lengths m and n, define an ?s?, s??
+context as an monotonically increasing sequence
+?x0, x1, ..., xm? of integers between 0 and n such
+that for all i:
+s?[i?1,i] 6= ? implies that s
+?
+[i?1,i] = s[xi?1,xi]
+The context shown in Figure 7 is ?1, 2, 3, 5, 6, 8?.
+Use cxt(s?, s) to denote the set of all ?s?, s??
+contexts.
+An ?s?, s??context x = ?x0, x1, ..., xm? has the
+following properties:
+span(x; s?, s) = [x0, xm]
+subspans(x; s?, s) = ?[x0, x1], ..., [xm?1, xm]?
+Moreover, define varspans(x; s?, s) as the sub-
+sequence of subspans(x; s?, s) including only
+[xi?1, xi] such that s?[i?1,i] = ?. For the context
+x shown in Figure 7:
+span(x; s?, s) = [1, 8]
+subspans(x; s?, s) = ?[1, 2], [2, 3], [3, 5], [5, 6], [6, 8]?
+varspans(x; s?, s) = ?[2, 3], [3, 5], [6, 8]?
+An application context x ? cxt(s?, s) tells us that
+we can build a derivation over span(x) by choosing
+a rule with pattern s? and subderivations over each
+span in varspans(x; s?, s).
+5 Chart Parsing Algorithm
+We are now ready to describe the chart parsing al-
+gorithm. Consider a span ? of our input sentence
+s and assume that we have computed and stored all
+derivations over any subspan of ?. A naive way to
+compute the minimum cost derivation over span ? is
+to consider every possible derivation:
+1. Choose a rule r = ?k, s?, X, pi,?, c?.
+2. Choose an application context x ? cxt(s?, s)
+such that span(x; s?, s) = ?.
+3. For each subspan ?i ? varspans(x; s?, s),
+choose a subderivation ?i such that post(?i) =
+pre(r, i).
+The key observation here is the following. In or-
+der to score such a derivation, we did not actually
+need to know each subderivation in its entirety. We
+merely needed to know the following information
+about it: (a) the subspan that it derives, (b) its post-
+condition, (c) its carry.
+650
+Chart parsing takes advantage of the above obser-
+vation to avoid building all possible derivations. In-
+stead it groups together derivations that share a com-
+mon subspan, postcondition, and carry, and records
+only the minimum cost for each equivalence class.
+It records this cost in an associative map referred to
+as the chart.
+Specifically, assume that we have computed and
+stored the minimum cost of every derivation class
+???, X ?, ???, where X ? is a postcondition, ?? is a
+carry, and ?? is a proper subspan of ?. Chart pars-
+ing computes the minimum cost of every derivation
+class ??,X, ?? by adapting the above naive method
+as follows:
+1. Choose a rule r = ?k, s?, X, pi,?, c?.
+2. Choose an application context x ? cxt(s?, s)
+such that span(x; s?, s) = ?.
+3. For each subspan ?i ? varspans(x; s?, s),
+choose a derivation class ??i, Xi, ?i? from the
+chart such that Xi = pre(r, i).
+4. Update3 the cost of derivation class
+??, post(r),?(?1, ..., ?k)? with:
+c(?1, ..., ?k) +
+k?
+i=1
+chart[?i, Xi, ?i]
+where chart[?i, Xi, ?i] refers to the stored
+cost of derivation class ??i, Xi, ?i?.
+By iteratively applying the above method to all sub-
+spans of size 1, 2, etc., chart parsing provides an
+efficient solution for the Minimum Derivation Cost
+problem.
+6 Runtime Analysis
+At the heart of chart parsing is a single operation:
+the updating of a value in the chart. The running
+time is linear in the number of these chart updates.
+4 The typical analysis counts the number of chart
+updates per span. Here we provide an alternative
+3Here, update means ?replace the cost associated with the
+class if the new cost is lower.?
+4This assumes that you can linearly enumerate the relevant
+updates. One convenient way to do this is to frame the enumer-
+ation problem as a search space, e.g. (Hopkins and Langmead,
+2009)
+analysis that counts the number of chart updates per
+rule. This provides us with a finer bound with prac-
+tical implications.
+Let r be a rule with rank k and pattern s?. Con-
+sider the chart updates involving rule r. There is
+(potentially) an update for every choice of (a) span,
+(b) application context, and (c) list of k derivation
+classes. If we let C be the set of possible carries,
+then this means there are at most |cxt(s?, s)| ? |C|k
+updates involving rule r. 5 If we are doing beam de-
+coding (i.e. after processing a span, the chart keeps
+only the B items of lowest cost), then there are at
+most |cxt(s?, s)| ?Bk updates.
+We can simplify the above by providing an upper
+bound for |cxt(s?, s)|. Define an ambiguity as the
+sentence ?? ??, and define scope(s?) as the number
+of ambiguities in the sentence ??? ?s?? ???. The
+following bound holds:
+Lemma 1. Assume that a zero-rank sentence s does
+not contain the same symbol more than once. Then
+|cxt(s?, s)| ? |s|scope(s
+?).
+Proof. Suppose s? and s have respective lengths m
+and n. Consider ?x0, x1, ..., xm? ? cxt(s?, s). Let
+I be the set of integers i between 1 and m such that
+s?i 6= ? and let I
++ be the set of integers i between
+0 and m ? 1 such that s?i+1 6= ?. If i ? I , then we
+know the value of xi, namely it is the unique integer
+j such that sj = s?i . Similarly, if i ? I
++, then the
+value of xi must be the unique integer j such that
+sj = s?i+1. Thus the only nondetermined elements
+of context xi are those for which i 6? I ? I+. Hence
+|cxt(s?, s)| ? |s|{0,1,...,m}?I?I
++
+= |s|scope(s
+?).
+Hence, under the assumption that the input sen-
+tence s does not contain the same symbol more than
+once, then there are at most |s|scope(s
+?) ? |C|k chart
+updates involving a rule with pattern s?.
+For a rule r with pattern s?, define scope(r) =
+scope(s?). For a grammar R, define scope(R) =
+maxr?R scope(r) and rank(R) = maxr?R rank(r).
+Given a grammar R and an input sentence s,
+the above lemma tells us that chart parsing makes
+5For instance, in SCFG decoding with an integrated j-gram
+language model, a carry consists of 2(j ? 1) boundary words.
+Generally it is assumed that there are O(n) possible choices for
+a boundary word, and hence O(n2(j?1)) possible carries.
+651
+O(|s|scope(R) ? |C|rank(R)) chart updates. If we re-
+strict ourselves to beam search, than chart parsing
+makes O(|s|scope(R)) chart updates. 6
+6.1 On the Uniqueness Assumption
+In practice, it will not be true that each input sen-
+tence contains only unique symbols, but it is not too
+far removed from the practical reality of many use
+cases, for which relatively few symbols repeat them-
+selves in a given sentence. The above lemma can
+also be relaxed to assume only that there is a con-
+stant upper bound on the multiplicity of a symbol
+in the input sentence. This does not affect the O-
+bound on the number of chart updates, as long as we
+further assume a constant limit on the length of rule
+patterns.
+7 Scope Reduction
+From this point of view, CNF binarization can be
+viewed as a specific example of scope reduction.
+Suppose we have a grammar R of scope p. See Fig-
+ure 8. If we can find a grammar R? of scope p? < p
+which is ?similar? to grammar R, then we can de-
+code in O(np?) rather than O(np) time.
+We can frame the problem by assuming the fol-
+lowing parameters:
+? a grammar R
+? a desired scope p
+? a loss function ? that returns a (non-negative
+real-valued) score for any two grammars R and
+R?; if ?(R, R?) = 0, then the grammars are con-
+sidered to be equivalent
+A scope reduction method with loss ? finds a gram-
+mar R? such that scope(R?) ? p and ?(R, R?) = ?.
+A scope reduction method is lossless when its loss
+is 0.
+In the following sections, we will use the loss
+function:
+?(R, R?) = |MinDCost(R, s)?MinDCost(R?, s)|
+where s is a fixed input sentence. Observe that if
+?(R, R?) = 0, then the solution to the Minimum
+6Assuming rank(R) is bounded by a constant.
+CNF LNF
+Scope 3
+All Grammars
+Figure 8: The ?scope reduction? problem. Given a gram-
+mar of large scope, find a similar grammar of reduced
+scope.
+Derivation Cost problem is the same for both R and
+R?. 7
+7.1 CNF Binarization
+A rule r is CNF if its pattern is ???? or ?x?, where x
+is any non-substitution symbol. A grammar is CNF
+if all of its rules are CNF. Note that the maximum
+scope of a CNF grammar is 3.
+CNF binarization is a deterministic process that
+maps a simple grammar to a CNF grammar. Since
+binarization takes subcubic time, we can decode
+with any grammar R in O(n3) time by converting
+R to CNF grammar R?, and then decoding with R?.
+This is a lossless scope reduction method.
+What if grammar R is not simple? For SCFG
+grammars, (Zhang et al, 2006) provide a scope
+reduction method called synchronous binarization
+with quantifiable loss. Synchronous binarization se-
+lects a ?binarizable? subgrammar R? of grammar R,
+and then converts R? into a CNF grammar R?. The
+cost and carry functions of these new rules are con-
+structed such that the conversion from R? to R? is
+a lossless scope reduction. Thus the total loss of
+the method is |MinDCost(R, s)?MinDCost(R?, s)|.
+Fortunately, they find in practice thatR? usually con-
+tains the great majority of the rules of R, thus they
+7Note that if we want the actual derivation and not just its
+cost, then we need to specify a more finely grained loss func-
+tion. This is omitted for clarity and left as an exercise.
+652
+a ????aa ??b?a ????a ????aa ???a b ????a ba ??b ?a ??b c
+a b ??c?a ??ba ?b ????a ?b???a ba ???ba ??b ?ca ????ba ??b c ??da ????b ?c ?da ??b ??c ??d
+Figure 9: A selection of rule patterns that are scope ? 3
+but not LNF or CNF.
+assert that this loss is negligable.
+A drawback of their technique is that the resulting
+CNF grammar contains many more rules and post-
+conditions than the original grammar. These con-
+stant factors do not impact asymptotic performance,
+but do impact practical performance.
+7.2 Lexical Normal Form
+Concerned about this inflation of the grammar con-
+stant, (DeNero et al, 2009) consider a superset of
+CNF called Lexical Normal Form (LNF). A rule is
+LNF if its pattern does not contain an ambiguity as
+a proper subsentence (recall that an ambiguity was
+defined to be the sentence ?? ??). Like CNF, the
+maximum scope of an LNF grammar is 3. In the
+worst case, the pattern s? is ?? ??, in which case
+there are three ambiguities in the sentence ??? ?s??
+???.
+(DeNero et al, 2009) provide a lossless scope
+reduction method that maps a simple grammar to
+an LNF grammar, thus enabling cubic-time decod-
+ing. Their principal objective is to provide a scope
+reduction method for SCFG that introduces fewer
+postconditions than (Zhang et al, 2006). However
+unlike (Zhang et al, 2006), their method only ad-
+dresses simple grammars. Thus they cannot inte-
+grate LM scoring into their decoding, requiring them
+to rescore the decoder output with a variant of cube
+growing (Huang and Chiang, 2007).
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+0 1 2 3 4 5 6 7 8
+% of r
+ules 
+with sc
+ope
+ 
+<= P
+P
+AE Lexical CE Lexical AE Nonlexical CE Nonlexical
+Figure 10: Breakdown of rules by scope (average per sen-
+tence in our test sets). In practice, most of the lexical rules
+applicable to a given sentence (95% for Arabic-English
+and 85% for Chinese-English) are scope 3 or less.
+7.3 Scope Pruning
+To exercise the power of the ideas presented in this
+paper, we experimented with a third (and very easy)
+scope reduction method called scope pruning. If we
+consider the entire space of scope-3 grammars, we
+see that it contains a much richer set of rules than
+those permitted by CNF or LNF. See Figure 9 for
+examples. Scope pruning is a lossy scope reduc-
+tion method that simply takes an arbitrary grammar
+and prunes all rules with scope greater than 3. By
+not modifying any rules, we preserve their cost and
+carry functions (enabling integrated LM decoding),
+without increasing the grammar constant. The prac-
+tical question is: how many rules are we typically
+pruning from the original grammar?
+We experimented with two pretrained syntax-
+based machine translation systems with rules ex-
+tracted via the GHKM algorithm (Galley et al,
+2004). The first was an Arabic-English system, with
+rules extracted from 200 million words of parallel
+data from the NIST 2008 data collection, and with
+a 4-gram language model trained on 1 billion words
+of monolingual English data from the LDC Giga-
+word corpus. We evaluated this system?s perfor-
+mance on the NIST 2008 test corpus, which con-
+sists of 1357 Arabic sentences from a mixture of
+newswire and web domains, with four English refer-
+ence translations. The second system was a Chinese-
+653
+Arabic -English Chinese -English
+33
+34
+35
+36
+37
+38
+39
+40
+0 2000 4000 6000 8000
+BLEU
+-4
+Words per minute
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+0 2000 4000 6000 8000
+BLEU
+-4
+Words per minute
+Figure 11: Speed-quality tradeoff curves comparing the baseline scope reduction method of synchronous binarization
+(dark gray diamonds) with scope-3 pruning (light gray squares).
+English system, with rules extracted from 16 million
+words of parallel data from the mainland-news do-
+main of the LDC corpora, and with a 4-gram lan-
+guage model trained on monolingual English data
+from the AFP and Xinhua portions of the LDC Gi-
+gaword corpus. We evaluated this system?s perfor-
+mance on the NIST 2003 test corpus, which con-
+sists of 919 Chinese sentences, with four English
+reference translations. For both systems, we report
+BLEU scores (Papineni et al, 2002) on untokenized,
+recapitalized output.
+In practice, how many rules have scope greater
+than 3? To answer this question, it is useful to dis-
+tinguish between lexical rules (i.e. rules whose pat-
+terns contain at least one non-substitution symbol)
+and non-lexical rules. Only a subset of lexical rules
+are potentially applicable to a given input sentence.
+Figure 10 shows the scope profile of these applicable
+rules (averaged over all sentences in our test sets).
+Most of the lexical rules applicable to a given sen-
+tence (95% for Arabic-English, 85% for Chinese-
+English) are scope 3 or less. 8 Note, however, that
+scope pruning also prunes a large percentage of non-
+lexical rules.
+Figure 11 compares scope pruning with the base-
+line technique of synchronous binarization. To gen-
+erate these speed-quality tradeoff curves, we de-
+coded the test sets with 380 different beam settings.
+We then plotted the hull of these 380 points, by elim-
+inating any points that were dominated by another
+(i.e. had better speed and quality). We found that
+this simple approach to scope reduction produced
+a better speed-quality tradeoff than the much more
+complex synchronous binarization. 9
+8For contrast, the corresponding numbers for LNF are 64%
+and 53%, respectively.
+9We also tried a hybrid approach in which we scope-pruned
+654
+8 Conclusion
+In this paper, we made the following contributions:
+? We provided an abstract formulation of chart
+parsing that generalizes CFG decoding and
+SCFG decoding with an integrated LM.
+? We framed scope reduction as a first-class ab-
+stract problem, and showed that CNF binariza-
+tion and LNF binarization are two specific solu-
+tions to this problem, each with their respective
+advantages and disadvantages.
+? We proposed a third scope reduction technique
+called scope pruning, and we showed that it can
+outperform synchronous CNF binarization for
+particular use cases.
+Moreover, this work gives formal expression to the
+extraction heuristics of hierarchical phrase-based
+translation (Chiang, 2007), whose directive not to
+extract SCFG rules with adjacent nonterminals can
+be viewed as a preemptive pruning of rules with
+scope greater than 2 (more specifically, the prun-
+ing of non-LNF lexical rules). In general, this work
+provides a framework in which different approaches
+to tractability-focused grammar construction can be
+compared and discussed.
+References
+David Chiang. 2007. Hierarchical phrase-based transla-
+tion. Computational Linguistics, 33(2):201?228.
+John DeNero, Mohit Bansal, Adam Pauls, and Dan Klein.
+2009. Efficient parsing for transducer grammars. In
+Proceedings of the Human Language Technology Con-
+ference of the NAACL, Main Conference.
+Michel Galley, Mark Hopkins, Kevin Knight, and Daniel
+Marcu. 2004. What?s in a translation rule? In Pro-
+ceedings of HLT/NAACL.
+Mark Hopkins and Greg Langmead. 2009. Cube pruning
+as heuristic search. In Proceedings of EMNLP.
+Liang Huang and David Chiang. 2007. Forest rescoring:
+Faster decoding with integrated language models. In
+Proceedings of ACL.
+the lexical rules and synchronously binarized the non-lexical
+rules. This had a similar performance to scope-pruning all
+rules. The opposite approach of scope-pruning the lexical rules
+and synchronously binarizing the non-lexical rules had a similar
+performance to synchronous binarization.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. In Proceedings of 40th
+Annual Meeting of the Association for Computational
+Linguistics, pages 311?318.
+Daniel Younger. 1967. Recognition and parsing of
+context-free languages in time n3. Information and
+Control, 10(2):189?208.
+Hao Zhang, Liang Huang, Daniel Gildea, and Kevin
+Knight. 2006. Synchronous binarization for machine
+translation. In Proceedings of the Human Language
+Technology Conference of the NAACL, Main Confer-
+ence, pages 256?263.
+655
+Proceedings of the 6th Workshop on Statistical Machine Translation, pages 523?532,
+Edinburgh, Scotland, UK, July 30?31, 2011. c?2011 Association for Computational Linguistics
+Extraction Programs: A Unified Approach to Translation Rule Extraction
+Mark Hopkins and Greg Langmead and Tai Vo
+SDL Language Technologies Division
+6060 Center Drive, Suite 150
+Los Angeles, CA 90045
+{mhopkins,glangmead,tvo}@sdl.com
+Abstract
+We provide a general algorithmic schema
+for translation rule extraction and show that
+several popular extraction methods (includ-
+ing phrase pair extraction, hierarchical phrase
+pair extraction, and GHKM extraction) can be
+viewed as specific instances of this schema.
+This work is primarily intended as a survey of
+the dominant extraction paradigms, in which
+we make explicit the close relationship be-
+tween these approaches, and establish a lan-
+guage for future hybridizations. This facili-
+tates a generic and extensible implementation
+of alignment-based extraction methods.
+1 Introduction
+The tradition of extracting translation rules from
+aligned sentence pairs dates back more than a
+decade. A prominent early example is phrase-based
+extraction (Och et al, 1999).
+Around the middle of the last decade, two ex-
+traction paradigms were proposed for syntax-based
+machine translation: the Hiero paradigm of (Chi-
+ang, 2005) and the GHKM paradigm of (Galley et
+al., 2004). From these papers followed two largely
+independent lines of research, respectively dubbed
+formally syntax-based machine translation (Chiang,
+2007; Zollmann and Venugopal, 2006; Venugopal et
+al., 2007; Lopez, 2007; Marton and Resnik, 2008;
+Li et al, 2009; de Gispert et al, 2010) and linguis-
+tically syntax-based machine translation (Galley et
+al., 2006; Marcu et al, 2006; Liu et al, 2006; Huang
+et al, 2006; Liu et al, 2007; Mi and Huang, 2008;
+Zhang et al, 2008; Liu et al, 2009).
+In this paper, we unify these strands of research
+by showing how to express Hiero extraction, GHKM
+extraction, and phrase-based extraction as instances
+of a single master extraction method. Specifically,
+we express each technique as a simple ?program?
+given to a generic ?evaluator?. Table 1 summarizes
+how to express several popular extraction methods
+as ?extraction programs.?
+Besides providing a unifying survey of popular
+alignment-based extraction methods, this work has
+the practical benefit of facilitating the implementa-
+tion of these methods. By specifying the appropri-
+ate input program, the generic evaluator (coded, say,
+as a Python module) can be used to execute any of
+the extraction techniques in Table 1. New extraction
+techniques and hybridizations of existing techniques
+can be supported with minimal additional program-
+ming.
+2 Building Blocks
+The family of extraction algorithms under consider-
+ation share a common setup: they extract translation
+rules from a sentence pair and an alignment. In this
+section, we define these concepts.
+2.1 Patterns and Sentences
+Assume we have a global vocabulary of atomic sym-
+bols, containing the reserved substitution symbol?.
+Define a pattern as a sequence of symbols. Define
+the rank of a pattern as the count of its ? symbols.
+Let ?k , ?
+k
+? ?? ?
+?,?, ...,??.
+We will typically use space-delimited quotations
+to represent example patterns, e.g. ?ne? pas? rather
+than ?ne,?, pas?. We will use the dot operator to
+represent the concatenation of patterns, e.g. ?il ne? ?
+?va pas? = ?il ne va pas?.
+523
+Extraction Program
+Method Primary Secondary Labeling
+Protocol Protocol Protocol
+PBMT (Och et al, 1999) RANKPP0 TRIVSPA TRIVLP
+Hiero (Chiang, 2005) RANKPP? TRIVSPA TRIVLP
+GHKM (Galley et al, 2004) MAPPPt TRIVSPA PMAPLPt
+SAMT (Zollmann and Venugopal, 2006) RANKPP? TRIVSPA PMAPLPt?
+Forest GHKM (Mi and Huang, 2008) MAPPPT TRIVSPA PMAPLPT
+Tree-to-Tree GHKM (Liu et al, 2009) MAPPPt MAPSP?,A IMAPLP{t},{?}
+Forest-to-Forest GHKM (Liu et al, 2009) MAPPPT MAPSPT ,A IMAPLPT,T
+Fuzzy Dual Syntax (Chiang, 2010) MAPPPt? MAPSP?? ,A IMAPLP{t?},{??}
+Table 1: Various rule extraction methods, expressed as extraction programs. Boldfaced methods are proven in this
+paper; the rest are left as conjecture. Parameters: t, ? are spanmaps (see Section 3); t?, ?? are fuzzy spanmaps (see
+Section 7); T, T are sets of spanmaps (typically encoded as forests); A is an alignment (see Section 2).
+We refer to a contiguous portion of a pattern with
+a span, defined as either the null span ? , or a pair
+[b, c] of positive integers such that b ? c. We will
+treat span [b, c] as the implicit encoding of the set
+{b, b+ 1, ..., c}, and employ set-theoretic operations
+on spans, e.g. [3, 8] ? [6, 11] = [6, 8]. Note that the
+null span encodes the empty set.
+If a set I of positive integers is non-empty, then it
+has a unique minimal enclosing span, defined by the
+operator span(I) = [min(I),max(I)]. For instance,
+span({1, 3, 4}) = [1, 4]. Define span({}) = ?.
+Finally, define a sentence as a pattern of rank 0.
+2.2 Alignments
+An alignment is a triple ?m,n,A?, where m and n
+are positive integers, andA is a set of ordered integer
+pairs (i, j) such that 1 ? i ? m and 1 ? j ? n.
+In Figure 1(a), we show a graphical depiction of
+alignment ?4, 6, {(1, 1), (2, 3), (4, 3), (3, 5)}?. Ob-
+serve that alignments have a primary side (top) and
+a secondary side (bottom)1. For alignment A =
+?m,n,A?, define |A|p = m and |A|s = n. A pri-
+mary index (resp., secondary index) ofA is any pos-
+itive integer less than or equal to |A|p (resp., |A|s).
+A primary span (resp., secondary span) of A is any
+span [b, c] such that 1 ? b ? c ? |A|p (resp., |A|s).
+Define a
+A
+? ? to mean that (a, ?) ? A (in words,
+we say that A aligns primary index a to secondary
+1The terms primary and secondary allow us to be agnostic
+about how the extracted rules are used in a translation system,
+i.e. the primary side can refer to the source or target language.
+[3,5]
+[2,4][2,4] 1 2 3 4
+2 3 4 51 6
+1 2 3 4
+2 3 4 51 6
+1 2 3 4
+2 3 4 51 6
+(a)
+(d)(c)
+(b)
+1 2 3 4
+2 3 4 51 6
+Figure 1: A demonstration of alignment terminology.
+(a) An alignment is a relation between positive integer
+sets. (b) The primary domain of the example alignment
+is {1,2,3,4} and the secondary domain is {1,3,5}. (c)
+The image of primary span [2,4] is {3,5}. (d) The mini-
+mal projection of primary span [2,4] is [3,5]. Secondary
+spans [2,5], [3,6], and [2,6] are also projections of pri-
+mary span [2,4].
+index ?), and define a 6
+A
+? ? to mean that (a, ?) 6? A.
+Define an aligned sentence pair as a triple
+?s, ?,A? where A is an alignment and s, ? are sen-
+tences of length |A|p and |A|s, respectively.
+Primary and Secondary Domain: The primary
+domain of alignment A is the set of primary in-
+dices that are aligned to some secondary index, i.e.
+pdom(A) = {a|?? s.t. a A? ?}. Analogously,
+define sdom(A) = {?|?a s.t. a A? ?}. For the
+example alignment of Figure 1(b), pdom(A) =
+524
+{1, 2, 3, 4} and sdom(A) = {1, 3, 5}.
+Image: The image of a set I of primary indices
+(denoted pimageA(I)) is the set of secondary in-
+dices to which the primary indices of I align. In
+Figure 1(c), for instance, the image of primary span
+[2, 4] is the set {3, 5}. Formally, for a set I of pri-
+mary indices of alignment A, define:
+pimageA(I) = {?|?a ? I s.t. (a, ?) ? A}
+Projection: The minimal projection of a set I of
+primary indices (denoted pmprojA(I)) is the min-
+imal enclosing span of the image of I . In other
+words, pmprojA(I) = span(pimageA(I)). In Fig-
+ure 1(d), for instance, the minimal projection of pri-
+mary span [2, 4] is the secondary span [3, 5].
+Consider Figure 1(d). We will also allow a more
+relaxed type of projection, in which we allow the
+broadening of the minimal projection to include un-
+aligned secondary indices. In the example, sec-
+ondary spans [2, 5], [3, 6], and [2, 6] (in addition
+to the minimal projection [3, 5]) are all considered
+projections of primary span [2, 4]. Formally, de-
+fine pprojA([b, c]) as the set of superspans [?, ?]
+of pmprojA([b, c]) such that [?, ?] ? sdom(A) ?
+pmprojA([b, c]).
+2.3 Rules
+We define an unlabeled rule as a tuple ?k, s?, ??, pi?
+where k is a nonnegative integer, s? and ??
+are patterns of rank k, and pi is a permuta-
+tion of the sequence ?1, 2, ..., k?. Such rules
+can be rewritten using a more standard Syn-
+chronous Context-Free Grammar (SCFG) format,
+e.g. ?3, ?le? ? de??, ?? ?s ? ??, ?3, 2, 1?? can
+be written: ? ? ?le?1 ?2 de ?3,?3 ?s?2 ?1?.
+A labeled rule is a pair ?r, l?, where r is an un-
+labeled rule, and l is a ?label?. The unlabeled rule
+defines the essential structure of a rule. The label
+gives us auxiliary information we can use as decod-
+ing constraints or rule features. This deliberate mod-
+ularization lets us unify sequence-based and tree-
+based extraction methods.
+Labels can take many forms. Two examples (de-
+picted in Figure 2) are:
+1. An SCFG label is a (k+ 1)-length sequence of
+symbols.
+DT NN JJ
+NPB
+NP
+< NP, NN, JJ, NNP > 
+IN NNP
+PP
+* *
+NNP POS JJ
+NP
+*
+NN
+NP ? < le NN1 JJ2 de NNP3 ,NNP3 ?s JJ2 NN1 >
+DT NN JJ
+NPB
+NP
+IN NNP
+PP
+le de
+NNP POS JJ
+NP
+?s
+NN
+label labeled rule
+Figure 2: An example SCFG label (top) and
+STSG label (bottom) for unlabeled rule ? ?
+?le ?1 ?2 de ?3,?3 ?s ?2 ?1?.
+2. An STSG label (from Synchronous Tree Sub-
+stitution Grammar (Eisner, 2003)) is a pair of
+trees.
+STSG labels subsume SCFG labels. Thus STSG
+extraction techniques can be used as SCFG extrac-
+tion techniques by ignoring the extra hierarchical
+structure of the STSG label. Due to space con-
+straints, we will restrict our focus to SCFG labels.
+When considering techniques originally formulated
+to extract STSG rules (GHKM, for instance), we
+will consider their SCFG equivalents.
+3 A General Rule Extraction Schema
+In this section, we develop a general algorithmic
+schema for extracting rules from aligned sentence
+pairs. We will do so by generalizing the GHKM al-
+gorithm (Galley et al, 2004). The process goes as
+follows:
+? Repeatedly:
+? Choose a ?construction request,? which
+consists of a ?primary subrequest? (see
+Figure 3a) and a ?secondary subrequest?
+(see Figure 3b).
+? Construct the unlabeled rule correspond-
+ing to this request (see Figure 3, bottom).
+? Label the rule (see Figure 2).
+525
+[1,4] [4,4][1,1]
+ne va pasil
+he does not go
+INDEX
+SORT
+1 4 2 3
+? ? does not
+[1,4 ]
+[3,3][1,1]
+[1,4] [4,4][1,1]
+ne va pasil
+he does not go
+? does not ?
+INDEX
+SORT
+1 3 2 4
+? ? ne pas
+? ne ? p a s
+INDEX
+SORT
+1 3
+1 2 1  2
+primar y
+pa ttern
+secondary
+pa ttern
+permutat io n
+(a ) (b )
+Figure 3: Extraction of the unlabeled rule ? ? ??1 does not?2,?1 ne?2 pas?. (a) Choose primary subre-
+quest [1, 4]  [1, 1][4, 4]. (b) Choose secondary subrequest [1, 4]  [1, 1][3, 3]. (bottom) Construct the rule
+? ? ??1 does not ?2,?1 ne?2 pas?.
+3.1 Choose a Construction Request
+The first step in the extraction process is to choose a
+?construction request,? which directs the algorithm
+about which unlabeled rule(s) we wish to construct.
+A ?construction request? consists of two ?subre-
+quests.?
+Subrequests: A subrequest is a
+nonempty sequence of non-null spans
+?[b0, c0], [b1, c1], ..., [bk, ck]? such that, for all
+1 ? i < j ? k, [bi, ci] and [bj , cj ] are disjoint
+proper2 subsets of [b0, c0]. If it also true that
+ci < bj , for all 1 ? i < j ? k, then the subrequest
+is called monotonic. We refer to k as the rank of the
+subrequest.
+We typically write subrequest
+?[b0, c0], [b1, c1], ..., [bk, ck]? using the notation:
+2If unary rules are desired, i.e. rules of the form ? ? ?,
+then this condition can be relaxed.
+[b0, c0] [b1, c1]...[bk, ck]
+or as [b0, c0]  if k = 0.
+For subrequest x = [b0, c0]  [b1, c1]...[bk, ck],
+define:
+covered(x) = ?ki=1[bi, ci]
+uncovered(x) = [b0, c0]\covered(x)
+Primary Subrequests: Given an alignment A,
+define the set frontier(A) as the set of primary spans
+[b, c] of alignment A such that pmprojA([b, c])) is
+nonempty and disjoint from pimageA([1, b ? 1]) ?
+pimageA([c+ 1, |A|p]).
+3
+3Our definition of the frontier property is an equivalent re-
+expression of that given in (Galley et al, 2004). We reexpress
+it in these terms in order to highlight the fact that the frontier
+526
+Algorithm CONSTRUCTRULEs,?,A(x, ?):
+if construction request ?x, ?? matches alignment A then
+{u1, ..., up} = uncovered([b0, c0] [b1, c1]...[bk, ck])
+{?1, ..., ?q} = uncovered([?0, ?0] [?1, ?1]...[?k, ?k])
+s? = INDEXSORT(?b1, b2, ..., bk, u1, u2, ..., up?, ?
+k
+? ?? ?
+?,?, ...,?, su1 , su2 , ..., sup?)
+?? = INDEXSORT(??1, ?2, ..., ?k, ?1, ?2, ..., ?q?, ?
+k
+? ?? ?
+?,?, ...,?, ??1 , ??2 , ..., ??q?)
+pi = INDEXSORT(??1, ?2, ..., ?k?, ?1, 2, ..., k?)
+return {?k, s?, ??, pi?}
+else
+return {}
+end if
+Figure 4: Pseudocode for rule construction. Arguments: s = ?s1 s2 ... sm? and ? = ??1 ?2 ... ?n? are sentences,
+A = ?m,n,A? is an alignment, x = [b0, c0] [b1, c1]...[bk, ck] and ? = [?0, ?0] [?1, ?1]...[?k, ?k] are subrequests.
+Define preqs(A) as the set of monotonic subre-
+quests whose spans are all in frontier(A). We refer
+to members of preqs(A) as primary subrequests of
+alignment A. Figure 3a shows a primary subrequest
+of an example alignment.
+Secondary Subrequests: Given a primary sub-
+request x = [b0, c0]  [b1, c1]...[bk, ck] of align-
+ment A, define sreqs(x,A) as the set of subrequests
+[?0, ?0]  [?1, ?1]...[?k, ?k] such that [?i, ?i] ?
+pprojA([bi, ci]), for all 0 ? i ? k. We refer to
+members of sreqs(x,A) as secondary subrequests
+of primary subrequest x and alignmentA. Figure 3b
+shows a secondary subrequest of the primary subre-
+quest selected in Figure 3a.
+Construction Requests: A construction request
+is a pair of subrequests of equivalent rank. Con-
+struction request ?x, ?? matches alignment A if x ?
+preqs(A) and ? ? sreqs(x,A).
+3.2 Construct the Unlabeled Rule
+The basis of rule construction is the INDEXSORT
+operator, which takes as input a sequence of
+integers I = ?i1, i2, ..., ik?, and an equivalent-
+length sequence of arbitrary values ?v1, v2, ..., vk?,
+and returns a sequence ?vj1 , vj2 , ..., vjk?, where
+?j1, j2, ..., jk? is a permutation of sequence
+I in ascending order. For instance, INDEX-
+SORT(?4, 1, 50, 2?, ??a?, ?b?, ?c?, ?d??) =
+property is a property of the alignment alone. It is independent
+of the auxiliary information that GHKM uses, in particular the
+tree.
+Primary Protocol RANKPPk:
+{[b0, c0] [b1, c1]...[bj , cj ]
+s.t. 1 ? b0 ? c0 and 0 ? j ? k}
+Primary Protocol MAPPPt:
+{[b0, c0] [b1, c1]...[bk, ck]
+s.t. ?0 ? i ? k [bi, ci] ? spans(t)}
+Primary Protocol MAPPPT :
+?
+t?T
+MAPPPt
+Figure 5: Various primary protocols. Parameters: k is a
+nonnegative integer; t is a spanmap; T is a set of span-
+maps (typically encoded as a forest).
+??b?, ?d?, ?a?, ?c??. Note that the output of
+INDEXSORT(I, V ) is nondeterministic if sequence
+I has repetitions. In Figure 4, we show the pseu-
+docode for rule construction. We show an example
+construction in Figure 3 (bottom).
+3.3 Label the Rule
+Rule construction produces unlabeled rules. To label
+these rules, we use a labeling protocol, defined as a
+function that takes a construction request as input,
+and returns a set of labels.
+Figure 7 defines a number of general-purpose la-
+527
+Secondary Protocol TRIVSPA(x):
+return sreqs(x,A)
+Secondary Protocol MAPSP?,A(x):
+{[?0, ?0] [?1, ?1]...[?k, ?k] ? sreqs(x,A)
+s.t. ?0 ? i ? k : [?i, ?i] ? spans(?)}
+Figure 6: Various secondary protocols. Parameters: ?
+is a spanmap; A is an alignment; x = [b0, c0]  
+[b1, c1]...[bk, ck] is a subrequest.
+beling protocols. Some of these are driven by trees.
+We will represent a tree as a spanmap, defined as
+a function that maps spans to symbol sequences.
+For instance, if a parse tree has constituent NP over
+span [4, 7], then the corresponding spanmap t has
+t([4, 7]) = ?NP?. We map spans to sequences in or-
+der to accommodate unary chains in the parse tree.
+Nonconstituent spans are mapped to the empty se-
+quence. For spanmap t, let spans(t) be the set of
+spans [b, c] for which t([b, c]) is a nonempty se-
+quence.
+4 Extraction Programs
+In the previous section, we developed a general
+technique for extracting labeled rules from aligned
+sentence pairs. Note that this was not an algorithm,
+but rather an algorithmic schema, as it left two ques-
+tions unanswered:
+1. What construction requests do we make?
+2. What labeling protocol do we use?
+We answer these questions with an extraction pro-
+gram, defined as a triple ?X ,?,L?, where:
+? X is a set of subrequests, referred to as the pri-
+mary protocol. It specifies the set of primary
+subrequests that interest us. Figure 5 defines
+some general-purpose primary protocols.
+? ? maps every subrequest to a set of subre-
+quests. We refer to ? as the secondary protocol.
+It specifies the set of secondary subrequests that
+interest us, given a particular primary subre-
+quest. Figure 6 defines some general-purpose
+secondary protocols.
+Labeling Protocol TRIVLP(x, ?):
+return ?k+1
+Labeling Protocol PMAPLPt(x, ?):
+{?l0, ..., lk? s.t. ?0 ? i ? k : li ? t([bi, ci])}
+Labeling Protocol PMAPLPT (x, ?):
+?
+t?T
+PMAPLPt(x, ?)
+Labeling Protocol SMAPLP? (x, ?):
+{??0, ..., ?k? s.t. ?0 ? i ? k : ?i ? ?([?i, ?i])}
+Labeling Protocol SMAPLPT (x, ?):
+?
+??T
+SMAPLP? (x, ?)
+Labeling Protocol IMAPLPT,T (x, ?):
+{?(l0, ?0), ..., (lk, ?k)?
+s.t. ?l0, ..., lk? ? PMAPLPT (x, ?)
+and ??0, ..., ?k? ? SMAPLPT (x, ?)}
+Figure 7: Various labeling protocols. Parameters: t, ? are
+spanmaps; T, T are sets of spanmaps; x = [b0, c0]  
+[b1, c1]...[bk, ck] and ? = [?0, ?0]  [?1, ?1]...[?k, ?k]
+are subrequests.
+? L is a labeling protocol. Figure 7 defines some
+general-purpose labeling protocols.
+Figure 8 shows the pseudocode for an ?evaluator?
+that takes an extraction program (and an aligned sen-
+tence pair) as input and returns a set of labeled rules.
+4.1 The GHKM Extraction Program
+As previously stated, we developed our extraction
+schema by generalizing the GHKM algorithm (Gal-
+ley et al, 2004). To recover GHKM as an instance
+of this schema, use the following program:
+EXTRACTs,?,A(MAPPPt, TRIVSPA, PMAPLPt)
+where t is a spanmap encoding a parse tree over the
+primary sentence.
+528
+Algorithm EXTRACTs,?,A(X ,?,L):
+R = {}
+for all subrequests x ? X do
+for all subrequests ? ? ?(x) do
+U = CONSTRUCTRULEs,?,A(x, ?)
+L = L(x, ?)
+R = R ? (U ? L)
+end for
+end for
+return R
+Figure 8: Evaluator for extraction programs. Parameters:
+?s, ?,A? is an aligned sentence pair; X is a primary pro-
+tocol; ? is a secondary protocol; L is a labeling protocol.
+5 The Phrase Pair Extraction Program
+In this section, we express phrase pair extraction
+(Och et al, 1999) as an extraction program.
+For primary span [b, c] and secondary span [?, ?]
+of alignment A, let [b, c]
+A
+? [?, ?] if the following
+three conditions hold:
+1. a
+A
+? ? for some a ? [b, c] and ? ? [?, ?]
+2. a
+A
+6? ? for all a ? [b, c] and ? 6? [?, ?]
+3. a
+A
+6? ? for all a 6? [b, c] and ? ? [?, ?]
+Define the ruleset PBMT(s, ?,A) to be the set of la-
+beled rules ?r,?1? such that:
+? r = ?0, ?sb...sc?, ???...???, ??
+? [b, c]
+A
+? [?, ?]
+We want to express PBMT(s, ?,A) as an extrac-
+tion program. First we establish a useful lemma and
+corollary.
+Lemma 1. [b, c] A? [?, ?] iff [b, c] ? frontier(A) and
+[?, ?] ? pprojA([b, c]).
+Proof. Let [b, c]c = [1, b? 1] ? [c+ 1, |A|p].
+[b, c] ? frontier(A) and [?, ?] ? pprojA ([b, c])
+(1)
+??
+{
+pmprojA ([b, c]) ? pimageA ([b, c]
+c) = {}
+[?, ?] ? pprojA ([b, c])
+(2)
+??
+{
+[?, ?] ? pimageA ([b, c]
+c) = {}
+[?, ?] ? pprojA ([b, c])
+(3)
+??
+{
+[?, ?] ? pimageA ([b, c]
+c) = {}
+pimageA ([b, c]) ? [?, ?]
+(4)
+??
+{
+conditions 2 and 3 hold
+[?, ?] 6= {}
+(5)
+?? conditions 1, 2 and 3 hold
+Equivalence 1 holds by definition of frontier(A).
+Equivalence 2 holds because [?, ?] differs from
+pmprojA ([b, c]) only in unaligned indices. Equiv-
+alence 3 holds because given the disjointness
+from pimageA ([b, c]
+c), [?, ?] differs from
+pimageA ([b, c]) only in unaligned indices. Equiva-
+lences 4 and 5 are a restatement of conditions 2 and
+3 plus the observation that empty spans can satisfy
+conditions 2 and 3.
+Corollary 2. Consider monotonic subrequest x =
+[b0, c0]  [b1, c1]...[bk, ck] and arbitary subrequest
+? = [?0, ?0]  [?1, ?1]...[?k, ?k]. Construction
+request ?x, ?? matches alignment A iff [bi, ci]
+A
+?
+[?i, ?i] for all 0 ? i ? k.
+We are now ready to express the rule set
+PBMT(s, ?,A) as an extraction program.
+Theorem 3. PBMT(s, ?,A) =
+EXTRACTs,?,A(RANKPP0, TRIVSPA, TRIVLP)
+Proof.
+?r, l? ? EXTs,?,A(RANKPP0, TRIVSPA, TRIVLP)
+(1)
+??
+?
+?????
+?????
+x = [b, c]  and ? = [?, ?] 
+?x, ?? matches alignment A
+{r} = CONSTRUCTRULEs,?,A(x, ?)
+l = ?1
+(2)
+??
+?
+?????
+?????
+x = [b, c]  and ? = [?, ?] 
+?x, ?? matches alignment A
+r = ?0, ?sb...sc?, ???...???, ??
+l = ?1
+(3)
+??
+?
+???
+???
+[b, c]
+A
+? [?, ?]
+r = ?0, ?sb...sc?, ???...???, ??
+l = ?1
+(4)
+?? ?r, l? ? PBMT(s, ?,A)
+529
+Equivalence 1 holds by the definition of EXTRACT
+and RANKPP0. Equivalence 2 holds by the pseu-
+docode of CONSTRUCTRULE. Equivalence 3 holds
+from Corollary 2. Equivalence 4 holds from the def-
+inition of PBMT(s, ?,A).
+6 The Hiero Extraction Program
+In this section, we express the hierarchical phrase-
+based extraction technique of (Chiang, 2007) as
+an extraction program. Define HIERO0(s, ?,A) =
+PBMT(s, ?,A). For positive integer k, define
+HIEROk(s, ?,A) as the smallest superset of HI-
+EROk?1(s, ?,A) satisfying the following condition:
+? For any labeled rule ??k ? 1, s?, ??, pi?,?k? ?
+HIEROk?1(s, ?,A) such that:
+1. s? = s?1 ? ?sb...sc? ? s
+?
+2
+2. ?? = ??1 ? ???...??? ? ?
+?
+2
+3. pi = ?pi1, pi2, ..., pik?1?
+4. s?2 has rank 0.
+4
+5. ??1 has rank j.
+6. [b, c]
+A
+? [?, ?]
+it holds that labeled rule ?r,?k+1? is a member
+of HIEROk(s, ?,A), where r is:
+?k, s?1 ? ??? ? s
+?
+2, ?
+?
+1 ? ??? ? ?
+?
+2,
+?pi1, ..., pij , k, pij+1, ..., pik?1??
+Theorem 4. HIEROk(s, ?,A) =
+EXTRACTs,?,A(RANKPPk, TRIVSPA, TRIVLP)
+Proof. By induction. Define ext(k) to mean
+EXTRACTs,?,A(RANKPPk, TRIVSPA, TRIVLP).
+From Theorem 3, HIERO0(s, ?,A) = ext(0).
+Assume that HIEROk?1(s, ?,A) = ext(k ? 1) and
+prove that HIEROk(s, ?,A)\HIEROk?1(s, ?,A) =
+ext(k)\ext(k ? 1).
+?r?, l?? ? ext(k)\ext(k ? 1)
+(1)
+??
+?
+???????
+???????
+x? = [b0, c0] [b1, c1]...[bk, ck]
+?? = [?0, ?0] [?1, ?1]...[?k, ?k]
+?x?, ??? matches alignment A
+{r?} = CONSTRUCTRULEs,?,A(x
+?, ??)
+l? = ?k+1
+4This condition is not in the original definition. It is a cos-
+metic addition, to enforce the consecutive ordering of variable
+indices on the rule LHS.
+(2)
+??
+?
+????????????????????????????
+????????????????????????????
+x = [b0, c0] [b1, c1]...[bk?1, ck?1]
+? = [?0, ?0] [?1, ?1]...[?k?1, ?k?1]
+{r} = CONSTRUCTRULEs,?,A(x, ?)
+pi = ?pi1, ..., pik?1?
+r =
+?k ? 1,s?1 ? ?sbk ...sck? ? s
+?
+2,
+??1 ? ???k ...??k? ? ?
+?
+2, pi?
+s?2 has rank 0 and ?
+?
+1 has rank j
+x? = [b0, c0] [b1, c1]...[bk, ck]
+?? = [?0, ?0] [?1, ?1]...[?k, ?k]
+?x?, ??? matches alignment A
+pi? = ?pi1, ..., pij , k, pij+1, ..., pik?1?
+r? = ?k, s?1 ? ??? ? s
+?
+2, ?
+?
+1 ? ??? ? ?
+?
+2, pi
+??
+l? = ?k+1
+(3)
+??
+?
+??????????????????
+??????????????????
+pi = ?pi1, ..., pik?1?
+r =
+?k ? 1,s?1 ? ?sbk ...sck? ? s
+?
+2,
+??1 ? ???k ...??k? ? ?
+?
+2, pi?
+s?2 has rank 0 and ?
+?
+1 has rank j
+?r,?k? ? HIEROk?1(s, ?,A)
+pi? = ?pi1, ..., pij , k, pij+1, ..., pik?1?
+r? = ?k, s?1 ? ??? ? s
+?
+2, ?
+?
+1 ? ??? ? ?
+?
+2, pi
+??
+[bi, ci]
+A
+? [?i, ?i] for all 0 ? i ? k
+l? = ?k+1
+(4)
+?? ?r?, l?? ? HIEROk(s, ?,A)\HIEROk?1(s, ?,A)
+Equivalence 1 holds by the definition of
+ext(k)\ext(k ? 1). Equivalence 2 holds by
+the pseudocode of CONSTRUCTRULE. Equivalence
+3 holds by the inductive hypothesis and Corol-
+lary 2. Equivalence 4 holds by the definition of
+HIEROk(s, ?,A)\HIEROk?1(s, ?,A).
+7 Discussion
+In this paper, we have created a framework that al-
+lows us to express a desired rule extraction method
+as a set of construction requests and a labeling pro-
+tocol. This enables a modular, ?mix-and-match? ap-
+proach to rule extraction. In Table 1, we summa-
+rize the results of this paper, as well as our conjec-
+tured extraction programs for several other methods.
+For instance, Syntax-Augmented Machine Transla-
+tion (SAMT) (Zollmann and Venugopal, 2006) is a
+530
+hybridization of Hiero and GHKM that uses the pri-
+mary protocol of Hiero and the labeling protocol of
+GHKM. To bridge the approaches, SAMT employs
+a fuzzy version5 of the spanmap t that assigns a triv-
+ial label to non-constituent primary spans:
+t?([b, c]) =
+{
+t([b, c]) if [b, c] ? spans(t)
+??? otherwise
+Other approaches can be similarly expressed as
+straightforward variants of the extraction programs
+we have developed in this paper.
+Although we have focused on idealized meth-
+ods, this framework also allows a compact and pre-
+cise characterization of practical restrictions of these
+techniques. For instance, (Chiang, 2007) lists six
+criteria that he uses in practice to restrict the gener-
+ation of Hiero rules. His condition 4 (?Rules can
+have at most two nonterminals.?) and condition 5
+(?It is prohibited for nonterminals to be adjacent on
+the French side.?) can be jointly captured by replac-
+ing Hiero?s primary protocol with the following:
+{[b0, c0] [b1, c1]...[bj , cj ] s.t. 1 ? b0 ? c0
+0 ? j ? 2
+b2 > c1 + 1}
+His other conditions can be similarly captured with
+appropriate changes to Hiero?s primary and sec-
+ondary protocols.
+This work is primarily intended as a survey of the
+dominant translation rule extraction paradigms, in
+which we make explicit the close relationship be-
+tween these approaches, and establish a language for
+future hybridizations. From a practical perspective,
+we facilitate a generic and extensible implementa-
+tion which supports a wide variety of existing meth-
+ods, and which permits the precise expression of
+practical extraction heuristics.
+5This corresponds with the original formulation of Syntax
+Augmented Machine Translation (Zollmann and Venugopal,
+2006). More recent versions of SAMT adopt a more refined
+?fuzzifier? that assigns hybrid labels to non-constituent primary
+spans.
+References
+David Chiang. 2005. A hierarchical phrase-based model
+for statistical machine translation. In Proceedings of
+ACL, pages 263?270.
+David Chiang. 2007. Hierarchical phrase-based transla-
+tion. Computational Linguistics, 33(2):201?228.
+David Chiang. 2010. Learning to translate with source
+and target syntax. In Proceedings of ACL, pages 1443?
+1452.
+A. de Gispert, G. Iglesias, G. Blackwood, E.R. Banga,
+and W. Byrne. 2010. Hierarchical phrase-based
+translation with weighted finite state transducers and
+shallow-n grammars. Computational Linguistics,
+36(3):505?533.
+Jason Eisner. 2003. Learning non-isomorphic tree map-
+pings for machine translation. In Proceedings of ACL,
+pages 205?208.
+Michel Galley, Mark Hopkins, Kevin Knight, and Daniel
+Marcu. 2004. What?s in a translation rule? In Pro-
+ceedings of HLT/NAACL.
+Michel Galley, Jonathan Graehl, Kevin Knight, Daniel
+Marcu, Steve DeNeefe, Wei Wang, and Ignacio
+Thayer. 2006. Scalable inference and training of
+context-rich syntactic models. In Proceedings of ACL-
+COLING.
+Liang Huang, Kevin Knight, and Aravind Joshi. 2006.
+Statistical syntax-directed translation with extended
+domain of locality. In Proceedings of AMTA.
+Zhifei Li, Chris Callison-Burch, Chris Dyer, Juri Gan-
+itkevitch, Sanjeev Khudanpur, Lane Schwartz, Wren
+Thornton, Jonathan Weese, and Omar Zaidan. 2009.
+Joshua: An open source toolkit for parsing-based ma-
+chine translation. In Proceedings of the Fourth ACL
+Workshop on Statistical Machine Translation, pages
+135?139.
+Yang Liu, Qun Liu, and Shouxun Lin. 2006. Tree-to-
+string alignment template for statistical machine trans-
+lation. In Proceedings of ACL/COLING, pages 609?
+616.
+Yang Liu, Yun Huang, Qun Liu, and Shouxun Lin. 2007.
+Forest-to-string statistical translation rules. In Pro-
+ceedings of ACL.
+Yang Liu, Yajuan Lu, and Qun Liu. 2009. Improving
+tree-to-tree translation with packed forests. In Pro-
+ceedings of ACL/IJCNLP, pages 558?566.
+Adam Lopez. 2007. Hierarchical phrase-based transla-
+tion with suffix arrays. In Proceedings of EMNLP-
+CoNLL.
+Daniel Marcu, Wei Wang, Abdessamad Echihabi, and
+Kevin Knight. 2006. Spmt: Statistical machine trans-
+lation with syntactified target language phrases. In
+Proceedings of EMNLP, pages 44?52.
+531
+Yuval Marton and Philip Resnik. 2008. Soft syntactic
+constraints for hierarchical phrased-based translation.
+In Proceedings of ACL.
+Haitao Mi and Liang Huang. 2008. Forest-based transla-
+tion rule extraction. In Proceedings of EMNLP.
+Franz J. Och, Christof Tillmann, and Hermann Ney.
+1999. Improved alignment models for statistical ma-
+chine translation. In Proceedings of the Joint Conf. of
+Empirical Methods in Natural Language Processing
+and Very Large Corpora, pages 20?28.
+Ashish Venugopal, Andreas Zollmann, and Stephan Vo-
+gel. 2007. An efficient two-pass approach to
+synchronous-cfg driven statistical mt. In Proceedings
+of HLT/NAACL.
+Min Zhang, Hongfei Jiang, Aiti Aw, Haizhou Li,
+Chew Lim Tan, and Sheng Li. 2008. A tree se-
+quence alignment-based tree-to-tree translation model.
+In Proceedings of ACL.
+Andreas Zollmann and Ashish Venugopal. 2006. Syntax
+augmented machine translation via chart parsing. In
+Proceedings of NAACL Workshop on Statistical Ma-
+chine Translation.
+532

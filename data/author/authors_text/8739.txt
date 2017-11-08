@@ -1,0 +1,1577 @@
+Proceedings of the NAACL HLT Workshop on Software Engineering, Testing, and Quality Assurance for Natural Language Processing, pages 56?64,
+Boulder, Colorado, June 2009. c?2009 Association for Computational Linguistics
+Distributed Parse Mining
+Scott A. Waterman, PhD
+Microsoft Live Search/Powerset
+475 Brannan St.
+San Francisco, USA
+waterman@acm.org
+Abstract
+We describe the design and implementation of
+a system for data exploration over dependency
+parses and derived semantic representations
+in a large-scale NLP-based search system at
+powerset.com. Because of the distributed
+nature of the document repository and the pro-
+cessing infrastructure, and also the complex
+representations of the corpus data, standard
+text analysis tools such as grep or awk or
+language modeling toolkits are not applicable.
+This paper explores the challenges of extract-
+ing statistical information and of building lan-
+guage models in such a distributed NLP envi-
+ronment, and introduces a corpus analysis sys-
+tem, Oceanography, that simplifies the writ-
+ing of analysis code and transparently takes
+advantage of existing distributed processing
+infrastructure.
+1 Introduction
+In computational linguistics we deal with large cor-
+pora and vast amounts of data from which we would
+like to extract useful information. The size of the
+text resources, derived linguistic analyses, and the
+complexity of their representations is often a stum-
+bling block on the way to understanding the statisti-
+cal and linguistic behavior within the corpus. Sim-
+ple software tools suffice for small or simple anal-
+ysis problems, or for building models of easily rep-
+resented relations. However, as the size of data, the
+intricacy of relations to be analyzed, and the com-
+plexity of the representation grow, so too does the
+technical difficulty of conducting the analysis.
+Software is our given means of escape from this
+escalation of complexity. However, as ?computa-
+tional linguists,? we often find ourselves spending
+more time and attention building software to per-
+form the required computations than we do on un-
+derstanding the linguistics.
+Even once a suitable set of NLP tools (e.g. tag-
+gers, chunkers, parsers, etc.) has been chosen, anal-
+ysis software, in the CL world, often consists of
+?throw away? scripts. Small, ad hoc programs are
+often the norm, often with no assurance (via strict
+design or testing) of correctness or completeness.
+1.1 Oceanography
+Our goal is to ensure that analysis is not so prob-
+lematic. Powerset is a group within the Microsoft
+Live Search team focused on using semantic NLP
+to improve web search. We face many problems
+with the scale and integration of our NLP compo-
+nents, and are approaching solving them by applying
+sound software design and abstraction principles to
+corpus processing. By generalizing tools to fit the
+processing environment, and the nature of the prob-
+lems at hand, we enable flexible processing which
+scales with the size of the platform and the data.
+The Oceanography software environment is de-
+signed to address two important needs in large cor-
+pus analysis. The first is to simplify the actual pro-
+gramming of analysis code to reduce development
+time and increase reliability, and the second is to use
+the available distributed computing resources to re-
+duce running time and provide for rapid testing and
+experimental turnaraound.
+56
+1.2 Linguistic and Diagnostic data analysis
+There are two separate kinds of analysis we want
+to support over this processed corpus. The first is
+linguistic modeling. In order to achieve the best se-
+mantic interpretation of each source document, we
+seek to understand the linguistic behavior within
+the corpus. Probabilistic parsing, entity extraction,
+sense disambiguation, and argument role assign-
+ment are all informed by structured, statistical mod-
+els of word behavior within the corpus. Some mod-
+els can be built from simple tokenized text, while
+other models need to incorporate parse dependen-
+cies or real-word knowledge of entities. Some of
+these tasks are exploratory and underspecified (e.g.
+selectional restrictions), while others, such as name
+tagging, have a well-developed literature and a num-
+ber of almost standard methodologies.
+The second kind of analysis is aimed at character-
+izing and improving system behavior. For example,
+distributions of POS-tags or preposition attachments
+can serve as regression indicators for parser perfor-
+mance. In order to perform error analysis, we need
+to selectively sample various types of label assign-
+ments or parse structures. So summarization and
+sampling from the various intermediate NL analyses
+are very important processes to support.
+2 Generalizing Text Mining
+We have found that most of these analysis and data
+modeling tasks share certain higher order steps that
+allow us to generalize them all into a single pro-
+gramming framework. All involve identifying some
+phenomena in one of the NLP outputs, represent-
+ing it in some characteristic form, and then sum-
+ming or comparing distributions. These general
+steps apply to many corpus tasks, including building
+n-gram data, learning sentence breaks, identifying
+selectional preferences, or building role mappings
+for verb nominalizations.
+The Oceanography system generalizes these steps
+into a declarative language for stating the selection
+of data, and the form of output, in a way that avoids
+repetitive and error prone boilerplate code for file
+traversal, regular expression matching, and statistics
+programming. By matching a declarative syntax to
+the general analysis steps, these common functions
+can be relegated to library code, or wrapped into the
+executable in the compilation step. The less time
+spent in describing a task, or in coding and debug-
+ging the implementation, the more time and atten-
+tion can be spent in understanding the results and
+modeling the linguistic processes that underly the
+data.
+This sort of abstraction away from the details
+of file representation, storage architecture, and pro-
+cessing model fits a general trend toward data min-
+ing, or text mining (Feldman and Dagan, 1995). In
+data mining or KDD systems (Fayyad et al, 1996),
+the goal is to separate the tasks of creative anal-
+ysis and theorizing from the mundane aspects of
+traversing the data collection and computing statis-
+tics. These are much the same goals emphasized
+by Tukey (1977) ? exploration of the data and in-
+teractions in order to understand which hypotheses,
+and which models of interaction, would be fruitful
+to explore. For our needs in analyzing collections of
+text, parses, and semantic representations, we have
+achieved a very practical step toward these goals.
+2.1 Matching process to conception
+We have found four steps that map very closely to
+our conception of the data analysis problem, which
+at the same time are easily translated to implemen-
+tations that can be run on both small local data sets
+and on very large distributed corpora.
+1. Pattern matching ? find the interesting phe-
+nomena among the mass of data, by declaring a
+set of desired properties to be met. In Oceanog-
+raphy, these are matched per-sentence.
+2. Transformation ? rewrite the raw occurrence
+data to identify the interesting part, and isolate
+it from the background
+3. Aggregation ? group together instances of the
+same kind
+4. Statistics ? compute statistics for counts, relative
+frequency, conditional distributions, distribu-
+tional comparisons, etc.
+In the following sections we describe the nature of
+each step in more detail, map these steps to a declar-
+ative data analysis language, give some motivating
+examples, and describe how these steps are typically
+57
+accomplished in an exploratory setting for NLP in-
+vestigations.
+Later, in section 4, we describe how the steps
+are mapped to processing operations within the NLP
+pipeline architecture. Following that, we give exam-
+ples of how this framework maps to specific prob-
+lems, of both the exploratory and the diagnostic
+type.
+2.2 Pattern Matching
+The first step is to identify the specific phenomena of
+interest within the source data. If the data is a com-
+plex structure, it is helpful to express the patterns in
+a logical representation of the structure, rather than
+matching the representation directly.
+Pattern matching in Oceanography for depen-
+dency parse structures is handled using a domain
+specific language (DSL) built explicitly for pattern-
+based manipulation of parse trees and semantic rep-
+resentations generated by the XLE linguistic compo-
+nents (Crouch et al, 2006). This Transfer language
+(Crouch, 2006) is normally used in the regular lin-
+guistic processing pipeline to incrementally rewrite
+LFG dependency parses into a role-labeled seman-
+tic representations (semreps) of entities, events, and
+relations in the text. Transfer matches pattern rules
+to a current set of parse dependencies or semantic
+facts, and writes alternate expressions derived from
+the matched components. Variables in these expres-
+sions are bound via Prolog-style unification (Huet,
+1975).
+For example, in figure 1, the first expression
+word(? ? ?) will match word forms in a parse that
+are ?verb?s, and bind %VerbSk variable to a
+unique occurrence id and %VerbWord to the verb
+lemma. The second pattern finds the node in the
+dependency graph that fills the ob (object) role for
+that verb, and extracts its lemmas. (The %%?s are
+placeholder variables in the pattern, needed to match
+the arity of the expression.) Below, in the same
+figure, is a representation of the verb and object
+from a parse of the phrase ?determined the struc-
+ture?. On matching these facts, the VerbWord and
+ObjLemma variables would be bound to the strings
+determine and structure.
+In a simpler environment, with more basic textual
+representations, this pattern matching step would be
+written with regular expressions, for example using
+the familiar grep command. The balance provided
+by grep between the simplicity of its operational
+model (a transform from stdin to stdout) and the ex-
+pressiveness of the regular expressions allows grep
+to be a workhorse for data analysis over text.
+However, except for simple cases such as word
+cooccurrence models, the typical need in deep lin-
+guistic analysis is not well served by regular expres-
+sions over strings. Anyone in the NLP field who
+has written regular expressions to match, say, part-
+of-speech labeled text knows the difficulties of hav-
+ing a pattern language which differs from the logical
+structures being matched. Another typical solution
+is to write a short program in a scripting language
+(e.g. perl, python, SNOBOL) which combines regu-
+lar expressions to provide a simple structure parser.
+Tgrep (Pito, 1993) is a one such program which ex-
+tends this regular expression notion to patterns over
+trees, and can output subtrees matching those ex-
+pressions, but only provided they are represented as
+text in the LDC TreeBank format.
+2.3 Transformation
+Once the items of the pattern have been identified in
+their original context, it is often necessary to isolate
+them from that context, and remove the extraneous,
+irrelevant information. For instance, if one is do-
+ing a simple word count, the tokenized words of text
+must be separated from any annotation and counted
+independently. For more complicated tasks, such as
+finding a verb?s distribution of occurrence with di-
+rect objects, the verb and object need to be isolated
+from the remainder of the parse tree, perhaps as the
+simple tuple (verb, object), or in a more complex
+structure, with additional dependent information.
+In our case, we express the transformed output of
+each pattern match with an expression built from the
+unification variables bound to the match. In figure 2,
+we construct a vo pair of (verb, object). This new
+construct is simply added to the collection of facts
+and representations already present. All other pre-
+existing facts in the NL analysis of the sentence also
+remain in context, potentially available for aggrega-
+tion and counting.
+==> vo_pair(%VerbWord, %ObjLemma).
+Figure 2: Transforming the matched pattern
+58
+word(%VerbSk, %VerbWord, verb, verb, %%, %%, %%, %% ),
+in_context(%%, role(hier(ob, %%), %VerbSk, %ObjLemma:%%))
+word(determine:n(41,3),determine,verb,verb, ....)
+in_context(t,role(hier(ob,[[ob,root],..]),
+determine:n(82,3),structure:n(91,3))))
+Figure 1: Pattern matching using Transfer
+In shallower text mining, this might be accom-
+plished using regex matching in a perl program. An-
+other common approach is to use command-line text
+tools such as awk or sed. Awk (Aho et al, 1977)
+is designed especially for text mining, but is limited
+to plain text files, on single machines, and doesn?t
+extend easily to structured graph representations or
+distributed processing. (But see, e.g. Sawzall (Pike
+et al, 2005) for a scalable awk-like language.)
+2.4 Aggregation
+The aggregation step collects the extracted instances
+and groups them by type and by key. Rather
+than have the matched, transformed results simply
+dumped out in some enormous file or database in
+their order of occurrence in the data set (as one
+would get e.g. from grep), it is quite useful even in
+the simplest of cases to aggregate all similar output
+items. This condenses the mass of data selected, and
+allows one to see the extent and diversity of the items
+that are found by the patterns. This simple counting
+is often enough for diagnostic tasks, and sometimes
+for exploratory tasks when a statistical judgement is
+not yet desired. The aggregation key might be, for
+various kinds of extraction: the head noun of an NN-
+compound, or the error type for parse errors, or the
+controlling verb of a relative clause.
+In Oceanography, we require a declaration of the
+data that will be aggregated, in order to separate it
+from the remainder which will be discarded. These
+declarations take the form of familiar static type dec-
+larations, in the style of C++ or Java. Figure 3
+shows the simple declaration for our vo pair type,
+where both fields are declared as strings. These
+named fields also provide a handle to refer to struc-
+ture members in later statements.
+In the command line text world, aggregation
+might be accomplished by using the unix pipeline
+vo_pair :: {
+verb::String, object::String }
+Figure 3: Declaring aggregation types
+command sort | uniq -c , to organize the out-
+put by the appropriate key. If using a small program
+to do this kind of analysis, one would use a dictio-
+nary or hash-table and sorting routines to organize
+the data before output.
+2.5 Statistics
+With the matched and extracted data, one can build
+up a statistical picture of the data and its interrela-
+tions. In our practice, and in the computational NLP
+literature, we have found a few fundamental statisti-
+cal operations that are frequently used to make sense
+of the corpus data. Primary among these are sim-
+ple class counts: the number of occurrences of a
+given phenomena. For instance, the count of part-
+of-speech tags, or of head nouns with adjective mod-
+ifiers, or the counts of (verb,object) pairs. These
+counts can be computed easily by summing the oc-
+currences in the aggregated groups.
+Other statistics are more complicated, requiring
+combinations of the simple counts and sums ?
+normalizing distributions by the total occurrence
+counts, for instance, as in the conditional occurrence
+of a part-of-speech label relative to the frequency
+of the token. Estimation of log-likelihood ratios
+or Pearson?s Chi-square test for pairwise correlation
+also falls in this category. These kinds of computa-
+tions are used heavily for building classifiers and for
+diagnostic purposes.
+Higher order functions of the counts are also in-
+teresting, in which various distributions compared.
+These include computing KL distance between con-
+ditional distributions for similarity measurements,
+59
+clustering over similarity, and building predictive or
+classification models for model corpus behavior.
+3 Data Parallel Document Processing at
+Powerset
+To simplify the processing of large web document
+collections, and flexibly include new processing
+modules, we have built a single consistent pro-
+cessing architecture for the natural language doc-
+ument pipeline, which allows us to process mil-
+lions of documents and handle terabytes of analy-
+sis data effectively. Coral is the name of the dis-
+tributed, document-parallel NLP pipeline at Power-
+set. Coral provides both a process and a data man-
+agement framework in order to smoothly execute the
+multi-step linguistic analysis of all content indexed
+for Powerset?s search.
+Coral controls a multi-step pipeline for deep lin-
+guistic processing of documents indexed for search.
+A partial list of the steps every web document un-
+dergoes includes: HTML destructuring, sentence
+breaking, name tagging, parsing, semantic inter-
+pretation, anaphora resolution, and indexing. The
+pipeline is similar to the UIMA (Ferrucci and Lally,
+2004) architecture in that each step adds interme-
+diate data ? tagged spans, dependency trees, co-
+referent expressions ? that can be used in subse-
+quent steps. Each step adds a different kind of data
+to the set, with its own labels and meanings. The
+output of all these steps is a daunting amount of in-
+formation, all of which is valuable for understanding
+the linguistic relations within the text, and also the
+behavior and effectiveness of the NLP pipeline.
+Documents are processed in a data-parallel fash-
+ion. Multiple documents are processed indepen-
+dently, across multiple processes on multiple com-
+pute nodes within a clustered environment. The doc-
+ument processing model is sequential, with multi-
+ple steps run in a fixed sequence for each document
+in the index. All processing for a single document
+is typically performed on a single compute node.
+The steps of the pipeline communicate through in-
+termediate data writen to the local filesystem in be-
+tween steps, where each step is free to consume data
+produced earlier. Output from the stages is check-
+pointed to backing storage at various points along
+the way, and the final index fragments are merged at
+the end.
+This kind of data-parallel process lends itself well
+to a map/reduce programming infrastructure (Dean
+and Ghemawat, 2004). Map/reduce divides process-
+ing into two classes: data-parallel ?map? operations,
+and commutative ?reduce? operations, in which all
+map output aggregated under a particular key is pro-
+cessed together. In map/reduce terms, the entire
+linguistic processing runs as a sequence of ?map?
+steps (there is no inter-document communication),
+with a final ?reduce? step to collect index fragments
+and construct a unified search index. Coral uses the
+open-source hadoop implementation of map/reduce
+(Cutting, ) as the central task control and distribu-
+tion mechanism for assigning NLP pipeline jobs to
+documents in the input data, and it has full control
+of the map/reduce processing layer.
+3.1 Difficulties for data mining in Coral
+All of the intermediate processing output of the
+pipeline, the name tags, parses, semantic representa-
+tions, etc., are are retained by this complex process.
+Unfortunately, they are retained in an unfriendly
+format: small document-addressed chunks scattered
+across a large distributed filesystem, on hundreds of
+machines. There is no operational way to collect
+these chunks in any single file, or to traverse them
+efficiently from any single point. Traditional script-
+ing techniques, even if scalable to the terabytes of
+data, are not applicable to the distributed organiza-
+tion of the underlying data.
+3.2 Re-using processing infrastructure for
+mining
+However, we can re-use the same Coral process and
+data management for the problems of data analy-
+sis. The breakdown of parse-mining steps presented
+earlier, in addition to providing a coherent model
+for data analysis, also maps very cleanly to the
+distributed map/reduce computational model. By
+translating the four steps of any analysis into corre-
+sponding map/reduce operations across the linguis-
+tic pipeline data, we can efficiently translate the cor-
+pus analytics to an arbitrarily large data setting. Fur-
+ther, because we can rely on the Coral process and
+data management infrastructure to handle the data
+movement and traversal, we allow the researcher or
+language engineer to concentrate on specifying the
+60
+patterns and relations to be investigated, rather than
+burdening them with complex yet necessary details.
+4 Oceanography - a compiled data mining
+language
+Oceanography has a compiler that transforms short
+analysis programs into multiple map/reduce steps
+that will operate over the corpus of text and deep lin-
+guistic analyses. These multiple sub-operations are
+then farmed out through the distributed cluster envi-
+ronment, managed by the Coral job controller. The
+data flow and dependencies between these jobs are
+compiled to a Coral-specific job control language.
+An oceanography program (cf. figure 4) is a
+single-file description of the data analysis task. It
+contains specifications for each of the four oper-
+ations: pattern matching, transformation, aggrega-
+tion, and statistics. The program style is declarative
+? there are no instructions for iterating over files,
+summing distributions, or parsing the dependency
+graph representations.
+We find that this matches our intuitions and con-
+ception of the parse mining task. A statement of
+the end-product of the analysis is natural: e.g. find
+the conditional distribution of object head nouns for
+verbs, or symbolically p(obj|verb). The style of the
+oceanography program matches this well, where the
+statistics statement such as
+dist triple.object cond on triple.verb
+states the desired output, and the preceding pat-
+tern match and type declarations serve as definitions
+to specify precisely what is meant by the variable
+names.
+In the following sections, we will follow the steps
+of the Oceanography program in the listing in fig-
+ure 4. The example analysis presented is a simple
+one ? to find all verbs with both subject and object
+roles, i.e. triples of (subject, object, verb), and re-
+port some counts and relative frequencies of verbs,
+subjects, and objects.
+4.1 Step 1: Pattern Matching
+The pattern matching rules are similar to those
+presented above in sec. 2.2. The first line
+matches a verb term, and the next two lines
+require the presence of terms in both the sub-
+ject (role(hier(sb, %%))) and object
+role(hier(ob, %%)) roles. Following the
+explicit pattern expression, we add negative checks
+to ensure that neither the subject or object are PRO
+elements, which have no surface form.
+4.2 Transformation
+The transformation expressed in figure 4 is almost
+trivial. We capture the verb-subject-object triple in a
+simple three place predicate. Recall that the values
+of the triple:
+(%VerbWord, %SubjLemma, %ObjLemma)
+are bound by unification to the terms matched in the
+pattern, above.
+Although we have only one pattern and one
+matching transformation in this example, we are not
+in general limited in the number of patterns or out-
+put expressions we might use. Multiple transforms,
+from multiple patterns, can be used.
+During compilation, these Transfer rules are com-
+piled into a binary object module, then distributed
+at runtime to the compute nodes where they will be
+executed in the proper sequence by the Coral job
+controller. Output from the transformation step, and
+between all the steps, is encoded as a set of hierar-
+chically structured objects using JSON (Crockford,
+2006). Because JSON provides a simple structural
+encoding with named fields, and many programming
+environments can handle the JSON format, it pro-
+vides a flexible and self-describing interchange for-
+mat between steps in the Oceanography runtime.
+4.3 Aggregation
+The third section of the Oceanography program de-
+clares the types of objects to be aggregated follow-
+ing the transform step. The type declarations in
+this section serve two purposes. First, they spec-
+ify exactly what types of data from the match-
+ing/transformation phase should be carried forward.
+Recall that all of the source data is available for pro-
+cessing, but we are likely only interested in a small
+portion of it. Secondly, the declarations serve as type
+hints to the compiler so that operations and data stor-
+age are performed correctly in the later phases (e.g.
+adding strings vs. integers).
+4.4 Statistics
+The simplest statistic we can compute is the count
+of a type that has been aggregated. For example,
+61
+## Step 1: pattern matching
+rules {
+word(%VerbSk, %VerbWord, verb, verb, %%Pos, %%SentNum, %%Context, %%LexicalInfo ),
+in_context(%%, role(hier(sb, %%), %VerbSk, %SubjLemma:%%)),
+in_context(%%, role(hier(ob, %%), %VerbSk, %ObjLemma:%%)),
+{ \+memberchk( %SubjLemma, [group_object, null_pro, agent_pro]),
+\+memberchk( %ObjLemma, [group_object, null_pro, agent_pro]) }
+## Step 2: Transformation
+==> triple(%VerbWord, %SubjLemma, %ObjLemma).
+}
+## Step 3: Aggregation
+triple :: {
+verb :: String,
+subject :: String,
+object :: String
+}
+## Step 4: Statistics
+count triple
+count triple.verb
+count triple.verb, triple.subject
+dist triple.object cond on triple.verb
+Figure 4: A complete Oceanography program
+count triple.verb
+will result in occurrence counts of each verb seen
+in the parses. We can combine primitive types into
+tuples, in order to count n-grams (which are not nec-
+essarily adjacent), e.g.
+count triple.verb, triple.subject
+to give occurrence counts for all (verb,subject) pairs.
+The dist X cond on Y statement is used to
+produce the conditional distribution p(x|y). The
+map/reduce framework collates all occurrences with
+a given value yi to a single reduce function, which
+sums the conditional counts of x, and normalizes by
+the total.
+Other statistics require multiple map/reduce op-
+erations. Computing the probability for the verb
+unigrams requires knowing the total number of oc-
+currences, which, in this kind of data-parallel pro-
+cessing architecture, is not available until the out-
+put of all occurrence counts is known. So, a prob
+triple.verb statistic must implicitly compute
+count triple.verb, sum all occurrences, and
+normalize across the set. For a good type-driven
+analysis of information flow during various stages
+of a map/reduce computations, see La?mmel (2008).
+4.5 Output
+Output is given two forms. For ease of interpreta-
+tions, human-readable tab delimited files are writ-
+ten, in which each record is preceded by the type,
+as given in the argument to the statistics declaration.
+To simplify later offline computation, the record can
+also be written out in a JSON encoded structure with
+named fields corresponding to the type.
+5 Development and testing in
+Oceanography
+Rapid turnaround and testing in exploratory corpus
+analytics is essential to understanding the nature of
+the data, and the performance and behavior of one?s
+program. Because the tools on which Oceanogra-
+phy is built are modular, we can compile an anal-
+ysis program for a local, single machine target as
+easily as we can for a cluster of arbitrarily many
+compute nodes. The resulting compiled programs
+differ somewhat in the ways they traverse the data,
+and in the control structures for the Coral processing
+steps. However, it was an important design require-
+ment that we could compile and test using small data
+on a single machine as easily as on a muti-terabyte
+corpus on a distributed cluster.
+62
+The same source program is compiled for either
+single machine or cluster execution. The user must
+specify a different type of store location for input
+and output data, depending on environment. Compi-
+lation is done using a command line program, which
+takes as input the Oceanography program, and pro-
+duces a set of executable outputs, corresponding to
+the tasks in the map/reduce process. These can also
+be run immediately in the single machine setting,
+with results going to stdout.
+5.1 Some sample tasks
+Although these tools have been available at Power-
+set only a few months, we have already used them
+to great advantage in diagnostic and linguistic anal-
+ysis tasks. Diagnostically, it is important to un-
+derstand the failure modes of the various linguistic
+pipeline components. For instance, the morpholog-
+ical analysis component of the XLE parser will on
+occasion encounter tokens it cannot analyze. Hand-
+examining a few hundred parses (which starts to ex-
+ceed the mental fatigue threshold), one can find nu-
+merous examples. But one has no idea of the rel-
+ative frequency of any given type of error, or their
+combined effect on the parse output. Oceanography
+enables a very simple single pattern match rule to be
+used to find the frequency distribution of unknown
+tokens over 100M sentences as easily as 100, and the
+grammar engineers can use this information to pri-
+oritize their effort. Other diagnostics on the parse,
+such as the frequency of certain rare grammatical
+constructs (e.g. reduced relatives), or the prevalence
+of unparseable fragments, or relative frequencies of
+transitive v. intransitive use, are immensely impor-
+tant for understanding the nature of the corpus and
+the behavior of the parser.
+The S-V-O triples used as an example also have
+practical import. By identifying the most common
+verb expressions, we can, just as in a keyword stop
+list, eliminate or downweight some of the less mean-
+ingful relations in our semantic index. For example,
+in the Wikipedia corpus, one of the most common S-
+V-O triples comes from the phrase ?this article needs
+references.?
+We are also beginning a series of lexical seman-
+tic studies, looking at selectional preferences and
+their dependence on surface form. Correspondence
+between prepositional adjunct roles and other sur-
+face realizations is also an active area. Additionally,
+Oceanography is being used to analyze feature data
+from the parses in order to experiment with an unsu-
+pervised word sense disambiguation project.
+6 Conclusion
+We have presented a methodology for understanding
+a certain class of linguistic data analysis problems,
+which identifies the steps of pattern matching, data
+transformation, aggregation, and statistics. We have
+also presented a programming system, Oceanogra-
+phy, which by following this breakdown simplifies
+the programming of these tasks while at the same
+time enabling us to take advantage of existing large
+scale distributed processing infrastructure.
+Acknowledgments
+I would like to thank Jim Firby, creator of the Coral
+document processing pipeline at Powerset, and Dick
+Crouch, creator of the XLE Transfer system, for
+their foundational work which makes these present
+developments possible.
+63
+References
+Alfred V. Aho, Peter J. Weinberger, and Brian W.
+Kernighan. 1977. awk.
+D. Crockford. 2006. The application/json Media Type
+for JavaScript Object Notation (JSON). RFC 4627 (In-
+formational), July.
+Richard S. Crouch, Mary Dalrymple, Ronald M. Kaplan,
+Tracy Holloway King, John Maxwell, and P. Newman.
+2006. XLE documentation.
+Richard S. Crouch. 2006. Packed rewriting for mapping
+text to semantics and KR.
+Doug Cutting. Apache Hadoop Project.
+http://hadoop.apache.org/.
+Jeffrey Dean and Sanjay Ghemawat. 2004. MapRe-
+duce: simplified data processing on large clusters. In
+OSDI?04: Proceedings of the 6th conference on Sym-
+posium on Opearting Systems Design & Implementa-
+tion, Berkeley, CA, USA. USENIX Association.
+Usama M. Fayyad, David Haussler, and Paul E. Stolorz.
+1996. KDD for Science Data Analysis: Issues and
+Examples. In KDD, pages 50?56.
+Ronen Feldman and Ido Dagan. 1995. Knowledge Dis-
+covery in Textual Databases (KDT). In KDD, pages
+112?117.
+David Ferrucci and Adam Lally. 2004. UIMA: an archi-
+tectural approach to unstructured information process-
+ing in the corporate research environment. Nat. Lang.
+Eng., 10(3-4):327?348.
+Grard P. Huet. 1975. A unification algorithm for typed
+lambda-calculus. Theor. Comput. Sci, 1:27.
+Ralf La?mmel. 2008. Google?s MapReduce programming
+model - Revisited. Sci. Comput. Program., 70(1):1?
+30.
+Rob Pike, Sean Dorward, Robert Griesemer, and Sean
+Quinlan. 2005. Interpreting the data: Parallel analy-
+sis with Sawzall. Scientific Programming, 13(4):277?
+298.
+Richard Pito. 1993. Tgrep.
+John Wilder Tukey. 1977. Exploratory Data Analysis.
+Addison-Wesley, New York.
+64
+Proceedings of the 2009 Workshop on Grammar Engineering Across Frameworks, ACL-IJCNLP 2009, pages 19?27,
+Suntec, Singapore, 6 August 2009. c?2009 ACL and AFNLP
+Mining of Parsed Data to Derive Deverbal Argument Structure
+Olga Gurevich Scott A. Waterman
+Microsoft / Powerset
+475 Brannan Street, Ste. 330
+San Francisco, CA 94107
+{olya.gurevich,scott.waterman}@microsoft.com
+Abstract
+The availability of large parsed corpora
+and improved computing resources now
+make it possible to extract vast amounts
+of lexical data. We describe the pro-
+cess of extracting structured data and sev-
+eral methods of deriving argument struc-
+ture mappings for deverbal nouns that sig-
+nificantly improves upon non-lexicalized
+rule-based methods. For a typical model,
+the F-measure of performance improves
+from a baseline of about 0.72 to 0.81.
+1 Introduction
+There is a long-standing division in natural lan-
+guage processing between symbolic, rule-based
+approaches and data-driven, statistical ones. Rule-
+based, human-curated approaches are thought to
+be more accurate for linguistic constructions ex-
+plicitly covered by the rules. However, such
+approaches often have trouble scaling up to a
+wider range of phenomena or different genres of
+text. There have been repeated moves towards hy-
+bridized approaches, in which rules created with
+human linguistic intuitions are supplemented by
+automatically derived corpus data (cf. (Klavans
+and Resnik, 1996)).
+Unstructured corpus data for English can eas-
+ily be found on the Internet. Large corpora of
+text annotated with part of speech information are
+also available (such as the British National Cor-
+pus). However, it is much harder to find widely
+available, large corpora annotated for syntactic or
+semantic structure. The Penn Treebank (Marcus
+et al, 1993) has until recently been the only such
+corpus, covering 4.5M words in a single genre of
+financial reporting. At the same time, the accuracy
+and speed of syntactic parsers has been improving
+greatly, so that in recent years it has become possi-
+ble to automatically create parsed corpora of rea-
+sonable quality, using much larger amounts of text
+with greater genre variation. For many NLP tasks,
+having more training data greatly improves the
+quality of the resulting models (Banko and Brill,
+2001), even if the training data are not perfect.
+We have access to the entire English-language
+text of Wikipedia (about 2M pages) that was
+parsed using the XLE parser (Riezler et al, 2002),
+as well as an architecture for distributed data-
+mining within this corpus, called Oceanography
+(Waterman, 2009). Using the parsed corpus, we
+extract a large volume of dependency relations and
+derive lexical models that significantly improve
+a rule-based system for determining the underly-
+ing argument structure of deverbal noun construc-
+tions.
+2 Deverbal Argument Mapping
+Deverbal nouns, or nominalizations, are nouns
+that designate some aspect of the event referred
+to by the verb from which they are morphologi-
+cally derived (Quirk et al, 1985). For example,
+the noun destruction refers to the action described
+by the verb destroy, and destroyer may refer to the
+agent of that event. Deverbal nouns are very com-
+mon in English texts: by one count, about half of
+all sentences in written text contain at least one
+deverbal noun (Gurevich et al, 2008). Thus, a
+computational system that aims to match multi-
+ple ways of expressing the same underlying events
+(such as question answering or search) must be
+able to deal with deverbal nouns.
+To interpret deverbal constructions, one must be
+able to map nominal and prepositional modifiers to
+the various roles in the verbal frame. For intran-
+sitive verbs, almost any argument of the deverbal
+noun is mapped to the verb?s subject, e.g. abun-
+dance of food gives rise to subj(abound, food).
+If the underlying verb is transitive, and the de-
+verbal noun has two arguments, the mappings
+are also fairly straightforward. For example, the
+phrase Carthage?s defeat by Rome gives rise to
+19
+the arguments subj(defeat, Rome) and obj(defeat,
+Carthage), based on knowledge that a ?by? argu-
+ment usually maps to the subject, and the posses-
+sive in the presence of a ?by? argument usually
+maps to the object (Nunes, 1993).
+However, in many cases a deverbal noun has
+only one argument, even though the underlying
+verb may be transitive. In such cases, our system
+has to decide whether to map the lone argument
+of the deverbal onto the subject or object of the
+verb. This mapping is in many cases obvious to a
+human: e.g., the king?s abdication corresponds to
+subj(abdicate, king), whereas the room?s adorn-
+ment corresponds to obj(adorn, room). In some
+cases, the mapping is truly ambiguous, e.g., They
+enjoyed the support of the Queen vs. They jumped
+to the support of the Queen. Yet in other cases, the
+lone argument of the deverbal noun is neither the
+subject nor the object of the underlying verb, but it
+may correspond to a different (e.g. prepositional)
+argument of the verb, as in the travels of 1996 (cor-
+responding to someone traveled in 1996). Finally,
+in some cases the deverbal noun is being used in
+a truly nominal sense, without an underlying map-
+ping to a verb, as in Bill Gates? foundation, and
+the possessive is not a verbal argument.
+The predictive models in this paper focus on this
+case of single arguments of deverbal nouns with
+transitive underlying verbs. To constrain the scope
+of the task, we focus on possessive arguments, like
+the room?s adornment, and ?of? arguments, like
+the support of the Queen. Our goal is to improve
+the accuracy of verbal roles assigned in such cases
+by creating lexically-specific preferences for indi-
+vidual deverbal noun / verb pairs. Some of our
+experiments also take into account some lexical
+properties of the deverbal noun?s arguments. The
+lexical preferences are derived by comparing ar-
+gument preferences of verbs with those of related
+deverbal nouns, derived from a large parsed cor-
+pus using Oceanography.
+2.1 Current Deverbal Mapping System
+We have a list of approximately 4000 deverbal
+noun / verb pairs, constructed from a combina-
+tion of WordNet?s derivational links (Fellbaum,
+1998), NomLex (Macleod et al, 1998), NomL-
+exPlus (Meyers et al, 2004b) and some indepen-
+dent curation. In the current system implementa-
+tion, we attempt to map deverbal nouns onto cor-
+responding verbs using a small set of heuristics
+described in (Gurevich et al, 2008). We distin-
+guish between event nouns like destruction, agen-
+tive nouns like destroyer, and patient-like nouns
+like employee.
+If a deverbal noun maps onto a transitive verb
+and has only one argument, the heuristics are as
+follows. Arguments of agentive nouns become ob-
+jects while the nouns themselves become subjects,
+so the ship?s destroyer maps to subj(destroy, de-
+stroyer); obj(destroy, ship). Arguments of patient-
+like nouns become subjects while the nouns them-
+selves become objects, so the company?s employee
+becomes subj(employ, company); obj(employ, em-
+ployee).
+The difficult case of event nouns is currently
+handled through default mappings: possessive ar-
+guments become subjects (e.g., his confession 7?
+subj(confess, he)), and ?of? arguments become ob-
+jects (e.g., confession of sin 7? obj(confess, sin)).
+However, as we have seen from examples above,
+these defaults are not always correct. The correct
+mapping depends on the lexical nature of the de-
+verbal noun and its corresponding verb, and pos-
+sibly on properties of the possessive or ?of? argu-
+ment as well.
+2.2 System Background
+The deverbal argument mapping occurs in the con-
+text of a larger semantic search application, where
+the goal is to match alternate forms expressing
+similar concepts. We are currently processing
+the entire text of the English-language Wikipedia,
+consisting of about 2M unique pages.
+Parsing in this system is done using the XLE
+parser (Kaplan and Maxwell, 1995) and a broad-
+coverage grammar of English (Riezler et al, 2002;
+Crouch et al, 2009), which produces constituent
+structures and functional structures in accordance
+with the theory of Lexical-Functional Grammar
+(Dalrymple, 2001).
+Parsing is followed by a semantic processing
+phase, producing a more abstract argument struc-
+ture. Semantic representations are created using
+the Transfer system of successive rewrite rules
+(Crouch and King, 2006). Numerous construc-
+tions are normalized and rewritten (e.g., passives,
+relative clauses, etc.) to maximize matching be-
+tween alternate surface forms. This is the step in
+which deverbal argument mapping occurs.
+20
+2.3 Evaluation Data
+To evaluate the performance of the current and
+experimental argument mappings, we extracted a
+random set of 1000 sentences from the parsed
+Wikipedia corpus in which a deverbal noun had
+a single possessive argument. Each sentence was
+manually annotated with the verb role mapping
+between the deverbal and the possessive argu-
+ments. One of six labels were assigned:
+? Subject, e.g. John?s attention
+? Object, e.g. arrangement of flowers
+? Other: there is an underlying verb, but the
+relationship between the verb and the argu-
+ment is neither subject nor object; these rela-
+tions often appear as prepositional arguments
+in the verbal form, e.g. Declaration of Delhi
+? Noun modifier: the argument modifies the
+nominal sense of the deverbal noun, rather
+than the underlying verb, although there is
+still an underlying event, as in director of 25
+years
+? Not deverbal: the deverbal noun is not used
+to designate an event in this context, e.g. the
+rest of them
+? Error: the parser incorrectly identified the ar-
+gument as modifying the deverbal, or as be-
+ing the only argument of the deverbal
+Similarly, we extracted a sample of 750 sentences
+in which a deverbal noun had a single ?of? argu-
+ment, and annotated those manually.
+The distribution of annotations is summarized
+in Table 1. For possessive arguments, the preva-
+lent role was subject, and for ?of? arguments it was
+object.
+The defaults will correctly assign the majority
+of arguments roles.
+Possessive ?Of?
+total 1000 750
+unique deverbals 423 338
+subj 511 (51%) 158 (21%)
+obj 335 (34%) 411 (55%)
+other 28 (3%) 50 (7%)
+noun mod 23 (2%) 18 (2%)
+not deverbal 21 (2%) 40 (5%)
+error 82 (8%) 73 (10%)
+Table 1: Evaluation Role Judgements, with de-
+faults in bold
+2.4 Lexicalizing Role Mappings
+Our basic premise is that knowledge about role-
+mapping behavior of particular verbs will inform
+the role-mapping behavior of their corresponding
+deverbal nouns. For example, if a particular argu-
+ment of a given verb surfaces as the verb?s sub-
+ject more often than as object, we might also pre-
+fer the subject role when the same argument oc-
+curs as a modifier of the corresponding deverbal
+noun. However, as nominal modification con-
+structions impose their own role-mapping pref-
+erences (e.g., possessives are more likely to be
+subjects than objects), we expect different dis-
+tributions of arguments to appear in the various
+deverbal modification patterns. Making use of
+this intuition requires collecting sufficient infor-
+mation about corresponding arguments of verbs
+and deverbal nouns. This is available, given a
+large parsed corpus, a reasonably accurate and fast
+parser, and enough computing capacity. The re-
+mainder of the paper details our data extraction,
+model-building methods, and the results of some
+experiments.
+3 Data Collection
+Oceanography is a pattern extraction and statistics
+language for analyzing structural relationships in
+corpora parsed using XLE (Waterman, 2009). It
+simplifies the task of programming for NL analy-
+sis over large corpora, and the sorting, counting,
+and distributional analysis that often characterizes
+statistical NLP. This corpus processing language is
+accompanied by a distributed runtime, which uses
+cluster computing to match patterns and collect
+statistics simultaneously across many machines.
+This is implemented in a specialized distributed
+framework for parsing and text analysis built on
+top of Hadoop (D. Cutting et al, ). Oceanography
+programs compile down to distributed programs
+which run in this cluster environment, allowing the
+NL researcher to state declaratively the data gath-
+ering and analysis tasks.
+A typical program consists of two declarative
+parts, a pattern matching specification, and a set
+of statistics declarations. The pattern matching
+section is written using Transfer, a specialized lan-
+guage for identifying subgraphs in the dependency
+structures used in XLE (Crouch and King, 2006).
+Transfer rules use a declarative syntax for spec-
+ifying elements and their relations; in this way,
+it is much like a very specialized awk or grep
+for matching within parse trees and dependency
+graphs.
+Statistics over these matched structures are
+21
+also stated declaratively. The researcher states
+which sub-elements or tuples are to be counted,
+and the resulting compiled program will output
+counts. Conditional distributions and comparisons
+between distributions are available as well.
+3.1 Training Data
+Using Oceanography, we extracted two sets of re-
+lations from the parsed Wikipedia corpus, Full-
+Wiki, with approximately 2 million documents. A
+smaller 10,000-document subset, the 10K set, was
+used in initial experiments. Some comparative re-
+sults are shown to indicate effects of corpus size
+on results. Summary corpus statistics are shown
+in table 2. The two sets were:
+1. All verb-argument pairs, using verb and ar-
+gument lemmas. We recorded the verb, the
+argument, the kind of relation between them
+(e.g., subject, object, etc.), and part of speech
+of the argument, distinguishing also among
+pronouns, names, and common nouns. For
+each combination, we record its frequency of
+occurrence.
+2. All deverbal-argument pairs, using deverbal
+noun and argument lemmas. We recorded the
+deverbal noun, the argument, the kind of rela-
+tion (e.g., possessive, ?of?, prenominal modi-
+fier, etc.) and part of speech of the argument.
+We record the frequency of occurrence for
+each combination.
+Some summary statistics about the extracted
+data are in Table 2.
+FullWiki training data
+Documents 2 million
+Sentences 121,428,873
+Deverbal nouns with arguments 4,596
+Unique verbs with deverbals 3,280
+Verbs with arguments 7,682
+Deverbal - role - argument sets 21,924,405
+Deverbal - argument pairs 12,773,621
+Deverbals with any poss argument 3,802
+Possessive deverbal - argument pairs 611,192
+Most frequent: poss(work, he) 75,343
+Deverbals with any ?of? argument 4,075
+?Of? deverbal- argument pairs 2,108,082
+Most frequent: of(end, season) 15,282
+Verb - role - argument sets 72,150,246
+Verb - argument pairs 40,895,810
+Overlapping pairs 5,069,479
+Deverbals with overlapping arguments 3,211
+Table 2: Training Data
+4 Assigning Roles
+The present method is based on projecting argu-
+ment type preferences from the verbal usage to the
+deverbal. The intuition is that if an argument X is
+preferred as the subject (object) of verb V, then it
+will also be preferred in the semantic frame of an
+occurrence (N, X) with the corresponding dever-
+bal noun N.
+We model these preferences directly using the
+relative frequency of subject and object occur-
+rences of each possible argument with each verb.
+Even with an extremely large corpus, it is unlikely
+that one will find direct evidence for all such com-
+binations, and one will need to generalize the pre-
+diction.
+4.1 Deverbal-only Model
+The first model, all-arg, specializes only for the
+deverbal, and generalizes over all arguments, re-
+lying on the overall preference of subject v. ob-
+ject for the set of arguments that appear with both
+verb and deverbal forms. Take as an example
+deverbal nouns with possessive arguments (e.g.,
+the city?s destruction). Given the phrase (X?s N),
+where N is a deverbal noun related to verb V,
+Fd(N, V, X) is a function that assigns one of the
+roles subj, obj, unknown to the pair (V, X). In
+this deverbal only model, the function depends on
+N and V only, and not on the argument X. Fd for
+a any pair (N, V) is calculated as follows:
+1. Find all arguments X that occur in the con-
+struction ?N?s X? as well as either subj(V, X)
+or obj(V, X). X, N, and V have all been lem-
+matized. For example, poss(city, destruction)
+occurs 10 times in the corpus; subj(destroy,
+city) occurs 3 times, and obj(destroy, city) oc-
+curs 12 times. This approach conflates in-
+stances of the city?s destruction, the cities?
+destruction, the city?s destructions, etc.
+2. For each argument X, calculate the ratio be-
+tween the number of occurrences of subj(V,
+X) and obj(V, X). If the argument occurs
+as subject more than 1.5 times as often as
+the object, increment the count of subject-
+preferring arguments of N by 1. If the ar-
+gument occurs as object more than 1.5 times
+as often as subject (as would be the case with
+(destroy, city)), increment the count of object-
+preferring arguments. If the ratio in frequen-
+cies of occurrence is less than the cutoff ratio
+22
+of 1.5, neither count is incremented. In ad-
+dition to the number of arguments with each
+preference, we keep track of the total num-
+ber of instances for each argument prefer-
+ence, summed up over all individual argu-
+ments with that preference.
+3. Compare the number of subject-preferring ar-
+guments of N with the number of object-
+preferring arguments. If one is greater than
+the other by more than 1.5 times, state that the
+deverbal noun N has a preference for map-
+ping its possessive arguments to the appro-
+priate verbal role. We ignore cases where the
+total number of occurrences of the winning
+arguments is too small to be informative (in
+the current model, we require it to be greater
+than 1).
+If there is insufficient evidence for a deverbal
+N, we fall back to the default preference across all
+deverbals. Subject and object co-occurrences with
+the verb forms are always counted, regardless of
+other arguments the verb may have in each sen-
+tence, on the intuition that the semantic role pref-
+erence of the argument is relatively unaffected and
+that this will map to the deverbal construction even
+when the possessive is the only argument. Sum-
+mary preferences for all-args are shown in Ta-
+ble 3.
+The same algorithm was applied to detect ar-
+gument preferences for deverbals with ?of? argu-
+ments (such as destruction of the city). Summary
+preferences are shown in Table 4.
+4.2 Deverbal + Argument Animacy Model
+The second model tries to capture the intuition that
+animate arguments often behave differently than
+inanimate ones: in particular, animate arguments
+are more often agents, encoded syntactically as
+subjects.
+We calculated argument preferences separately
+for two classes of arguments: (1) animate pro-
+nouns such as he, she, I; and (2) nouns that were
+not identified as names by our name tagger. We
+assumed that arguments in the first group were
+animate, whereas arguments in the second group
+were not. In these experiments, we did not try to
+classify named entities as animate or inanimate,
+resulting in less training data for both classes of
+arguments. This strategy also incorrectly classifies
+common nouns that refer to people (e.g., occupa-
+tion names such as teacher).
+The results of running both models on the 10K
+and FullWiki training sets are in Table 3 for pos-
+sessive arguments and Table 4 for ?of? arguments.
+For possessives, animate arguments preferred
+subject role mappings much more than the average
+across all arguments. Inanimate arguments also on
+the whole preferred subject mappings, but much
+less strongly.
+For ?of? arguments, in most cases there were
+more object-preferring verbs, except for verbs
+with animate arguments, which overwhelmingly
+preferred subjects. We might therefore expect
+there to be a difference in performance between
+the model that treats all arguments equally and the
+model that takes argument animacy into account.
+Model: all-arg
+10K FullWiki
+Subj-preferring 391 (65%) 1786 (67%)
+Obj-preferring 207 (35%) 884 (33%)
+Total 598 (100%) 2670 (100%)
+Model: animacy
+Subj-pref animate 370 (78%) 1941 (79%)
+Obj-pref animate 106 (22%) 511 (21%)
+Total animate 476 (100%) 2452 (100%)
+Subj-pref inanimate 45 (47%) 990 (57%)
+Obj-pref inanimate 51 (53%) 748 (43%)
+Total inanimate 96 (100%) 1738 (100%)
+Table 3: Possessive argument preferences
+Model: all-arg
+10K FullWiki
+Subj-preferring 143 (30%) 839 (29%)
+Obj-preferring 328 (70%) 2036 (71%)
+Total 471 (100%) 2875 (100%)
+Model: animacy
+Subj-pref animate 70 (83%) 1196 (74%)
+Obj-pref animate 14 (17%) 423 (26%)
+Total animate 84 (100 %) 1619 (100%)
+Subj-pref inanimate 83 (23%) 699 (25%)
+Obj-pref inanimate 272 (77%) 2068 (75%)
+Total inanimate 355 (100%) 2767 (100%)
+Table 4: ?Of? argument preferences
+5 Experiments
+The base system against which we compare these
+models uses the output of the parser, identifies de-
+verbal nouns and their arguments, and applies the
+heuristics described in Section 2.1 to obtain verb
+roles. Recall that possessive arguments of transi-
+tive deverbals map to the subject role, and ?of? ar-
+guments map to object. Also recall that these rules
+apply only to eventive deverbals; mapping rules
+for known agentive and patient-like deverbals re-
+main as before.
+23
+In the evaluation, the experimental models take
+precedence: if the model predicts an outcome, it
+is used. The default system behavior is used as a
+fallback when the model does not have sufficient
+evidence to make a prediction. This stacking of
+models allows the use of corpus evidence when
+available, and generalized defaults otherwise.
+For the animacy model, we used our full sys-
+tem to detect whether the argument of a deverbal
+was animate (more precisely, human). In addi-
+tion to the animate pronouns used to generate the
+model, we also considered person names, as well
+as common nouns that had the hypernym ?person?
+in WordNet. If the argument was animate and the
+model had a prediction, that was used. If no pre-
+diction was available for animate arguments, then
+the inanimate prediction was used. Failing that,
+the prediction falls back to the general defaults.
+5.1 Possessive Arguments of Deverbal Nouns
+Model predictions were compared against the
+hand-annotated evaluation set described in Sec-
+tion 2.3. For each sentence in the evaluation set,
+we used the models to make a two-way prediction
+with respect to the default mapping: is the posses-
+sive argument of the deverbal noun an underlying
+subject or not. We ignored test sentences marked
+as having erroneous parses, leaving 918 (of 1000
+annotated). Since we were evaluating the accuracy
+of the ?subject? label, all non-subject roles (object,
+?other?, ?not a deverbal?, and ?nominal modifier?)
+were in the same class. The baseline for compari-
+son is the default ?subject? role.
+The possible outcomes for each sentence
+were:
+? True Positive: Expected role and role pro-
+duced by the system are ?subject?
+? True Negative: Expected role is not subject,
+and the model did not produce the label sub-
+ject. Expected role and produced role may
+differ (e.g. expected role may be ?other?, and
+the model may produce ?object?, but since
+neither one is ?subject?, this counts as correct
+? False Positive: Expected role is not subject,
+but the model produced subject
+? False Negative: Expected role is subject, but
+the model produced some other role
+As a quick evaluation, we compared baseline
+and model-predicted results directly in the surface
+string of the sentences, without reparsing the sen-
+tences or using the semantic rewrite rules. The
+advantage of this evaluation is that it is very fast
+to run and is easily reproducible outside of our
+specialized environment. This evaluation differed
+from the full-pipeline evaluation in two ways: (1)
+it did not distinguish event deverbals from agen-
+tive and patient-like deverbals, thus possibly in-
+troducing errors, and (2) it did not look up all ar-
+gument lemmas to find out their animacy. This
+baseline had precision of 0.56; recall of 1.0, and
+an F-measure of 0.72.
+The complete evaluation uses our full NL
+pipeline, reparsing the sentences and applying all
+of our deverbal mapping rules as described above.
+The baseline for this evaluation had a precision of
+0.65, recall of 0.94, and F-measure of 0.77. The
+differences in the two baselines are mostly due to
+the full-pipeline evaluation having different map-
+ping rules for agentive and patient-like deverbals.
+5.1.1 Results
+Results of applying the models are summarized
+in Table 5, for all models, trained with both the
+smaller and the larger data sets, and measured with
+and without using the full pipeline.
+All models performed better than the baseline.
+The all-arg model did about the same as the an-
+imacy model with both training sets. We suggest
+some reasons for this in the next section.
+It is unambiguously clear that adding lexical
+knowledge to the rule system, even when this
+knowledge is derived from a relatively small train-
+ing set, significantly improves performance, and
+also that more training data leads to greater im-
+provements.
+Model Training Precision Recall F-measure
+Surface String Measure
+Baseline - 0.56 1.00 0.72
+all-arg 10K 0.64 0.92 0.76
+animacy 10K 0.62 0.93 0.75
+all-arg FullWiki 0.68 0.95 0.81
+animacy FullWiki 0.70 0.92 0.79
+Full NL pipeline
+Baseline - 0.65 0.94 0.77
+all-arg 10K 0.75 0.88 0.81
+animacy 10K 0.73 0.90 0.80
+all-arg FullWiki 0.78 0.90 0.84
+animacy FullWiki 0.81 0.88 0.84
+Table 5: Performance on deverbal nouns with one
+possessive argument
+5.1.2 Error Analysis and Discussion
+We looked at the errors produced by the best-
+performing model, all-arg trained on the FullWiki
+24
+set. There were 49 false negatives (i.e. cases
+where the human judge decided that the underly-
+ing relationship between the deverbal and its ar-
+gument is ?subject?, but our system produced a
+different relation or no relation at all), covering
+39 unique deverbal nouns. Of these, 20 deverbal
+nouns were predicted by the model to prefer ob-
+jects (e.g., Hopkins? accusation), and 19 did not
+get assigned either subject or object due to other
+errors (including a few mislabeled evaluation sen-
+tences).
+Some of the false negatives involved deverbal
+nouns that refer to reciprocal predicates such as
+his marriage, or causative ones such as Berlin?s
+unity, which could map to subject or objects. Our
+current system does not allow us to express such
+ambiguity, but it is a possible future improvement.
+Looking at the false negatives produced by the
+all-arg model, 3 deverbal nouns received more ac-
+curate predictions with the animacy model (e.g.,
+his sight; Peter Kay?s statement). Intuitively, the
+animacy model should in general make more in-
+formed decisions about the argument mappings
+because it takes properties of individual arguments
+into account. However, as we have seen, it does
+not in fact outperform the model that treats all ar-
+guments the same way.
+We believe this is due to the fact that the an-
+imacy model was trained on less data than the
+all-arg model, because we only considered ani-
+mate pronouns and common nouns when gener-
+ating argument-mapping predictions. Excluding
+all named entities and non-animate pronouns most
+likely had an effect on the number of deverbals for
+which the model was able to make accurate pre-
+dictions. In the next iteration, we would like to
+use all available arguments, relying on the named
+entity type and information available in WordNet
+for common nouns to distinguish between animate
+and inanimate arguments.
+The all-arg model evaluation resulted in 131
+false positives (cases where the model predicted
+the relation to be ?subject?, but the human judge
+thought it was something else). Of these, 105 were
+marked by the human judge as having objects, 8 as
+having a verbal relation other than subject or ob-
+ject, 9 as having nominal modifiers, 9 has having
+no deverbal.
+Altogether, false positives covered 85 unique
+verbs. Of these, 48 had been explicitly predicted
+by our model to prefer subjects, and the rest had
+no explicit prediction, thus defaulting to having a
+subject. 3 of these deverbals would have been cor-
+rectly identified as having objects by the animacy
+model (e.g., his composition; her representation).
+Although it is hard to predict the outcome of a
+statistical model, we feel that more reliable infor-
+mation about the animacy of arguments at training
+time would improve the performance of the ani-
+macy model, potentially making it better than the
+all-arg model.
+5.2 ?Of? Arguments of Deverbal Nouns
+The evaluation procedure for ?of? arguments was
+the same as for possessive arguments, except that
+the default argument mapping was ?object?, and
+the evaluated decision was whether a particular
+role was object or non-object. Ignoring sentence
+with erroneous parses, we had 677 evaluation ex-
+amples.
+5.2.1 Results
+Results for all models are summarized in Table 6.
+All models outperformed the baseline on all train-
+ing sets and on both the surface or full-pipeline
+measures.
+As with possessive arguments, the all-arg and
+animacy models performed about the same, with
+both the FullWiki and 10K training sets.
+The 10K-trained animacy model did not do
+as poorly as might have been expected given its
+low prediction rate for deverbals with animate ar-
+guments in our evaluation set. The better-than-
+expected performance may be explained by low
+incidence of animate arguments in this set.
+Model Training Precision Recall F-measure
+Surface String Measure
+Baseline - 0.60 1.00 0.75
+all-arg 10K 0.68 0.97 0.80
+animacy 10K 0.66 0.94 0.78
+all-arg FullWiki 0.71 0.97 0.82
+animacy FullWiki 0.70 0.91 0.79
+Full NL pipeline
+Baseline - 0.61 0.89 0.73
+all-arg 10K 0.71 0.86 0.78
+animacy 10K 0.70 0.85 0.77
+all-arg FullWiki 0.78 0.87 0.82
+animacy FullWiki 0.80 0.85 0.82
+Table 6: Performance on deverbal nouns with one
+?of? argument
+5.2.2 Error Analysis and Discussion
+We looked at the errors produced by the best-
+performing model, all-arg trained on the FullWiki
+25
+set. There were 53 false negatives (cases where
+the human judged marked the relation as ?object?
+but the system marked it as something else), cov-
+ering 42 unique deverbal nouns. Of these 7 were
+(incorrectly) predicted by the model to prefer sub-
+jects (e.g., operation of a railway engine), and the
+rest were misidentified due to other errors.
+There were 101 false positives (cases where the
+system marked the role as object, but the human
+judge disagreed). Of these, the human judged
+marked 54 as subject, 21 as other verbal role, 13
+as nominal modifier, and 13 as non-deverbal.
+Of the 72 unique deverbals in the false-positive
+set, our model incorrectly predicted that 38 should
+prefer objects (such as Adoration of the Magi; un-
+der the direction of Bishop Smith)). For 30 de-
+verbals, the model made no prediction, and the
+default mapping to object turned out to be incor-
+rect. It is unclear to what extent better information
+about animacy would have helped.
+6 Related Work
+One of the earliest computational attempts to de-
+rive argument structures for deverbal nouns is
+(Hull and Gomez, 1996), with hand-crafted map-
+ping rules for a small set of individual nouns, ex-
+emplifying a highly precise but not easily scalable
+method.
+In recent years, NomBank (Meyers et al,
+2004a) has provided a set of about 200,000 manu-
+ally annotated instances of nominalizations with
+arguments, giving rise to supervised machine-
+learned approaches such as (Pradhan et al, 2004)
+and (Liu and Ng, 2007), which perform fairly well
+in the overall task of classifying deverbal argu-
+ments. However, no evaluation results are pro-
+vided for specific, problematic classes of nominal
+arguments such as possessives; it is likely that the
+amount of annotations in NomBank is insufficient
+to reliably map such cases onto verbal arguments.
+(Pado? et al, 2008) describe an unsupervised
+approach that, like ours, uses verbal argument
+patterns to deduce deverbal patterns, though the
+resulting labels are semantic roles used in SLR
+tasks (cf. (Gildea and Jurafsky, 2000)) rather
+than syntactic roles. A combination of our much
+larger training set and the sophisticated probabilis-
+tic methods used by Pado? et al would most likely
+improve performance for both syntactic and se-
+mantic roles labelling tasks.
+7 Conclusions and Future Work
+We have demonstrated that large amounts of lexi-
+cal data derived from an unsupervised parsed cor-
+pus improve role assignment for deverbal nouns.
+The improvements are significant even with a rel-
+atively small training set, relying on parses that
+have not been hand-corrected, using a very sim-
+ple prediction model. Larger amounts of extracted
+data improve performance even more.
+There is clearly still headroom for improve-
+ment in this method. In a pilot study, we used
+argument preferences for individual deverbal-
+argument pairs, falling back to deverbal-only gen-
+eralizations when more specific patterns were not
+available. This model had slightly higher preci-
+sion and slightly lower recall than the deverbal-
+only model, suggesting that a more sophisticcated
+probabilistic prediction model may be needed.
+In addition, performance should improve if we
+allow non-binary decisions: in addition to map-
+ping deverbal arguments to subject or object of the
+underlying verb, we could allow mappings such
+as ?unknown? or ?ambiguous?. The same training
+sets can be used to produce a model that makes a
+3- or 4-way split. In the possessive and ?of? sets,
+the ?unknown / ambiguous? class would cover be-
+tween 15% and 20% of all the data. This third
+possibility becomes even more important for other
+deverbal arguments. For example, if the deverbal
+noun has a prenominal modifier (as in city destruc-
+tion), in a third of the cases the underlying relation
+is neither the subject nor the object (Lapata, 2002).
+And, of course, the methodology of extracting
+lexical preferences based on large parsed corpora
+can be applied to many other NL tasks not related
+to deverbal nouns.
+Acknowledgments
+We gratefully acknowledge the helpful advice and
+comments of our colleagues Tracy Holloway King
+and Dick Crouch, as well as the three anonymous
+reviewers.
+26
+References
+Michele Banko and Eric Brill. 2001. Scaling to very
+very large corpora for natural language disambigua-
+tion. In ACL, pages 26?33.
+Richard S. Crouch and Tracy Holloway King. 2006.
+Semantics via f-structure rewriting. In Proceed-
+ings of the Lexical Functional Grammar Conference
+2006.
+Dick Crouch, Mary Dalrymple, Ron Kaplan,
+Tracy Holloway King, John Maxwell, and Paula
+Newman. 2009. XLE Documentation. Available
+On-line.
+D. Cutting et al Apache Hadoop Project.
+http://hadoop.apache.org/.
+Mary Dalrymple. 2001. Lexical Functional Grammar.
+Academic Press. Syntax and Semantics, volume 34.
+Christiane Fellbaum, editor. 1998. WordNet: An Elec-
+tronic Lexical Database. The MIT Press.
+Daniel Gildea and Daniel Jurafsky. 2000. Automatic
+labeling of semantic roles. In Proceedings of the
+38th Annual Meeting of the Association for Com-
+putational Linguistics, pages 512?520, Hong Kong,
+October. Association for Computational Linguistics.
+Olga Gurevich, Richard Crouch, Tracy Holloway King,
+and Valeria de Paiva. 2008. Deverbal nouns in
+knowledge representation. Journal of Logic and
+Computation, 18:385?404.
+Richard D. Hull and Fernando Gomez. 1996. Seman-
+tic interpretation of nominalizations. In AAAI/IAAI,
+Vol. 2, pages 1062?1068.
+Ronald Kaplan and John T. Maxwell. 1995. A method
+for disjunctive constraint satisfaction. In Formal Is-
+sues in Lexical-Functional Grammar. CSLI Press.
+Judith Klavans and Philip Resnik, editors. 1996. The
+Balancing Act. Combining Symbolic and Statistical
+Approaches to Language. The MIT Press.
+Maria Lapata. 2002. The disambiguation of nomi-
+nalizations. Computational Linguistics, 28(3):357?
+388.
+Chang Liu and Hwee Tou Ng. 2007. Learning pre-
+dictive structures for semantic role labeling of nom-
+bank. In ACL.
+Catherine Macleod, Ralph Grishman, Adam Meyers,
+Leslie Barrett, and Ruth Reeves. 1998. NOMLEX:
+A lexicon of nominalizations. In Proceedings of
+EURALEX?98.
+Mitchell P. Marcus, Beatrice Santorini, and Mary Ann
+Marcinkiewicz. 1993. Building a large annotated
+corpus of english: The penn treebank. Computa-
+tional Linguistics, 19(2):313?330.
+A. Meyers, R. Reeves, C. Macleod, R. Szekely,
+V. Zielinska, B. Young, and R. Grishman. 2004a.
+The nombank project: An interim report. In
+A. Meyers, editor, HLT-NAACL 2004 Workshop:
+Frontiers in Corpus Annotation, pages 24?31,
+Boston, Massachusetts, USA, May 2 - May 7. As-
+sociation for Computational Linguistics.
+Adam Meyers, Ruth Reeves, Catherine Macleod,
+Rachel Szekely, Veronika Zielinska, Brian Young,
+and Ralph Grishman. 2004b. The cross-breeding of
+dictionaries. In Proceedings of LREC-2004.
+Mary Nunes. 1993. Argument linking in english de-
+rived nominals. In Robert Van Valin, editor, Ad-
+vances in Role and Reference Grammar, pages 375?
+432. John Benjamins.
+Sebastian Pado?, Marco Pennacchiotti, and Caroline
+Sporleder. 2008. Semantic role assignment for
+event nominalisations by leveraging verbal data. In
+Proceedings of CoLing08.
+Sameer Pradhan, Honglin Sun, Wayne Ward, James H.
+Martin, and Daniel Jurafsky. 2004. Parsing argu-
+ments of nominalizations in english and chinese. In
+Daniel Marcu Susan Dumais and Salim Roukos, ed-
+itors, HLT-NAACL 2004: Short Papers, pages 141?
+144, Boston, Massachusetts, USA, May 2 - May 7.
+Association for Computational Linguistics.
+Randolph Quirk, Sidney Greenbaum, Geoffrey Leech,
+and Jan Svartvik. 1985. A Comprehensive Gram-
+mar of the English Language. Longman.
+Stefan Riezler, Tracy Holloway King, Ronald Kaplan,
+John T. Maxwell II, Richard Crouch, and Mark
+Johnson. 2002. Parsing the Wall Street Journal
+using a Lexical-Functional Grammar and discrimi-
+native estimation techniques. In Proceedings of the
+ACL?02.
+Scott A. Waterman. 2009. Distributed parse mining.
+In Software engineering, testing, and quality assur-
+ance for natural language processing (SETQA-NLP
+2009).
+27

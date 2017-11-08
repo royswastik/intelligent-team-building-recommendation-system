@@ -1,0 +1,2004 @@
+Proceedings of the 2008 Conference on Empirical Methods in Natural Language Processing, pages 21?30,
+Honolulu, October 2008. c?2008 Association for Computational Linguistics
+Regular Expression Learning for Information Extraction
+Yunyao Li, Rajasekar Krishnamurthy, Sriram Raghavan, Shivakumar Vaithyanathan
+IBM Almaden Research Center
+San Jose, CA 95120
+{yunyaoli, rajase, rsriram}@us.ibm.com, shiv@almaden.ibm.com
+H. V. Jagadish?
+Department of EECS
+University of Michigan
+Ann Arbor, MI 48109
+jag@umich.edu
+Abstract
+Regular expressions have served as the dom-
+inant workhorse of practical information ex-
+traction for several years. However, there has
+been little work on reducing the manual ef-
+fort involved in building high-quality, com-
+plex regular expressions for information ex-
+traction tasks. In this paper, we propose Re-
+LIE, a novel transformation-based algorithm
+for learning such complex regular expressions.
+We evaluate the performance of our algorithm
+on multiple datasets and compare it against the
+CRF algorithm. We show that ReLIE, in ad-
+dition to being an order of magnitude faster,
+outperforms CRF under conditions of limited
+training data and cross-domain data. Finally,
+we show how the accuracy of CRF can be im-
+proved by using features extracted by ReLIE.
+1 Introduction
+A large class of entity extraction tasks can be ac-
+complished by the use of carefully constructed reg-
+ular expressions (regexes). Examples of entities
+amenable to such extractions include email ad-
+dresses and software names (web collections), credit
+card numbers and social security numbers (email
+compliance), and gene and protein names (bioinfor-
+matics), etc. These entities share the characteristic
+that their key representative patterns (features) are
+expressible in standard constructs of regular expres-
+sions. At first glance, it may seem that constructing
+?Supported in part by NSF 0438909 and NIH 1-U54-
+DA021519.
+a regex to extract such entities is fairly straightfor-
+ward. In reality, robust extraction requires the use
+of rather complex expressions, as illustrated by the
+following example.
+Example 1 (Phone number extraction). An obvious
+pattern for identifying phone numbers is ?blocks of
+digits separated by hyphens? represented as R1 =
+(\d+\-)+\d+.1 While R1 matches valid phone numbers
+like 800-865-1125 and 725-1234, it suffers from both
+?precision? and ?recall? problems. Not only does R1
+produce incorrect matches (e.g., social security numbers
+like 123-45-6789), it also fails to identify valid phone
+numbers such as 800.865.1125, and (800)865-CARE. An
+improved regex that addresses these problems is R2 =
+(\d{3}[-.\ ()]){1,2}[\dA-Z]{4}.
+While multiple machine learning approaches have
+been proposed for information extraction in recent
+years (McCallum et al, 2000; Cohen and McCal-
+lum, 2003; Klein et al, 2003; Krishnan and Man-
+ning, 2006), manually created regexes remain a
+widely adopted practical solution for information
+extraction (Appelt and Onyshkevych, 1998; Fukuda
+et al, 1998; Cunningham, 1999; Tanabe and Wilbur,
+2002; Li et al, 2006; DeRose et al, 2007; Zhu et al,
+2007). Yet, with a few notable exceptions, which we
+discuss later in Section 1.1, there has been very little
+work in reducing this human effort through the use
+of automatic learning techniques. In this paper, we
+propose a novel formulation of the problem of learn-
+1Throughout this paper, we use the syntax of the standard
+Java regex engine (Java, 2008).
+21
+ing regexes for information extraction tasks. We
+demonstrate that high quality regex extractors can be
+learned with significantly reduced manual effort. To
+motivate our approach, we first discuss prior work
+in the area of learning regexes and describe some of
+the limitations of these techniques.
+1.1 Learning Regular Expressions
+The problem of inducing regular languages from
+positive and negative examples has been studied in
+the past, even outside the context of information
+extraction (Alquezar and Sanfeliu, 1994; Dupont,
+1996; Firoiu et al, 1998; Garofalakis et al, 2000;
+Denis, 2001; Denis et al, 2004; Fernau, 2005;
+Galassi and Giordana, 2005; Bex et al, 2006).
+Much of this work assumes that the target regex
+is small and compact thereby allowing the learn-
+ing algorithm to exploit this information. Consider,
+for example, the learning of patterns motivated by
+DNA sequencing applications (Galassi and Gior-
+dana, 2005). Here the input sequence is viewed
+as multiple atomic events separated by gaps. Since
+each atomic event is easily described by a small and
+compact regex, the problem reduces to one of learn-
+ing simple regexes. Similarly, in XML DTD infer-
+ence (Garofalakis et al, 2000; Bex et al, 2006), it
+is possible to exploit the fact that the XML docu-
+ments of interest are often described using simple
+DTDs. E.g., in an online books store, each book
+has a title, one or more authors and price. This in-
+formation can be described in a DTD as ?book? ?
+?title??author? + ?price?. However, as shown in Ex-
+ample 1, regexes for information extraction rely on
+more complex constructs.
+In the context of information extraction, prior
+work has concentrated primarily on learning regexes
+over relatively small alphabet sizes. A common
+theme in (Soderland, 1999; Ciravegna, 2001; Wu
+and Pottenger, 2005; Feldman et al, 2006) is the
+problem of learning regexes over tagged tokens
+produced by other text-processing steps such as
+POS tagging, morphological analysis, and gazetteer
+matching. Thus, the alphabet is defined by the space
+of possible tags output by these analysis steps. A
+similar approach has been proposed in (Brill, 2000)
+for POS disambiguation. In contrast, our paper ad-
+dresses extraction tasks that require ?fine-grained?
+control to accurately capture the structural features
+of the entity of interest. Consequently, the domain
+of interest consists of all characters thereby dramat-
+ically increasing the size of the alphabet. To enable
+this scale-up, the techniques presented in this paper
+exploit advanced syntactic constructs (such as char-
+acter classes and quantifiers) supported by modern
+regex languages.
+Finally, we note that almost all of the above de-
+scribed work define the learning problem over a
+restricted class of regexes. Typically, the restric-
+tions involve either disallowing or limiting the use of
+Kleene disclosure and disjunction operations. How-
+ever, our work imposes no such restrictions.
+1.2 Contributions
+In a key departure from prior formulations, the
+learning algorithm presented in this work takes as
+input not just labeled examples but also an initial
+regular expression. The use of an initial regex has
+two major advantages. First, this expression pro-
+vides a natural mechanism for a domain expert to
+provide domain knowledge about the structure of the
+entity being extracted. Second, as we show in Sec-
+tion 2, the space of output regular expressions un-
+der consideration can be meaningfully restricted by
+appropriately defining their relationship to the input
+expression. Such a principled approach to restrict
+the search space permits the learning algorithm to
+consider complex regexes in a tractable manner. In
+contrast, prior work defined a tractable search space
+by placing restrictions on the target class of regular
+expressions. Our specific contributions are:
+? A novel regex learning problem consisting of learn-
+ing an ?improved? regex given an initial regex and
+labeled examples
+? Formulation of this learning task as an optimization
+problem over a search space of regexes
+? ReLIE, a regex learning algorithm that employs
+transformations to navigate the search space
+? Extensive experimental results over multiple
+datasets to show the effectiveness of ReLIE and
+a comparison study with the Conditional Random
+Field (CRF) algorithm
+? Finally, experiments that demonstrate the benefits
+of using ReLIE as a feature extractor for CRF and
+possibly other machine learning algorithms.
+22
+2 The Regex Learning Problem
+Consider the task of identifying instances of some
+entity E . Let R0 denote the input regex provided by
+the user and let M(R0 ,D) denote the set of matches
+obtained by evaluating R0 over a document col-
+lection D. Let Mp(R0 ,D) = {x ? M(R0 ,D) :
+x instance of E} and Mn(R0 ,D) = {x ? M(R0 ,D) :
+x not an instance of E} denote the set of positive and
+negative matches for R0 . Note that a match is pos-
+itive if it corresponds to an instance of the entity of
+interest and is negative otherwise. The goal of our
+learning task is to produce a regex that is ?better?
+than R0 at identifying instances of E .
+Given a candidate regex R, we need a mechanism
+to judge whether R is indeed a better extractor for
+E than R0 . To make this judgment even for just the
+original document collection D, we must be able to
+label each instance matched byR (i.e., each element
+of M(R,D)) as positive or negative. Clearly, this
+can be accomplished if the set of matches produced
+byR are contained within the set of available labeled
+examples, i.e., if M(R,D) ? M(R0 ,D). Based on
+this observation, we make the following assumption:
+Assumption 1. Given an input regex R0 over some al-
+phabet ?, any other regexR over ? is a candidate for our
+learning algorithm only if L(R) ? L(R0 ). (L(R) denotes
+the language accepted by R).
+Even with this assumption, we are left with a po-
+tentially infinite set of candidate regexes from which
+our learning algorithm must choose one. To explore
+this set in a principled fashion, we need a mecha-
+nism to move from one element in this space to an-
+other, i.e., from one candidate regex to another. In
+addition, we need an objective function to judge the
+extraction quality of each candidate regex. We ad-
+dress these two issues below.
+Regex Transformations To systematically ex-
+plore the search space, we introduce the concept of
+regex transformations.
+Definition 1 (Regex Transformation). LetR? denote
+the set of all regular expressions over some alphabet ?. A
+regex transformation is a function T : R? ? 2R? such
+that ?R? ? T (R), L(R?) ? L(R).
+For example, by replacing different occurrences
+of the quantifier + in R1 from Example 1 with
+specific ranges (such as {1,2} or {3}), we obtain
+expressions such as R3 = (\d+\-){1,2}\d+ and
+R4 = (\d{3}\-)+\d+. The operation of replacing
+quantifiers with restricted ranges is an example of a
+particular class of transformations that we describe
+further in Section 3. For the present, it is sufficient
+to view a transformation as a function applied to a
+regexR that produces, as output, a set of regexes that
+accept sublanguages of L(R). We now define the
+search space of our learning algorithm as follows:
+Definition 2 (Search Space). Given an input regex R0
+and a set of transformations T , the search space of our
+learning algorithm is T (R0 ), the set of all regexes ob-
+tained by (repeatedly) applying the transformations in T
+to R0 .
+For instance, if the operation of restricting quanti-
+fiers that we described above is part of the transfor-
+mation set, then R3 and R4 are in the search space
+of our algorithm, given R1 as input.
+Objective Function We now define an objective
+function, based on the well known F-measure, to
+compare the extraction quality of different candidate
+regexes in our search space. Using Mp(R,D) (resp.
+Mn(R,D)) to denote the set of positive (resp. nega-
+tive) matches of a regex R, we define
+precision(R,D) =
+Mp(R,D)
+Mp(R,D) + Mn(R,D)
+recall(R,D) =
+Mp(R,D)
+Mp(R0,D)
+F(R,D) =
+2 ? precision(R,D) ? recall(R,D)
+precision(R,D) + recall(R,D)
+The regex learning task addressed in this paper
+can now be formally stated as the following opti-
+mization problem:
+Definition 3 (Regex Learning Problem). Given
+an input regex R0 , a document collection D, labeled
+sets of positive and negative examples Mp(R0 ,D) and
+Mn(R0 ,D), and a set of transformations T , compute the
+output regex Rf = argmaxR?T (R0 ) F(R,D).
+3 Instantiating Regex Transformations
+In this section, we describe how transformations
+can be implemented by exploiting the syntactic con-
+structs of modern regex engines. To help with our
+description, we introduce the following task:
+Example 2 (Software name extraction). Consider the
+task of identifying names of software products in text.
+A simple pattern for this task is: ?one or more capital-
+ized words followed by a version number?, represented
+as R5 = ([A-Z]\w*\s*)+[Vv]?(\d+\.?)+.
+23
+When applied to a collection of University web
+pages, we discovered that R5 identified correct in-
+stances such as Netscape 2.0, Windows 2000 and
+Installation Designer v1.1. However, R5 also ex-
+tracted incorrect instances such as course numbers
+(e.g. ENGLISH 317), room numbers (e.g. Room
+330), and section headings (e.g. Chapter 2.2). To
+eliminate spurious matches such as ENGLISH 317,
+let us enforce the condition that ?each word is a
+single upper-case letter followed by one or more
+lower-case letters?. To accomplish this, we focus
+on the sub-expression of R5 that identifies capital-
+ized words, R51 = ([A-Z]\w*\s*)+, and replace it
+with R51a = ([A-Z][a-z]*\s*)+. The regex result-
+ing from R5 by replacing R51 with R51a will avoid
+matches such as ENGLISH 317.
+An alternate way to improve R5 is by explicitly
+disallowing matches against strings like ENGLISH,
+Room and Chapter. To accomplish this, we can
+exploit the negative lookahead operator supported
+in modern regex engines. Lookaheads are special
+constructs that allow a sequence of characters
+to be checked for matches against a regex with-
+out the characters themselves being part of the
+match. As an example, (?!Ra)Rb (??!? being
+the negative lookahead operator) returns matches
+of regex Rb but only if they do not match Ra.
+Thus, by replacing R51 in our original regex with
+R51b =(?! ENGLISH|Room|Chapter)[A-Z]\w*\s*,
+we produce an improved regex for software names.
+The above examples illustrate the general prin-
+ciple of our transformation technique. In essence,
+we isolate a sub-expression of a given regex R and
+modify it such that the resulting regex accepts a sub-
+language of R. We consider two kinds of modifica-
+tions ? drop-disjunct and include-intersect. In drop-
+disjunct, we operate on a sub-expression that corre-
+sponds to a disjunct and drop one or more operands
+of that disjunct. In include-intersect, we restrict the
+chosen sub-expression by intersecting it with some
+other regex. Formally,
+Definition 4 (Drop-disjunct Transformation). Let
+R ? R? be a regex of the form R = Ra?(X)Rb,
+where ?(X) denotes the disjunction R1|R2| . . . |Rn of
+any non-empty set of regexes X = {R1, R2, . . . , Rn}.
+The drop-disjunct transformation DD(R,X, Y ) for some
+Y ? X, Y 6= ? results in the new regex Ra?(Y )Rb.
+Definition 5 (Include-Intersect Transformation). Let
+.\W \s \w[a-zA-Z] \d|[0-9] _[a-z] [A-Z]
+Figure 1: Sample Character Classes in Regex
+R ? R? be a regex of the form R = RaXRb for some
+X ? R?, X 6= ?. The include-intersect transformation
+II(R,X, Y ) for some Y ? R?, Y 6= ? results in the new
+regex Ra(X ? Y )Rb.
+We state the following proposition (proof omit-
+ted in the interest of space) that guarantees that both
+drop-disjunct and include-intersect restrict the lan-
+guage of the resulting regex, and therefore are valid
+transformations according to Definition 1.
+Proposition 1. Given regexes R,X1, Y1, X2 and Y2
+from R? such that DD(R,X1, Y1) and II(R,X2, Y2)
+are applicable, L(DD(R,X1, Y1)) ? L(R) and
+L(II(R,X2, Y2)) ? L(R).
+We now proceed to describe how we use differ-
+ent syntactic constructs to apply drop-disjunct and
+include-intersect transformations.
+Character Class Restrictions Character
+classes are short-hand notations for denoting
+the disjunction of a set of characters (\d is
+equivalent to (0|1...|9); \w is equivalent to
+(a|. . .|z|A|. . .|Z|0|1. . .|9| ); etc.).2 Figure 1
+illustrates a character class hierarchy in which
+each node is a stricter class than its parent (e.g.,
+\d is stricter than \w). A replacement of any of
+these character classes by one of its descendants
+is an instance of the drop-disjunct transformation.
+Notice that in Example 2, when replacing R51 with
+R51a , we were in effect applying a character class
+restriction.
+Quantifier Restrictions Quantifiers are used to
+define the range of valid counts of a repetitive se-
+quence. For instance, a{m,n} looks for a sequence
+of a?s of length at least m and at most n. Since
+quantifiers are also disjuncts (e.g., a{1,3} is equiv-
+alent to a|aa|aaa), the replacement of an expres-
+sion R{m,n} with an expression R{m1, n1} (m ?
+m1 ? n1 ? n) is an instance of the drop-disjunct
+transformation. For example, given a subexpres-
+sion of the form a{1,3}, we can replace it with
+2Note that there are two distinct character classes \W and \w
+24
+one of a{1,1}, a{1,2}, a{2,2}, a{2,3}, or a{3,3}.
+Note that, before applying this transformation, wild-
+card expressions such as a+ and a* are replaced by
+a{0,maxCount} and a{1,maxCount} respectively,
+where maxCount is a user configured maximum
+length for the entity being extracted.
+Negative Dictionaries Observe that the include-
+intersect transformation (Definition 5) is applicable
+for every possible sub-expression of a given regex
+R. Note that a valid sub-expression in R is any
+portion of R where a capturing group can be intro-
+duced.3 Consider a regex R = RaXRb with a sub-
+expression X; the application of include-intersect
+requires another regex Y to yieldRa(X?Y )Rb. We
+would like to construct Y such thatRa(X ?Y )Rb is
+?better? than R for the task at hand. Therefore, we
+construct Y as ?Y ? where Y ? is a regex constructed
+from negative matches ofR. Specifically, we look at
+each negative match of R and identify the substring
+of the match that corresponds to X . We then apply
+a greedy heuristic (see below) to these substrings to
+yield a negative dictionary Y ?. Finally, the trans-
+formed regexRa(X??Y ?)Rb is implemented using
+the negative lookahead expression Ra(?! Y?)XRb.
+Greedy Heuristic for Negative Dictionaries Im-
+plementation of the above procedure requires cer-
+tain judicious choices in the construction of the neg-
+ative dictionary to ensure tractability of this trans-
+formation. Let S(X) denote the distinct strings
+that correspond to the sub-expression X in the neg-
+ative matches of R.4 Since any subset of S(X)
+is a candidate negative dictionary, we are left with
+an exponential number of possible transformations.
+In our implementation, we used a greedy heuris-
+tic to pick a single negative dictionary consisting
+of all those elements of S(X) that individually
+improve the F-measure. For instance, in Exam-
+ple 2, if the independent substitution of R51 with
+(?!ENGLISH)[A-Z]\w*\s*, (?!Room)[A-Z]
+\w*\s*, and (?!Chapter)[A-Z]\w*\s* each im-
+proves the F-measure, we produce a nega-
+tive dictionary consisting of ENGLISH, Room, and
+Chapter. This is precisely how the disjunct
+ENGLISH|Room|Chapter is constructed in R51b .
+3For instance, the sub-expressions of ab{1,2}c are a,
+ab{1,2}, ab{1,2}c, b, b{1,2}, b{1,2}c, and c.
+4S(X) can be obtained automatically by identifying the sub-
+string corresponding to the group X in each entry in Mn(R,D)
+Procedure ReLIE(Mtr ,Mval,R0 ,T )
+//Mtr : set of labeled matches used as training data
+//Mval: set of labeled matches used as validation data
+// R0 : user-provided regular expression
+// T : set of transformations
+begin
+1. Rnew = R0
+2. do {
+3. for each transformation ti ? T
+4. Candidatei=ApplyTransformations(Rnew, ti)
+5. let Candidates =
+?
+i Candidatei
+6. let R? = argmaxR?Candidates F(R,Mtr)
+7. if (F(R?,Mtr) <= F(Rnew,Mtr)) return Rnew
+8. if (F(R?,Mval) < F(Rnew,Mval)) return Rnew
+9. Rnew = R?
+10. } while(true)
+end
+Figure 2: ReLIE Search Algorithm
+4 ReLIE Search Algorithm
+Figure 2 describes the ReLIE algorithm for the
+Regex Learning Problem (Definition 3) based on the
+transformations described in Section 3. ReLIE is a
+greedy hill climbing search procedure that chooses,
+at every iteration, the regex with the highest F-
+measure. An iteration in ReLIE consists of:
+? Applying every transformation on the current regex
+Rnew to obtain a set of candidate regexes
+? From the candidates, choosing the regex R? whose
+F-measure over the training dataset is maximum
+To avoid overfitting, ReLIE terminates when either
+of the following conditions is true: (i) there is no
+improvement in F-measure over the training set;
+(ii) there is a drop in F-measure when applying R?
+on the validation set.
+The following proposition provides an upper
+bound for the running time of the ReLIE algorithm.
+Proposition 2. Given any valid set of inputs Mtr,
+Mval, R0 , and T , the ReLIE algorithm terminates in at
+most |Mn(R0 ,Mtr )| iterations. The running time of the
+algorithm TTotal(R0 ,Mtr ,Mval) ? |Mn(R0 ,Mtr )| ?
+t0 , where t0 is the time taken for the first iteration of the
+algorithm.
+Proof. With reference to Figure 2, in each iteration, the
+F-measure of the ?best? regex R? is strictly better than
+Rnew. Since L(R?) ? L(Rnew), R? eliminates at least
+one additional negative match compared toRnew. Hence,
+the maximum number of iterations is |Mn(R0 ,Mtr )|.
+For a regular expression R, let ncc(R) and nq(R) de-
+note, respectively, the number of character classes and
+quantifiers in R. The maximum number of possible sub-
+expressions in R is |R|2, where |R| is the length of R.
+Let MaxQ(R) denote the maximum number of ways in
+25
+which a single quantifier appearing in R can be restricted
+to a smaller range. Let Fcc denote the maximum fanout5
+of the character class hierarchy. Let TReEval(D) denote
+the average time taken to evaluate a regex over datasetD.
+Let Ri denote the regex at the beginning of iteration
+i. The number of candidate regexes obtained by applying
+the three transformations is
+NumRE(Ri,Mtr) ? ncc(Ri)?Fcc+nq(Ri)?MaxQ(Ri)+|Ri|
+2
+The time taken to enumerate the character class and
+quantifier restriction transformations is proportional to
+the resulting number of candidate regexes. The time
+taken for the negative dictionaries transformation is given
+by the running time of the greedy heuristic (Section 3).
+The total time taken to enumerate all candidate regexes is
+given by (for some constant c)
+TEnum(Ri,Mtr) ? c ? (ncc(Ri) ? Fcc + nq(Ri) ?MaxQ(Ri)
++ |Ri|
+2 ?Mn(Ri,Mtr) ? TReEval(Mtr))
+Choosing the best transformation involves evaluating
+each candidate regex over the training and validation cor-
+pus and the time taken for this step is
+TPickBest(Ri,Mtr,Mval) = NumRE(Ri,Mtr)
+?(TReEval(Mtr) + TReEval(Mval))
+The total time taken for an iteration can be written as
+TI(Ri,Mtr,Mval) =TEnum(Ri,Mtr)
++ TPickBest(Ri,Mtr,Mval)
+It can be shown that the time taken in each iteration
+decreases monotonically (details omitted in the interest of
+space). Therefore, the total running time of the algorithm
+is given by
+TTotal(R0 ,Mtr ,Mval) =
+?
+TI(Ri,Mtr,Mval)
+? |Mn(R0 ,Mtr )| ? t0 .
+where t0 = TI(R0 ,Mtr ,Mval) is the running time
+of the first iteration of the algorithm.
+5 Experiments
+In this section, we present an empirical study of
+the ReLIE algorithm using four extraction tasks over
+three real-life data sets. The goal of this study is to
+evaluate the effectiveness of ReLIE in learning com-
+plex regexes and to investigate how it compares with
+standard machine learning algorithms.
+5.1 Experimental Setup
+Data Set The datasets used in our experiments are:
+? EWeb: A collection of 50,000 web pages crawled
+from a corporate intranet.
+5Fanout is the number of ways in which a character class
+may be restricted as defined by the hierarchy (e.g. Figure 1).
+? AWeb: A set of 50,000 web pages obtained from
+the publicly available University of Michigan Web
+page collection (Li et al, 2006), including a sub-
+collection of 10,000 pages (AWeb-S).
+? Email: A collection of 10,000 emails obtained
+from the publicly available Enron email collec-
+tion (Minkov et al, 2005).
+Extraction Tasks SoftwareNameTask, CourseNum-
+berTask and PhoneNumberTask were evaluated on
+EWeb, AWeb and Email, respectively. Since web
+pages have large number of URLs, to keep the la-
+beling task manageable, URLTask was evaluated on
+AWeb-S.
+Gold Standard For each task, the gold standard
+was created by manually labeling all matches for the
+initial regex. Note that only exact matches with the
+gold standard are considered correct in our evalua-
+tions. 6
+Comparison Study To evaluate ReLIE for entity
+extraction vis-a-vis existing algorithms, we used the
+popular conditional random field (CRF). Specifi-
+cally, we used the MinorThird (Cohen, 2004) imple-
+mentation of CRF to train models for all four extrac-
+tion tasks. For training the CRF we provided it with
+the set of positive and negative matches from the ini-
+tial regex with a context of 200 characters on either
+side of each match7. Since it is unlikely that useful
+features are located far away from the entity, we be-
+lieve that 200 characters on either side is sufficient
+context. The CRF used the base features described
+in (Cohen et al, 2005). To ensure fair compari-
+son with ReLIE, we also included the matches corre-
+sponding to the input regex as a feature to the CRF.
+In practice, more complex features (e.g., dictionar-
+ies, simple regexes) derived by domain experts are
+often provided to CRFs. However, such features can
+also be used to refine the initial regex given to ReLIE.
+Hence, with a view to investigating the ?raw? learn-
+ing capability of the two approaches, we chose to
+run all our experiments without any additional man-
+ually derived features. In fact, the patterns learned
+by ReLIE through transformations are often similar
+6The labeled data will be made publicly available at
+http://www.eecs.umich.edu/db/regexLearning/.
+7Ideally, we would have preferred to let MinorThird extract
+appropriate features from complete documents in the training-
+set but could not get it to load our large datasets.
+26
+(a) SoftwareNameTask
+0.50.6
+0.70.8
+0.91
+10% 40% 80%Percentage of Data Used for Training
+F
+-
+M
+e
+a
+s
+u
+r
+e
+ReLIE CRF
+(b) CourseNumberTask
+0.50.6
+0.70.8
+0.91
+10% 40% 80%Percentage of Data Used for Training
+F
+-
+M
+e
+a
+s
+u
+r
+e
+ReLIE CRF
+(c) URLTask
+0.50.6
+0.70.8
+0.91
+10% 40% 80%Percentage of Data Used for Training
+F
+-
+M
+e
+a
+s
+u
+r
+e
+ReLIE CRF
+(d) PhoneNumberTask
+0.50.6
+0.70.8
+0.91
+10% 40% 80%Percentage of Data Used for Training
+F
+-
+M
+e
+a
+s
+u
+r
+e
+ReLIE CRF
+Figure 3: Extraction Qualitya
+aFor SoftwareNameTask, with 80% training data we could not obtain results for CRF as the program
+failed repeatedly during the training phase.
+to the features that domain experts may provide to
+CRF. We will revisit this issue in Section 5.4.
+Evaluation We used the standard F-measure to
+evaluate the effectiveness of ReLIE and CRF. We di-
+vided each dataset into 10 equal parts and used X%
+of the dataset for training (X=10, 40 and 80), 10%
+for validation, and remaining (90-X)% for testing.
+All results are reported on the test set.
+5.2 Results
+Four extraction tasks were chosen to reflect the enti-
+ties commonly present in the three datasets.
+? SoftwareNameTask: Extracting software names such
+as Lotus Notes 8.0, Open Office Suite 2007.
+? CourseNumberTask: Extracting university course
+numbers such as EECS 584, Pharm 101.
+? PhoneNumberTask: Extracting phone numbers such
+as 1-800-COMCAST, (425)123 5678.
+? URLTask: Extracting URLs such as
+http:\\www.abc.com and lsa.umich.edu/ foo/.8
+This section summarizes the results of our empir-
+ical evaluation comparing ReLIE and CRF.
+8URLTask may appear to be simplistic. However, extracting
+URLs without the leading protocol definitions (e.g. http) can
+be challenging.
+Raw Extraction Quality The cross-validated re-
+sults across all four tasks are presented in Figure 3.
+? With 10% training data, ReLIE outperforms CRF
+on three out of four tasks with a difference in F-
+measure ranging from 0.1 to 0.2.
+? As training data increases, both algorithms perform
+better with the gap between the two reducing for
+all the four tasks. For CourseNumberTask and URL-
+Task, CRF does slightly better than ReLIE for larger
+training dataset. For the other two tasks, ReLIE re-
+tains its advantage over CRF.9
+The above results indicate that ReLIE performs
+comparably with CRF with a slight edge in condi-
+tions of limited training data. Indeed, the capability
+to learn high-quality extractors using a small train-
+ing set is important because labeled data is often ex-
+pensive to obtain. For precisely this same reason, we
+would ideally like to learn the extractors once and
+then apply them to other datasets as needed. Since
+these other datasets may be from a different domain,
+we next performed a cross-domain test (i.e., training
+9For SoftwareNameTask, with 80% training data we could
+not obtain results for CRF as the program failed repeatedly dur-
+ing the training phase.
+27
+and testing on different domains).
+Task(Training, Testing)
+Data for Training 10% 40% 80%
+ReLIE CRF ReLIE CRF ReLIE CRF
+SoftwareNameTask(EWeb,AWeb) 0.920 0.297 0.977 0.503 0.971 N/A
+URLTask(AWeb-S,Email) 0.690 0.209 0.784 0.380 0.801 0.507
+PhoneNumberTask(Email,AWeb) 0.357 0.130 0.475 0.125 0.513 0.120
+Table 1: Cross Domain Test (F-measure).
+Technique
+SoftwareNameTask CourseNumberTask URLTask PhoneNumberTask
+training testing training testing training testing training testing
+ReLIE 511.7 20.6 69.3 18.4 73.8 7.7 39.4 1.1
+CRF 7597.0 2315.8 482.5 75.4 438.7 53.8 434.8 57.7
+t(ReLIE)
+t(CRF) 0.067 0.009 0.144 0.244 0.168 0.143 0.091 0.019
+Table 2: Average Training/Testing Time (sec)(with 40% data for training)
+Task(Extra Feature)
+Data for Training 10% 40% 80%
+CRF C+RL CRF C+RL CRF C+RL
+CourseNumberTask(Negative Dictionary) 0.553 0.624 0.644 0.764 0.854 0.845
+PhoneNumberTask(Quantifier) 0.695 0.893 0.820 0.937 0.821 0.964
+Table 3: ReLIE as Feature Extractor (C+RL is CRF enhanced with
+features learned by ReLIE).
+Cross-domain Evaluation Table 1
+summarizes the results of training
+the algorithms on one data set and
+testing on another. The scenarios
+chosen are: (i) SoftwareNameTask
+trained on EWeb and tested on
+AWeb, (ii) URLTask trained on AWeb
+and tested on Email, and (iii) Pho-
+neNumberTask trained on Email
+and tested on AWeb.10 We can
+see that ReLIE significantly out-
+performs CRF for all three tasks,
+even when provided with a large
+training dataset. Compared to test-
+ing on the same dataset, there is a
+reduction in F-measure (less than
+0.1 in many cases) when the regex
+learned by ReLIE is applied to a dif-
+ferent dataset, while the drop for
+CRF is much more significant (over 0.5 in many
+cases).11
+Training Time Another issue of practical consid-
+eration is the efficiency of the learning algorithm.
+Table 2 reports the average training and testing time
+for both algorithms on the four tasks. On average Re-
+LIE is an order of magnitude faster than CRF in both
+building the model and applying the learnt model.
+Robustness to Variations in Input Regexes The
+transformations done by ReLIE are based on the
+structure of the input regex. Therefore given differ-
+ent input regexes, the final regexes learned by ReLIE
+will be different. To evaluate the impact of the struc-
+ture of the input regex on the quality of the regex
+learned by ReLIE, we started with different regexes12
+for the same task. We found that ReLIE is robust
+to variations in input regexes. For instance, on Soft-
+wareNameTask, the standard deviation in F-measure
+10We do not report results for CourseNumberTask as course
+numbers are specific to academic webpages and do not appear
+in the other two domains
+11Similar cross-domain performance deterioration for a ma-
+chine learning approach has been observed by (Guo et al,
+2006).
+12Recall that the search space of ReLIE is limited by L(R0)
+(Assumption 1). Thus to ensure meaningful comparison, for
+the same task any two given input regexes R0 and R?0 are cho-
+sen in such a way that although their structures are different,
+Mp(R0,D) = Mp(R?0,D) and Mn(R0,D) = Mn(R
+?
+0,D).
+of the final regexes generated from six different in-
+put regexes was less than 0.05. Further details of this
+experiment are omitted in the interest of space.
+5.3 Discussion
+The results of our comparison study (Figure 3) in-
+dicates that for raw extraction quality ReLIE has a
+slight edge over CRF for small training data. How-
+ever, in cross-domain performance (Table 1) ReLIE
+is significantly better than CRF (by 0.41 on aver-
+age) . To understand this discrepancy, we examined
+the final regex learned by ReLIE and compared that
+with the features learned by CRF. Examples of ini-
+tial regexes with corresponding final regexes learnt
+by ReLIE with 10% training data are listed in Ta-
+ble 4. Recall, from Section 3, that ReLIE transfor-
+mations include character class restrictions, quanti-
+fier restrictions and addition of negative dictionar-
+ies. For instance, in the SoftwareNameTask, the final
+regex listed was obtained by restricting [a-zA-Z]
+to [a-z], \w to [a-zA-Z], and adding the nega-
+tive dictionary (Copyright|Fall| ? ? ? |Issue). Sim-
+ilarly, for the PhoneNumberTask, the final regex
+involved two negative dictionaries (expressed as
+(?![,]) and (?![,:])) 13 and quantifier restric-
+tions (e.g. the first [A-Z\d]{2,4} was transformed
+13To obtain these negative dictionaries, ReLIE not only
+needs to correctly identify the dictionary entries from negative
+matches but also has to place the corresponding negative looka-
+head expression at the appropriate place in the regex.
+28
+SoftwareNameTask
+R0 \b([A-Z][a-zA-Z]{1,10}\s){1,5}\s*(\w{0,2}\d[\.]?){1,4}\b
+Rfinal
+\b((?!(Copyright|Page|Physics|Question| ? ? ? |Article|Issue))[A-Z][a-z]{1,10}
+\s){1,5}\s*([a-zA-Z]{0,2}\d[\.]?){1,4}\b
+PhoneNumberTask R0 \b(1\W+)?\W?\d{3,3}\W*\s*\W?[A-Z\d]{2,4}\s*\W?[A-Z\d]{2,4}\bRfinal \b(1\W+)?\W?\d{3,3}((?![,])\W*)\s*\W?[A-Z\d]{3,3}\s*((?![,:])\W?)[A-Z\d]{3,4}\b
+CourseNumberTask R0 \b([A-Z][a-zA-Z]+)\s+\d{3,3}\bRfinal \b(((?!(At|Between| ? ? ?Contact|Some|Suite|Volume))[A-Z][a-zA-Z]+))\s+\d{3,3}\b
+URLTask R0 \b(\w+://)?(\w+\.){0,2}\w+\.\w+(/[
+?\s]+){0,20}\b
+Rfinal
+\b((?!(Response 20010702 1607.csv| ? ? ?))((\w+://)?(\w+\.){0,2}\w+\.(?!(ppt
+| ? ? ?doc))[a-zA-Z]{2,3}))(/[?\s]+){0,20}\b
+Table 4: Sample Regular Expressions Learned by ReLIE(R0: input regex; Rfinal: final regex learned; the parts of R0
+modified by ReLIE and the corresponding parts in Rfinal are highlighted.)
+into [A-Z\d]{3,3}).
+After examining the features learnt by CRF, it was
+clear that while CRF could learn features such as the
+negative dictionary it is unable to learn character-
+level features. This should not be surprising since
+our CRF was trained with primarily tokens as fea-
+tures (cf. Section 5.1). While this limitation was less
+of a factor in experiments involving data from the
+same domain (some effects were seen with smaller
+training data), it does explain the significant differ-
+ence between the two algorithms in cross-domain
+tasks where the vocabulary can be significantly dif-
+ferent. Indeed, in practical usage of CRF, the main
+challenge is to come up with additional complex fea-
+tures (often in the form of dictionary and regex pat-
+terns) that need to be given to the CRF (Minkov et
+al., 2005). Such complex features are largely hand-
+crafted and thus expensive to obtain. Since the Re-
+LIE transformations are operations over characters,
+a natural question to ask is: ?Can the regex learned
+by ReLIE be used to provide features to CRF?? We
+answer this question below.
+5.4 ReLIE as Feature Extractor for CRF
+To understand the effect of incorporating ReLIE-
+identified features into CRF, we chose the two tasks
+(CourseNumberTask and PhoneNumberTask) with the
+least F-measure in our experiments to determine raw
+extraction quality. We examined the final regex pro-
+duced by ReLIE and manually extracted portions
+to serve as features. For example, the negative
+dictionary learned by ReLIE for the CourseNumber-
+Task (At|Between| ? ? ? |Volume) was incorporated as
+a feature into CRF. To help isolate the effects, for
+each task, we only incorporated features correspond-
+ing to a single transformation: negative dictionar-
+ies for CourseNumberTask and quantifier restrictions
+for PhoneNumberTask. The results of these experi-
+ments are shown in Table 3. The first point worthy of
+note is that performance has improved in all but one
+case. Second, despite the F-measure on CourseNum-
+berTask being lower than PhoneNumberTask (presum-
+ably more potential for improvement), the improve-
+ments on PhoneNumberTask are significantly higher.
+This observation is consistent with our conjecture
+in Section 5.1 that CRF learns token-level features;
+therefore incorporating negative dictionaries as extra
+feature provides only limited improvement. Admit-
+tedly more experiments are needed to understand the
+full impact of incorporating ReLIE-identified fea-
+tures into CRF. However, we do believe that this is
+an exciting direction of future research.
+6 Summary and Future Work
+We proposed a novel formulation of the problem of
+learning complex character-level regexes for entity
+extraction tasks. We introduced the concept of regex
+transformations and described how these could be
+realized using the syntactic constructs of modern
+regex languages. We presented ReLIE, a powerful
+regex learning algorithm that exploits these ideas.
+Our experiments demonstrate that ReLIE is very ef-
+fective for certain classes of entity extraction, partic-
+ularly under conditions of cross-domain and limited
+training data. Our preliminary results also indicate
+the possibility of using ReLIE as a powerful feature
+extractor for CRF and other machine learning algo-
+rithms. Further investigation of this aspect of ReLIE
+presents an interesting avenue of future work.
+Acknowledgments
+We thank the anonymous reviewers for their insight-
+ful and constructive comments and suggestions. We
+are also grateful for comments from David Gondek
+and Sebastian Blohm.
+29
+References
+R. Alquezar and A. Sanfeliu. 1994. Incremental gram-
+matical inference from positive and negative data using
+unbiased finite state automata. In SSPR.
+Douglas E. Appelt and Boyan Onyshkevych. 1998. The
+common pattern specification language. In TIPSTER
+TEXT PROGRAM.
+Geert Jan Bex et al 2006. Inference of concise DTDs
+from XML data. In VLDB.
+Eric Brill. 2000. Pattern-based disambiguation for natu-
+ral language processing. In SIGDAT.
+William W. Cohen and Andrew McCallum. 2003. Infor-
+mation Extraction from the World Wide Web. in KDD
+William W. Cohen. 2004. Minorthird: Methods for
+identifying names and ontological relations in text
+using heuristics for inducing regularities from data.
+http://minorthird.sourceforge.net.
+William W. Cohen et al 2005. Learning to Understand
+Web Site Update Requests. In IJCAI.
+Fabio Ciravegna. 2001. Adaptive information extraction
+from text by rule induction and generalization. In IJ-
+CAI.
+H. Cunningham. 1999. JAPE ? a java annotation patterns
+engine.
+Francois Denis et al 2004. Learning regular languages
+using RFSAs. Theor. Comput. Sci., 313(2):267?294.
+Francois Denis. 2001. Learning regular languages
+from simple positive examples. Machine Learning,
+44(1/2):37?66.
+Pedro DeRose et al 2007. DBLife: A Community In-
+formation Management Platform for the Database Re-
+search Community In CIDR
+Pierre Dupont. 1996. Incremental regular inference. In
+ICGI.
+Ronen Feldman et al. 2006. Self-supervised Relation
+Extraction from the Web. In ISMIS.
+Henning Fernau. 2005. Algorithms for learning regular
+expressions. In ALT.
+Laura Firoiu et al 1998. Learning regular languages
+from positive evidence. In CogSci.
+K. Fukuda et al 1998. Toward information extraction:
+identifying protein names from biological papers. Pac
+Symp Biocomput., 1998:707?718
+Ugo Galassi and Attilio Giordana. 2005. Learning regu-
+lar expressions from noisy sequences. In SARA.
+Minos Garofalakis et al 2000. XTRACT: a system for
+extracting document type descriptors from XML doc-
+uments. In SIGMOD.
+Hong Lei Guo et al 2006. Empirical Study on the
+Performance Stability of Named Entity Recognition
+Model across Domains In EMNLP.
+Java Regular Expressions. 2008. http://java.sun.com
+/javase/6/docs/api/java/util/regex/package-
+summary.html.
+Dan Klein et al 2003. Named Entity Recognition with
+Character-Level Models. In HLT-NAACL.
+Vijay Krishnan and Christopher D. Manning. 2006. An
+Effective Two-Stage Model for Exploiting Non-Local
+Dependencies in Named Entity Recognition. In ACL.
+Yunyao Li et al 2006. Getting work done on the web:
+Supporting transactional queries. In SIGIR.
+Andrew McCallum et al 2000. Maximum Entropy
+Markov Models for Information Extraction and Seg-
+mentation. In ICML.
+Einat Minkov et al 2005. Extracting personal names
+from emails: Applying named entity recognition to in-
+formal text. In HLT/EMNLP.
+Stephen Soderland. 1999. Learning information extrac-
+tion rules for semi-structured and free text. Machine
+Learning, 34:233?272.
+Lorraine Tanabe and W. John Wilbur 2002. Tagging
+gene and protein names in biomedical text. Bioinfor-
+matics, 18:1124?1132.
+Tianhao Wu and William M. Pottenger. 2005. A semi-
+supervised active learning algorithm for information
+extraction from textual data. JASIST, 56(3):258?271.
+Huaiyu Zhu, Alexander Loeser, Sriram Raghavan, Shiv-
+akumar Vaithyanathan 2007. Navigating the intranet
+with high precision. In WWW.
+30
+Proceedings of the 48th Annual Meeting of the Association for Computational Linguistics, pages 128?137,
+Uppsala, Sweden, 11-16 July 2010. c?2010 Association for Computational Linguistics
+SystemT: An Algebraic Approach to Declarative Information Extraction
+Laura Chiticariu Rajasekar Krishnamurthy Yunyao Li
+Sriram Raghavan Frederick R. Reiss Shivakumar Vaithyanathan
+IBM Research ? Almaden
+San Jose, CA, USA
+{chiti,sekar,yunyaoli,rsriram,frreiss,vaithyan}@us.ibm.com
+Abstract
+As information extraction (IE) becomes
+more central to enterprise applications,
+rule-based IE engines have become in-
+creasingly important. In this paper, we
+describe SystemT, a rule-based IE sys-
+tem whose basic design removes the ex-
+pressivity and performance limitations of
+current systems based on cascading gram-
+mars. SystemT uses a declarative rule
+language, AQL, and an optimizer that
+generates high-performance algebraic ex-
+ecution plans for AQL rules. We com-
+pare SystemT?s approach against cascad-
+ing grammars, both theoretically and with
+a thorough experimental evaluation. Our
+results show that SystemT can deliver re-
+sult quality comparable to the state-of-the-
+art and an order of magnitude higher an-
+notation throughput.
+1 Introduction
+In recent years, enterprises have seen the emer-
+gence of important text analytics applications like
+compliance and data redaction. This increase,
+combined with the inclusion of text into traditional
+applications like Business Intelligence, has dra-
+matically increased the use of information extrac-
+tion (IE) within the enterprise. While the tradi-
+tional requirement of extraction quality remains
+critical, enterprise applications also demand ef-
+ficiency, transparency, customizability and main-
+tainability. In recent years, these systemic require-
+ments have led to renewed interest in rule-based
+IE systems (Doan et al, 2008; SAP, 2010; IBM,
+2010; SAS, 2010).
+Until recently, rule-based IE systems (Cunning-
+ham et al, 2000; Boguraev, 2003; Drozdzynski
+et al, 2004) were predominantly based on the
+cascading grammar formalism exemplified by the
+Common Pattern Specification Language (CPSL)
+specification (Appelt and Onyshkevych, 1998). In
+CPSL, the input text is viewed as a sequence of an-
+notations, and extraction rules are written as pat-
+tern/action rules over the lexical features of these
+annotations. In a single phase of the grammar, a
+set of rules are evaluated in a left-to-right fash-
+ion over the input annotations. Multiple grammar
+phases are cascaded together, with the evaluation
+proceeding in a bottom-up fashion.
+As demonstrated by prior work (Grishman and
+Sundheim, 1996), grammar-based IE systems can
+be effective in many scenarios. However, these
+systems suffer from two severe drawbacks. First,
+the expressivity of CPSL falls short when used
+for complex IE tasks over increasingly pervasive
+informal text (emails, blogs, discussion forums
+etc.). To address this limitation, grammar-based
+IE systems resort to significant amounts of user-
+defined code in the rules, combined with pre-
+and post-processing stages beyond the scope of
+CPSL (Cunningham et al, 2010). Second, the
+rigid evaluation order imposed in these systems
+has significant performance implications.
+Three decades ago, the database community
+faced similar expressivity and efficiency chal-
+lenges in accessing structured information. The
+community addressed these problems by introduc-
+ing a relational algebra formalism and an associ-
+ated declarative query language SQL. The ground-
+breaking work on System R (Chamberlin et al,
+1981) demonstrated how the expressivity of SQL
+can be efficiently realized in practice by means of
+a query optimizer that translates an SQL query into
+an optimized query execution plan.
+Borrowing ideas from the database community,
+we have developed SystemT, a declarative IE sys-
+tem based on an algebraic framework, to address
+both expressivity and performance issues. In Sys-
+temT, extraction rules are expressed in a declar-
+ative language called AQL. At compilation time,
+128
+({First} {Last} ) :full :full.Person
+({Caps}  {Last} ) :full :full.Person
+({Last} {Token.orth = comma} {Caps | First}) : reverse
+:reverse.Person
+({First}) : fn  :fn.Person
+({Last}) : ln  :ln.Person
+({Lookup.majorType = FirstGaz})  : fn  :fn.First
+({Lookup.majorType = LastGaz}) : ln  :ln.Last
+({Token.orth = upperInitial} | 
+{Token.orth = mixedCaps } ) :cw  :cw.Caps
+Rule Patterns
+50
+20
+10
+10
+10
+50
+50
+10
+Priority
+P2R1
+P2R2
+P2R3
+P2R4
+P2R5
+P1R1
+P1R2
+P1R3
+RuleId
+Input
+First
+Last
+Caps
+Token
+Output
+Person
+Input
+Lookup
+Token
+Output
+First
+Last
+Caps
+TypesPhase
+P2
+P1
+P2R3        ({Last} {Token.orth = comma} {Caps | First}) : reverse   :reverse.Person
+Last followed by Token whose orth attribute has value 
+comma followed by Caps or First
+Rule part Action part
+Create Person
+annotation
+Bind match 
+to variables
+Syntax:
+Gazetteers containing first names and last names
+Figure 1: Cascading grammar for identifying Person names
+SystemT translates AQL statements into an al-
+gebraic expression called an operator graph that
+implements the semantics of the statements. The
+SystemT optimizer then picks a fast execution
+plan from many logically equivalent plans. Sys-
+temT is currently deployed in a multitude of real-
+world applications and commercial products1.
+We formally demonstrate the superiority of
+AQL and SystemT in terms of both expressivity
+and efficiency (Section 4). Specifically, we show
+that 1) the expressivity of AQL is a strict superset
+of CPSL grammars not using external functions
+and 2) the search space explored by the SystemT
+optimizer includes operator graphs correspond-
+ing to efficient finite state transducer implemen-
+tations. Finally, we present an extensive experi-
+mental evaluation that validates that high-quality
+annotators can be developed with SystemT, and
+that their runtime performance is an order of mag-
+nitude better when compared to annotators devel-
+oped with a state-of-the-art grammar-based IE sys-
+tem (Section 5).
+2 Grammar-based Systems and CPSL
+A cascading grammar consists of a sequence of
+phases, each of which consists of one or more
+rules. Each phase applies its rules from left to
+right over an input sequence of annotations and
+generates an output sequence of annotations that
+the next phase consumes. Most cascading gram-
+mar systems today adhere to the CPSL standard.
+Fig. 1 shows a sample CPSL grammar that iden-
+tifies person names from text in two phases. The
+first phase, P1, operates over the results of the tok-
+1A trial version is available at
+http://www.alphaworks.ibm.com/tech/systemt
+Rule skipped 
+due to priority 
+semantics
+CPSL
+Phase P1
+Last(P1R2) Last(P1R2)
+? Mark        Scott     ,            Howard         Smith   ?
+First(P1R1) First(P1R1) First(P1R1) Last(P1R2)
+CPSL
+Phase P2
+? Mark        Scott     ,        Howard          Smith    ?
+Person(P2R1)
+Person (P2R4)
+Person(P2R4)
+Person (P2R5)
+Person(P2R4)
+? Mark        Scott     ,            Howard         Smith   ?
+First(P1R1) First(P1R1) First(P1R1) Last(P1R2)
+JAPE
+Phase P1
+(Brill) Caps(P1R3) Last(P1R2) Last(P1R2)
+Caps(P1R3) Caps(P1R3)
+Caps(P1R3)
+? Mark        Scott     ,        Howard          Smith    ?
+Person(P2R1)
+Person (P2R4, P2R5)
+JAPE
+Phase P2
+(Appelt)
+Person(P2R1)
+Person (P2R2)
+Some discarded 
+matches omitted
+for clarity
+? Tomorrow, we will meet Mark Scott, Howard Smith and ?Document d1
+Rule fired
+Legend
+3 persons
+identified
+2 persons
+identified
+(a)
+(b)
+Figure 2: Sample output of CPSL and JAPE
+enizer and gazetteer (input types Token and Lookup,
+respectively) to identify words that may be part of
+a person name. The second phase, P2, identifies
+complete names using the results of phase P1.
+Applying the above grammar to document d1
+(Fig. 2), one would expect that to match ?Mark
+Scott? and ?Howard Smith? as Person. However,
+as shown in Fig. 2(a), the grammar actually finds
+three Person annotations, instead of two. CPSL has
+several limitations that lead to such discrepancies:
+L1. Lossy sequencing. In a CPSL grammar,
+each phase operates on a sequence of annotations
+from left to right. If the input annotations to a
+phase may overlap with each other, the CPSL en-
+gine must drop some of them to create a non-
+overlapping sequence. For instance, in phase P1
+(Fig. 2(a)), ?Scott? has both a Lookup and a To-
+ken annotation. The system has made an arbitrary
+choice to retain the Lookup annotation and discard
+the Token annotation. Consequently, no Caps anno-
+tations are output by phase P1.
+L2. Rigid matching priority. CPSL specifies
+that, for each input annotation, only one rule can
+actually match. When multiple rules match at the
+same start position, the following tie-breaker con-
+ditions are applied (in order): (a) the rule match-
+ing the most annotations in the input stream; (b)
+the rule with highest priority; and (c) the rule de-
+clared earlier in the grammar. This rigid match-
+ing priority can lead to mistakes. For instance,
+as illustrated in Fig. 2(a), phase P1 only identi-
+fies ?Scott? as a First. Matching priority causes
+the grammar to skip the corresponding match for
+?Scott? as a Last. Consequently, phase P2 fails to
+identify ?Mark Scott? as one single Person.
+L3. Limited expressivity in rule patterns. It is
+not possible to express rules that compare annota-
+tions overlapping with each other. E.g., ?Identify
+129
+[A-Z]{\w|-}+
+DocumentInput Tuple
+?
+we will meet Mark 
+Scott, ?
+Output Tuple 2 Span 2Document
+Span 1Output Tuple 1 Document
+Regex
+Caps
+Figure 3: Regular Expression Extraction Operator
+words that are both capitalized and present in the
+FirstGaz gazetteer? or ?Identify Person annotations
+that occur within an EmailAddress?.
+Extensions to CPSL
+In order to address the above limitations, several
+extensions to CPSL have been proposed in JAPE,
+AFst and XTDL (Cunningham et al, 2000; Bogu-
+raev, 2003; Drozdzynski et al, 2004). The exten-
+sions are summarized as below, where each solu-
+tion Si corresponds to limitation Li.
+? S1. Grammar rules are allowed to operate on
+graphs of input annotations in JAPE and AFst.
+? S2. JAPE introduces more matching regimes
+besides the CPSL?s matching priority and thus
+allows more flexibility when multiple rules
+match at the same starting position.
+? S3. The rule part of a pattern has been ex-
+panded to allow more expressivity in JAPE,
+AFst and XTDL.
+Fig. 2(b) illustrates how the above extensions
+help in identifying the correct matches ?Mark Scott?
+and ?Howard Smith? in JAPE. Phase P1 uses a match-
+ing regime (denoted by Brill) that allows multiple
+rules to match at the same starting position, and
+phase P2 uses CPSL?s matching priority, Appelt.
+3 SystemT
+SystemT is a declarative IE system based on an
+algebraic framework. In SystemT, developers
+write rules in a language called AQL. The system
+then generates a graph of operators that imple-
+ment the semantics of the AQL rules. This decou-
+pling allows for greater rule expressivity, because
+the rule language is not constrained by the need to
+compile to a finite state transducer. Likewise, the
+decoupled approach leads to greater flexibility in
+choosing an efficient execution strategy, because
+many possible operator graphs may exist for the
+same AQL annotator.
+In the rest of the section, we describe the parts
+of SystemT, starting with the algebraic formalism
+behind SystemT?s operators.
+3.1 Algebraic Foundation of SystemT
+SystemT executes IE rules using graphs of op-
+erators. The formal definition of these operators
+takes the form of an algebra that is similar to the
+relational algebra, but with extensions for text pro-
+cessing.
+The algebra operates over a simple relational
+data model with three data types: span, tuple, and
+relation. In this data model, a span is a region of
+text within a document identified by its ?begin?
+and ?end? positions; a tuple is a fixed-size list of
+spans. A relation is a multiset of tuples, where ev-
+ery tuple in the relation must be of the same size.
+Each operator in our algebra implements a single
+basic atomic IE operation, producing and consum-
+ing sets of tuples.
+Fig. 3 illustrates the regular expression ex-
+traction operator in the algebra, which per-
+forms character-level regular expression match-
+ing. Overall, the algebra contains 12 different op-
+erators, a full description of which can be found
+in (Reiss et al, 2008). The following four oper-
+ators are necessary to understand the examples in
+this paper:
+? The Extract operator (E) performs character-
+level operations such as regular expression and
+dictionary matching over text, creating a tuple
+for each match.
+? The Select operator (?) takes as input a set of
+tuples and a predicate to apply to the tuples. It
+outputs all tuples that satisfy the predicate.
+? The Join operator (??) takes as input two sets
+of tuples and a predicate to apply to pairs of
+tuples from the input sets. It outputs all pairs
+of input tuples that satisfy the predicate.
+? The consolidate operator (?) takes as input a
+set of tuples and the index of a particular col-
+umn in those tuples. It removes selected over-
+lapping spans from the indicated column, ac-
+cording to the specified policy.
+3.2 AQL
+Extraction rules in SystemT are written in AQL,
+a declarative relational language similar in syn-
+tax to the database language SQL. We chose SQL
+as a basis for our language due to its expres-
+sivity and its familiarity. The expressivity of
+SQL, which consists of first-order logic predicates
+130
+Figure 4: Person annotator as AQL query
+over sets of tuples, is well-documented and well-
+understood (Codd, 1990). As SQL is the pri-
+mary interface to most relational database sys-
+tems, the language?s syntax and semantics are
+common knowledge among enterprise application
+programmers. Similar to SQL terminology, we
+call a collection of AQL rules an AQL query.
+Fig. 4 shows portions of an AQL query. As
+can be seen, the basic building block of AQL is
+a view: A logical description of a set of tuples in
+terms of either the document text (denoted by a
+special view called Document) or the contents of
+other views. Every SystemT annotator consists
+of at least one view. The output view statement in-
+dicates that the tuples in a view are part of the final
+results of the annotator.
+Fig. 4 also illustrates three of the basic con-
+structs that can be used to define a view.
+? The extract statement specifies basic
+character-level extraction primitives to be
+applied directly to a tuple.
+? The select statement is similar to the SQL
+select statement but it contains an additional
+consolidate on clause, along with an exten-
+sive collection of text-specific predicates.
+? The union all statement merges the outputs
+of one or more select or extract statements.
+To keep rules compact, AQL also provides a
+shorthand sequence pattern notation similar to the
+syntax of CPSL. For example, the CapsLast
+view in Figure 4 could have been written as:
+create view CapsLast as
+extract pattern <C.name> <L.name>
+from Caps C, Last L;
+Internally, SystemT translates each of these ex-
+tract pattern statements into one or more select
+and extract statements.
+AQL SystemT
+Optimizer
+SystemT
+Runtime
+Compiled
+Operator
+Graph
+Figure 5: The compilation process in SystemT
+Figure 6: Execution strategies for the CapsLast rule
+in Fig. 4
+SystemT has built-in multilingual support in-
+cluding tokenization, part of speech and gazetteer
+matching for over 20 languages using Language-
+Ware (IBM, 2010). Rule developers can utilize
+the multilingual support via AQL without hav-
+ing to configure or manage any additional re-
+sources. In addition, AQL allows user-defined
+functions to be used in a restricted context in or-
+der to support operations such as validation (e.g.
+for extracted credit card numbers), or normaliza-
+tion (e.g., compute abbreviations of multi-token
+organization candidates that are useful in gener-
+ating additional candidates). More details on AQL
+can be found in the AQL manual (SystemT, 2010).
+3.3 Optimizer and Operator Graph
+Grammar-based IE engines place rigid restrictions
+on the order in which rules can be executed. Due
+to the semantics of the CPSL standard, systems
+that implement the standard must use a finite state
+transducer that evaluates each level of the cascade
+with one or more left to right passes over the entire
+token stream.
+In contrast, SystemT places no explicit con-
+straints on the order of rule evaluation, nor does
+it require that intermediate results of an annota-
+tor collapse to a fixed-size sequence. As shown in
+Fig. 5, the SystemT engine does not execute AQL
+directly; instead, the SystemT optimizer compiles
+AQL into a graph of operators. By tying a collec-
+tion of operators together by their inputs and out-
+puts, the system can implement a wide variety of
+different execution strategies. Different execution
+strategies are associated with different evaluation
+costs. The optimizer chooses the execution strat-
+egy with the lowest estimated evaluation cost.
+131
+Fig. 6 presents three possible execution strate-
+gies for the CapsLast rule in Fig. 4. If the opti-
+mizer estimates that the evaluation cost of Last is
+much lower than that of Caps, then it can deter-
+mine that Plan C has the lowest evaluation cost
+among the three, because Plan C only evaluates
+Caps in the ?left? neighborhood for each instance
+of Last. More details of our algorithms for enumer-
+ating plans can be found in (Reiss et al, 2008).
+The optimizer in SystemT chooses the best ex-
+ecution plan from a large number of different al-
+gebra graphs available to it. Many of these graphs
+implement strategies that a transducer could not
+express: such as evaluating rules from right to left,
+sharing work across different rules, or selectively
+skipping rule evaluations. Within this large search
+space, there generally exists an execution strategy
+that implements the rule semantics far more effi-
+ciently than the fastest transducer could. We refer
+the reader to (Reiss et al, 2008) for a detailed de-
+scription of the types of plan the optimizer consid-
+ers, as well as an experimental analysis of the per-
+formance benefits of different parts of this search
+space.
+Several parallel efforts have been made recently
+to improve the efficiency of IE tasks by optimiz-
+ing low-level feature extraction (Ramakrishnan et
+al., 2006; Ramakrishnan et al, 2008; Chandel et
+al., 2006) or by reordering operations at a macro-
+scopic level (Ipeirotis et al, 2006; Shen et al,
+2007; Jain et al, 2009). However, to the best of
+our knowledge, SystemT is the only IE system
+in which the optimizer generates a full end-to-end
+plan, beginning with low-level extraction primi-
+tives and ending with the final output tuples.
+3.4 Deployment Scenarios
+SystemT is designed to be usable in various de-
+ployment scenarios. It can be used as a stand-
+alone system with its own development and run-
+time environment. Furthermore, SystemT ex-
+poses a generic Java API that enables the integra-
+tion of its runtime environment with other applica-
+tions. For example, a specific instantiation of this
+API allows SystemT annotators to be seamlessly
+embedded in applications using the UIMA analyt-
+ics framework (UIMA, 2010).
+4 Grammar vs. Algebra
+Having described both the traditional cascading
+grammar approach and the declarative approach
+Figure 7: Supporting Complex Rule Interactions
+used in SystemT, we now compare the two in
+terms of expressivity and performance.
+4.1 Expressivity
+In Section 2, we described three expressivity lim-
+itations of CPSL grammars: Lossy sequencing,
+rigid matching priority, and limited expressivity in
+rule patterns. As we noted, cascading grammar
+systems extend the CPSL specification in various
+ways to provide workarounds for these limitations.
+In SystemT, the basic design of the AQL lan-
+guage eliminates these three problems without the
+need for any special workaround. The key design
+difference is that AQL views operate over sets of
+tuples, not sequences of tokens. The input or out-
+put tuples of a view can contain spans that overlap
+in arbitrary ways, so the lossy sequencing prob-
+lem never occurs. The annotator will retain these
+overlapping spans across any number of views un-
+til a view definition explicitly removes the over-
+lap. Likewise, the tuples that a given view pro-
+duces are in no way constrained by the outputs of
+other, unrelated views, so the rigid matching prior-
+ity problem never occurs. Finally, the select state-
+ment in AQL allows arbitrary predicates over the
+cross-product of its input tuple sets, eliminating
+the limited expressivity in rule patterns problem.
+Beyond eliminating the major limitations of
+CPSL grammars, AQL provides a number of other
+information extraction operations that even ex-
+tended CPSL cannot express without custom code.
+Complex rule interactions. Consider an exam-
+ple document from the Enron corpus (Minkov et
+al., 2005), shown in Fig. 7, which contains a list
+of person names. Because the first person in the
+list (?Skilling?) is referred to by only a last name,
+rule P2R3 in Fig. 1 incorrectly identifies ?Skilling,
+Cindy? as a person. Consequently, the output of
+phase P2 of the cascading grammar contains sev-
+eral mistakes as shown in the figure. This problem
+132
+went to the Switchfoot concert at the Roxy. It was pretty fun,? The lead singer/guitarist 
+was really good, and even though there was another guitarist  (an Asian guy), he ended up 
+playing most of the guitar parts, which was really impressive. The biggest surprise though is 
+that I actually liked the opening bands. ?I especially liked the first band
+Consecutive review snippets are within 25 tokens
+At least 4 occurrences of MusicReviewSnippet or GenericReviewSnippet
+At least 3 of them should be MusicReviewSnippets
+Review ends with one of these.
+Start with 
+ConcertMention
+Complete review is
+within 200 tokens
+ConcertMention
+MusicReviewSnippet
+GenericReviewSnippet
+Example Rule
+Informal Band Review
+Figure 8: Extracting informal band reviews from web logs
+occurs because CPSL only evaluates rules over
+the input sequence in a strict left-to-right fashion.
+On the other hand, the AQL query Q1 shown in
+the figure applies the following condition: ?Al-
+ways discard matches to Rule P2R3 if they overlap
+with matches to rules P2R1 or P2R2? (even if the
+match to Rule P2R3 starts earlier). Applying this
+rule ensures that the person names in the list are
+identified correctly. Obtaining the same effect in
+grammar-based systems would require the use of
+custom code (as recommended by (Cunningham
+et al, 2010)).
+Counting and Aggregation. Complex extraction
+tasks sometimes require operations such as count-
+ing and aggregation that go beyond the expressiv-
+ity of regular languages, and thus can be expressed
+in CPSL only using external functions. One such
+task is that of identifying informal concert reviews
+embedded within blog entries. Fig. 8 describes, by
+example, how these reviews consist of reference
+to a live concert followed by several review snip-
+pets, some specific to musical performances and
+others that are more general review expressions.
+An example rule to identify informal reviews is
+also shown in the figure. Notice how implement-
+ing this rule requires counting the number of Mu-
+sicReviewSnippet and GenericReviewSnippet annotations
+within a region of text and aggregating this occur-
+rence count across the two review types. While
+this rule can be written in AQL, it can only be ap-
+proximated in CPSL grammars.
+Character-Level Regular Expression CPSL
+cannot specify character-level regular expressions
+that span multiple tokens. In contrast, the extract
+regex statement in AQL fully supports these ex-
+pressions.
+We have described above several cases where
+AQL can express concepts that can only be ex-
+pressed through external functions in a cascad-
+ing grammar. These examples naturally raise the
+question of whether similar cases exist where a
+cascading grammar can express patterns that can-
+not be expressed in AQL.
+It turns out that we can make a strong statement
+that such examples do not exist. In the absence
+of an escape to arbitrary procedural code, AQL is
+strictly more expressive than a CPSL grammar. To
+state this relationship formally, we first introduce
+the following definitions.
+We refer to a grammar conforming to the CPSL
+specification as a CPSL grammar. When a CPSL
+grammar contains no external functions, we refer
+to it as a Code-free CPSL grammar. Finally, we
+refer to a grammar that conforms to one of the
+CPSL, JAPE, AFst and XTDL specifications as an
+expanded CPSL grammar.
+Ambiguous Grammar Specification An ex-
+panded CPSL grammar may be under-specified in
+some cases. For example, a single rule contain-
+ing the disjunction operator (|) may match a given
+region of text in multiple ways. Consider the eval-
+uation of Rule P2R3 over the text fragment ?Scott,
+Howard? from document d1 (Fig. 1). If ?Howard?
+is identified both as Caps and First, then there are
+two evaluations for Rule P2R3 over this text frag-
+ment. Since the system has to arbitrarily choose
+one evaluation, the results of the grammar can be
+non-deterministic (as pointed out in (Cunning-
+ham et al, 2010)). We refer to a grammar G as
+an ambiguous grammar specification for a docu-
+ment collection D if the system makes an arbitrary
+choice while evaluating G over D.
+Definition 1 (UnambigEquiv) A query Q is Un-
+ambigEquiv to a cascading grammar G if and only
+if for every document collection D, where G is not
+an ambiguous grammar specification for D, the
+results of the grammar invocation and the query
+evaluation are identical.
+We now formally compare the expressivity of
+AQL and expanded CPSL grammars. The detailed
+proof is omitted due to space limitations.
+Theorem 1 The class of extraction tasks express-
+ible as AQL queries is a strict superset of that ex-
+pressible through expanded code-free CPSL gram-
+mars. Specifically,
+(a) Every expanded code-free CPSL grammar can
+be expressed as an UnambigEquiv AQL query.
+(b) AQL supports information extraction opera-
+tions that cannot be expressed in expanded code-
+free CPSL grammars.
+133
+Proof Outline: (a) A single CPSL grammar can
+be expressed in AQL as follows. First, each rule
+r in the grammar is translated into a set of AQL
+statements. If r does not contain the disjunct (|)
+operator, then it is translated into a single AQL
+select statement. Otherwise, a set of AQL state-
+ments are generated, one for each disjunct opera-
+tor in rule r, and the results merged using union
+all statements. Then, a union all statement is used
+to combine the results of individual rules in the
+grammar phase. Finally, the AQL statements for
+multiple phases are combined in the same order as
+the cascading grammar specification.
+The main extensions to CPSL supported by ex-
+panded CPSL grammars (listed in Sec. 2) are han-
+dled as follows. AQL queries operate on graphs
+on annotations just like expanded CPSL gram-
+mars. In addition, AQL supports different match-
+ing regimes through consolidation operators, span
+predicates through selection predicates and co-
+references through join operators.
+(b) Example operations supported in AQL that
+cannot be expressed in expanded code-free CPSL
+grammars include (i) character-level regular ex-
+pressions spanning multiple tokens, (ii) count-
+ing the number of annotations occurring within a
+given bounded window and (iii) deleting annota-
+tions if they overlap with other annotations start-
+ing later in the document. 2
+4.2 Performance
+For the annotators we test in our experiments
+(See Section 5), the SystemT optimizer is able to
+choose algebraic plans that are faster than a com-
+parable transducer-based implementation. The
+question arises as to whether there are other an-
+notators for which the traditional transducer ap-
+proach is superior. That is, for a given annota-
+tor, might there exist a finite state transducer that
+is combinatorially faster than any possible algebra
+graph? It turns out that this scenario is not possi-
+ble, as the theorem below shows.
+Definition 2 (Token-Based FST) A token-based
+finite state transducer (FST) is a nondeterministic
+finite state machine in which state transitions are
+triggered by predicates on tokens. A token-based
+FST is acyclic if its state graph does not contain
+any cycles and has exactly one ?accept? state.
+Definition 3 (Thompson?s Algorithm)
+Thompson?s algorithm is a common strategy
+for evaluating a token-based FST (based on
+(Thompson, 1968)). This algorithm processes the
+input tokens from left to right, keeping track of the
+set of states that are currently active.
+Theorem 2 For any acyclic token-based finite
+state transducer T , there exists an UnambigEquiv
+operator graph G, such that evaluating G has the
+same computational complexity as evaluating T
+with Thompson?s algorithm starting from each to-
+ken position in the input document.
+Proof Outline: The proof constructs G by struc-
+tural induction over the transducer T . The base
+case converts transitions out of the start state into
+Extract operators. The inductive case adds a Se-
+lect operator to G for each of the remaining state
+transitions, with each selection predicate being the
+same as the predicate that drives the corresponding
+state transition. For each state transition predicate
+that T would evaluate when processing a given
+document, G performs a constant amount of work
+on a single tuple. 2
+5 Experimental Evaluation
+In this section we present an extensive comparison
+study between SystemT and implementations of
+expanded CPSL grammar in terms of quality, run-
+time performance and resource requirements.
+TasksWe chose two tasks for our evaluation:
+? NER : named-entity recognition for Person,
+Organization, Location, Address, PhoneNumber,
+EmailAddress, URL and DateTime.
+? BandReview : identify informal reviews in
+blogs (Fig. 8).
+We chose NER primarily because named-entity
+recognition is a well-studied problem and standard
+datasets are available for evaluation. For this task
+we use GATE and ANNIE for comparison3. We
+chose BandReview to conduct performance evalu-
+ation for a more complex extraction task.
+Datasets. For quality evaluation, we use:
+? EnronMeetings (Minkov et al, 2005): collec-
+tion of emails with meeting information from
+the Enron corpus4 with Person labeled data;
+? ACE (NIST, 2005): collection of newswire re-
+ports and broadcast news/conversations with
+Person, Organization, Location labeled data5.
+3To the best of our knowledge, ANNIE (Cunningham et
+al., 2002) is the only publicly available NER library imple-
+mented in a grammar-based system (JAPE in GATE).
+4http://www.cs.cmu.edu/ enron/
+5Only entities of type NAM have been considered.
+134
+Table 1: Datasets for performance evaluation.
+Dataset Description of the Content Number of Document size
+documents range average
+Enronx Emails randomly sampled from the Enron corpus of average size xKB (0.5 < x < 100)2 1000 xKB +/? 10% xKB
+WebCrawl Small to medium size web pages representing company news, with HTML tags removed 1931 68b - 388.6KB 8.8KB
+FinanceM Medium size financial regulatory filings 100 240KB - 0.9MB 401KB
+FinanceL Large size financial regulatory filings 30 1MB - 3.4MB 1.54MB
+Table 2: Quality of Person on test datasets.
+Precision (%) Recall (%) F1 measure (%)
+(Exact/Partial) (Exact/Partial) (Exact/Partial)
+EnronMeetings
+ANNIE 57.05/76.84 48.59/65.46 52.48/70.69
+T-NE 88.41/92.99 82.39/86.65 85.29/89.71
+Minkov 81.1/NA 74.9/NA 77.9/NA
+ACE
+ANNIE 39.41/78.15 30.39/60.27 34.32/68.06
+T-NE 93.90/95.82 90.90/92.76 92.38/94.27
+Table 1 lists the datasets used for performance
+evaluation. The size of FinanceLis purposely
+small because GATE takes a significant amount of
+time processing large documents (see Sec. 5.2).
+Set Up. The experiments were run on a server
+with two 2.4 GHz 4-core Intel Xeon CPUs and
+64GB of memory. We use GATE 5.1 (build 3431)
+and two configurations for ANNIE: 1) the default
+configuration, and 2) an optimized configuration
+where the Ontotext Japec Transducer6 replaces the
+default NE transducer for optimized performance.
+We refer to these configurations as ANNIE and
+ANNIE-Optimized, respectively.
+5.1 Quality Evaluation
+The goal of our quality evaluation is two-fold:
+to validate that annotators can be built in Sys-
+temT with quality comparable to those built in
+a grammar-based system; and to ensure a fair
+performance comparison between SystemT and
+GATE by verifying that the annotators used in the
+study are comparable.
+Table 2 shows results of our comparison study
+for Person annotators. We report the classical
+(exact) precision, recall, and F1 measures that
+credit only exact matches, and corresponding par-
+tial measures that credit partial matches in a fash-
+ion similar to (NIST, 2005). As can be seen, T-
+NE produced results of significantly higher quality
+than ANNIE on both datasets, for the same Person
+extraction task. In fact, on EnronMeetings, the F1
+measure of T-NE is 7.4% higher than the best pub-
+lished result (Minkov et al, 2005). Similar results
+6http://www.ontotext.com/gate/japec.html
+a) Throughput on Enron
+0
+100
+200
+300
+400
+500
+600
+700
+0 20 40 60 80 100
+Average document size (KB)
+Th
+ro
+u
+gh
+pu
+t (
+K
+B
+/s
+ec
+)
+ANNIE
+ANNIE-Optimized
+T-NE
+x
+b) Memory Utilization on Enron
+0
+200
+400
+600
+0 20 40 60 80 100
+Average document size (KB)
+A
+v
+g 
+H
+ea
+p 
+si
+ze
+ 
+(M
+B
+) ANNIE
+ANNIE-Optimized
+T-NE
+Error bars show
+25th and 75th
+percentile 
+x
+Figure 9: Throughput (a) and memory consump-
+tion (b) comparisons on Enronx datasets.
+can be observed for Organization and Location on
+ACE (exact numbers omitted in interest of space).
+Clearly, considering the large gap between
+ANNIE?s F1 and partial F1 measures on both
+datasets, ANNIE?s quality can be improved via
+dataset-specific tuning as demonstrated in (May-
+nard et al, 2003). However, dataset-specific tun-
+ing for ANNIE is beyond the scope of this paper.
+Based on the experimental results above and our
+previous formal comparison in Sec. 4, we believe
+it is reasonable to conclude that annotators can be
+built in SystemT of quality at least comparable to
+those built in a grammar-based system.
+5.2 Performance Evaluation
+We now focus our attention on the throughput and
+memory behavior of SystemT, and draw a com-
+parison with GATE. For this purpose, we have con-
+figured both ANNIE and T-NE to identify only the
+same eight types of entities listed for NER task.
+Throughput. Fig. 9(a) plots the throughput of
+the two systems on multiple Enronx datasets with
+average document sizes of between 0.5KB and
+100KB. For this experiment, both systems ran
+with a maximum Java heap size of 1GB.
+135
+Table 3: Throughput and mean heap size.
+ANNIE ANNIE-Optimized T-NE
+Dataset ThroughputMemoryThroughput Memory ThroughputMemory
+(KB/s) (MB) (KB/s) (MB) (KB/s) (MB)
+WebCrawl 23.9 212.6 42.8 201.8 498.9 77.2
+FinanceM 18.82 715.1 26.3 601.8 703.5 143.7
+FinanceL 19.2 2586.2 21.1 2683.5 954.5 189.6
+As shown in Fig. 9(a), even though the through-
+put of ANNIE-Optimized (using the optimized trans-
+ducer) increases two-fold compared to ANNIE un-
+der default configuration, T-NE is between 8 and
+24 times faster compared to ANNIE-Optimized. For
+both systems, throughput varied with document
+size. For T-NE, the relatively low throughput on
+very small document sizes (less than 1KB) is due
+to fixed overhead in setting up operators to pro-
+cess a document. As document size increases, the
+overhead becomes less noticeable.
+We have observed similar trends on the rest
+of the test collections. Table 3 shows that T-
+NE is at least an order of magnitude faster than
+ANNIE-Optimized across all datasets. In partic-
+ular, on FinanceL T-NE?s throughput remains
+high, whereas the performance of both ANNIE and
+ANNIE-Optimized degraded significantly.
+To ascertain whether the difference in perfor-
+mance in the two systems is due to low-level com-
+ponents such as dictionary evaluation, we per-
+formed detailed profiling of the systems. The pro-
+filing revealed that 8.2%, 16.2% and respectively
+14.2% of the execution time was spent on aver-
+age on low-level components in the case of ANNIE,
+ANNIE-Optimized and T-NE, respectively, thus lead-
+ing us to conclude that the observed differences
+are due to SystemT?s efficient use of resources at
+a macroscopic level.
+Memory utilization. In theory, grammar based
+systems can stream tuples through each stage
+for minimal memory consumption, whereas Sys-
+temT operator graphs may need to materialize in-
+termediate results for the full document at certain
+points to evaluate the constraints in the original
+AQL. The goal of this study is to evaluate whether
+this potential problem does occur in practice.
+In this experiment we ran both systems with a
+maximum heap size of 2GB, and used the Java
+garbage collector?s built-in telemetry to measure
+the total quantity of live objects in the heap over
+time while annotating the different test corpora.
+Fig. 9(b) plots the minimum, maximum, and mean
+heap sizes with the Enronx datasets. On small doc-
+uments of size up to 15KB, memory consumption
+is dominated by the fixed size of the data struc-
+tures used (e.g., dictionaries, FST/operator graph),
+and is comparable for both systems. As docu-
+ments get larger, memory consumption increases
+for both systems. However, the increase is much
+smaller for T-NE compared to that for both AN-
+NIE and ANNIE-Optimized. A similar trend can be
+observed on the other datasets as shown in Ta-
+ble 3. In particular, for FinanceL, both ANNIE and
+ANNIE-Optimized required 8GB of Java heap size to
+achieve reasonable throughput7 , in contrast to T-
+NE which utilized at most 300MB out of the 2GB
+of maximum Java heap size allocation.
+SystemT requires much less memory than
+GATE in general due to its runtime, which monitors
+data dependencies between operators and clears
+out low-level results when they are no longer
+needed. Although a streaming CPSL implemen-
+tation is theoretically possible, in practice mecha-
+nisms that allow an escape to custom code make it
+difficult to decide when an intermediate result will
+no longer be used, hence GATE keeps most inter-
+mediate data in memory until it is done analyzing
+the current document.
+The BandReview Task. We conclude by briefly dis-
+cussing our experience with the BandReview task
+from Fig. 8. We built two versions of this anno-
+tator, one in AQL, and the other using expanded
+CPSL grammar. The grammar implementation
+processed a 4.5GB collection of 1.05 million blogs
+in 5.6 hours and output 280 reviews. In contrast,
+the SystemT version (85 AQL statements) ex-
+tracted 323 reviews in only 10 minutes!
+6 Conclusion
+In this paper, we described SystemT, a declar-
+ative IE system based on an algebraic frame-
+work. We presented both formal and empirical
+arguments for the benefits of our approach to IE.
+Our extensive experimental results show that high-
+quality annotators can be built using SystemT,
+with an order of magnitude throughput improve-
+ment compared to state-of-the-art grammar-based
+systems. Going forward, SystemT opens up sev-
+eral new areas of research, including implement-
+ing better optimization strategies and augmenting
+the algebra with additional operators to support
+advanced features such as coreference resolution.
+7GATE ran out of memory when using less than 5GB of
+Java heap size, and thrashed when run with 5GB to 7GB
+136
+References
+Douglas E. Appelt and Boyan Onyshkevych. 1998.
+The common pattern specification language. In TIP-
+STER workshop.
+Branimir Boguraev. 2003. Annotation-based finite
+state processing in a large-scale nlp arhitecture. In
+RANLP, pages 61?80.
+D. D. Chamberlin, A. M. Gilbert, and Robert A. Yost.
+1981. A history of System R and SQL/data system.
+In vldb.
+Amit Chandel, P. C. Nagesh, and Sunita Sarawagi.
+2006. Efficient batch top-k search for dictionary-
+based entity recognition. In ICDE.
+E. F. Codd. 1990. The relational model for database
+management: version 2. Addison-Wesley Longman
+Publishing Co., Inc., Boston, MA, USA.
+H. Cunningham, D. Maynard, and V. Tablan. 2000.
+JAPE: a Java Annotation Patterns Engine (Sec-
+ond Edition). Research Memorandum CS?00?10,
+Department of Computer Science, University of
+Sheffield, November.
+H. Cunningham, D. Maynard, K. Bontcheva, and
+V. Tablan. 2002. GATE: A framework and graphical
+development environment for robust NLP tools and
+applications. In Proceedings of the 40th Anniver-
+sary Meeting of the Association for Computational
+Linguistics, pages 168 ? 175.
+Hamish Cunningham, Diana Maynard, Kalina
+Bontcheva, Valentin Tablan, Marin Dimitrov, Mike
+Dowman, Niraj Aswani, Ian Roberts, Yaoyong
+Li, and Adam Funk. 2010. Developing language
+processing components with gate version 5 (a user
+guide).
+AnHai Doan, Luis Gravano, Raghu Ramakrishnan, and
+Shivakumar Vaithyanathan. 2008. Special issue on
+managing information extraction. SIGMOD Record,
+37(4).
+Witold Drozdzynski, Hans-Ulrich Krieger, Jakub
+Piskorski, Ulrich Scha?fer, and Feiyu Xu. 2004.
+Shallow processing with unification and typed fea-
+ture structures ? foundations and applications.
+Ku?nstliche Intelligenz, 1:17?23.
+Ralph Grishman and Beth Sundheim. 1996. Message
+understanding conference - 6: A brief history. In
+COLING, pages 466?471.
+IBM. 2010. IBM LanguageWare.
+P. G. Ipeirotis, E. Agichtein, P. Jain, and L. Gravano.
+2006. To search or to crawl?: towards a query opti-
+mizer for text-centric tasks. In SIGMOD.
+Alpa Jain, Panagiotis G. Ipeirotis, AnHai Doan, and
+Luis Gravano. 2009. Join optimization of informa-
+tion extraction output: Quality matters! In ICDE.
+Diana Maynard, Kalina Bontcheva, and Hamish Cun-
+ningham. 2003. Towards a semantic extraction of
+named entities. In Recent Advances in Natural Lan-
+guage Processing.
+Einat Minkov, Richard C. Wang, and William W. Co-
+hen. 2005. Extracting personal names from emails:
+Applying named entity recognition to informal text.
+In HLT/EMNLP.
+NIST. 2005. The ACE evaluation plan.
+Ganesh Ramakrishnan, Sreeram Balakrishnan, and
+Sachindra Joshi. 2006. Entity annotation based on
+inverse index operations. In EMNLP.
+Ganesh Ramakrishnan, Sachindra Joshi, Sanjeet Khai-
+tan, and Sreeram Balakrishnan. 2008. Optimization
+issues in inverted index-based entity annotation. In
+InfoScale.
+Frederick Reiss, Sriram Raghavan, Rajasekar Kr-
+ishnamurthy, Huaiyu Zhu, and Shivakumar
+Vaithyanathan. 2008. An algebraic approach to
+rule-based information extraction. In ICDE, pages
+933?942.
+SAP. 2010. Inxight ThingFinder.
+SAS. 2010. Text Mining with SAS Text Miner.
+Warren Shen, AnHai Doan, Jeffrey F. Naughton, and
+Raghu Ramakrishnan. 2007. Declarative informa-
+tion extraction using datalog with embedded extrac-
+tion predicates. In vldb.
+SystemT. 2010. AQL Manual.
+http://www.alphaworks.ibm.com/tech/systemt.
+Ken Thompson. 1968. Regular expression search al-
+gorithm. pages 419?422.
+UIMA. 2010. Unstructured Information Management
+Architecture.
+http://uima.apache.org.
+137

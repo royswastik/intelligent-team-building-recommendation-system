@@ -1,0 +1,1098 @@
+Proceedings of Human Language Technology Conference and Conference on Empirical Methods in Natural Language
+Processing (HLT/EMNLP), pages 563?570, Vancouver, October 2005. c?2005 Association for Computational Linguistics
+KnowItNow: Fast, Scalable Information Extraction from the Web
+Michael J. Cafarella, Doug Downey, Stephen Soderland, Oren Etzioni
+Department of Computer Science and Engineering
+University of Washington
+Seattle, WA 98195-2350
+{mjc,ddowney,soderlan,etzioni}@cs.washington.edu
+Abstract
+Numerous NLP applications rely on
+search-engine queries, both to ex-
+tract information from and to com-
+pute statistics over the Web corpus.
+But search engines often limit the
+number of available queries. As a
+result, query-intensive NLP applica-
+tions such as Information Extraction
+(IE) distribute their query load over
+several days, making IE a slow, off-
+line process.
+This paper introduces a novel archi-
+tecture for IE that obviates queries to
+commercial search engines. The ar-
+chitecture is embodied in a system
+called KNOWITNOW that performs
+high-precision IE in minutes instead
+of days. We compare KNOWITNOW
+experimentally with the previously-
+published KNOWITALL system, and
+quantify the tradeoff between re-
+call and speed. KNOWITNOW?s ex-
+traction rate is two to three orders
+of magnitude higher than KNOW-
+ITALL?s.
+1 Background and Motivation
+Numerous modern NLP applications use the Web as their
+corpus and rely on queries to commercial search engines
+to support their computation (Turney, 2001; Etzioni et al,
+2005; Brill et al, 2001). Search engines are extremely
+helpful for several linguistic tasks, such as computing us-
+age statistics or finding a subset of web documents to an-
+alyze in depth; however, these engines were not designed
+as building blocks for NLP applications. As a result,
+the applications are forced to issue literally millions of
+queries to search engines, which limits the speed, scope,
+and scalability of the applications. Further, the applica-
+tions must often then fetch some web documents, which
+at scale can be very time-consuming.
+In response to heavy programmatic search engine use,
+Google has created the ?Google API? to shunt program-
+matic queries away from Google.com and has placed hard
+quotas on the number of daily queries a program can is-
+sue to the API. Other search engines have also introduced
+mechanisms to limit programmatic queries, forcing ap-
+plications to introduce ?courtesy waits? between queries
+and to limit the number of queries they issue.
+To understand these efficiency problems in more detail,
+consider the KNOWITALL information extraction sys-
+tem (Etzioni et al, 2005). KNOWITALL has a generate-
+and-test architecture that extracts information in two
+stages. First, KNOWITALL utilizes a small set of domain-
+independent extraction patterns to generate candidate
+facts (cf. (Hearst, 1992)). For example, the generic pat-
+tern ?NP1 such as NPList2? indicates that the head of
+each simple noun phrase (NP) in NPList2 is a member of
+the class named in NP1. By instantiating the pattern for
+class City, KNOWITALL extracts three candidate cities
+from the sentence: ?We provide tours to cities such as
+Paris, London, and Berlin.? Note that it must also fetch
+each document that contains a potential candidate.
+Next, extending the PMI-IR algorithm (Turney, 2001),
+KNOWITALL automatically tests the plausibility of the
+candidate facts it extracts using pointwise mutual in-
+formation (PMI) statistics computed from search-engine
+hit counts. For example, to assess the likelihood that
+?Yakima? is a city, KNOWITALL will compute the PMI
+between Yakima and a set of k discriminator phrases that
+tend to have high mutual information with city names
+(e.g., the simple phrase ?city?). Thus, KNOWITALL re-
+quires at least k search-engine queries for every candidate
+extraction it assesses.
+Due to KNOWITALL?s dependence on search-engine
+queries, large-scale experiments utilizing KNOWITALL
+take days and even weeks to complete, which makes re-
+search using KNOWITALL slow and cumbersome. Pri-
+vate access to Google-scale infrastructure would provide
+563
+sufficient access to search queries, but at prohibitive cost,
+and the problem of fetching documents (even if from a
+cached copy) would remain (as we discuss in Section
+2.1). Is there a feasible alternative Web-based IE system?
+If so, what size Web index and how many machines are
+required to achieve reasonable levels of precision/recall?
+What would the architecture of this IE system look like,
+and how fast would it run?
+To address these questions, this paper introduces a
+novel architecture for web information extraction. It
+consists of two components that supplant the generate-
+and-test mechanisms in KNOWITALL. To generate ex-
+tractions rapidly we utilize our own specialized search
+engine, called the Bindings Engine (or BE), which ef-
+ficiently returns bindings in response to variabilized
+queries. For example, in response to the query ?Cities
+such as ProperNoun(Head(?NounPhrase?))?, BE will
+return a list of proper nouns likely to be city names. To
+assess these extractions, we use URNS, a combinatorial
+model, which estimates the probability that each extrac-
+tion is correct without using any additional search engine
+queries.1 For further efficiency, we introduce an approx-
+imation to URNS, based on frequency of extractions? oc-
+currence in the output of BE, and show that it achieves
+comparable precision/recall to URNS.
+Our contributions are as follows:
+1. We present a novel architecture for Information Ex-
+traction (IE), embodied in the KNOWITNOW sys-
+tem, which does not depend on Web search-engine
+queries.
+2. We demonstrate experimentally that KNOWITNOW
+is the first system able to extract tens of thousands
+of facts from the Web in minutes instead of days.
+3. We show that KNOWITNOW?s extraction rate is two
+to three orders of magnitude greater than KNOW-
+ITALL?s, but this increased efficiency comes at the
+cost of reduced recall. We quantify this tradeoff for
+KNOWITNOW?s 60,000,000 page index and extrap-
+olate how the tradeoff would change with larger in-
+dices.
+Our recent work has described the BE search engine
+in detail (Cafarella and Etzioni, 2005), and also analyzed
+the URNS model?s ability to compute accurate probability
+estimates for extractions (Downey et al, 2005). However,
+this is the first paper to investigate the composition of
+these components to create a fast IE system, and to com-
+pare it experimentally to KNOWITALL in terms of time,
+1In contrast, PMI-IR, which is built into KNOWITALL, re-
+quires multiple search engine queries to assess each potential
+extraction.
+recall, precision, and extraction rate. The frequency-
+based approximation to URNS and the demonstration of
+its success are also new.
+The remainder of the paper is organized as follows.
+Section 2 provides an overview of BE?s design. Sec-
+tion 3 describes the URNS model and introduces an ef-
+ficient approximation to URNS that achieves similar pre-
+cision/recall. Section 4 presents experimental results. We
+conclude with related and future work in Sections 5 and
+6.
+2 The Bindings Engine
+This section explains how relying on standard search en-
+gines leads to a bottleneck for NLP applications, and pro-
+vides a brief overview of the Bindings Engine (BE)?our
+solution to this problem. A comprehensive description of
+BE appears in (Cafarella and Etzioni, 2005).
+Standard search engines are computationally expen-
+sive for IE and other NLP tasks. IE systems issue multiple
+queries, downloading all pages that potentially match an
+extraction rule, and performing expensive processing on
+each page. For example, such systems operate roughly as
+follows on the query (?cities such as ?NounPhrase??):
+1. Perform a traditional search engine query to find
+all URLs containing the non-variable terms (e.g.,
+?cities such as?)
+2. For each such URL:
+(a) obtain the document contents,
+(b) find the searched-for terms (?cities such as?) in
+the document text,
+(c) run the noun phrase recognizer to determine
+whether text following ?cities such as? satisfies
+the linguistic type requirement,
+(d) and if so, return the string
+We can divide the algorithm into two stages: obtaining
+the list of URLs from a search engine, and then process-
+ing them to find the ?NounPhrase? bindings. Each stage
+poses its own scalability and speed challenges. The first
+stage makes a query to a commercial search engine; while
+the number of available queries may be limited, a single
+one executes relatively quickly. The second stage fetches
+a large number of documents, each fetch likely resulting
+in a random disk seek; this stage executes slowly. Nat-
+urally, this disk access is slow regardless of whether it
+happens on a locally-cached copy or on a remote doc-
+ument server. The observation that the second stage is
+slow, even if it is executed locally, is important because
+it shows that merely operating a ?private? search engine
+does not solve the problem (see Section 2.1).
+The Bindings Engine supports queries contain-
+ing typed variables (such as NounPhrase) and
+564
+string-processing functions (such as ?head(X)? or
+?ProperNoun(X)?) as well as standard query terms. BE
+processes a variable by returning every possible string
+in the corpus that has a matching type, and that can be
+substituted for the variable and still satisfy the user?s
+query. If there are multiple variables in a query, then all
+of them must simultaneously have valid substitutions.
+(So, for example, the query ?<NounPhrase> is located
+in <NounPhrase>? only returns strings when noun
+phrases are found on both sides of ?is located in?.) We
+call a string that meets these requirements a binding for
+the variable in question. These queries, and the bindings
+they elicit, can usefully serve as part of an information
+extraction system or other common NLP tasks (such as
+gathering usage statistics). Figure 1 illustrates some of
+the queries that BE can handle.
+president Bush <Verb>
+cities such as ProperNoun(Head(<NounPhrase>))
+<NounPhrase> is the CEO of <NounPhrase>
+Figure 1: Examples of queries that can be handled by
+BE. Queries that include typed variables and string-
+processing functions allow NLP tasks to be done ef-
+ficiently without downloading the original document
+during query processing.
+BE?s novel neighborhood index enables it to process
+these queries with O(k) random disk seeks and O(k) se-
+rial disk reads, where k is the number of non-variable
+terms in its query. As a result, BE can yield orders of
+magnitude speedup as shown in the asymptotic analysis
+later in this section. The neighborhood index is an aug-
+mented inverted index structure. For each term in the cor-
+pus, the index keeps a list of documents in which the term
+appears and a list of positions where the term occurs, just
+as in a standard inverted index (Baeza-Yates and Ribeiro-
+Neto, 1999). In addition, the neighborhood index keeps
+a list of left-hand and right-hand neighbors at each posi-
+tion. These are adjacent text strings that satisfy a recog-
+nizer for one of the target types, such as NounPhrase.
+As with a standard inverted index, a term?s list is pro-
+cessed from start to finish, and can be kept on disk as a
+contiguous piece. The relevant string for a variable bind-
+ing is included directly in the index, so there is no need
+to fetch the source document (thus causing a disk seek).
+Expensive processing such as part-of-speech tagging or
+shallow syntactic parsing is performed only once, while
+building the index, and is not needed at query time. It
+is important to note that simply preprocessing the corpus
+and placing the results in a database would not avoid disk
+seeks, as we would still have to explicitly fetch these re-
+sults. The run-time efficiency of the neighborhood index
+Query Time Index Space
+BE O(k) O(N)
+Standard engine O(k + B) O(N)
+Table 1: BE yields considerable savings in query time
+over a standard search engine. k is the number of con-
+crete terms in the query, B is the number of variable
+bindings found in the corpus, and N is the number of
+documents in the corpus. N and B are typically ex-
+tremely large, while k is small.
+comes from integrating the results of corpus processing
+with the inverted index (which determines which of those
+results are relevant).
+The neighborhood index avoids the need to return to
+the original corpus, but it can consume a large amount
+of disk space, as parts of the corpus text are folded into
+the index several times. To conserve space, we perform
+simple dictionary-lookup compression of strings in the
+index. The storage penalty will, of course, depend on the
+exact number of different types added to the index. In our
+experiments, we created a useful IE system with a small
+number of types (including NounPhrase) and found that
+the neighborhood index increased disk space only four
+times that of a standard inverted index.
+Asymptotic Analysis:
+In our asymptotic analysis of BE?s behavior, we count
+query time as a function of the number of random disk
+seeks, since these seeks dominate all other processing
+tasks. Index space is simply the number of bytes needed
+to store the index (not including the corpus itself).
+Table 1 shows that BE requires only O(k) random disk
+seeks to process queries with an arbitrary number of vari-
+ables whereas a standard engine takes O(k + B), where
+k is the number of concrete query terms, and B is the
+number of bindings found in a corpus of N documents.
+Thus, BE?s performance is the same as that of a standard
+search engine for queries containing only concrete terms.
+For variabilized queries, N may be in the billions and B
+will tend to grow with N . In our experiments, eliminating
+the B term from our query processing time has resulted
+in speedups of two to three orders of magnitude over a
+standard search engine. The speedup is at the price of a
+small constant multiplier to index size.
+2.1 Discussion
+While BE has some attractive properties for NLP compu-
+tations, is it necessary? Could fast, large-scale informa-
+tion extraction be achieved merely by operating a ?pri-
+vate? search engine?
+The release of open-source search engines such as
+Nutch2, coupled with the dropping price of CPUs and
+2http://lucene.apache.org/nutch/
+565
+8.16
+0.06
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+BE Nutch
+El
+ap
+se
+d 
+m
+in
+u
+te
+s
+Figure 2: Average time to return the relevant bindings
+in response to a set of queries was 0.06 CPU minutes
+for BE, compared to 8.16 CPU minutes for the com-
+parable processing on Nutch. This is a 134-fold speed
+up. The CPU resources, network, and index size were
+the same for both systems.
+disks, makes it feasible for NLP researchers to operate
+their own large-scale search engines. For example, Tur-
+ney operates a search engine with a terabyte-sized index
+of Web pages, running on a local eight-machine Beowulf
+cluster (Turney, 2004). Private search engines have two
+advantages. First, there is no query quota or need for
+?courtesy waits? between queries. Second, since the en-
+gine is local, network latency is minimal.
+However, to support IE, we must also execute the sec-
+ond stage of the algorithm (see the beginning of this sec-
+tion). In this stage, each document that matches a query
+has to be retrieved from an arbitrary location on a disk.3
+Thus, the number of random disk seeks scales linearly
+with the number of documents retrieved. Moreover, many
+NLP applications require the extraction of strings match-
+ing particular syntactic or semantic types from each page.
+The lack of linguistic data in the search engine?s index
+means that many pages are fetched only to be discarded
+as irrelevant.
+To quantify the speedup due to BE, we compared it to a
+standard search index built on the open-source Nutch en-
+gine. All of our Nutch and BE experiments were carried
+out on the same corpus of 60 million Web pages and were
+run on a cluster of 23 dual-Xeon machines, each with two
+local 140 Gb disks and 4 Gb of RAM. We set al config-
+uration values to be exactly the same for both Nutch and
+BE. BE gave a 134-fold speed up on average query pro-
+cessing time when compared to the same queries with the
+Nutch index, as shown in Figure 2.
+3Moving the disk head to an arbitrary location on the disk
+is a mechanical operation that takes about 5 milliseconds on
+average.
+3 The URNS Model
+To realize the speedup from BE, KNOWITNOW must also
+avoid issuing search engine queries to validate the cor-
+rectness of each extraction, as required by PMI compu-
+tation. We have developed a probabilistic model obviat-
+ing search-engine queries for assessment. The intuition
+behind this model is that correct instances of a class or
+relation are likely to be extracted repeatedly, while ran-
+dom errors by an IE system tend to have low frequency
+for each distinct incorrect extraction.
+Our probabilistic model, which we call URNS, takes the
+form of a classic ?balls-and-urns? model from combina-
+torics. We think of IE abstractly as a generative process
+that maps text to extractions. Each extraction is modeled
+as a labeled ball in an urn. A label represents either an
+instance of the target class or relation, or represents an
+error. The information extraction process is modeled as
+repeated draws from the urn, with replacement.
+Formally, the parameters that characterize an urn are:
+? C ? the set of unique target labels; |C| is the number
+of unique target labels in the urn.
+? E ? the set of unique error labels; |E| is the number
+of unique error labels in the urn.
+? num(b) ? the function giving the number of balls
+labeled by b where b ? C ? E. num(B) is the
+multi-set giving the number of balls for each label
+b ? B.
+The goal of an IE system is to discern which of the
+labels it extracts are in fact elements of C, based on re-
+peated draws from the urn. Thus, the central question we
+are investigating is: given that a particular label x was
+extracted k times in a set of n draws from the urn, what
+is the probability that x ? C? We can express the prob-
+ability that an element extracted k of n times is of the
+target relation as follows.
+P (x ? C|x appears k times in n draws) =
+?
+r?num(C)( rs )k(1 ? rs )n?k
+?
+r??num(C?E)( r
+?
+s )k(1 ? r
+?
+s )n?k
+(1)
+where s is the total number of balls in the urn, and the
+sum is taken over possible repetition rates r.
+A few numerical examples illustrate the behavior of
+this equation. Let |C| = |E| = 2, 000 and assume
+for simplicity that all labels are repeated on the same
+number of balls (num(ci) = RC for all ci ? C, and
+num(ei) = RE for all ei ? E). Assume that the ex-
+traction rules have precision p = 0.9, which means that
+RC = 9 ? RE ? target balls are nine times as common
+in the urn as error balls. Now, for k = 3 and n = 10, 000
+we have P (x ? C) = 93.0%. Thus, we see that a small
+number of repetitions can yield high confidence in an ex-
+traction. However, when the sample size increases so that
+566
+n = 20, 000, and the other parameters are unchanged,
+then P (x ? C) drops to 19.6%. On the other hand, if
+C balls repeat much more frequently than E balls, say
+RC = 90?RE (with |E| set to 20,000, so that p remains
+unchanged), then P (x ? C) rises to 99.9%.
+The above examples enable us to illustrate the advan-
+tages of URNS over the noisy-or model used in previous
+work. The noisy-or model assumes that each extraction is
+an independent assertion that the extracted label is ?true,?
+an assertion that is correct a fraction p of the time. The
+noisy-or model assigns the following probability to ex-
+tractions:
+Pnoisy?or(x ? C|x appears k times) = 1 ? (1 ? p)k
+Therefore, the noisy-or model will assign the same
+probability ? 99.9% ? in all three of the above exam-
+ples, although this is only correct in the case for which
+n = 10, 000 and RC = 90?RE . As the other two exam-
+ples show, for different sample sizes or repetition rates,
+the noisy-or model can be highly inaccurate. This is not
+surprising given that the noisy-or model ignores the sam-
+ple size and the repetition rates.
+URNS uses an EM algorithm to estimate its parameters,
+and currently the algorithm takes roughly three minutes
+to terminate.4 Fortunately, we determined experimen-
+tally that we can approximate URNS?s precision and recall
+using a far simpler frequency-based assessment method.
+This is true because good precision and recall merely re-
+quire an appropriate ordering of the extractions for each
+relation, and not accurate probabilities for each extrac-
+tion. For unary relations, we use the simple approxima-
+tion that items extracted more often are more likely to
+be true, and order the extractions from most to least ex-
+tracted. For binary relations like CapitalOf(X,y),
+in which we extract several different candidate capitals y
+for each known country X, we use a smoothed frequency
+estimate to order the extractions. Let freq(R(X, y)) de-
+note the number of times that the binary relation R(X, y)
+is extracted; we define:
+smoothed freq(R(X, y)) = freq(R(X, y))maxy? freq(R(X, y?)) + 1
+We found that sorting by smoothed frequency (in de-
+scending order) performed better than simply sorting by
+freq for relations R(X, y) in which different known X val-
+ues may have widely varying Web presence.
+Unlike URNS, our frequency-based assessment does
+not yield accurate probabilities to associate with each ex-
+traction, but for the purpose of returning a ranked list of
+high-quality extractions it is comparable to URNS (see
+4This code has not been optimized at all. We believe that
+we can easily reduce its running time to less than a minute on
+average, and perhaps substantially more.
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+0 50 100 150 200 250
+Correct Extractions
+Pr
+ec
+is
+io
+n
+KnowItNow-freq KnowItNow-URNS
+KnowItAll-PMI
+Figure 3: Country: KNOWITALL maintains some-
+what higher precision than KNOWITNOW throughout
+the recall-precision curve.
+Figures 3 through 6), and it has the advantage of being
+much faster. Thus, in the experiments reported on below,
+we use frequency-based assessment as part of KNOWIT-
+NOW.
+4 Experimental Results
+This section contrasts the performance of KNOWITNOW
+and KNOWITALL experimentally. Before considering the
+experiments in detail, we note that a key advantage of
+KNOWITNOW is that it does not make any queries to Web
+search engines. As a result, KNOWITNOW?s scale is not
+limited by a query quota, though it is limited by the size
+of its index.
+We report on the following metrics:
+? Recall: how many distinct extractions does each
+system return at high precision?5
+? Time: how long did each system take to produce
+and rank its extractions?
+? Extraction Rate: how many distinct high-quality
+extractions does the system return per minute? The
+extraction rate is simply recall divided by time.
+We contrast KNOWITALL and KNOWITNOW?s preci-
+sion/recall curves in Figures 3 through 6. We com-
+pared KNOWITNOW with KNOWITALL on four rela-
+tions: Corp, Country, CeoOf(Corp,Ceo), and
+CapitalOf(Country,City). The unary relations
+were chosen to examine the difference between a relation
+with a small number of correct instances (Country) and
+one with a large number of extractions (Corp). The bi-
+nary relations were chosen to cover both functional rela-
+tions (CapitalOf) and set-valued relations (CeoOf?
+we treat former CEOs as correct instances of the relation).
+5Since we cannot compute ?true recall? for most relations
+on the Web, the paper uses the term ?recall? to refer to the size
+of the set of facts extracted.
+567
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+0 50 100 150 200
+Correct Extractions
+Pr
+ec
+is
+io
+n
+KnowItNow-freq KnowItNow-URNS
+KnowItAll-PMI
+Figure 4: CapitalOf: KNOWITNOW does nearly as
+well as KNOWITALL, but has more difficulty than
+KNOWITALL with sparse data for capitals of more ob-
+scure countries.
+For the two unary relations, both systems created ex-
+traction rules from eight generic patterns. These are hy-
+ponym patterns like ?NP1 {,} such as NPList2? or ?NP2
+{,} and other NP1?, which extract members of NPList2
+or NP2 as instances of NP1. For the binary relations,
+the systems instantiated rules from four generic patterns.
+These are patterns for a generic ?of? relation. They are
+?NP1 , rel of NP2?, ?NP1 the rel of NP2?, ?rel of NP2
+, NP1?, and ?NP2 rel NP1?. When rel is instantiated for
+CeoOf, these patterns become ?NP1 , CEO of NP2? and
+so forth.
+Both KNOWITNOW and KNOWITALL merge extrac-
+tions with slight variants in the name, such as those dif-
+fering only in punctuation or whitespace, or in the pres-
+ence or absence of a corporate designator. For binary
+extractions, CEOs with the same last name and same
+company were also merged. Both systems rely on the
+OpenNlp maximum-entropy part-of-speech tagger and
+chunker (Ratnaparkhi, 1996), but KNOWITALL applies
+them to pages downloaded from the Web based on the re-
+sults of Google queries, whereas KNOWITNOW applies
+them once to crawled and indexed pages.6 Overall, each
+of the above elements of KNOWITALL and KNOWIT-
+NOW are the same to allow for controlled experiments.
+Whereas KNOWITNOW runs a small number of vari-
+abilized queries (one for each extraction pattern, for
+each relation), KNOWITALL requires a stopping crite-
+rion. Otherwise, KNOWITALL will continue to query
+Google and download URLs found in its result pages over
+many days and even weeks. We allowed a total of 6 days
+of search time for KNOWITALL, allocating more search
+for the relations that continued to be most productive. For
+CeoOf KNOWITNOW returned all pairs of Corp,Ceo
+6Our time measurements for KNOWITALL are not affected
+by the tagging and chunking time because it is dominated
+by time required to query Google, waiting a second between
+queries.
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+0 5,000 10,000 15,000 20,000 25,000
+Correct Extractions
+Pr
+ec
+is
+io
+n
+KnowItNow-freq KnowItNow-URNS
+KnowItAll-PMI
+Figure 5: Corp: KNOWITALL?s PMI assessment main-
+tains high precision. KNOWITNOW has low recall up
+to precision 0.85, then catches up with KNOWITALL.
+in its corpus; KNOWITALL searched for CEOs of a ran-
+dom selection of 10% of the corporations it found, and
+we projected the total extractions and search effort for all
+corporations. For CapitalOf, both KNOWITNOW and
+KNOWITALL looked for capitals of a set of 195 coun-
+tries.
+Table 2 shows the number of queries, search time, dis-
+tinct correct extractions at precision 0.8, and extraction
+rate for each relation. Search time for KNOWITNOW is
+measured in seconds and search time for KNOWITALL
+is measured in hours. The number of extractions per
+minute counts the distinct correct extractions. Since we
+limit KNOWITALL to one Google query per second, the
+time for KNOWITALL is proportional to the number of
+queries. KNOWITNOW?s extraction rate is from 275 to
+4,707 times that of KNOWITALL at this level of preci-
+sion.
+While the number of distinct correct extractions from
+KNOWITNOW at precision 0.8 is roughly comparable to
+that of 6 days search effort from KNOWITALL, the sit-
+uation is different at precision 0.9. KNOWITALL?s PMI
+assessor is able to maintain higher precision than KNOW-
+ITNOW?s frequency-based assessor. The number of cor-
+rect corporations for KNOWITNOW drops from 23,128 at
+precision 0.8 to 1,116 at precision 0.9. KNOWITALL is
+able to identify 17,620 correct corporations at precision
+0.9. Even with the drop in recall, KNOWITNOW?s ex-
+traction rate is still 305 times higher than KNOWITALL?s.
+The reason for KNOWITNOW?s difficulty at precision 0.9
+is due to extraction errors that occur with high frequency,
+particularly generic references to companies (?the Seller
+is a corporation ...?, ?corporations such as Banks?, etc.)
+and truncation of certain company names by the extrac-
+tion rules. The more expensive PMI-based assessment
+was not fooled by these systematic extraction errors.
+Figures 3 through 6 show the recall-precision curves
+for KNOWITNOW with URNS assessment, KNOWIT-
+NOW with the simpler frequency-based assessment, and
+568
+Google Queries Time Extractions Extractions per minute
+NOW ALL NOW (sec) ALL (hrs) NOW ALL NOW ALL ratio
+Corp 0 (16) 201,878 42 56.1 23,128 23,617 33,040 7.02 4,707
+Country 0 (16) 35,480 42 9.9 161 203 230 0.34 672
+CeoOf 0 (6) 263,646 51 73.2 2,402 5,823 2,836 1.33 2,132
+CapitalOf 0 (6) 17,216 55 4.8 169 192 184 0.67 275
+Table 2: Comparison of KNOWITNOW with KNOWITALL for four relations, showing number of Google queries
+(local BE queries in parentheses), search time, correct extractions at precision 0.8, and extraction rate (the
+number of correct extractions at precision 0.8 per minute of search). Overall, KNOWITNOW took a total of
+slightly over 3 minutes as compared to a total of 6 days of search for KNOWITALL.
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+0 2,000 4,000 6,000
+Correct Extractions
+Pr
+ec
+is
+io
+n
+KnowItNow-freq KnowitNow-URNS
+KnowItAll-PMI
+Figure 6: CeoOf: KNOWITNOW has difficulty dis-
+tinguishing low frequency correct extractions from
+noise. KNOWITALL is able to cope with the sparse
+data more effectively.
+KNOWITALL with PMI-based assessment. For each of
+the four relations, PMI is able to maintain a higher pre-
+cision than either frequency-based or URNS assessment.
+URNS and frequency-based assessment give roughly the
+same levels of precision.
+For the relations with a small number of correct in-
+stances, Country and CapitalOf, KNOWITNOW is
+able to identify 70-80% as many instances as KNOW-
+ITALL at precision 0.9. In contrast, Corp and CeoOf
+have a huge number of correct instances and a long tail
+of low frequency extractions that KNOWITNOW has dif-
+ficulty distinguishing from noise. Over one fourth of
+the corporations found by KNOWITALL had Google hit
+counts less than 10,500, a sparseness problem that was
+exacerbated by KNOWITNOW?s limited index size.
+Figure 7 shows projected recall from larger KNOW-
+ITNOW indices, fitting a sigmoid curve to the recall
+from index size of 10M, 20M, up to 60M pages. The
+curve was fitted using logistic regression, and is restricted
+to asymptote at the level reported for Google-based
+KNOWITALL for each relation. We report re-
+call at precision 0.9 for capitals of 195 coun-
+tries and CEOs of a random selection of the
+top 5,000 corporations as ranked by PMI.
+Recall is defined as the percent of countries with a
+0
+0.2
+0.4
+0.6
+0.8
+1
+0 100 200 300 400
+KnowItNow index size (millions)
+R
+ec
+al
+l a
+t 0
+.
+9 
+pr
+ec
+is
+io
+n
+KnowItNow CeoOf
+Google CeoOf
+KnowItNow CapitalOf
+Google CapitalOf
+Figure 7: Projections of recall (at precision 0.9) as a
+function of KNOWITNOW index size. At 400 million
+pages, KNOWITNOW?s recall rapidly approaches the
+recall achieved by KNOWITALL using roughly 300,000
+Google queries.
+correct capital or the number of correct CEOs divided by
+the number of corporations.
+The curve for CeoOf is rising steeply enough that a
+400 million page KNOWITNOW index may approach the
+same level of recall yielded by KNOWITALL when it uses
+300,000 Google queries. As shown in Table 2, KNOW-
+ITALL takes slightly more than three days to generate
+these results. KNOWITNOW would operate over a cor-
+pus 6.7 times its current one, but the number of required
+random disk seeks (and the asymptotic run time analy-
+sis) would remain the same. We thus expect that with a
+larger corpus we can construct a KNOWITNOW system
+that reproduces KNOWITALL levels of precision and re-
+call while still executing in the order of a few minutes.
+5 Related Work
+There has been very little work published on how to make
+NLP computations such as PMI-IR and IE fast for large
+corpora. Indeed, extraction rate is not a metric typically
+used to evaluate IE systems, but we believe it is an im-
+portant metric if IE is to scale.
+Hobbs et al point out the advantage of fast text
+processing for rapid system development (Hobbs et al,
+1992). They could test each change to system parameters
+569
+and domain-specific patterns on a large sample of docu-
+ments, having moved from a system that took 36 hours to
+process 100 documents to FASTUS, which took only 11
+minutes. This allowed them to develop one of the highest
+performing MUC-4 systems in only one month.
+While there has been extensive work in the IR and
+Web communities on improvements to the standard in-
+verted index scheme, there has been little work on effi-
+cient large-scale search to support natural language ap-
+plications. One exception is Resnik?s Linguist?s Search
+Engine (Elkiss and Resnik, 2004), a tool for searching
+large corpora of parse trees. There is little published in-
+formation about its indexing system, but the user man-
+ual suggests its corpus is a combination of indexed sen-
+tences and user-specific document collections driven by
+the user?s AltaVista queries. In contrast, the BE system
+has a single index, constructed just once, that serves all
+queries. There is no published performance data avail-
+able for Resnik?s system.
+6 Conclusions and Future Directions
+In previous work, statistical NLP computation over large
+corpora has been a slow, offline process, as in KNOW-
+ITALL (Etzioni et al, 2005) and also in PMI-IR appli-
+cations such as sentiment classification (Turney, 2002).
+Technology trends, and open source search engines such
+as Nutch, have made it feasible to create ?private? search
+engines that index large collections of documents; but as
+shown in Figure 2, firing large numbers of queries at pri-
+vate search engines is still slow.
+This paper described a novel and practical approach
+towards substantially speeding up IE. We described
+KNOWITNOW, which extracts thousands of facts in min-
+utes instead of days. Furthermore, we sketched URNS,
+a probabilistic model that both obviates the need for
+search-engine queries and outputs more accurate prob-
+abilities than PMI-IR. Finally, we introduced a simple,
+efficient approximation to URNS, whose probability esti-
+mates are not as good, but which has comparable preci-
+sion/recall to URNS, making it an appropriate assessor for
+KNOWITNOW.
+The speed and massively improved extraction rate of
+KNOWITNOW come at the cost of reduced recall. We
+quantified this tradeoff in Table 2, and also argued that as
+KNOWITNOW?s index size increases from 60 million to
+400 million pages, KNOWITNOW would achieve in min-
+utes the same precision/recall that takes KNOWITALL
+days to obtain. Of course, a hybrid approach is possi-
+ble where KNOWITNOW has, say, a 100 million page
+index and, when necessary, augments its results with a
+limited number of queries to Google. Investigating the
+extraction-rate/recall tradeoff in such a hybrid system is
+a natural next step.
+While our experiments have used the Web corpus, our
+approach transfers readily to other large corpora; exper-
+imentation with other corpora is another topic for future
+work. In conclusion, we believe that our techniques trans-
+form IE from a slow, offline process to an online one.
+They could open the door to a new class of interactive IE
+applications, of which KNOWITNOW is merely the first.
+7 Acknowledgments
+This research was supported in part by NSF grant IIS-
+0312988, DARPA contract NBCHD030010, ONR grant
+N00014-02-1-0324, and gifts from Google and the Tur-
+ing Center.
+References
+R. Baeza-Yates and B. Ribeiro-Neto. 1999. Modern Informa-
+tion Retrieval. Addison Wesley.
+E. Brill, J. Lin, M. Banko, S. T. Dumais, and A. Y. Ng. 2001.
+Data-intensive question answering. In Procs. of Text RE-
+trieval Conference (TREC-10), pages 393?400.
+M. Cafarella and O. Etzioni. 2005. A Search Engine for Nat-
+ural Language Applications. In Procs. of the 14th Interna-
+tional World Wide Web Conference (WWW 2005).
+D. Downey, O. Etzioni, and S. Soderland. 2005. A Probabilistic
+Model of Redundancy in Information Extraction. In Procs.
+of the 19th International Joint Conference on Artificial Intel-
+ligence (IJCAI 2005).
+E. Elkiss and P. Resnik, 2004. The Linguist?s Search Engine
+User?s Guide. University of Maryland.
+O. Etzioni, M. Cafarella, D. Downey, S. Kok, A. Popescu,
+T. Shaked, S. Soderland, D. Weld, and A. Yates. 2005. Un-
+supervised named-entity extraction from the web: An exper-
+imental study. Artificial Intelligence, 165(1):91?134.
+M. Hearst. 1992. Automatic Acquisition of Hyponyms from
+Large Text Corpora. In Procs. of the 14th International
+Conference on Computational Linguistics, pages 539?545,
+Nantes, France.
+J.R. Hobbs, D. Appelt, M. Tyson, J. Bear, and D. Israel. 1992.
+Description of the FASTUS system used for MUC-4. In
+Procs. of the Fourth Message Understanding Conference,
+pages 268?275.
+A. Ratnaparkhi. 1996. A maximum entropy part-of-speech tag-
+ger. In Procs. of the Empirical Methods in Natural Language
+Processing Conference, Univ. of Pennsylvania.
+P. D. Turney. 2001. Mining the Web for Synonyms: PMI-IR
+versus LSA on TOEFL. In Procs. of the Twelfth European
+Conference on Machine Learning (ECML-2001), pages 491?
+502, Freiburg, Germany.
+P. D. Turney. 2002. Thumbs up or thumbs down? semantic
+orientation applied to unsupervised classification of reviews.
+In Procs. of the 40th Annual Meeting of the Association for
+Computational Linguistics (ACL?02), pages 417?424.
+P. D. Turney, 2004. Waterloo MultiText System. Institute for
+Information Technology, Nat?l Research Council of Canada.
+570
+NAACL HLT Demonstration Program, pages 25?26,
+Rochester, New York, USA, April 2007. c?2007 Association for Computational Linguistics
+TextRunner: Open Information Extraction on the Web
+Alexander Yates
+Michael Cafarella
+Michele Banko
+Oren Etzioni
+University of Washington
+Computer Science and Engineering
+Box 352350
+Seattle, WA 98195-2350
+{ayates,banko,hastur,mjc,etzioni,soderlan}@cs.washington.edu
+Matthew Broadhead
+Stephen Soderland
+1 Introduction
+Traditional information extraction systems
+have focused on satisfying precise, narrow,
+pre-specified requests from small, homoge-
+neous corpora. In contrast, the TextRunner
+system demonstrates a new kind of informa-
+tion extraction, called Open Information Ex-
+traction (OIE), in which the system makes a
+single, data-driven pass over the entire cor-
+pus and extracts a large set of relational
+tuples, without requiring any human input.
+(Banko et al, 2007) TextRunner is a fully-
+implemented, highly scalable example of OIE.
+TextRunner?s extractions are indexed, al-
+lowing a fast query mechanism.
+Our first public demonstration of the Text-
+Runner system shows the results of perform-
+ing OIE on a set of 117 million web pages. It
+demonstrates the power of TextRunner in
+terms of the raw number of facts it has ex-
+tracted, as well as its precision using our novel
+assessment mechanism. And it shows the abil-
+ity to automatically determine synonymous re-
+lations and objects using large sets of extrac-
+tions. We have built a fast user interface for
+querying the results.
+2 Previous Work
+The bulk of previous information extraction
+work uses hand-labeled data or hand-crafted
+patterns to enable relation-specific extraction
+(e.g., (Culotta et al, 2006)). OIE seeks to
+avoid these requirements for human input.
+Shinyama and Sekine (Shinyama and
+Sekine, 2006) describe an approach to ?un-
+restricted relation discovery? that does away
+with many of the requirements for human in-
+put. However, it requires clustering of the doc-
+uments used for extraction, and thus scales in
+quadratic time in the number of documents.
+It does not scale to the size of the Web.
+For a full discussion of previous work, please
+see (Banko et al, 2007), or see (Yates and Et-
+zioni, 2007) for work relating to synonym res-
+olution.
+3 Open IE in TextRunner
+OIE presents significant new challenges for in-
+formation extraction systems, including
+Automation of relation extraction, which in
+traditional information extraction uses hand-
+labeled inputs.
+Corpus Heterogeneity on the Web, which
+makes tools like parsers and named-entity tag-
+gers less accurate because the corpus is differ-
+ent from the data used to train the tools.
+Scalability and efficiency of the system.
+Open IE systems are effectively restricted to
+a single, fast pass over the data so that they
+can scale to huge document collections.
+In response to these challenges, Text-
+Runner includes several novel components,
+which we now summarize (see (Banko et al,
+2007) for details).
+1. Single Pass Extractor
+The TextRunner extractor makes a sin-
+gle pass over all documents, tagging sen-
+tences with part-of-speech tags and noun-
+phrase chunks as it goes. For each pair of noun
+phrases that are not too far apart, and subject
+to several other constraints, it applies a clas-
+sifier described below to determine whether or
+not to extract a relationship. If the classifier
+25
+deems the relationship trustworthy, a tuple of
+the form t = (ei, rj , ek) is extracted, where
+ei, ek are entities and rj is the relation between
+them. For example, TextRunner might ex-
+tract the tuple (Edison, invented, light bulbs).
+On our test corpus (a 9 million document sub-
+set of our full corpus), it took less than 68
+CPU hours to process the 133 million sen-
+tences. The process is easily parallelized, and
+took only 4 hours to run on our cluster.
+2. Self-Supervised Classifier
+While full parsing is too expensive to apply to
+the Web, we use a parser to generate training
+examples for extraction. Using several heuris-
+tic constraints, we automatically label a set
+of parsed sentences as trustworthy or untrust-
+worthy extractions (positive and negative ex-
+amples, respectively). The classifier is trained
+on these examples, using features such as the
+part of speech tags on the words in the re-
+lation. The classifier is then able to decide
+whether a sequence of POS-tagged words is a
+correct extraction with high accuracy.
+3. Synonym Resolution
+Because TextRunner has no pre-defined re-
+lations, it may extract many different strings
+representing the same relation. Also, as with
+all information extraction systems, it can ex-
+tract multiple names for the same object. The
+Resolver system performs an unsupervised
+clustering of TextRunner?s extractions to
+create sets of synonymous entities and rela-
+tions. Resolver uses a novel, unsupervised
+probabilistic model to determine the probabil-
+ity that any pair of strings is co-referential,
+given the tuples that each string was extracted
+with. (Yates and Etzioni, 2007)
+4. Query Interface
+TextRunner builds an inverted index of
+the extracted tuples, and spreads it across a
+cluster of machines. This architecture sup-
+ports fast, interactive, and powerful relational
+queries. Users may enter words in a relation or
+entity, and TextRunner quickly returns the
+entire set of extractions matching the query.
+For example, a query for ?Newton? will return
+tuples like (Newton, invented, calculus). Users
+may opt to query for all tuples matching syn-
+onyms of the keyword input, and may also opt
+to merge all tuples returned by a query into
+sets of tuples that are deemed synonymous.
+4 Experimental Results
+On our test corpus of 9 million Web doc-
+uments, TextRunner extracted 7.8 million
+well-formed tuples. On a randomly selected
+subset of 400 tuples, 80.4% were deemed cor-
+rect by human reviewers.
+We performed a head-to-head compari-
+son with a state-of-the-art traditional in-
+formation extraction system, called Know-
+ItAll. (Etzioni et al, 2005) On a set of ten
+high-frequency relations, TextRunner found
+nearly as many correct extractions as Know-
+ItAll (11,631 to 11,476), while reducing the
+error rate of KnowItAll by 33% (18% to
+12%).
+Acknowledgements
+This research was supported in part by NSF
+grants IIS-0535284 and IIS-0312988, DARPA
+contract NBCHD030010, ONR grant N00014-
+05-1-0185 as well as gifts from Google, and
+carried out at the University of Washington?s
+Turing Center.
+References
+M. Banko, M. J. Cafarella, S. Soderland,
+M. Broadhead, and O. Etzioni. 2007. Open In-
+formation Extraction from the Web. In IJCAI.
+A. Culotta, A. McCallum, and J. Betz. 2006. Inte-
+grating Probabilistic Extraction Models and Re-
+lational Data Mining to Discover Relations and
+Patterns in Text. In HLT-NAACL.
+O. Etzioni, M. Cafarella, D. Downey, S. Kok,
+A. Popescu, T. Shaked, S. Soderland, D. Weld,
+and A. Yates. 2005. Unsupervised Named-
+Entity Extraction from the Web: An Experi-
+mental Study. Artificial Intelligence, 165(1):91?
+134.
+Y. Shinyama and S. Sekine. 2006. Preemptive
+Information Extraction Using Unrestricted Re-
+lation Discovery. In HLT-NAACL.
+A. Yates and O. Etzioni. 2007. Unsupervised Res-
+olution of Objects and Relations on the Web. In
+NAACL-HLT.
+26
+BE: A Search Engine for NLP Research
+Michael J. Cafarella, Oren Etzioni
+Department of Computer Science and Engineering
+University of Washington
+Seattle, WA 98195-2350
+{mjc,etzioni}@cs.washington.edu
+Many modern natural language-processing applica-
+tions utilize search engines to locate large numbers of
+Web documents or to compute statistics over the Web
+corpus. Yet Web search engines are designed and op-
+timized for simple human queries?they are not well
+suited to support such applications. As a result, these
+applications are forced to issue millions of successive
+queries resulting in unnecessary search engine load and
+in slow applications with limited scalability.
+In response, we have designed the Bindings Engine
+(BE), which supports queries containing typed vari-
+ables and string-processing functions (Cafarella and
+Etzioni, 2005). For example, in response to the query
+?powerful ?noun?? BE will return all the nouns in its
+index that immediately follow the word ?powerful?,
+sorted by frequency. (Figure 1 shows several possible
+BE queries.) In response to the query ?Cities such as
+ProperNoun(Head(?NounPhrase?))?, BE will return a
+list of proper nouns likely to be city names.
+president Bush <Verb>
+cities such as ProperNoun(Head(<NounPhrase>))
+<NounPhrase> is the CEO of <NounPhrase>
+Figure 1: Examples of queries that can be handled
+by BE. Queries that include typed variables and
+string-processing functions allow certain NLP tasks
+to be done very efficiently.
+BE?s novel neighborhood index enables it to do so
+with O(k) random disk seeks and O(k) serial disk
+reads, where k is the number of non-variable terms in
+its query. A standard search engine requires O(k + B)
+random disk seeks, where B is the number of vari-
+able ?bindings? found in the corpus. Since B is typ-
+ically very large, BE vastly reduces the number of ran-
+dom disk seeks needed to process a query. Such seeks
+operate very slowly and make up the bulk of query-
+processing time. As a result, BE can yield several
+orders of magnitude speedup for large-scale language-
+processing applications. The main cost is a modest in-
+crease in space to store the index.
+To illustrate BE?s capabilities, we have built an ap-
+plication to support interactive information extraction
+in response to simple user queries. For example, in re-
+sponse to the user query ?insects?, the application re-
+turns the results shown in Figure 2. The application
+Figure 2: Most-frequently-seen extractions for
+query ?insects?. The score for each extraction is the
+number of times it was retrieved over several BE ex-
+traction phrases.
+generates this list by using the query term to instantiate
+a set of generic extraction phrase queries such as ?in-
+sects such as ?NounPhrase??. In effect, the application
+is doing a kind of query expansion to enable naive users
+to extract information. In an effort to find high-quality
+extractions, we sort the list by the hit count for each
+binding, summed over all the queries.
+The key difference between this BE application,
+called KNOWITNOW, and domain-independent infor-
+mation extraction systems such as KNOWITALL (Et-
+zioni et al, 2005) is that BE enables extraction at in-
+teractive speeds ? the average time to expand and re-
+spond to a user query is between 1 and 45 seconds.
+With additional optimization, we believe we can reduce
+that time to 5 seconds or less. A detailed description of
+KNOWITNOW appears in (Cafarella et al, 2005).
+References
+M. Cafarella and O. Etzioni. 2005. A Search En-gine for Natural Language Applications. In Procs.
+of the 14th International World Wide Web Confer-
+ence (WWW 2005).
+M. Cafarella, D. Downey, S. Soderland, and O. Etzioni.2005. Knowitnow: Fast, scalable information ex-
+traction from the web. In Procs. of EMNLP.
+O. Etzioni, M. Cafarella, D. Downey, S. Kok,A. Popescu, T. Shaked, S. Soderland, D. Weld, andA. Yates. 2005. Unsupervised named-entity extrac-
+tion from the web: An experimental study. Articial
+Intelligence, 165(1):91?134.
+9
+ 10

@@ -1,0 +1,4104 @@
+Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing, pages 938?947,
+Singapore, 6-7 August 2009. c?2009 ACL and AFNLP
+ 
+ 
+Web-Scale Distributional Similarity and Entity Set Expansion 
+Patrick Pantel?, Eric Crestan?, Arkady Borkovsky?, Ana-Maria Popescu?, Vishnu Vyas? 
+?Yahoo! Labs 
+Sunnyvale, CA 94089 
+{ppantel,ecrestan}@yahoo-inc.com 
+{amp,vishnu}@yahoo-inc.com 
+?Yandex Labs 
+Burlingame, CA 94010 
+arkady@yandex-team.ru 
+  
+ 
+Abstract 
+Computing the pairwise semantic similarity 
+between all words on the Web is a compu-
+tationally challenging task. Parallelization 
+and optimizations are necessary. We pro-
+pose a highly scalable implementation 
+based on distributional similarity, imple-
+mented in the MapReduce framework and 
+deployed over a 200 billion word crawl of 
+the Web. The pairwise similarity between 
+500 million terms is computed in 50 hours 
+using 200 quad-core nodes. We apply the 
+learned similarity matrix to the task of au-
+tomatic set expansion and present a large 
+empirical study to quantify the effect on 
+expansion performance of corpus size, cor-
+pus quality, seed composition and seed 
+size. We make public an experimental 
+testbed for set expansion analysis that in-
+cludes a large collection of diverse entity 
+sets extracted from Wikipedia. 
+1 Introduction 
+Computing the semantic similarity between terms 
+has many applications in NLP including word clas-
+sification (Turney and Littman 2003), word sense 
+disambiguation (Yuret and Yatbaz 2009), context-
+spelling correction (Jones and Martin 1997), fact 
+extraction (Pa?ca et al 2006), semantic role labe-
+ling (Erk 2007), and applications in IR such as 
+query expansion (Cao et al 2008) and textual ad-
+vertising (Chang et al 2009). 
+For commercial engines such as Yahoo! and 
+Google, creating lists of named entities found on 
+the Web is critical for query analysis, document 
+categorization, and ad matching. Computing term 
+similarity is typically done by comparing co-
+occurrence vectors between all pairs of terms 
+(Sarmento et al 2007). Scaling this task to the 
+Web requires parallelization and optimizations. 
+In this paper, we propose a large-scale term si-
+milarity algorithm, based on distributional similari-
+ty, implemented in the MapReduce framework and 
+deployed over a 200 billion word crawl of the 
+Web. The resulting similarity matrix between 500 
+million terms is applied to the task of expanding 
+lists of named entities (automatic set expansion). 
+We provide a detailed empirical analysis of the 
+discovered named entities and quantify the effect 
+on expansion accuracy of corpus size, corpus 
+quality, seed composition, and seed set size. 
+2 Related Work 
+Below we review relevant work in optimizing si-
+milarity computations and automatic set expansion. 
+2.1 Computing Term Similarities 
+The distributional hypothesis (Harris 1954), which 
+links the meaning of words to their contexts, has 
+inspired many algorithms for computing term simi-
+larities (Lund and Burgess 1996; Lin 1998; Lee 
+1999; Erk and Pad? 2008; Agirre et al 2009). 
+Brute force similarity computation compares all 
+the contexts for each pair of terms, with complexi-
+ty O(n2m) where n is the number of terms and m is 
+the number of possible contexts. More efficient 
+strategies are of three kinds: 
+938
+Smoothing: Techniques such as Latent Semantic 
+Analysis reduce the context space by applying 
+truncated Singular Value Decomposition (SVD) 
+(Deerwester et al 1990). Computing the matrix 
+decomposition however does not scale well to 
+web-size term-context matrices. Other currently 
+unscalable smoothing techniques include Probabil-
+istic Latent Semantic Analysis (Hofmann 1999), 
+Iterative Scaling (Ando 2000), and Latent Dirichlet 
+Allocation (Blei et al 2003). 
+Randomized Algorithms: Randomized tech-
+niques for approximating various similarity meas-
+ures have been successfully applied to term simi-
+larity (Ravichandran et al 2005; Gorman and Cur-
+ran 2006). Common techniques include Random 
+Indexing based on Sparse Distributed Memory 
+(Kanerva 1993) and Locality Sensitive Hashing 
+(Broder 1997). 
+Optimizations and Distributed Processing: 
+Bayardo et al (2007) present a sparse matrix opti-
+mization strategy capable of efficiently computing 
+the similarity between terms which?s similarity 
+exceeds a given threshold. Rychl? and Kilgarriff 
+(2007), Elsayed et al (2008) and Agirre et al 
+(2009) use reverse indexing and the MapReduce 
+framework to distribute the similarity computa-
+tions across several machines. Our proposed ap-
+proach combines these two strategies and efficient-
+ly computes the exact similarity (cosine, Jaccard, 
+Dice, and Overlap) between all pairs. 
+2.2 Entity extraction and classification 
+Building entity lexicons is a task of great interest 
+for which structured, semi-structured and unstruc-
+tured data have all been explored (GoogleSets; 
+Sarmento et al 2007; Wang and Cohen 2007; Bu-
+nescu and Mooney 2004; Etzioni et al 2005; Pa?ca 
+et al 2006). Our own work focuses on set expan-
+sion from unstructured Web text. Apart from the 
+choice of a data source, state-of-the-art entity ex-
+traction methods differ in their use of numerous, 
+few or no labeled examples, the open or targeted 
+nature of the extraction as well as the types of fea-
+tures employed. Supervised approaches (McCal-
+lum and Li 2003, Bunescu and Mooney 2004) rely 
+on large sets of labeled examples, perform targeted 
+extraction and employ a variety of sentence- and 
+corpus-level features. While very precise, these 
+methods are typically used for coarse grained enti-
+ty classes (People, Organizations, Companies) for 
+which large training data sets are available. Unsu-
+pervised approaches rely on no labeled data and 
+use either bootstrapped class-specific extraction 
+patterns (Etzioni et al 2005) to find new elements 
+of a given class (for targeted extraction) or corpus-
+based term similarity (Pantel and Lin 2002) to find 
+term clusters (in an open extraction framework). 
+Finally, semi-supervised methods have shown 
+great promise for identifying and labeling entities 
+(Riloff and Shepherd 1997; Riloff and Jones 1999; 
+Banko et al 2007; Downey et al 2007; Pa?ca et al 
+2006; Pa?ca 2007a; Pa?ca 2007b; Pa?ca and Durme 
+2008). Starting with a set of seed entities, semi-
+supervised extraction methods use either class-
+specific patterns to populate an entity class or dis-
+tributional similarity to find terms similar to the 
+seed set (Pa?ca?s work also examines the advan-
+tages of combining these approaches). Semi-
+supervised methods (including ours) are useful for 
+extending finer grain entity classes, for which large 
+unlabeled data sets are available. 
+2.3 Impact of corpus on system performance 
+Previous work has examined the effect of using 
+large, sometimes Web-size corpora, on system per-
+formance in the case of familiar NLP tasks. Banko 
+and Brill (2001) show that Web-scale data helps 
+with confusion set disambiguation while Lapata 
+and Keller (2005) find that the Web is a good 
+source of n-gram counts for unsupervised models. 
+Atterer and Schutze (2006) examine the influence 
+of corpus size on combining a supervised approach 
+with an unsupervised one for relative clause and 
+PP-attachment. Etzioni et al (2005) and Pantel et 
+al. (2004) show the advantages of using large 
+quantities of generic Web text over smaller corpora 
+for extracting relations and named entities. Overall, 
+corpus size and quality are both found to be impor-
+tant for extraction. Our paper adds to this body of 
+work by focusing on the task of similarity-based 
+set expansion and providing a large empirical 
+study quantify the relative corpus effects. 
+2.4 Impact of seeds on extraction performance 
+Previous extraction systems report on the size and 
+quality of the training data or, if semi-supervised, 
+the size and quality of entity or pattern seed sets. 
+Narrowing the focus to closely related work, Pa?ca 
+(2007a; 2007b) and Pa?ca and Durme (2008) show 
+the impact of varying the number of instances rep-
+resentative of a given class and the size of the 
+attribute seed set on the precision of class attribute 
+extraction. An example observation is that good 
+939
+quality class attributes can still be extracted using 
+20 or even 10 instances to represent an entity class. 
+Among others, Etzioni et al (2005) shows that a 
+small pattern set can help bootstrap useful entity 
+seed sets and reports on the impact of seed set 
+noise on final performance. Unlike previous work, 
+empirically quantifying the influence of seed set 
+size and quality on extraction performance of ran-
+dom entity types is a key objective of this paper. 
+3 Large-Scale Similarity Model 
+Term semantic models normally invoke the distri-
+butional hypothesis (Harris 1985), which links the 
+meaning of terms to their contexts. Models are 
+built by recording the surrounding contexts for 
+each term in a large collection of unstructured text 
+and storing them in a term-context matrix. Me-
+thods differ in their definition of a context (e.g., 
+text window or syntactic relations), or by a means 
+to weigh contexts (e.g., frequency, tf-idf, pointwise 
+mutual information), or ultimately in measuring 
+the similarity between two context vectors (e.g., 
+using Euclidean distance, Cosine, Dice). 
+In this paper, we adopt the following methodol-
+ogy for computing term similarity. Our various 
+web crawls, described in Section 6.1, are POS-
+tagged using Brill?s tagger (1995) and chunked 
+using a variant of the Abney chunker (Abney 
+1991). Terms are NP chunks with some modifiers 
+removed; their contexts (i.e., features) are defined 
+as their rightmost and leftmost stemmed chunks. 
+We weigh each context f using pointwise mutual 
+information (Church and Hanks 1989). Let PMI(w) 
+denote a pointwise mutual information vector, con-
+structed for each term as follows: PMI(w) = (pmiw1, 
+pmiw2, ?, pmiwm), where pmiwf is the pointwise 
+mutual information between term w and feature f: 
+ 
+???
+?=
+==
+m
+j
+wj
+n
+i
+if
+wf
+wf
+cc
+Nc
+pmi
+11
+log
+ 
+where cwf is the frequency of feature f occurring for 
+term w, n is the number of unique terms and N is 
+the total number of features for all terms. 
+Term similarities are computed by comparing 
+these pmi context vectors using measures such as 
+cosine, Jaccard, and Dice. 
+3.1 Large-Scale Implementation  
+Computing the similarity between terms on a large 
+Web crawl is a non-trivial problem, with a worst 
+case cubic running time ? O(n2m) where n is the 
+number of terms and m is the dimensionality of the 
+feature space. Section 2.1 introduces several opti-
+mization techniques; below we propose an algo-
+rithm for large-scale term similarity computation 
+which calculates exact scores for all pairs of terms, 
+generalizes to several different metrics, and is scal-
+able to a large crawl of the Web. 
+Our optimization strategy follows a generalized 
+sparse-matrix multiplication approach (Sarawagi 
+and Kirpal 2004), which is based on the well-
+known observation that a scalar product of two 
+vectors depends only on the coordinates for which 
+both vectors have non-zero values. Further, we 
+observe that most commonly used similarity scores 
+for feature vectors x
+r
+ and y
+r
+, such as cosine and 
+Dice, can be decomposed into three values: one 
+depending only on features of x
+r
+, another depend-
+ing only on features of y
+r
+, and the third depending 
+on the features shared both by x
+r
+ and y
+r
+. More for-
+mally, commonly used similarity scores ( )yxF rr,  
+can be expressed as: 
+ ( ) ( ) ( ) ( )??
+???
+?= ? yfxfyxffyxF
+i
+ii
+rrrr
+3210 ,,,,
+ 
+Table 1 defines f0, f1, f2, and f3 for some common 
+similarity functions. For each of these scores, f2 = 
+f3. In our work, we compute all of these scores, but 
+report our results using only the cosine function. 
+Let A and B be two matrices of PMI feature vec-
+tors. Our task is to compute the similarity between 
+all vectors in A and all vectors in B. In computing 
+the similarity between all pairs of terms, A = B. 
+Figure 1 outlines our algorithm for computing 
+the similarity between all elements of A and B. Ef-
+ficient computation of the similarity matrix can be 
+achieved by leveraging the fact that ( )yxF rr,  is de-
+termined solely by the features shared by x
+r
+ and y
+r
+ 
+(i.e., f1(0,x) = f1(x,0) = 0 for any x) and that most of 
+Table 1. Definitions for f0, f1, f2, and f3 for commonly used 
+similarity scores. 
+METRIC ( )zyxf ,,0  ( )yxf ,1  ( ) ( )xfxf rr 32 =  
+Overlap x  1 0  
+Jaccard* xzy
+x
+?+
+ ( )yx ,min  ?
+i
+ix
+Dice* 
+zy
+x
++
+2
+ 
+yx ?  ?
+i
+ix
+2
+Cosine zy
+x
+?
+ 
+yx ?  ?
+i
+ix
+2
+*weighted generalization  
+ 
+940
+the feature vectors are very sparse (i.e., most poss-
+ible contexts never occur for a given term). In this 
+case, calculating f1(x, y) is only required when both 
+feature vectors have a shared non-zero feature, sig-
+nificantly reducing the cost of computation. De-
+termining which vectors share a non-zero feature 
+can easily be achieved by first building an inverted 
+index for the features. The computational cost of 
+this algorithm is ? 2iN , where Ni is the number of 
+vectors that have a non-zero ith coordinate. Its 
+worst case time complexity is O(ncv) where n is 
+the number of terms to be compared, c is the max-
+imum number of non-zero coordinates of any vec-
+tor, and v is the number of vectors that have a non-
+zero ith coordinate where i is the coordinate which 
+is non-zero for the most vectors. In other words, 
+the algorithm is efficient only when the density of 
+the coordinates is low. On our datasets, we ob-
+served near linear running time in the corpus size. 
+Bayardo et al (2007) described a strategy that 
+potentially reduces the cost even further by omit-
+ting the coordinates with the highest number of 
+non-zero value. However, their algorithm gives a 
+significant advantage only when we are interested 
+in finding solely the similarity between highly sim-
+ilar terms. In our experiments, we compute the ex-
+act similarity between all pairs of terms. 
+Distributed Implementation 
+The pseudo-code in Figure 1 assumes that A can fit 
+into memory, which for large A may be impossible. 
+Also, as each element of B is processed indepen-
+dently, running parallel processes for non-
+intersecting subsets of B makes the processing 
+faster. In this section, we outline our MapReduce 
+implementation of Figure 1 deployed using Ha-
+doop1, the open-source software package imple-
+menting the MapReduce framework and distri-
+buted file system. Hadoop has been shown to scale 
+to several thousands of machines, allowing users to 
+write simple ?map? and ?reduce? code, and to 
+seamlessly manage the sophisticated parallel ex-
+ecution of the code. A good primer on MapReduce 
+programming is in (Dean and Ghemawat 2008). 
+Our implementation employs the MapReduce 
+model by using the Map step to start M?N Map 
+tasks in parallel, each caching 1/Mth part of A as 
+an inverted index and streaming 1/Nth part of B 
+through it. The actual inputs are read by the tasks 
+                                                 
+1 Hadoop, http://lucene.apache.org/hadoop/ 
+directly from HDFS (Hadoop Distributed File Sys-
+tem). Each part of A is processed N times, and each 
+part of B is processed M times. M is determined by 
+the amount of memory dedicated for the inverted 
+index, and N should be determined by trading off 
+the fact that as N increases, more parallelism can 
+be obtained at the increased cost of building the 
+same inverse index N times. 
+The similarity algorithm from Figure 1 is run in 
+each task of the Map step of a MapReduce job. 
+The Reduce step is used to group the output by bi. 
+4 Application to Set Expansion 
+Creating lists of named entities is a critical prob-
+lem at commercial engines such as Yahoo! and 
+Google. The types of entities to be expanded are 
+often not known a priori, leaving supervised clas-
+sifiers undesirable. Additionally, list creators typi-
+cally need the ability to expand sets of varying 
+granularity. Semi-supervised approaches are pre-
+dominantly adopted since they allow targeted ex-
+pansions while requiring only small sets of seed 
+entities. State-of-the-art techniques first compute 
+term-term similarities for all available terms and 
+then select candidates for set expansion from 
+amongst the terms most similar to the seeds (Sar-
+mento et al 2007). 
+Input: Two matrices A and B of feature vectors. 
+## Build an inverted index for A (optimiza- 
+## tion for data sparseness) 
+AA = an empty hash-table 
+for i in (1..n): 
+   F2[i] = f2(A[i]) ## cache values of f2(x) 
+   for k in non-zero features of A[i]: 
+      if k not in AA: AA[k] = empty-set 
+      ## append <vector-id, feature-value> 
+      ## pairs to the set of non-zero 
+      ## values for feature k 
+      AA[k].append( (i,A[i,k]) ) 
+## Process the elements of B 
+for b in B: 
+   F1 = {} ## the set of Ai that have non-
+zero similarity with b 
+   for k in non-zero features of b: 
+      for i in AA[k]: 
+         if i not in sim: sim[i] = 0 
+         F1[i] += f1( AA[k][i], b[k]) 
+   F3 = f3(b) 
+   for i in sim: 
+      print i, b, f0( F1[i], F2[i], F3) 
+Output: A matrix containing the similarity between 
+all elements in A and in B. 
+Figure 1. Similarity computation algorithm. 
+941
+Formally, we define our expansion task as: 
+Task Definition: Given a set of seed entities S = 
+{s1, s2, ?, sk} of a class C = {s1, s2, ?, sk, ?,, sn} and 
+an unlabeled textual corpus T, find all members of 
+the class C. 
+For example, consider the class of Bottled Water 
+Brands. Given the set of seeds S = {Volvic, San 
+Pellegrino, Gerolsteiner Brunnen, Bling H2O}, our 
+task is to find all other members of this class, such 
+as {Agua Vida, Apenta, Culligan, Dasani, Ethos 
+Water, Iceland Pure Spring Water, Imsdal, ?} 
+4.1 Set Expansion Algorithm 
+Our goal is not to propose a new set expansion al-
+gorithm, but instead to test the effect of using our 
+Web-scale term similarity matrix (enabled by the 
+algorithm proposed in Section 3) on a state-of-the-
+art distributional set expansion algorithm, namely 
+(Sarmento et al 2007). 
+We consider S as a set of prototypical examples 
+of the underlying entity set. A representation for 
+the meaning of S is computed by building a feature 
+vector consisting of a weighted average of the fea-
+tures of its seed elements s1, s2, ?, sk, a centroid. For 
+example, given the seed elements {Volvic, San Pel-
+legrino, Gerolsteiner Brunnen, Bling H2O}, the 
+resulting centroid consists of (details of the feature 
+extraction protocol are in Section 6.1): 
+brand, mineral water, monitor, 
+lake, water, take over, ? 
+Centroids are represented in the same space as 
+terms allowing us to compute the similarity be-
+tween centroids and all terms in our corpus. A 
+scored and ranked set for expansion is ultimately 
+generated by sorting all terms according to their 
+similarity to the seed set centroid, and applying a 
+cutoff on either the similarity score or on the total 
+number of retrieved terms. In our reported experi-
+ments, we expanded over 22,000 seed sets using 
+our Web similarity model from Section 3. 
+5 Evaluation Methodology 
+In this section, we describe our methodology for 
+evaluating Web-scale set expansion. 
+5.1 Gold Standard Entity Sets 
+Estimating the quality of a set expansion algorithm 
+requires a random sample from the universe of all 
+entity sets that may ever be expanded, where a set 
+represents some concept such as Stage Actors. An 
+approximation of this universe can be extracted 
+from the ?List of? pages in Wikipedia2. 
+Upon inspection of a random sample of the ?List 
+of? pages, we found that several lists were compo-
+sitions or joins of concepts, for example ?List of 
+World War II aces from Denmark? and ?List of 
+people who claimed to be God?. We addressed this 
+issue by constructing a quasi-random sample as 
+follows. We randomly sorted the list of every noun 
+occurring in Wikipedia2. Then, for each noun we 
+verified whether or not it existed in a Wikipedia 
+list, and if so we extracted this list. If a noun be-
+longed to multiple lists, the authors chose the list 
+that seemed most appropriate. Although this does 
+not generate a perfect random sample, diversity is 
+ensured by the random selection of nouns and rele-
+vancy is ensured by the author adjudication. 
+The final gold standard consists of 50 sets, in-
+cluding: classical pianists, Spanish provinces, 
+Texas counties, male tennis players, first ladies, 
+cocktails, bottled water brands, and Archbishops of 
+Canterbury. For each set, we then manually 
+scraped every instance from Wikipedia keeping 
+track also of the listed variants names. 
+The gold standard is available for download at: 
+http://www.patrickpantel.com/cgi-bin/Web/Tools/getfile.pl?type=data&id=sse-
+gold/wikipedia.20071218.goldsets.tgz 
+The 50 sets consist on average of 208 instances 
+(with a minimum of 11 and a maximum of 1,116) 
+for a total of 10,377 instances. 
+5.2 Trials 
+In order to analyze the corpus and seed effects on 
+performance, we created 30 copies of each of the 
+50 sets and randomly sorted each copy. Then, for 
+each of the 1500 copies, we created a trial for each 
+of the following 23 seed sizes: 1, 2, 5, 10, 20, 30, 
+40, ?, 200. Each trial of seed size s was created by 
+taking the first s entries in each of the 1500 random 
+copies. For sets that contained fewer than 200 
+items, we only generated trials for seed sizes 
+                                                 
+2 In this paper, extractions from Wikipedia are taken 
+from a snapshot of the resource in December 2008. 
+942
+smaller than the set size. The resulting trial dataset 
+consists of 20,220 trials3. 
+5.3 Judgments 
+Set expansion systems consist of an expansion al-
+gorithm (such as the one described in Section 4.1) 
+as well as a corpus (such as Wikipedia, a news 
+corpus, or a web crawl). For a given system, each 
+of the 20,220 trials described in the previous sec-
+tion are expanded. In our work, we limited the total 
+number of system expansions, per trial, to 1000. 
+Before judgment of an expanded set, we first 
+collapse each instance that is a variant of another 
+(determined using the variants in our gold stan-
+dard) into one single instance (keeping the highest 
+system score)4. Then, each expanded instance is 
+judged as correct or incorrect automatically 
+against the gold standard described in Section 5.1. 
+5.4 Analysis Metrics 
+Our experiments in Section 6 consist of precision 
+vs. recall or precision vs. rank curves, where: 
+a) precision is defined as the percentage of correct 
+instances in the expansion of a seed set; and 
+b) recall is defined as the percentage of non-seed 
+gold standard instances retrieved by the system. 
+Since the gold standard sets vary significantly in 
+size, we also provide the R-precision metric to 
+normalize for set size: 
+c) R-precision is defined as the average precision 
+of all trials where precision is taken at rank R = 
+{size of trial?s associated gold standard set}, 
+thereby normalizing for set size. 
+                                                 
+3 Available for download at http://www.patrickpantel.com/cgi-
+bin/Web/Tools/getfile.pl?type=data&id=sse-gold/wikipedia.20071218.trials.tgz. 
+4 Note also that we do not allow seed instances nor their 
+variants to appear in an expansion set. 
+For the above metrics, 95% confidence bounds are 
+computed using the randomly generated samples 
+described in Section 5.2. 
+6 Experimental Results 
+Our goal is to study the performance gains on set 
+expansion using our Web-scale term similarity al-
+gorithm from Section 3. We present a large empir-
+ical study quantifying the importance of corpus 
+and seeds on expansion accuracy. 
+6.1 Experimental Setup 
+We extracted statistics to build our model from 
+Section 3 using four different corpora, outlined in 
+Table 2. The Wikipedia corpus consists of a snap-
+shot of the English articles in December 20085. 
+The Web100 corpus consists of an extraction from 
+a large crawl of the Web, from Yahoo!, of over 
+600 million English webpages. For each crawled 
+document, we removed paragraphs containing 
+fewer than 50 tokens (as a rough approximation of 
+the narrative part of a webpage) and then removed 
+all duplicate sentences. The resulting corpus con-
+sists of over 200 billion words. The Web020 cor-
+pus is a random sample of 1/5th of the sentences in 
+Web100 whereas Web004 is a random sample of 
+1/25th of Web100. 
+For each corpus, we tagged and chunked each 
+sentence as described in Section 3. We then com-
+puted the similarity between all noun phrase 
+chunks using the model of Section 3.1. 
+6.2 Quantitative Analysis 
+Our proposed optimization for term similarity 
+computation produces exact scores (unlike rando-
+mized techniques) for all pairs of terms on a large 
+Web crawl. For our largest corpus, Web100, we 
+computed the pairwise similarity between over 500 
+million words in 50 hours using 200 four-core ma-
+chines. Web004 is of similar scale to the largest 
+reported randomized technique (Ravichandran et 
+al. 2005). On this scale, we compute the exact si-
+milarity matrix in a little over two hours whereas 
+Ravichandran et al (2005) compute an approxima-
+tion in 570 hours. On average they only find 73% 
+                                                 
+5 To avoid biasing our Wikipedia corpus with the test 
+sets, Wikipedia ?List of? pages were omitted from our 
+statistics as were any page linked to gold standard list 
+members from ?List of? pages. 
+Table 2. Corpora used to build our expansion models.
+CORPORA 
+UNIQUE 
+SENTENCES 
+(MILLIONS) 
+TOKENS 
+(MILLIONS) 
+UNIQUE 
+WORDS 
+(MILLIONS) 
+Web100 5,201 217,940 542 
+Web020? 1040 43,588 108 
+Web004? 208 8,717 22 
+Wikipedia6 30 721 34 
+?Estimated from Web100 statistics. 
+ 
+943
+of the top-1000 similar terms of a random term 
+whereas we find all of them. 
+For set expansion, experiments have been run on 
+corpora as large as Web004 and Wikipedia (Sar-
+mento et al 2007), a corpora 300 times smaller 
+than our Web crawl. Below, we compare the ex-
+pansion accuracy of Sarmento et al (2007) on Wi-
+kipedia and our Web crawls. 
+Figure 2 illustrates the precision and recall tra-
+deoff for our four corpora, with 95% confidence 
+intervals computed over all 20,220 trials described 
+in Section 4.2. Table 3 lists the resulting R-
+precision along with the system precisions at ranks 
+25, 50, and 100 (see Figure 2 for detailed precision 
+analysis). Why are the precision scores so low? 
+Compared with previous work that manually select 
+entity types for expansion, such as countries and 
+companies, our work is the first to evaluate over a 
+large set of randomly selected entity types. On just 
+the countries class, our R-Precision was 0.816 us-
+ing Web100. 
+The following sections analyze the effects of 
+various expansion variables: corpus size, corpus 
+quality, seed size, and seed quality. 
+6.2.1 Corpus Size and Corpus Quality Effect 
+Not surprisingly, corpus size and quality have a 
+significant impact on expansion performance. Fig-
+ure 2 and Table 3 quantify this expectation. On our 
+Web crawl corpora, we observe that the full 200+ 
+billion token crawl (Web100) has an average R-
+precision 13% higher than 1/5th of the crawl 
+(Web020) and 53% higher than 1/25th of the crawl. 
+Figure 2 also illustrates that throughout the full 
+precision/recall curve, Web100 significantly out-
+performs Web020, which in turn significantly out-
+performs Web004. 
+The higher text quality Wikipedia corpus, which 
+consists of roughly 60 times fewer tokens than 
+Web020, performs nearly as well as Web020 (see 
+Figure 2). We omitted statistics from Wikipedia 
+?List of? pages in order to not bias our evaluation 
+to the test set described in Section 5.1. Inspection 
+of the precision vs. rank graph (omitted for lack of 
+space) revealed that from rank 1 thru 550, Wikipe-
+dia had the same precision as Web020. From rank 
+550 to 1000, however, Wikipedia?s precision 
+dropped off significantly compared with Web020, 
+accounting for the fact that the Web corpus con-
+tains a higher recall of gold standard instances. The 
+R-precision reported in Table 3 shows that this 
+precision drop-off results in a significantly lower 
+R-precision for Wikipedia compared with Web020. 
+6.2.2  The Effect of Seed Selection 
+Intuitively, some seeds are better than others. We 
+study the impact of seed selection effect by in-
+specting the system performance for several ran-
+domly selected seed sets of fixed size and we find 
+that seed set composition greatly affects perfor-
+mance. Figure 3 illustrates the precision vs. recall 
+tradeoff on our best performing corpus Web100 for 
+30 random seed sets of size 10 for each of our 50 
+gold standard sets (i.e., 1500 trials were tested.) 
+Each of the trials performed better than the average 
+system performance (the double-lined curve lowest 
+in Figure 3). Distinguishing between the various 
+data series is not important, however important to 
+notice is the very large gap between the preci-
+sion/recall curves of the best and worst performing 
+random seed sets. On average, the best performing 
+seed sets had 42% higher precision and 39% higher 
+recall than the worst performing seed set. Similar 
+Table 3. Corpora analysis: R-precision and Precision at var-
+ious ranks. 95% confidence bounds are all below 0.005?. 
+CORPORA R-PREC PREC@25 PREC@50 PREC@100 
+Web100 0.404 0.407 0.347 0.278 
+Web020 0.356 0.377 0.319 0.250 
+Web004 0.264 0.353 0.298 0.239 
+Wikipedia 0.315 0.372 0.314 0.253 
+?95% confidence bounds are computed over all trials described in Section 5.2. 
+Figure 2. Corpus size and quality improve performance. 
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0 0.1 0.2 0.3 0.4 0.5 0.6
+Re
+ca
+ll
+Precision
+Corpora?Analysis
+(Precision?vs.?Recall)
+Web100
+Web020
+Web004
+Wikipedia
+CORPORA R-PREC PREC@25 PREC@50 PREC@100 
+Web100 0.404 0.407 0.347 0.278 
+Web020 0.356 0.377 0.319 0.250 
+Web004 0.264 0.353 0.298 0.239 
+Wikipedia 0.315 0.372 0.314 0.253 
+?95% confidence bounds are computed over all trials described in Section 5.2. 
+944
+curves were observed for inspected seed sets of 
+size 5, 20, 30, and 40. 
+Although outside of the scope of this paper, we 
+are currently investigating ways to automatically 
+detect which seed elements are better than others in 
+order to reduce the impact of seed selection effect. 
+6.2.3 The Effect of Seed Size 
+Here we aim to confirm, with a large empirical 
+study, the anecdotal claims in (Pa?ca and Durme 
+2008) that few seeds are necessary. We found that 
+a) very small seed sets of size 1 or 2 are not suffi-
+cient for representing the intended entity set; b) 5-
+20 seeds yield on average best performance; and c) 
+surprisingly, increasing the seed set size beyond 
+20 or 30 on average does not find any new correct 
+instances. 
+We inspected the effect of seed size on R-
+precision over the four corpora. Each seed size 
+curve is computed by averaging the system per-
+formance over the 30 random trials of all 50 sets. 
+For each corpus, R-precision increased sharply 
+from seed size 1 to 10 and the curve flattened out 
+for seed sizes larger than 20 (figure omitted for 
+lack of space). Error analysis on the Web100 cor-
+pus shows that once our model has seen 10-20 
+seeds, the distributional similarity model seems to 
+have enough statistics to discover as many new 
+correct instances as it could ever find. Some enti-
+ties could never be found by the distributional si-
+milarity model since they either do not occur or 
+infrequently occur in the corpus or they occur in 
+contexts that vary a great deal from other set ele-
+ments. Figure 4 illustrates this behavior by plotting 
+for each seed set size the rate of increase in discov-
+ery of new correct instances (i.e., not found in 
+smaller seed set sizes). 
+We see that most gold standard instances are 
+discovered with the first 5-10 seeds. After the 30th 
+seed is introduced, no new correct instances are 
+found. An important finding is that the error rate 
+does not increase with increased seed set size (see 
+Figure 5). This study shows that only few seeds 
+(10-20) yield best performance and that adding 
+more seeds beyond this does not on average affect 
+performance in a positive or negative way. 
+Figure 3. Seed set composition greatly affects system performance (with 30 different seed samples of size 10). 
+Figure 4. Few new instances are discovered with more 
+than 5-20 seeds on Web100 (with 95% confidence). 
+Figure 5. Percentage of errors does not increase as 
+seed size increases on Web100 (with 95% confidence).
+0
+0.5
+1
+1.5
+2
+2.5
+3
+0 20 40 60 80 100 120 140 160 180 200
+Ra
+te
+?o
+f?N
+ew
+?C
+or
+re
+ct
+?
+Seed?Size
+Rate?of?New?Correct?Expansions
+vs.?Seed?Size
+0
+0.2
+0.4
+0.6
+0.8
+1
+0 20 40 60 80 100 120 140 160 180 200
+%
+?o
+f?E
+rr
+or
+Seed?Size
+Seed?Size?vs.?%?of?Errors
+0
+0.2
+0.4
+0.6
+0.8
+0 0.2 0.4 0.6 0.8 1
+Re
+ca
+ll
+Precision
+Web100:?Seed?Selection?Effect
+Precision?vs.?Recall
+Web100 s010
+s010.t01 s010.t02
+s010.t03 s010.t04
+s010.t05 s010.t06
+s010.t07 s010.t08
+s010.t09 s010.t10
+s010.t11 s010.t12
+s010.t13 s010.t14
+s010.t15 s010.t16
+s010.t17 s010.t18
+s010.t19 s010.t20
+s010.t21 s010.t22
+s010.t23 s010.t24
+s010.t25 s010.t26
+s010.t27 s010.t28
+s010.t29 s010.t30
+945
+7 Conclusion  
+We proposed a highly scalable term similarity al-
+gorithm, implemented in the MapReduce frame-
+work, and deployed over a 200 billion word crawl 
+of the Web. The pairwise similarity between 500 
+million terms was computed in 50 hours using 200 
+quad-core nodes. We evaluated the impact of the 
+large similarity matrix on a set expansion task and 
+found that the Web similarity matrix gave a large  
+performance boost over a state-of-the-art expan-
+sion algorithm using Wikipedia. Finally, we re-
+lease to the community a testbed for experimental-
+ly analyzing automatic set expansion, which in-
+cludes a large collection of nearly random entity 
+sets extracted from Wikipedia and over 22,000 
+randomly sampled seed expansion trials.  
+References 
+Abney, S. Parsing by Chunks. In: Robert Berwick, Ste-
+ven Abney and Carol Tenny (eds.), Principle-Based 
+Parsing. Kluwer Academic Publishers, Dordrecht. 
+1991. 
+Agirre, E.; Alfonseca, E.; Hall, K.; Kravalova, J.; Pasca, 
+M.; and Soroa, A.. 2009. A Study on Similarity and 
+Relatedness Using Distributional and WordNet-based 
+Approaches. In Proceedings of NAACL HLT 09. 
+Ando, R. K. 2000. Latent semantic space: Iterative scal-
+ing improves precision of interdocument similarity 
+measurement. In Proceedings of SIGIR-00. pp. 216?
+223. 
+Atterer, M. and Schutze, H., 2006. The Effect of Corpus 
+Size when Combining Supervised and Unsupervised 
+Training for Disambiguation. In Proceedings of ACL-
+06. 
+Banko, M. and Brill, E. 2001. Mitigating the paucity of 
+data problem. In Proceedings of HLT-2001. San Di-
+ego, CA. 
+Banko, M.; Cafarella, M.; Soderland, S.; Broadhead, M.; 
+Etzioni, O. 2007. Open Information Extraction from 
+the Web. In Proceedings of IJCAI. 
+Bayardo, R. J.; Ma, Y.; Srikant, R. 2007. Scaling Up 
+All-Pairs Similarity Search. In Proceedings of WWW-
+07. pp. 131-140. Banff, Canada. 
+Blei, D. M.; Ng, A. Y.; and Jordan, M. I. 2003. Latent 
+Dirichlet Allocation. Journal of Machine Learning 
+Research, 3:993?1022. 
+Brill, E. 1995. Transformation-Based Error-Driven 
+Learning and Natural Language Processing: A Case 
+Study in Part of Speech Tagging. Computational 
+Linguistics. 
+Broder, A. 1997. On the resemblance and containment 
+of documents. In Compression and Complexity of 
+Sequences. pp. 21-29. 
+Bunescu, R. and Mooney, R. 2004 Collective Informa-
+tion Extraction with Relational Markov Networks. In 
+Proceedings of ACL-04, pp. 438-445. 
+Cao, H.; Jiang, D.; Pei, J.; He, Q.; Liao, Z.; Chen, E.; 
+and Li, H. 2008. Context-aware query suggestion by 
+mining click-through and session data. In Proceed-
+ings of KDD-08. pp. 875?883. 
+Chang, W.; Pantel, P.; Popescu, A.-M.; and Gabrilovich, 
+E. 2009. Towards intent-driven bidterm suggestion. 
+In Proceedings of WWW-09 (Short Paper), Madrid, 
+Spain. 
+Church, K. and Hanks, P. 1989. Word association 
+norms, mutual information, and lexicography. In 
+Proceedings of ACL89. pp. 76?83. 
+Dean, J. and Ghemawat, S. 2008. MapReduce: Simpli-
+fied Data Processing on Large Clusters. Communica-
+tions of the ACM, 51(1):107-113. 
+Deerwester, S. C.; Dumais, S. T.; Landauer, T. K.; Fur-
+nas, G. W.; and Harshman, R. A. 1990. Indexing by 
+latent semantic analysis. Journal of the American So-
+ciety for Information Science, 41(6):391?407. 
+Downey, D.; Broadhead, M; Etzioni, O. 2007. Locating 
+Complex Named Entities in Web Text. In Proceed-
+ings of IJCAI-07.  
+Elsayed, T.; Lin, J.; Oard, D. 2008. Pairwise Document 
+Similarity in Large Collections with MapReduce. In 
+Proceedings of ACL-08: HLT, Short Papers (Com-
+panion Volume). pp. 265?268. Columbus, OH. 
+Erk, K. 2007. A simple, similarity-based model for se-
+lectional preferences. In Proceedings of ACL-07. pp. 
+216?223. Prague, Czech Republic. 
+Erk, K. and Pad?, S. 2008. A structured vector space 
+model for word meaning in context. In Proceedings 
+of EMNLP-08. Honolulu, HI. 
+Etzioni, O.; Cafarella, M.; Downey. D.; Popescu, A.; 
+Shaked, T; Soderland, S.; Weld, D.; Yates, A. 2005. 
+Unsupervised named-entity extraction from the Web: 
+An Experimental Study. In Artificial Intelligence, 
+165(1):91-134. 
+Gorman, J. and Curran, J. R. 2006. Scaling distribution-
+al similarity to large corpora. In Proceedings of ACL-
+06. pp. 361-368. 
+946
+Harris, Z. 1985. Distributional Structure. In: Katz, J. J. 
+(ed.), The Philosophy of Linguistics. New York: Ox-
+ford University Press. pp. 26-47. 
+Hindle, D. 1990. Noun classification from predicate-
+argument structures. In Proceedings of ACL-90. pp. 
+268?275. Pittsburgh, PA. 
+Hofmann, T. 1999. Probabilistic Latent Semantic Index-
+ing. In Proceedings of SIGIR-99. pp. 50?57, Berke-
+ley, California. 
+Kanerva, P. 1993. Sparse distributed memory and re-
+lated models. pp. 50-76. 
+Lapata, M. and Keller, F., 2005. Web-based Models for 
+Natural Language Processing, In ACM Transactions 
+on Speech and Language Processing (TSLP), 2(1). 
+Lee, Lillian. 1999. Measures of Distributional Similarity. 
+In Proceedings of ACL-93. pp. 25-32. College Park, 
+MD. 
+Lin, D. 1998. Automatic retrieval and clustering of 
+similar words. In Proceedings of COLING/ACL-98. 
+pp. 768?774. Montreal, Canada. 
+Lund, K., and Burgess, C. 1996. Producing high-
+dimensional semantic spaces from lexical co-
+occurrence. Behavior Research Methods, Instruments, 
+and Computers, 28(2):203?208. 
+McCallum, A. and Li, W. Early Results for Named 
+Entity Recognition with Conditional Random Fields, 
+Feature Induction and Enhanced Lexicons. In Pro-
+ceedings of CoNLL-03. 
+McQueen, J. 1967. Some methods for classification and 
+analysis of multivariate observations. In Proceedings 
+of 5th Berkeley Symposium on Mathematics, Statistics 
+and Probability, 1:281?298. 
+Pa?ca, M. 2007a. Weakly-supervised discovery of 
+named entities using web search queries. In Proceed-
+ings of CIKM-07. pp. 683-690. 
+Pa?ca, M. 2007b. Organizing and Searching the World 
+Wide Web of Facts ? Step Two: Harnessing the Wis-
+dom of the Crowds. In Proceedings of WWW-07. 
+Pa?ca, M. and Durme, B.J. 2008. Weakly-supervised 
+Acquisition of Open-Domain Classes and Class 
+Attributes from Web Documents and Query Logs. In 
+Proceedings of ACL-08. 
+Pa?ca, M.; Lin, D.; Bigham, J.; Lifchits, A.; Jain, A. 
+2006. Names and Similarities on the Web: Fast Ex-
+traction in the Fast Lane. In Proceedings of ACL-
+2006. pp. 113-120. 
+Pantel, P. and Lin, D. 2002. Discovering Word Senses 
+from Text. In Proceedings of KDD-02. pp. 613-619. 
+Edmonton, Canada. 
+Pantel, P.; Ravichandran, D; Hovy, E.H. 2004. Towards 
+terascale knowledge acquisition. In proceedings of 
+COLING-04. pp 771-777. 
+Ravichandran, D.; Pantel, P.; and Hovy, E. 2005. Ran-
+domized algorithms and NLP: Using locality sensi-
+tive hash function for high speed noun clustering. In 
+Proceedings of ACL-05. pp. 622-629. 
+Riloff, E. and Jones, R. 1999 Learning Dictionaries for 
+Information Extraction by Multi-Level Boostrapping. 
+In Proceedings of AAAI/IAAAI-99. 
+Riloff, E. and Shepherd, J. 1997. A corpus-based ap-
+proach for building semantic lexicons. In Proceed-
+ings of EMNLP-97. 
+Rychl?, P. and Kilgarriff, A. 2007. An efficient algo-
+rithm for building a distributional thesaurus (and oth-
+er Sketch Engine developments). In Proceedings of 
+ACL-07, demo sessions. Prague, Czech Republic. 
+Sarawagi, S. and Kirpal, A. 2004. Efficient set joins on 
+similarity predicates. In Proceedings of SIGMOD '04. 
+pp. 74 ?754. New York, NY. 
+Sarmento, L.; Jijkuon, V.; de Rijke, M.; and Oliveira, E. 
+2007. ?More like these?: growing entity classes from 
+seeds. In Proceedings of CIKM-07. pp. 959-962. Lis-
+bon, Portugal. 
+Turney, P. D., and Littman, M. L. 2003. Measuring 
+praise and criticism: Inference of semantic orienta-
+tion from association. ACM Transactions on Infor-
+mation Systems, 21(4). 
+Wang, R.C. and Cohen, W.W. 2008. Iterative Set Ex-
+pansion of Named Entities using the Web. In Pro-
+ceedings of ICDM 2008. Pisa, Italy. 
+Wang. R.C. and Cohen, W.W. 2007 Language-
+Independent Set Expansion of Named Entities Using 
+the Web. In Proceedings of ICDM-07. 
+Yuret, D., and Yatbaz, M. A. 2009. The noisy channel 
+model for unsupervised word sense disambiguation. 
+Computational Linguistics. Under review. 
+ 
+947
+Modern Natural Language Interfaces to Databases:
+Composing Statistical Parsing with Semantic Tractability
+Ana-Maria Popescu Alex Armanasu Oren Etzioni
+University of Washington
+{amp, alexarm, etzioni, daveko, ayates}@cs.washington.edu
+David Ko Alexander Yates
+Abstract
+Natural Language Interfaces to Databases
+(NLIs) can benefit from the advances in statis-
+tical parsing over the last fifteen years or so.
+However, statistical parsers require training on
+a massive, labeled corpus, and manually cre-
+ating such a corpus for each database is pro-
+hibitively expensive. To address this quandary,
+this paper reports on the PRECISE NLI, which
+uses a statistical parser as a ?plug in?. The pa-
+per shows how a strong semantic model cou-
+pled with ?light re-training? enables PRECISE
+to overcome parser errors, and correctly map
+from parsed questions to the corresponding
+SQL queries. We discuss the issues in using
+statistical parsers to build database-independent
+NLIs, and report on experimental results with
+the benchmark ATIS data set where PRECISE
+achieves 94% accuracy.
+1 Introduction and Motivation
+Over the last fifteen years or so, much of the NLP
+community has focused on the use of statistical
+and machine learning techniques to solve a wide
+range of problems in parsing, machine translation,
+and more. Yet, classical problems such as building
+Natural Language Interfaces to Databases (NLIs)
+(Grosz et al, 1987) are far from solved.
+There are many reasons for the limited success of
+past NLI efforts (Androutsopoulos et al, 1995). We
+highlight several problems that are remedied by our
+approach. First, manually authoring and tuning a se-
+mantic grammar for each new database is brittle and
+prohibitively expensive. In response, we have im-
+plemented a ?transportable? NLI that aims to mini-
+mize manual, database-specific configuration. Sec-
+ond, NLI systems built in the 70s and 80s had lim-
+ited syntactic parsing capabilities. Thus, we have an
+opportunity to incorporate the important advances
+made by statistical parsers over the last two decades
+in an NLI.
+However, attempting to use a statistical parser in
+a database-independent NLI leads to a quandary. On
+the one hand, to parse questions posed to a particu-
+lar database, the parser has to be trained on a corpus
+of questions specific to that database. Otherwise,
+many of the parser?s decisions will be incorrect. For
+example, the Charniak parser (trained on the 40,000
+sentences in the WSJ portion of the Penn Treebank)
+treats ?list? as a noun, but in the context of the ATIS
+database it is a verb.1 On the other hand, manually
+creating and labeling a massive corpus of questions
+for each database is prohibitively expensive.
+We consider two methods of resolving this
+quandary and assess their performance individually
+and in concert on the ATIS data set. First, we use
+a strong semantic model to correct parsing errors.
+We introduce a theoretical framework for discrim-
+inating between Semantically Tractable (ST) ques-
+tions and difficult ones, and we show that ST ques-
+tions are prevalent in the well-studied ATIS data
+set (Price, 1990). Thus, we show that the seman-
+tic component of the NLI task can be surprisingly
+easy and can be used to compensate for syntactic
+parsing errors. Second, we re-train the parser using
+a relatively small set of 150 questions, where each
+word is labeled by its part-of-speech tag.
+To demonstrate how these methods work in prac-
+tice, we sketch the fully-implemented PRECISE
+NLI, where a parser is a modular ?plug in?. This
+modularity enables PRECISE to leverage continuing
+advances in parsing technology over time by plug-
+ging in improved parsers as they become available.
+The remainder of this paper is organized as fol-
+lows. We describe PRECISE in Section 2, sketch our
+theory in Section 3, and report on our experiments
+in Section 4. We consider related work in Section 5,
+and conclude in Section 6.
+2 The PRECISE System Overview
+Our recent paper (Popescu et al, 2003) introduced
+the PRECISE architecture and its core algorithm for
+1This is an instance of a well known machine learning prin-
+ciple ? typically, a learning algorithm is effective when its test
+examples are drawn from roughly the same distribution as its
+training examples.
+reducing semantic interpretation to a graph match-
+ing problem that is solved by MaxFlow. In this sec-
+tion we provide a brief overview of PRECISE, focus-
+ing on the components necessary to understanding
+its performance on the ATIS data set in Section 4.
+To discuss PRECISE further, we must first intro-
+duce some terminology. We say that a database is
+made up of three types of elements: relations, at-
+tributes and values. Each element is unique: an at-
+tribute element is a particular column in a particular
+relation and each value element is the value of a
+particular attribute. A value is compatible with its
+attribute and also with the relation containing this
+attribute. An attribute is compatible with its rela-
+tion. Each attribute in the database has associated
+with it a special value, which we call a wh-value,
+that corresponds to a wh-word (what, where, etc.).
+We define a lexicon as a tuple (T, E, M), where
+T is a set of strings, called tokens (intuitively, tokens
+are strings of one or more words, like ?New York?);
+E is a set of database elements, wh-values, and join
+paths; 2 and M is a subset of T ? E ? a binary
+relation between tokens and database elements.
+PRECISE takes as input a lexicon and a parser.
+Then, given an English question, PRECISE maps it
+to one (or more) corresponding SQL queries. We
+concisely review how PRECISE works through a
+simple example. Consider the following question
+q: ?What are the flights from Boston to Chicago??
+First, the parser plug-in automatically derives a
+dependency analysis for q from q?s parse tree,
+represented by the following compact syntactic log-
+ical form: LF (q) = what(0), is(0, 1), f light(1),
+from(1, 2), boston(2), to(1, 3), chicago(3).
+LF (q) contains a predicate for each question word.
+Head nouns correspond to unary predicates whose
+arguments are constant identifiers.
+Dependencies are encoded by equality con-
+straints between arguments to different predicates.
+The first type of dependency is represented by noun
+and adjective pre-modifiers corresponding to unary
+predicates whose arguments are the identifiers for
+the respective modified head nouns. A second type
+of dependency is represented by noun postmodifiers
+and mediated by prepositions (in the above exam-
+ple, ?from? and ?to?). The prepositions correspond
+to binary predicates whose arguments specify the at-
+tached noun phrases. For instance, ?from? attaches
+?flight? to ?boston?. Finally, subject/predicate,
+predicate/direct object and predicate/indirect object
+dependency information is computed for the various
+2A join path is a set of equality constraints between the at-
+tributes of two or more tables. See Section 3 for more details
+and a formal definition.
+verbs present in the question. Verbs correspond to
+binary or tertiary predicates whose arguments indi-
+cate what noun phrases play the subject and object
+roles. In our example, the verb ?is? mediates the
+dependency between ?what? and ?flight?. 3
+PRECISE?s lexicon is generated by automatically
+extracting value, attribute, and relation names from
+the database. We manually augmented the lexicon
+with relevant synonyms, prepositions, etc..
+The tokenizer produces a single complete
+tokenization of this question and lemmatizes
+the tokens: (what, is, flight, from,
+boston, to, chicago). By looking up the
+tokens in the lexicon, PRECISE efficiently retrieves
+the set of potentially matching database elements
+for every token. In this case, what, boston and
+chicago are value tokens, to and from are at-
+tribute tokens and flight is a relation token.
+In addition to this information, the lexicon also
+contains a set of restrictions for tokens that are
+prepositions or verbs. The restrictions specify the
+database elements that are allowed to match to the
+arguments of the respective preposition or verb. For
+example, from can take as arguments a flight and
+a city. The restrictions also specify the join paths
+connecting these relations/attributes. The syntactic
+logical form is used to retrieve the relevant set of
+restrictions for a given question.
+The matcher takes as input the information de-
+scribed above and reduces the problem of satisfy-
+ing the semantic constraints imposed by the defi-
+nition of a valid interpretation to a graph matching
+problem (Popescu et al, 2003). In order for each
+attribute token to match a value token, Boston
+and Chicago map to the respective values of the
+database attribute city.cityName, from maps to
+flight.fromAirport or fare.fromAirport and to
+maps to flight.toAirport or fare.toAirport. The
+restrictions validate the output of the matcher and
+are then used in combination with the syntactic in-
+formation to narrow down even further the possi-
+ble interpretations for each token by enforcing lo-
+cal dependencies. For example, the syntactic in-
+formation tells us that ?from? refers to ?flight? and
+since ?flight? uniquely maps to flight, this means
+that from will map to flight.fromAirport rather
+than fare.fromAirport (similarly, to maps to
+flight.toAirport and whatmaps to flight.flightId).
+Finally, the matcher compiles a list of all relations
+satisfying all the clauses in the syntactic logical
+form using each constant and narrows down the set
+3PRECISE uses a larger set of constraints on dependency
+relations, but for brevity, we focus on those relevant to our ex-
+amples.
+of possible interpretations for each token accord-
+ingly. Each set of (constant, corresponding database
+element) pairs represents a semantic logical form.
+The query generator takes each semantic logical
+form and uses the join path information available in
+the restrictions to form the final SQL queries corre-
+sponding to each semantic interpretation.
+pronoun verb noun prep noun prep noun prep noun
+NP NP
+NP
+PP
+PP
+PP
+NPNP NP
+VP
+S
+NP
+WhatareflightsfromBostontoChicagoonMonday?
+Figure 1: Example of an erroneous parse tree corrected
+by PRECISE?s semantic over-rides. PRECISE detects that the
+parser attached the PP ?on Monday? to ?Chicago? in error.
+PRECISE attempts to re-attach ?on Monday? first to the PP
+?to Chicago?, and then to the NP ?flights from Boston to
+Chicago?, where it belongs.
+2.1 Parser Enhancements
+We used the Charniak parser (Charniak, 2000) for
+the experiments reported in this paper. We found
+that the Charniak parser, which was trained on
+the WSJ corpus, yielded numerous syntactic errors.
+Our first step was to hand tag a set of 150 questions
+with Part Of Speech (POS) tags, and re-train the
+parser?s POS tagger. As a result, the probabilities
+associated with certain tags changed dramatically.
+For example, initially, ?list? was consistently tagged
+as a noun, but after re-training it was consistently la-
+beled as a verb. This change occurs because, in the
+ATIS domain, ?list? typically occurs in imperative
+sentences, such as ?List all flights.?
+Focusing exclusively on the tagger drastically re-
+duced the amount of data necessary for re-training.
+Whereas the Charniak parser was originally trained
+on close to 40,000 sentences, we only required 150
+sentences for re-training. Unfortunately, the re-
+trained parser still made errors when solving dif-
+ficult syntactic problems, most notably preposition
+attachment and preposition ellipsis. PRECISE cor-
+rects both types of errors using semantic informa-
+tion.
+We refer to PRECISE?s use of semantic informa-
+tion to correct parser errors as semantic over-rides.
+Specifically, PRECISE detects that an attachment de-
+cision made by the parser is inconsistent with the
+semantic information in its lexicon.4 When this oc-
+curs, PRECISE attempts to repair the parse tree as
+follows. Given a noun phrase or a prepositional
+phrase whose corresponding node n in the parse tree
+has the wrong parent p, PRECISE traverses the path
+in the parse tree from p to the root node, search-
+ing for a suitable node to attach n to. PRECISE
+chooses the first ancestor of p such that when n is
+attached to the new node, the modified parse tree
+agrees with PRECISE?s semantic model. Thus, the
+semantic over-ride procedure is a generate-and-test
+search where potential solutions are generated in the
+order of ancestors of node n in the parse tree. The
+procedure?s running time is linear in the depth of the
+parse tree.
+Consider, for example, the question ?What are
+flights from Boston to Chicago on Monday?? The
+parser attaches the prepositional phrase ?on Mon-
+day? to ?Chicago? whereas it should be attached to
+?flights? (see Figure 1). The parser merely knows
+that ?flights?, ?Boston?, and ?Chicago? are nouns. It
+then uses statistics to decide that ?on Monday? is
+most likely to attach to ?Chicago?. However, this
+syntactic decision is inconsistent with the semantic
+information in PRECISE?s lexicon ? the preposition
+?on? does not take a city and a day as arguments,
+rather it takes a flight and a day.
+Thus, PRECISE decides to over-ride the parser
+and attach ?on? elsewhere. As shown in Figure
+1, PRECISE detects that the parser attached the PP
+?on Monday? to ?Chicago? in error. PRECISE at-
+tempts to re-attach ?on Monday? first to the PP ?to
+Chicago?, and then to the NP ?flights from Boston
+to Chicago?, where it belongs. While in our ex-
+ample the parser violated a constraint in PRECISE?s
+lexicon, the violation of any semantic constraint will
+trigger the over-ride procedure.
+In the above example, we saw how semantic over-
+rides help PRECISE fix prepositional attachment er-
+rors; they also enable it to correct parser errors
+in topicalized questions (e.g., ?What are Boston to
+Chicago flights??) and in preposition ellipsis (e.g.,
+when ?on? is omitted in the question ?What are
+flights from Boston to Chicago Monday??).
+Unfortunately, semantic over-rides do not correct
+all of the parser?s errors. Most of the remaining
+parser errors fall into the following categories: rel-
+ative clause attachment, verb attachment, numeric
+4We say that node n is attached to node p if p is the parent
+of n in the parse tree.
+noun phrases, and topicalized prepositional phrases.
+In general, semantic over-rides can correct local at-
+tachment errors, but cannot over-come more global
+problems in the parse tree. Thus, PRECISE can be
+forced to give up and ask the user to paraphrase her
+question.
+3 PRECISE Theory
+The aim of this section is to explain the theoretical
+under-pinnings of PRECISE?s semantic model. We
+show that PRECISE always answers questions from
+the class of Semantically Tractable (ST) questions
+correctly, given correct lexical and syntactic infor-
+mation.5
+We begin by introducing some terminology that
+builds on the definitions given Section 2.
+3.1 Definitions
+A join path is a set of equality constraints between
+a sequence of database relations. More formally, a
+join path for relations R1, . . . , Rn is a set of con-
+straints C ? {Ri.a = Ri+1.b|1 ? i ? n?1}. Here
+the notation Ri.a refers to the value of attribute a in
+relation Ri.
+We say a relation between token set T and a set
+of database elements and join paths E respects a
+lexicon L if it is a subset of M .
+A question is simply a string of characters. A to-
+kenization of a question (with respect to a lexicon)
+is an ordered set of strings such that each element
+of the tokenization is an element of the lexicon?s to-
+ken set, and the concatenation of the elements of the
+tokenization, in order, is equal to the original ques-
+tion. For a given lexicon and question, there may
+be zero, one, or several tokenizations. Any question
+that has at least one tokenization is tokenizable.
+An attachment function is a function FL,q : T ?
+T , where L is the lexicon, q is a question, and T
+is the set of tokens in the lexicon. The attachment
+function is meant to represent dependency informa-
+tion available to PRECISE through a parser. For
+example, if a question includes the phrase ?restau-
+rants in Seattle?, the attachment function would at-
+tach ?Seattle? to ?restaurants? for this question. Not
+all tokens are attached to something in every ques-
+tion, so the attachment function is not a total func-
+tion. We say that a relation R between tokens
+in a question q respects the attachment function if
+?t1, t2, R(t1, t2) ? (FL,q(t1) = t2) ? (FL,q does
+not take on a value for t1).
+5We do not claim that NLI users will restrict their questions
+to the ST subset of English in practice, but rather that identify-
+ing classes of questions as semantically tractable (or not), and
+experimentally measuring the prevalence of such questions, is
+a worthwhile avenue for NLI research.
+In an NLI, interpretations of a question are SQL
+statements. We define a valid interpretation of a
+question as being an SQL statement that satisfies a
+number of conditions connecting it to the tokens in
+the question. Because of space constraints, we pro-
+vide only one such constraint as an example: There
+exists a tokenization t of the question and a set of
+database elements E such that there is a one-to-one
+map from t to E respecting the lexicon, and for each
+value element v ? E, there is exactly one equality
+constraint in the SQL clause that uses v.
+For a complete definition of a valid interpretation,
+see (Popescu et al, 2003).
+3.2 Semantic Tractability Model
+In this section we formally define the class of
+ST questions, and show that PRECISE can prov-
+ably map such questions to the corresponding SQL
+queries. Intuitively, ST questions are ?easy to un-
+derstand? questions where the words or phrases
+correspond to database elements or constraints on
+join paths. Examining multiple questions sets and
+databases, we have found that nouns, adjectives, and
+adverbs in ?easy? questions refer to database rela-
+tions, attributes, or values.
+Moreover, the attributes and values in a question
+?pair up? naturally to indicate equality constraints in
+SQL. However, values may be paired with implicit
+attributes that do not appear in the question (e.g., the
+attribute ?cuisine? in ?What are the Chinese restau-
+rants in Seattle?? is implicit). Interestingly, there is
+no notion of ?implicit value? ? the question ?What
+are restaurants with cuisine in Seattle?? does not
+make sense.
+A preposition indicates a join between the rela-
+tions corresponding to the arguments of the prepo-
+sition. For example, consider the preposition ?from?
+in the question ?what airlines fly from Boston to
+Chicago?? ?from? connects the value ?Boston? (in
+the relation ?cities?) to the relation ?airlines?. Thus,
+we know that the corresponding SQL query will join
+?airlines? and ?cities?.
+We formalize these observations about questions
+below. We say that a question q is semantically
+tractable using lexicon L and attachment function
+FL,q if:
+1. It is possible to split q up into words and
+phrases found in L. (More formally, q is to-
+kenizable according to L.)
+2. While words may have multiple meanings in
+the lexicon, it must be possible to find a one-
+to-one correspondence between tokens in the
+question and some set of database elements.
+(More formally, there exists a tokenization t
+and a set of database elements and join paths
+Et such that there is a bijective function f from
+t to Et that respects L.)
+3. There is at least one such set Et that has exactly
+one wh-value.
+4. It is possible to add ?implicit? attributes to Et
+to get a set E ?t with exactly one compatible
+attribute for every value. (More formally, for
+some Et with a wh-value there exist attributes
+a1, . . . , an such that E ?t = Et ? {a1, . . . , an}
+and there is a bijective function g from the set
+of value elements (including wh-values) V to
+the set of attribute elements A in E ?t.)
+5. At least one such E ?t obeys the syntactic
+restrictions of FL,q. (More formally, let
+A? = A ? Et. Then we require that
+{(f?1(g?1(a)), f?1(a)) | a ? A?} respects
+FL,q.)
+3.3 Results and Discussion
+We say that an NLI is sound for a class of questions
+Q using lexicon L and attachment function FL if
+for every input q ? Q, every output of the NLI is a
+valid interpretation. We say the NLI is complete if
+it returns all valid interpretations. Our main result is
+the following:
+Theorem 1 Given a lexicon L and attachment
+function FL, PRECISE is sound and complete for the
+class of semantically tractable questions.
+In practical terms, the theorem states that given
+correct and complete syntactic and lexical informa-
+tion, PRECISE will return exactly the set of valid
+interpretations of a question. If PRECISE is missing
+syntactic or semantic constraints, it can generate ex-
+traneous interpretations that it ?believes? are valid.
+Also, if a person uses a term in a manner incon-
+sistent with PRECISE?s lexicon, then PRECISE will
+interpret her question incorrectly. Finally, PRECISE
+will not answer a question that contains words ab-
+sent from its lexicon.
+The theorem is clearly an idealization, but the ex-
+periments reported in Section 4 provide evidence
+that it is a useful idealization. PRECISE, which em-
+bodies the model of semantic tractability, achieves
+very high accuracy because in practice it either has
+correct and complete lexical and syntactic informa-
+tion or it has enough semantic information to com-
+pensate for its imperfect inputs. In fact, as we ex-
+plained in Section 2.1, PRECISE?s semantic model
+enables it to correct parser errors in some cases.
+Finding all the valid interpretations for a question
+is computationally expensive in the worst case (even
+just tokenizing a question is NP-complete (Popescu
+et al, 2003)). Moreover, if the various syntac-
+tic and semantic constraints are fed to a standard
+constraint solver, then the problem of finding even
+a single valid interpretation is exponential in the
+worst case. However, we have been able to formu-
+late PRECISE?s constraint satisfaction problem as a
+graph matching problem that is solved in polyno-
+mial time by the MaxFlow algorithm:
+Theorem 2 For lexicon L, PRECISE finds one valid
+interpretation for a tokenization T of a semantically
+tractable question in time O(Mn2), where n is the
+number of tokens in T and M is the maximum num-
+ber of interpretations that a token can have in L.
+4 Experimental Evaluation
+Semantic Tractability (ST) theory and PRECISE?s
+architecture raise a four empirical questions that
+we now address via experiments on the ATIS data
+set (Price, 1990): how prevalent are ST questions?
+How effective is PRECISE in mapping ATIS ques-
+tions to SQL queries? What is the impact of se-
+mantic over-rides? What is the impact of parser re-
+training? Our experiments utilized the 448 context-
+independent questions in the ATIS ?Scoring Set A?.
+We chose the ATIS data set because it is a standard
+benchmark (see Table 2) where independently gen-
+erated questions are available to test the efficacy of
+an NLI.
+We found that 95.8% of the ATIS questions were
+ST questions. We classified each question as ST
+(or not) by running PRECISE on the question and
+System Setup PRECISE PRECISE-1
+ParserORIG 61.9% 60.3%
+ParserORIG+ 89.7% 85.5%
+ParserTRAINED 92.4% 88.2%
+ParserTRAINED+ 94.0% 89.2%
+ParserCORRECT 95.8% 91.9%
+Table 1: Impact of Parser Enhancements. The PRECISE
+column records the percentage of questions where the small
+set of SQL queries returned by PRECISE contains the cor-
+rect query; PRECISE-1 refers to the questions correctly in-
+terpreted if PRECISE is forced to return exactly one SQL
+query. ParserORIG is the original version of the parser,
+ParserTRAINED is the version re-trained for the ATIS do-
+main, and ParserCORRECT is the version whose output is
+corrected manually. System configurations marked by +
+indicate the automatic use of semantic over-rides to correct
+parser errors.
+PRECISE PRECISE-1 AT&T CMU MIT SRI BBN UNISYS MITRE HEY
+94.0% 89.1% 96.2% 96.2% 95.5% 93% 90.6% 76.4% 69.4% 92.5%
+Table 2: Accuracy Comparison between PRECISE , PRECISE-1 and the major ATIS NLIs. Only PRECISE and the HEY NLI
+are database independent. All results are for performance on the context-independent questions in ATIS.
+recording its response. Intractable questions were
+due to PRECISE?s incomplete semantic informa-
+tion. Consider, for example, the ATIS request ?List
+flights from Oakland to Salt Lake City leaving after
+midnight Thursday.? PRECISE fails to answer this
+question because it lacks a model of time, and so
+cannot infer that ?after midnight Thursday? means
+?early Friday morning.?
+In addition, we found that the prevalence of ST
+questions in the ATIS data is consistent with our ear-
+lier results on the set of 1,800 natural language ques-
+tions compiled by Ray Mooney in his experiments
+in three domains (Tang and Mooney, 2001). As re-
+ported in (Popescu et al, 2003), we found that ap-
+proximately 80% of Mooney?s questions were ST.
+PRECISE performance on the ATIS data was also
+comparable to its performance on the Mooney data
+sets.
+Table 1 quantifies the impact of the parser en-
+hancements discussed in Section 2.1. Since PRE-
+CISE can return multiple distinct SQL queries when
+it judges a question to be ambiguous, we report its
+results in two columns. The left column (PRECISE)
+records the percentage of questions where the set
+of returned SQL queries contains the correct query.
+The right column (PRECISE-1) records the percent-
+age of questions where PRECISE is correct if it is
+forced to return exactly one query per question. In
+our experiments, PRECISE returned a single query
+92.4% of the time, and returned two queries the rest
+of the time. Thus, the difference between the two
+columns is not great.
+Initially, plugging the Charniak parser into PRE-
+CISE yielded only 61.9% accuracy. Introducing se-
+mantic over-rides to correct prepositional attach-
+ment and preposition ellipsis errors increased PRE-
+CISE?s accuracy to 89.7% ? the parser?s erroneous
+POS tags still led PRECISE astray in some cases.
+After re-training the parser on 150 POS-tagged
+ATIS questions, but without utilizing semantic over-
+rides, PRECISE achieved 92.4% accuracy. Combin-
+ing both re-training and semantic over-rides, PRE-
+CISE achieved 94.0% accuracy. This accuracy is
+close to the maximum that PRECISE can achieve,
+given its incomplete semantic information? we
+found that, when all parsing errors are corrected by
+hand, PRECISE?s accuracy is 95.8%.
+To assess PRECISE?s performance, we compared
+it with previous work. Table 2 shows PRECISE?s
+accuracy compared with the most successful ATIS
+NLIs (Minker, 1998). We also include, for com-
+parison, the more recent database-independent HEY
+system (He and Young, 2003). All systems were
+compared on the ATIS scoring set ?A?, but we
+did ?clean? the questions by introducing sentence
+breaks, removing verbal errors, etc.. Since we could
+add modules to PRECISE to automatically handle
+these various cases, we don?t view this as signifi-
+cant.
+Given the database-specific nature of most previ-
+ous ATIS systems, it is remarkable that PRECISE is
+able to achieve comparable accuracy. PRECISE does
+return two interpretations a small percentage of the
+time. However, even when restricted to returning
+a single interpretation, PRECISE-1 still achieved an
+impressive 89.1% accuracy (Table 1).
+5 Related Work
+We discuss related work in three categories:
+Database-independent NLIs, ATIS-specific NLIs,
+and sublanguages.
+Database-independent NLIs There has been ex-
+tensive previous work on NLIs (Androutsopoulos et
+al., 1995), but three key elements distinguish PRE-
+CISE. First, we introduce a model of ST questions
+and show that it produces provably correct inter-
+pretations of questions (subject to the assumptions
+of the model). We measure the prevalence of ST
+questions to demonstrate the practical import of our
+model. Second, we are the first to use a statistical
+parser as a ?plug in?, experimentally measure its
+efficacy, and analyze the attendant challenges. Fi-
+nally, we show how to leverage our semantic model
+to correct parser errors in difficult syntactic cases
+(e.g., prepositional attachment). A more detailed
+comparison of PRECISE with a wide range of NLI
+systems appears in (Popescu et al, 2003). The
+advances in this paper over our previous one in-
+clude: reformulation of ST THEORY, the parser re-
+training, semantic over-rides, and the experiments
+testing PRECISE on the ATIS data.
+ATIS NLIs The typical ATIS NLIs used either
+domain-specific semantic grammars (Seneff, 1992;
+Ward and Issar, 1996) or stochastic models that re-
+quired fully annotated domain-specific corpora for
+reliable parameter estimation (Levin and Pieraccini,
+1995). In contrast, since it uses its model of se-
+mantically tractable questions, PRECISE does not
+require heavy manual processing and only a small
+number of annotated questions. In addition, PRE-
+CISE leverages existing domain-independent pars-
+ing technology and offers theoretical guarantees ab-
+sent from other work. Improved versions of ATIS
+systems such as Gemini (Moore et al, 1995) in-
+creased their coverage by allowing an approximate
+question interpretation to be computed from the
+meanings of some question fragments. Since PRE-
+CISE focuses on high precision rather than recall, we
+analyze every word in the question and interpret the
+question as a whole. Most recently, (He and Young,
+2003) introduced the HEY system, which learns a
+semantic parser without requiring fully-annotated
+corpora. HEY uses a hierarchical semantic parser
+that is trained on a set of questions together with
+their corresponding SQL queries. HEY is similar to
+(Tang and Mooney, 2001). Both learning systems
+require a large set of questions labeled by their SQL
+queries?an expensive input that PRECISE does not
+require?and, unlike PRECISE, both systems can-
+not leverage continuing improvements to statistical
+parsers.
+Sublanguages The early work with the most sim-
+ilarities to PRECISE was done in the field of sublan-
+guages. Traditional sublanguage work (Kittredge,
+1982) has looked at defining sublanguages for var-
+ious domains, while more recent work (Grishman,
+2001; Sekine, 1994) suggests using AI techniques
+to learn aspects of sublanguages automatically. Our
+work can be viewed as a generalization of tradi-
+tional sublanguage research. We restrict ourselves
+to the semantically tractable subset of English rather
+than to a particular knowledge domain. Finally, in
+addition to offering formal guarantees, we assess the
+prevalence of our ?sublanguage? in the ATIS data.
+6 Conclusion
+This paper is the first to provide evidence that sta-
+tistical parsers can support NLIs such as PRECISE.
+We identified the quandary associated with appro-
+priately training a statistical parser: without special
+training for each database, the parser makes numer-
+ous errors, but creating a massive, labeled corpus of
+questions for each database is prohibitively expen-
+sive. We solved this quandary via light re-training
+of the parser?s tagger and via PRECISE?s semantic
+over-rides, and showed that in concert these meth-
+ods enable PRECISE to rise from 61.9% accuracy to
+94% accuracy on the ATIS data set. Even though
+PRECISE is database independent, its accuracy is
+comparable to the best of the database-specific ATIS
+NLIs developed in previous work (Table 2).
+References
+I. Androutsopoulos, G. D. Ritchie, and P. Thanisch.
+1995. Natural Language Interfaces to Databases - An
+Introduction. In Natural Language Engineering, vol
+1, part 1, pages 29?81.
+E. Charniak. 2000. A Maximum-Entropy-Inspired
+Parser. In Proc. of NAACL-2000.
+R. Grishman. 2001. Adaptive information extraction
+and sublanguage analysis. In Proc. of IJCAI 2001.
+B.J. Grosz, D. Appelt, P. Martin, and F. Pereira. 1987.
+TEAM: An Experiment in the Design of Trans-
+portable Natural Language Interfaces. In Artificial In-
+telligence 32, pages 173?243.
+Y. He and S. Young. 2003. A data-driven spoken lan-
+guage understanding system. In IEEE Workshop on
+Automatic Speech Recognition and Understanding.
+R. Kittredge. 1982. Variation and homogeneity of sub-
+languages. In R. Kittredge and J. Lehrberger, editors,
+Sublanguage: Studies of Language in Restricted Se-
+mantic Domains, pages 107?137. de Gruyter, Berlin.
+E. Levin and R. Pieraccini. 1995. Chronus, the next gen-
+eration. In Proc. of the DARPA Speech and Natural
+Language Workshop, pages 269?271.
+W. Minker. 1998. Evaluation methodologies for inter-
+active speech systems. In First International Confer-
+ence on Language Resources and Evaluation, pages
+801?805.
+R. Moore, D. Appelt, J. Dowding, J. M. Gawron, and
+D. Moran. 1995. Combining linguistic and statistical
+knowledge sources in natural-language processing for
+atis. In Proc. of the ARPA Spoken Language Technol-
+ogy Workshop.
+A. Popescu, O. Etzioni, and H. Kautz. 2003. Towards a
+theory of natural language interfaces to databases. In
+Proc. of IUI-2003.
+P. Price. 1990. Evaluation of spoken language systems:
+the atis domain. In Proc. of the DARPA Speech and
+Natural Language Workshop, pages 91?95.
+S. Sekine. 1994. A New Direction For Sublanguage
+NLP. In Proc. of the International Conference on New
+Methods in Language Processing, pages 165?177.
+S. Seneff. 1992. Robust parsing for spoken language
+systems. In Proc. of the IEEE International Confer-
+ence on Acoustics, Speech and Signal Processing.
+L.R. Tang and R.J. Mooney. 2001. Using Multiple
+Clause Constructors in Inductive Logic Programming
+for Semantic Parsing. In Proc. of the 12th Eu-
+ropean Conference on Machine Learning (ECML-
+2001), Freiburg, Germany, pages 466?477.
+W. Ward and S. Issar. 1996. Recent improvements in the
+cmu spoken language understanding system. In Proc.
+of the ARPA Human Language Technology Workshop,
+pages 213?216.
+Proceedings of Human Language Technology Conference and Conference on Empirical Methods in Natural Language
+Processing (HLT/EMNLP), pages 339?346, Vancouver, October 2005. c?2005 Association for Computational Linguistics
+Extracting Product Features and Opinions from Reviews
+Ana-Maria Popescu and Oren Etzioni
+Department of Computer Science and Engineering
+University of Washington
+Seattle, WA 98195-2350
+{amp, etzioni}@cs.washington.edu
+Abstract
+Consumers are often forced to wade
+through many on-line reviews in
+order to make an informed prod-
+uct choice. This paper introduces
+OPINE, an unsupervised information-
+extraction system which mines re-
+views in order to build a model of im-
+portant product features, their evalu-
+ation by reviewers, and their relative
+quality across products.
+Compared to previous work, OPINE
+achieves 22% higher precision (with
+only 3% lower recall) on the feature
+extraction task. OPINE?s novel use of
+relaxation labeling for finding the se-
+mantic orientation of words in con-
+text leads to strong performance on
+the tasks of finding opinion phrases
+and their polarity.
+1 Introduction
+The Web contains a wealth of opinions about products,
+politicians, and more, which are expressed in newsgroup
+posts, review sites, and elsewhere. As a result, the prob-
+lem of ?opinion mining? has seen increasing attention
+over the last three years from (Turney, 2002; Hu and Liu,
+2004) and many others. This paper focuses on product
+reviews, though our methods apply to a broader range of
+opinions.
+Product reviews on Web sites such as amazon.com
+and elsewhere often associate meta-data with each review
+indicating how positive (or negative) it is using a 5-star
+scale, and also rank products by how they fare in the re-
+views at the site. However, the reader?s taste may differ
+from the reviewers?. For example, the reader may feel
+strongly about the quality of the gym in a hotel, whereas
+many reviewers may focus on other aspects of the ho-
+tel, such as the decor or the location. Thus, the reader is
+forced to wade through a large number of reviews looking
+for information about particular features of interest.
+We decompose the problem of review mining into the
+following main subtasks:
+I. Identify product features.
+II. Identify opinions regarding product features.
+III. Determine the polarity of opinions.
+IV. Rank opinions based on their strength.
+This paper introduces OPINE, an unsupervised infor-
+mation extraction system that embodies a solution to each
+of the above subtasks. OPINE is built on top of the Know-
+ItAll Web information-extraction system (Etzioni et al,
+2005) as detailed in Section 3.
+Given a particular product and a corresponding set of
+reviews, OPINE solves the opinion mining tasks outlined
+above and outputs a set of product features, each accom-
+panied by a list of associated opinions which are ranked
+based on strength (e.g., ?abominable? is stronger than
+?bad). This output information can then be used to gen-
+erate various types of opinion summaries.
+This paper focuses on the first 3 review mining sub-
+tasks and our contributions are as follows:
+1. We introduce OPINE, a review-mining system whose
+novel components include the use of relaxation labeling
+to find the semantic orientation of words in the context of
+given product features and sentences.
+2. We compare OPINE with the most relevant previous
+review-mining system (Hu and Liu, 2004) and find that
+OPINE?s precision on the feature extraction task is 22%
+better though its recall is 3% lower on Hu?s data sets. We
+show that 1/3 of this increase in precision comes from
+using OPINE?s feature assessment mechanism on review
+data while the rest is due to Web PMI statistics.
+3. While many other systems have used extracted opin-
+ion phrases in order to determine the polarity of sentences
+or documents, OPINE is the first to report its precision and
+recall on the tasks of opinion phrase extraction and opin-
+ion phrase polarity determination in the context of known
+product features and sentences. On the first task, OPINE
+has a precision of 79% and a recall of 76%. On the sec-
+ond task, OPINE has a precision of 86% and a recall of
+89%.
+339
+Input: product class C, reviews R.
+Output: set of [feature, ranked opinion list] tuples
+R?? parseReviews(R);
+E? findExplicitFeatures(R?, C);
+O? findOpinions(R?, E);
+CO? clusterOpinions(O);
+I? findImplicitFeatures(CO, E);
+RO? rankOpinions(CO);
+{(f , oi, ...oj)...}?outputTuples(RO, I ? E);
+Figure 1: OPINE Overview.
+The remainder of this paper is organized as follows:
+Section 2 introduces the basic terminology, Section 3
+gives an overview of OPINE, describes and evaluates its
+main components, Section 4 describes related work and
+Section 5 presents our conclusion.
+2 Terminology
+A product class (e.g., Scanner) is a set of products (e.g.,
+Epson1200). OPINE extracts the following types of prod-
+uct features: properties, parts, features of product parts,
+related concepts, parts and properties of related concepts
+(see Table 1 for examples of such features in the Scan-
+ner domains). Related concepts are concepts relevant to
+the customers? experience with the main product (e.g.,
+the company that manufactures a scanner). The relation-
+ships between the main product and related concepts are
+typically expressed as verbs (e.g., ?Epson manufactures
+scanners?) or prepositions (?scanners from Epson?). Fea-
+tures can be explicit (?good scan quality?) or im-
+plicit (?good scans? implies good ScanQuality).
+OPINE also extracts opinion phrases, which are adjec-
+tive, noun, verb or adverb phrases representing customer
+opinions. Opinions can be positive or negative and vary
+in strength (e.g., ?fantastic? is stronger than ?good?).
+3 OPINE Overview
+This section gives an overview of OPINE (see Figure 1)
+and describes its components and their experimental eval-
+uation.
+Goal Given product class C with instances I and re-
+views R, OPINE?s goal is to find a set of (feature, opin-
+ions) tuples {(f, oi, ...oj)} s.t. f ? F and oi, ...oj ? O,
+where:
+a) F is the set of product class features in R.
+b) O is the set of opinion phrases in R.
+c) f is a feature of a particular product instance.
+d) o is an opinion about f in a particular sentence.
+d) the opinions associated with each feature f are
+ranked based on their strength.
+Solution The steps of our solution are outlined in Fig-
+ure 1 above. OPINE parses the reviews using MINI-
+PAR (Lin, 1998) and applies a simple pronoun-resolution
+module to parsed review data. OPINE then uses the data
+to find explicit product features (E). OPINE?s Feature As-
+sessor and its use of Web PMI statistics are vital for the
+extraction of high-quality features (see 3.2). OPINE then
+identifies opinion phrases associated with features in E
+and finds their polarity. OPINE?s novel use of relaxation-
+labeling techniques for determining the semantic orien-
+tation of potential opinion words in the context of given
+features and sentences leads to high precision and recall
+on the tasks of opinion phrase extraction and opinion
+phrase polarity extraction (see 3.3).
+In this paper, we only focus on the extraction of ex-
+plicit features, identifying corresponding customer opin-
+ions about these features and determining their polarity.
+We omit the descriptions of the opinion clustering, im-
+plicit feature generation and opinion ranking algorithms.
+3.0.1 The KnowItAll System.
+OPINE is built on top of KnowItAll, a Web-based,
+domain-independent information extraction system (Et-
+zioni et al, 2005). Given a set of relations of interest,
+KnowItAll instantiates relation-specific generic extrac-
+tion patterns into extraction rules which find candidate
+facts. KnowItAll?s Assessor then assigns a probability to
+each candidate. The Assessor uses a form of Point-wise
+Mutual Information (PMI) between phrases that is esti-
+mated from Web search engine hit counts (Turney, 2001).
+It computes the PMI between each fact and automatically
+generated discriminator phrases (e.g., ?is a scanner? for
+the isA() relationship in the context of the Scanner
+class). Given fact f and discriminator d, the computed
+PMI score is:
+PMI(f, d) = Hits(d+ f )Hits(d)?Hits(f )
+The PMI scores are converted to binary features for a
+Naive Bayes Classifier, which outputs a probability asso-
+ciated with each fact (Etzioni et al, 2005).
+3.1 Finding Explicit Features
+OPINE extracts explicit features for the given product
+class from parsed review data. First, the system recur-
+sively identifies both the parts and the properties of the
+given product class and their parts and properties, in turn,
+continuing until no candidates are found. Then, the sys-
+tem finds related concepts as described in (Popescu et
+al., 2004) and extracts their parts and properties. Table 1
+shows that each feature type contributes to the set of final
+features (averaged over 7 product classes).
+Explicit Features Examples % Total
+Properties ScannerSize 7%
+Parts ScannerCover 52%
+Features of Parts BatteryLife 24%
+Related Concepts ScannerImage 9%
+Related Concepts? Features ScannerImageSize 8%
+Table 1: Explicit Feature Information
+340
+In order to find parts and properties, OPINE first ex-
+tracts the noun phrases from reviews and retains those
+with frequency greater than an experimentally set thresh-
+old. OPINE?s Feature Assessor, which is an instantia-
+tion of KnowItAll?s Assessor, evaluates each noun phrase
+by computing the PMI scores between the phrase and
+meronymy discriminators associated with the product
+class (e.g., ?of scanner?, ?scanner has?, ?scanner comes
+with?, etc. for the Scanner class). OPINE distin-
+guishes parts from properties using WordNet?s IS-A hi-
+erarchy (which enumerates different kinds of properties)
+and morphological cues (e.g., ?-iness?, ?-ity? suffixes).
+3.2 Experiments: Explicit Feature Extraction
+In our experiments we use sets of reviews for 7 prod-
+uct classes (1621 total reviews) which include the pub-
+licly available data sets for 5 product classes from (Hu
+and Liu, 2004). Hu?s system is the review mining sys-
+tem most relevant to our work. It uses association rule
+mining to extract frequent review noun phrases as fea-
+tures. Frequent features are used to find potential opin-
+ion words (only adjectives) and the system uses Word-
+Net synonyms/antonyms in conjunction with a set of seed
+words in order to find actual opinion words. Finally, opin-
+ion words are used to extract associated infrequent fea-
+tures. The system only extracts explicit features.
+On the 5 datasets in (Hu and Liu, 2004), OPINE?s pre-
+cision is 22% higher than Hu?s at the cost of a 3% re-
+call drop. There are two important differences between
+OPINE and Hu?s system: a) OPINE?s Feature Assessor
+uses PMI assessment to evaluate each candidate feature
+and b) OPINE incorporates Web PMI statistics in addition
+to review data in its assessment. In the following, we
+quantify the performance gains from a) and b).
+a) In order to quantify the benefits of OPINE?s Feature
+Assessor, we use it to evaluate the features extracted by
+Hu?s algorithm on review data (Hu+A/R). The Feature
+Assessor improves Hu?s precision by 6%.
+b) In order to evaluate the impact of using Web PMI
+statistics, we assess OPINE?s features first on reviews
+(OP/R) and then on reviews in conjunction with the
+Web (the corresponding methods are Hu+A/R+W and
+OPINE). Web PMI statistics increase precision by an av-
+erage of 14.5%.
+Overall, 1/3 of OPINE?s precision increase over Hu?s
+system comes from using PMI assessment on reviews and
+the other 2/3 from the use of the Web PMI statistics.
+In order to show that OPINE?s performance is robust
+across multiple product classes, we used two sets of re-
+views downloaded from tripadvisor.com for Ho-
+tels and amazon.com for Scanners. Two annotators la-
+beled a set of unique 450 OPINE extractions as correct
+or incorrect. The inter-annotator agreement was 86%.
+The extractions on which the annotators agreed were used
+to compute OPINE?s precision, which was 89%. Fur-
+Data Explicit Feature Extraction: Precision
+Hu Hu+A/R Hu+A/R+W OP/R OPINE
+D1 0.75 +0.05 +0.17 +0.07 +0.19
+D2 0.71 +0.03 +0.19 +0.08 +0.22
+D3 0.72 +0.03 +0.25 +0.09 +0.23
+D4 0.69 +0.06 +0.22 +0.08 +0.25
+D5 0.74 +0.08 +0.19 +0.04 +0.21
+Avg 0.72 +0.06 + 0.20 +0.07 +0.22
+Table 2: Precision Comparison on the Explicit Feature-
+Extraction Task. OPINE?s precision is 22% better than Hu?s
+precision; Web PMI statistics are responsible for 2/3 of the pre-
+cision increase. All results are reported with respect to Hu?s.
+Data Explicit Feature Extraction: Recall
+Hu Hu+A/R Hu+A/R+W OP/R OPINE
+D1 0.82 -0.16 -0.08 -0.14 -0.02
+D2 0.79 -0.17 -0.09 -0.13 -0.06
+D3 0.76 -0.12 -0.08 -0.15 -0.03
+D4 0.82 -0.19 -0.04 -0.17 -0.03
+D5 0.80 -0.16 -0.06 -0.12 -0.02
+Avg 0.80 -0.16 -0.07 -0.14 -0.03
+Table 3: Recall Comparison on the Explicit Feature-
+Extraction Task. OPINE?s recall is 3% lower than the recall
+of Hu?s original system (precision level = 0.8). All results are
+reported with respect to Hu?s.
+thermore, the annotators extracted explicit features from
+800 review sentences (400 for each domain). The inter-
+annotator agreement was 82%. OPINE?s recall on the
+set of 179 features on which both annotators agreed was
+73%.
+3.3 Finding Opinion Phrases and Their Polarity
+This subsection describes how OPINE extracts potential
+opinion phrases, distinguishes between opinions and non-
+opinions, and finds the polarity of each opinion in the
+context of its associated feature in a particular review sen-
+tence.
+3.3.1 Extracting Potential Opinion Phrases
+OPINE uses explicit features to identify potential opin-
+ion phrases. Our intuition is that an opinion phrase as-
+sociated with a product feature will occur in its vicinity.
+This idea is similar to that of (Kim and Hovy, 2004) and
+(Hu and Liu, 2004), but instead of using a window of size
+k or the output of a noun phrase chunker, OPINE takes
+advantage of the syntactic dependencies computed by the
+MINIPAR parser. Our intuition is embodied by 10 ex-
+traction rules, some of which are shown in Table 4. If
+an explicit feature is found in a sentence, OPINE applies
+the extraction rules in order to find the heads of potential
+opinion phrases. Each head word together with its modi-
+341
+fiers is returned as a potential opinion phrase1.
+Extraction Rules Examples
+if ?(M,NP = f)? po = M (expensive) scanner
+if ?(S = f, P,O)? po = O lamp has (problems)
+if ?(S, P,O = f)? po = P I (hate) this scanner
+if ?(S = f, P,O)? po = P program (crashed)
+Table 4: Examples of Domain-independent Rules for
+the Extraction of Potential Opinion Phrases. Nota-
+tion: po=potential opinion, M=modifier, NP=noun phrase,
+S=subject, P=predicate, O=object. Extracted phrases are en-
+closed in parentheses. Features are indicated by the typewriter
+font. The equality conditions on the left-hand side use po?s
+head.
+Rule Templates Rules
+dep(w,w?) m(w,w?)
+?v s.t. dep(w, v), dep(v, w?) ?v s.t. m(w, v), o(v, w?)
+?v s.t. dep(w, v), dep(w?, v) ?v s.t. m(w, v), o(w?, v)
+Table 5: Dependency Rule Templates For Finding Words
+w, w? with Related SO Labels . OPINE instantiates these
+templates in order to obtain extraction rules. Notation:
+dep=dependent, m=modifier, o=object, v,w,w?=words.
+OPINE examines the potential opinion phrases in order
+to identify the actual opinions. First, the system finds the
+semantic orientation for the lexical head of each poten-
+tial opinion phrase. Every phrase whose head word has a
+positive or negative semantic orientation is then retained
+as an opinion phrase. In the following, we describe how
+OPINE finds the semantic orientation of words.
+3.3.2 Word Semantic Orientation
+OPINE finds the semantic orientation of a word w in
+the context of an associated feature f and sentence s. We
+restate this task as follows:
+Task Given a set of semantic orientation (SO) labels
+({positive, negative, neutral}), a set of reviews and a
+set of tuples (w, f , s), where w is a potential opinion
+word associated with feature f in sentence s, assign a SO
+label to each tuple (w, f , s).
+For example, the tuple (sluggish, driver, ?I am not
+happy with this sluggish driver?) would be assigned a
+negative SO label.
+Note: We use ?word? to refer to a potential opinion
+word w and ?feature? to refer to the word or phrase which
+represents the explicit feature f .
+Solution OPINE uses the 3-step approach below:
+1. Given the set of reviews, OPINE finds a SO label for
+each word w.
+2. Given the set of reviews and the set of SO labels for
+words w, OPINE finds a SO label for each (w, f ) pair.
+1The (S,P,O) tuples in Table 4 are automatically generated
+from MINIPAR?s output.
+3. Given the set of SO labels for (w, f ) pairs, OPINE
+finds a SO label for each (w, f , s) input tuple.
+Each of these subtasks is cast as an unsupervised col-
+lective classification problem and solved using the same
+mechanism. In each case, OPINE is given a set of ob-
+jects (words, pairs or tuples) and a set of labels (SO la-
+bels); OPINE then searches for a global assignment of la-
+bels to objects. In each case, OPINE makes use of local
+constraints on label assignments (e.g., conjunctions and
+disjunctions constraining the assignment of SO labels to
+words (Hatzivassiloglou and McKeown, 1997)).
+A key insight in OPINE is that the problem of searching
+for a global SO label assignment to words, pairs or tuples
+while trying to satisfy as many local constraints on as-
+signments as possible is analogous to labeling problems
+in computer vision (e.g., model-based matching). OPINE
+uses a well-known computer vision technique, relaxation
+labeling (Hummel and Zucker, 1983), in order to solve
+the three subtasks described above.
+3.3.3 Relaxation Labeling Overview
+Relaxation labeling is an unsupervised classification
+technique which takes as input:
+a) a set of objects (e.g., words)
+b) a set of labels (e.g., SO labels)
+c) initial probabilities for each object?s possible labels
+d) the definition of an object o?s neighborhood (a set of
+other objects which influence the choice of o?s label)
+e) the definition of neighborhood features
+f) the definition of a support function for an object label
+The influence of an object o?s neighborhood on its la-
+bel L is quantified using the support function. The sup-
+port function computes the probability of the label L be-
+ing assigned to o as a function of o?s neighborhood fea-
+tures. Examples of features include the fact that a certain
+local constraint is satisfied (e.g., the word nice partic-
+ipates in the conjunction and together with some other
+word whose SO label is estimated to be positive).
+Relaxation labeling is an iterative procedure whose
+output is an assignment of labels to objects. At each itera-
+tion, the algorithm uses an update equation to reestimate
+the probability of an object label based on its previous
+probability estimate and the features of its neighborhood.
+The algorithm stops when the global label assignment
+stays constant over multiple consecutive iterations.
+We employ relaxation labeling for the following rea-
+sons: a) it has been extensively used in computer-vision
+with good results b) its formalism allows for many types
+of constraints on label assignments to be used simulta-
+neously. As mentioned before, constraints are integrated
+into the algorithm as neighborhood features which influ-
+ence the assignment of a particular label to a particular
+object.
+OPINE uses the following sources of constraints:
+342
+a) conjunctions and disjunctions in the review text
+b) manually-supplied syntactic dependency rule tem-
+plates (see Table 5). The templates are automatically in-
+stantiated by our system with different dependency re-
+lationships (premodifier, postmodifier, subject, etc.) in
+order to obtain syntactic dependency rules which find
+words with related SO labels.
+c) automatically derived morphological relationships
+(e.g., ?wonderful? and ?wonderfully? are likely to have
+similar SO labels).
+d) WordNet-supplied synonymy, antonymy, IS-A and
+morphological relationships between words. For exam-
+ple, clean and neat are synonyms and so they are likely
+to have similar SO labels.
+Each of the SO label assignment subtasks previously
+identified is solved using a relaxation labeling step. In the
+following, we describe in detail how relaxation labeling
+is used to find SO labels for words in the given review
+sets.
+3.3.4 Finding SO Labels for Words
+For many words, a word sense or set of senses is used
+throughout the review corpus with a consistently positive,
+negative or neutral connotation (e.g., ?great?, ?awful?,
+etc.). Thus, in many cases, a word w?s SO label in the
+context of a feature f and sentence s will be the same as
+its SO label in the context of other features and sentences.
+In the following, we describe how OPINE?s relaxation la-
+beling mechanism is used to find a word?s dominant SO
+label in a set of reviews.
+For this task, a word?s neighborhood is defined as
+the set of words connected to it through conjunctions,
+disjunctions and all other relationships previously intro-
+duced as sources of constraints.
+RL uses an update equation to re-estimate the prob-
+ability of a word label based on its previous probabil-
+ity estimate and the features of its neighborhood (see
+Neighborhood Features). At iteration m, let q(w,L)(m)
+denote the support function for label L of w and let
+P (l(w) = L)(m) denote the probability that L is the label
+of w. P (l(w) = L)(m+1) is computed as follows:
+RL Update Equation (Rangarajan, 2000)
+P (l(w) = L)(m+1) =
+P (l(w) = L)(m)(1 + ?q(w,L)(m))
+P
+L? P (l(w) = L
+?)(m)(1 + ?q(w,L?)(m))
+where L? ? {pos, neg, neutral} and ? > 0 is an
+experimentally set constant keeping the numerator and
+probabilities positive. RL?s output is an assignment of
+dominant SO labels to words.
+In the following, we describe in detail the initialization
+step, the derivation of the support function formula and
+the use of neighborhood features.
+RL Initialization Step OPINE uses a version of Tur-
+ney?s PMI-based approach (Turney, 2003) in order to de-
+rive the initial probability estimates (P (l(w) = L)(0))
+for a subset S of the words. OPINE computes a SO
+score so(w) for each w in S as the difference between
+the PMI of w with positive keywords (e.g., ?excellent?)
+and the PMI of w with negative keywords (e.g., ?awful?).
+When so(w) is small, or w rarely co-occurs with the key-
+words, w is classified as neutral. If so(w) > 0, then
+w is positive, otherwise w is negative. OPINE then uses
+the labeled S set in order to compute prior probabilities
+P (l(w) = L), L ? {pos, neg, neutral} by computing
+the ratio between the number of words in S labeled L
+and |S|. Such probabilities are used as initial probabil-
+ity estimates associated with the labels of the remaining
+words.
+Support Function The support function computes the
+probability of each label for word w based on the labels
+of objects in w?s neighborhood N .
+Let Ak = {(wj , Lj)|wj ? N} , 0 < k ? 3|N | rep-
+resent one of the potential assignments of labels to the
+words in N . Let P (Ak)(m) denote the probability of this
+particular assignment at iteration m. The support for la-
+bel L of word w at iteration m is :
+q(w,L)(m) =
+3|N|X
+k=1
+P (l(w) = L|Ak)(m) ? P (Ak)(m)
+We assume that the labels of w?s neighbors are inde-
+pendent of each other and so the formula becomes:
+q(w,L)(m) =
+3|N|X
+k=1
+P (l(w) = L|Ak)(m)?
+|N|Y
+j=1
+P (l(wj) = Lj)(m)
+Every P (l(wj) = Lj)(m) term is the estimate for the
+probability that l(wj) = Lj (which was computed at it-
+eration m using the RL update equation).
+The P (l(w) = L|Ak)(m) term quantifies the influence
+of a particular label assignment to w?s neighborhood over
+w?s label. In the following, we describe how we estimate
+this term.
+Neighborhood Features
+Each type of word relationship which constrains the
+assignment of SO labels to words (synonymy, antonymy,
+etc.) is mapped by OPINE to a neighborhood feature. This
+mapping allows OPINE to use simultaneously use multi-
+ple independent sources of constraints on the label of a
+particular word. In the following, we formalize this map-
+ping.
+Let T denote the type of a word relationship in R (syn-
+onym, antonym, etc.) and let Ak,T represent the labels
+assigned by Ak to neighbors of a word w which are con-
+nected to w through a relationship of type T . We have
+Ak =
+?
+T Ak,T and
+P (l(w) = L|Ak)(m) = P (l(w) = L|
+[
+T
+Ak,T )(m)
+For each relationship type T , OPINE defines a
+neighborhood feature fT (w,L,Ak,T ) which computes
+P (l(w) = L|Ak,T ), the probability that w?s label is L
+given Ak,T (see below). P (l(w) = L|
+?
+T Ak,T )(m) is
+estimated combining the information from various fea-
+tures about w?s label using the sigmoid function ?():
+343
+P (l(w) = L|Ak)(m) = ?(
+jX
+i=1
+f i(w,L,Ak,i)(m) ? ci)
+where c0, ...cj are weights whose sum is 1 and which
+reflect OPINE ?s confidence in each type of feature.
+Given word w, label L, relationship type T and neigh-
+borhood label assignment Ak, let NT represent the subset
+of w?s neighbors connected to w through a type T rela-
+tionship. The feature fT computes the probability that
+w?s label is L given the labels assigned by Ak to words
+in NT . Using Bayes?s Law and assuming that these la-
+bels are independent given l(w), we have the following
+formula for fT at iteration m:
+fT (w,L,Ak,T )(m) = P (l(w) = L)(m)?
+|NT |Y
+j=1
+P (Lj |l(w) = L)
+P (Lj |l(w) = L) is the probability that word wj has label
+Lj if wj and w are linked by a relationship of type T and
+w has label L. We make the simplifying assumption that
+this probability is constant and depends only of T , L and
+L?, not of the particular words wj and w. For each tuple
+(T , L, Lj), L,Lj ? {pos, neg, neutral}, OPINE builds
+a probability table using a small set of bootstrapped pos-
+itive, negative and neutral words.
+3.3.5 Finding (Word, Feature) SO Labels
+This subtask is motivated by the existence of frequent
+words which change their SO label based on associated
+features, but whose SO labels in the context of the respec-
+tive features are consistent throughout the reviews (e.g.,
+in the Hotel domain, ?hot water? has a consistently posi-
+tive connotation, whereas ?hot room? has a negative one).
+In order to solve this task, OPINE first assigns each
+(w, f) pair an initial SO label which is w?s SO label. The
+system then executes a relaxation labeling step during
+which syntactic relationships between words and, respec-
+tively, between features, are used to update the default
+SO labels whenever necessary. For example, (hot, room)
+appears in the proximity of (broken, fan). If ?room?and
+?fan? are conjoined by and, this suggests that ?hot? and
+?broken? have similar SO labels in the context of their
+respective features. If ?broken? has a strongly negative
+semantic orientation, this fact contributes to OPINE?s be-
+lief that ?hot? may also be negative in this context. Since
+(hot, room) occurs in the vicinity of other such phrases
+(e.g., stifling kitchen), ?hot? acquires a negative SO label
+in the context of ?room?.
+3.3.6 Finding (Word, Feature, Sentence) SO Labels
+This subtask is motivated by the existence of (w,f )
+pairs (e.g., (big, room)) for which w?s orientation changes
+based on the sentence in which the pair appears (e.g., ? I
+hated the big, drafty room because I ended up freezing.?
+vs. ?We had a big, luxurious room?.)
+In order to solve this subtask, OPINE first assigns each
+(w, f, s) tuple an initial label which is simply the SO la-
+bel for the (w, f) pair. The system then uses syntactic
+relationships between words and, respectively, features
+in order to update the SO labels when necessary. For
+example, in the sentence ?I hated the big, drafty room
+because I ended up freezing.?, ?big? and ?hate? satisfy
+condition 2 in Table 5 and therefore OPINE expects them
+to have similar SO labels. Since ?hate? has a strong neg-
+ative connotation, ?big? acquires a negative SO label in
+this context.
+In order to correctly update SO labels in this last step,
+OPINE takes into consideration the presence of negation
+modifiers. For example, in the sentence ?I don?t like a
+large scanner either?, OPINE first replaces the positive
+(w, f) pair (like, scanner) with the negative labeled pair
+(not like, scanner) and then infers that ?large? is likely to
+have a negative SO label in this context.
+3.3.7 Identifying Opinion Phrases
+After OPINE has computed the most likely SO labels
+for the head words of each potential opinion phrase in the
+context of given features and sentences, OPINE can ex-
+tract opinion phrases and establish their polarity. Phrases
+whose head words have been assigned positive or nega-
+tive labels are retained as opinion phrases. Furthermore,
+the polarity of an opinion phrase o in the context of a fea-
+ture f and sentence s is given by the SO label assigned to
+the tuple (head(o), f, s) (3.3.6 shows how OPINE takes
+into account negation modifiers).
+3.4 Experiments
+In this section we evaluate OPINE?s performance on the
+following tasks: finding SO labels of words in the con-
+text of known features and sentences (SO label extrac-
+tion); distinguishing between opinion and non-opinion
+phrases in the context of known features and sentences
+(opinion phrase extraction); finding the correct polarity
+of extracted opinion phrases in the context of known fea-
+tures and sentences (opinion phrase polarity extraction).
+While other systems, such as (Hu and Liu, 2004; Tur-
+ney, 2002), have addressed these tasks to some degree,
+OPINE is the first to report results. We first ran OPINE on
+13841 sentences and 538 previously extracted features.
+OPINE searched for a SO label assignment for 1756 dif-
+ferent words in the context of the given features and sen-
+tences. We compared OPINE against two baseline meth-
+ods, PMI++ and Hu++.
+PMI++ is an extended version of (Turney, 2002)?s
+method for finding the SO label of a phrase (as an at-
+tempt to deal with context-sensitive words). For a given
+(word, feature, sentence) tuple, PMI++ ignores the sen-
+tence, generates a phrase based on the word and the fea-
+ture (e.g., (clean, room): ?clean room?) and finds its SO
+label using PMI statistics. If unsure of the label, PMI++
+tries to find the orientation of the potential opinion word
+instead. The search engine queries use domain-specific
+keywords (e.g., ?scanner?), which are dropped if they
+344
+lead to low counts.
+Hu++ is a WordNet-based method for finding a word?s
+context-independent semantic orientation. It extends
+Hu?s adjective labeling method in a number of ways in
+order to handle nouns, verbs and adverbs in addition to
+adjectives and in order to improve coverage. Hu?s method
+starts with two sets of positive and negative words and
+iteratively grows each one by including synonyms and
+antonyms from WordNet. The final sets are used to pre-
+dict the orientation of an incoming word.
+Type PMI++ Hu++ OPINE
+P R P R P R
+adj 0.73 0.91 +0.02 -0.17 +0.07 -0.03
+nn 0.63 0.92 +0.04 -0.24 +0.11 -0.08
+vb 0.71 0.88 +0.03 -0.12 +0.01 -0.01
+adv 0.82 0.92 +0.02 -0.01 +0.06 +0.01
+Avg 0.72 0.91 +0.03 -0.14 +0.06 -0.03
+Table 6: Finding SO Labels of Potential Opinion Words
+in the Context of Given Product Features and Sentences.
+OPINE?s precision is higher than that of PMI++ and Hu++.
+All results are reported with respect to PMI++ . Notation:
+adj=adjectives, nn=nouns, vb=verbs, adv=adverbs
+3.4.1 Experiments: SO Labels
+On the task of finding SO labels for words in the con-
+text of given features and review sentences, OPINE obtains
+higher precision than both baseline methods at a small
+loss in recall with respect to PMI++. As described be-
+low, this result is due in large part to OPINE?s ability to
+handle context-sensitive opinion words.
+We randomly selected 200 (word, feature, sentence)
+tuples for each word type (adjective, adverb, etc.) and
+obtained a test set containing 800 tuples. Two annota-
+tors assigned positive, negative and neutral labels to each
+tuple (the inter-annotator agreement was 78%). We re-
+tained the tuples on which the annotators agreed as the
+gold standard. We ran PMI++ and Hu++ on the test data
+and compared the results against OPINE?s results on the
+same data.
+In order to quantify the benefits of each of the three
+steps of our method for finding SO labels, we also com-
+pared OPINE with a version which only finds SO la-
+bels for words and a version which finds SO labels for
+words in the context of given features, but doesn?t take
+into account given sentences. We have learned from this
+comparison that OPINE?s precision gain over PMI++ and
+Hu++ is mostly due to to its ability to handle context-
+sensitive words in a large number of cases.
+Although Hu++ does not handle context-sensitive SO
+label assignment, its average precision was reasonable
+(75%) and better than that of PMI++. Finding a word?s
+SO label is good enough in the case of strongly positive
+or negative opinion words, which account for the major-
+ity of opinion instances. The method?s loss in recall is
+due to not recognizing words absent from WordNet (e.g.,
+?depth-adjustable?) or not having enough information to
+classify some words in WordNet.
+PMI++ typically does well in the presence of strongly
+positive or strongly negative words. Its high recall is
+correlated with decreased precision, but overall this sim-
+ple approach does well. PMI++?s main shortcoming is
+misclassifying terms such as ?basic? or ?visible? which
+change orientation based on context.
+3.4.2 Experiments: Opinion Phrases
+In order to evaluate OPINE on the tasks of opinion
+phrase extraction and opinion phrase polarity extraction
+in the context of known features and sentences, we used a
+set of 550 sentences containing previously extracted fea-
+tures. The sentences were annotated with the opinion
+phrases corresponding to the known features and with the
+opinion polarity. We compared OPINE with PMI++ and
+Hu++ on the tasks of interest. We found that OPINE had
+the highest precision on both tasks at a small loss in re-
+call with respect to PMI++. OPINE?s ability to identify
+a word?s SO label in the context of a given feature and
+sentence allows the system to correctly extract opinions
+expressed by words such as ?big? or ?small?, whose se-
+mantic orientation varies based on context.
+Measure PMI++ Hu++ OPINE
+OP Extraction: Precision 0.71 +0.06 +0.08
+OP Extraction: Recall 0.78 -0.08 -0.02
+OP Polarity: Precision 0.80 -0.04 +0.06
+OP Polarity: Recall 0.93 +0.07 -0.04
+Table 7: Extracting Opinion Phrases and Opinion Phrase
+Polarity Corresponding to Known Features and Sentences.
+OPINE?s precision is higher than that of PMI++ and of Hu++.
+All results are reported with respect to PMI++.
+4 Related Work
+The key components of OPINE described in this paper are
+the PMI feature assessment which leads to high-precision
+feature extraction and the use of relaxation-labeling in or-
+der to find the semantic orientation of potential opinion
+words. The review-mining work most relevant to our re-
+search is that of (Hu and Liu, 2004) and (Kobayashi et
+al., 2004). Both identify product features from reviews,
+but OPINE significantly improves on both. (Hu and Liu,
+2004) doesn?t assess candidate features, so its precision
+is lower than OPINE?s. (Kobayashi et al, 2004) employs
+an iterative semi-automatic approach which requires hu-
+man input at every iteration. Neither model explicitly ad-
+dresses composite (feature of feature) or implicit features.
+Other systems (Morinaga et al, 2002; Kushal et al, 2003)
+also look at Web product reviews but they do not extract
+345
+opinions about particular product features. OPINE?s use
+of meronymy lexico-syntactic patterns is similar to that
+of many others, from (Berland and Charniak, 1999) to
+(Almuhareb and Poesio, 2004).
+Recognizing the subjective character and polarity of
+words, phrases or sentences has been addressed by many
+authors, including (Turney, 2003; Riloff et al, 2003;
+Wiebe, 2000; Hatzivassiloglou and McKeown, 1997).
+Most recently, (Takamura et al, 2005) reports on the
+use of spin models to infer the semantic orientation of
+words. The paper?s global optimization approach and use
+of multiple sources of constraints on a word?s semantic
+orientation is similar to ours, but the mechanism differs
+and they currently omit the use of syntactic information.
+Subjective phrases are used by (Turney, 2002; Pang and
+Vaithyanathan, 2002; Kushal et al, 2003; Kim and Hovy,
+2004) and others in order to classify reviews or sentences
+as positive or negative. So far, OPINE?s focus has been on
+extracting and analyzing opinion phrases corresponding
+to specific features in specific sentences, rather than on
+determining sentence or review polarity.
+5 Conclusion
+OPINE is an unsupervised information extraction system
+which extracts fine-grained features, and associated opin-
+ions, from reviews. OPINE?s use of the Web as a cor-
+pus helps identify product features with improved preci-
+sion compared with previous work. OPINE uses a novel
+relaxation-labeling technique to determine the semantic
+orientation of potential opinion words in the context of
+the extracted product features and specific review sen-
+tences; this technique allows the system to identify cus-
+tomer opinions and their polarity with high precision and
+recall.
+6 Acknowledgments
+We would like to thank the KnowItAll project and the
+anonymous reviewers for their comments. Michael Ga-
+mon, Costas Boulis and Adam Carlson have also pro-
+vided valuable feedback. We thank Minquing Hu and
+Bing Liu for providing their data sets and for their com-
+ments. Finally, we are grateful to Bernadette Minton and
+Fetch Technologies for their help in collecting additional
+reviews. This research was supported in part by NSF
+grant IIS-0312988, DARPA contract NBCHD030010,
+ONR grant N00014-02-1-0324 as well as gifts from
+Google and the Turing Center.
+References
+A. Almuhareb and M. Poesio. 2004. Attribute-based and value-
+based clustering: An evaluation. In EMNLP, pages 158?165.
+M. Berland and E. Charniak. 1999. Finding parts in very large
+corpora. In ACL, pages 57?64.
+O. Etzioni, M. Cafarella, D. Downey, S. Kok, A. Popescu,
+T. Shaked, S. Soderland, D. Weld, and A. Yates. 2005. Un-
+supervised named-entity extraction from the web: An exper-
+imental study. Artificial Intelligence, 165(1):91?134.
+V. Hatzivassiloglou and K. McKeown. 1997. Predicting the se-
+mantic orientation of adjectives. In ACL/EACL, pages 174?
+181.
+M. Hu and B. Liu. 2004. Mining and Summarizing Customer
+Reviews. In KDD, pages 168?177, Seattle, WA.
+R.A. Hummel and S.W. Zucker. 1983. On the foundations of
+relaxation labeling processes. In PAMI, pages 267?287.
+S. Kim and E. Hovy. 2004. Determining the sentiment of opin-
+ions. In COLING.
+N. Kobayashi, K. Inui, K. Tateishi, and T. Fukushima. 2004.
+Collecting Evaluative Expressions for Opinion Extraction.
+In IJCNLP, pages 596?605.
+D. Kushal, S. Lawrence, and D. Pennock. 2003. Mining the
+peanut gallery: Opinion extraction and semantic classifica-
+tion of product reviews. In WWW.
+D. Lin. 1998. Dependency-based evaluation of MINIPAR. In
+Workshop on Evaluation of Parsing Systems at ICLRE.
+S. Morinaga, K. Yamanishi, K. Tateishi, and T. Fukushima.
+2002. Mining product reputations on the web. In KDD.
+Lee L. Pang, B and S. Vaithyanathan. 2002. Thumbs up? sen-
+timent classification using machine learning techniques. In
+EMNLP, pages 79?86.
+A. Popescu, A. Yates, and O. Etzioni. 2004. Class extraction
+from the World Wide Web. In AAAI-04 Workshop on Adap-
+tive Text Extraction and Mining, pages 68?73.
+A. Rangarajan. 2000. Self annealing and self annihilation: uni-
+fying deterministic annealing and relaxation labeling. In Pat-
+tern Recognition, 33:635-649.
+E. Riloff, J. Wiebe, and T. Wilson. 2003. Learning Subjective
+Nouns Using Extraction Pattern Bootstrapping. In CoNLL,
+pages 25?32s.
+H. Takamura, T. Inui, and M. Okumura. 2005. Extracting Se-
+mantic Orientations of Words using Spin Model. In ACL,
+pages 133?141.
+P. D. Turney. 2001. Mining the Web for Synonyms: PMI-IR
+versus LSA on TOEFL. In Procs. of the Twelfth European
+Conference on Machine Learning (ECML-2001), pages 491?
+502, Freiburg, Germany.
+P. D. Turney. 2002. Thumbs up or thumbs down? semantic
+orientation applied to unsupervised classification of reviews.
+In Procs. of the 40th Annual Meeting of the Association for
+Computational Linguistics (ACL?02), pages 417?424.
+P. Turney. 2003. Inference of Semantic Orientation from Asso-
+ciation. In CoRR cs. CL/0309034.
+J. Wiebe. 2000. Learning subjective adjectives from corpora.
+In AAAI/IAAI, pages 735?740.
+346
+Proceedings of HLT/EMNLP 2005 Demonstration Abstracts, pages 32?33,
+Vancouver, October 2005.
+OPINE: Extracting Product Features and Opinions from Reviews
+Ana-Maria Popescu Bao Nguyen
+Department of Computer Science and Engineering
+University of Washington
+Seattle, WA 98195-2350
+{amp,omicron,etzioni}@cs.washington.edu
+Oren Etzioni
+Abstract
+Consumers have to often wade
+through a large number of on-line re-
+views in order to make an informed
+product choice. We introduce OPINE,
+an unsupervised, high-precision in-
+formation extraction system which
+mines product reviews in order to
+build a model of product features and
+their evaluation by reviewers.
+1 Introduction
+The Web contains a wealth of customer reviews - as a
+result, the problem of ?review mining? has seen increas-
+ing attention over the last few years from (Turney, 2003;
+Hu and Liu, 2004) and many others. We decompose the
+problem of review mining into the following subtasks:
+a) Identify product features, b) Identify opinions re-
+garding product features, c) Determine the polarity of
+each opinion and d) Rank opinions according to their
+strength (e.g., ?abominable? is stronger than ?bad?).
+We introduce OPINE, an unsupervised information ex-
+traction system that embodies a solution to each of the
+above subtasks. The remainder of this paper is organized
+as follows: Section 2 describes OPINE?s components to-
+gether with their experimental evaluation and Section 3
+describes the related work.
+2 OPINE Overview
+OPINE is built on top of KNOWITALL, a Web-based,
+domain-independent information extraction system (Et-
+zioni et al, 2005). Given a set of relations of inter-
+est, KNOWITALL instantiates relation-specific generic
+extraction patterns into extraction rules which find can-
+didate facts. The Assessor module then assigns a proba-
+bility to each candidate using a form of Point-wise Mu-
+tual Information (PMI) between phrases that is estimated
+from Web search engine hit counts (Turney, 2003). It
+Input: product class C, reviews R.
+Output: set of [feature, ranked opinion list] tuples
+R?? parseReviews(R);
+E? findExplicitFeatures(R?, C);
+O? findOpinions(R?, E);
+CO? clusterOpinions(O);
+I? findImplicitFeatures(CO, E);
+RO? rankOpinions(CO);
+{(f , oi, ...oj)}?outputTuples(RO, I?E);
+Figure 1: OPINE Overview.
+computes the PMI between each fact and discriminator
+phrases (e.g., ?is a scanner? for the isA() relationship
+in the context of the Scanner class). Given fact f and
+discriminator d, the computed PMI score is:
+PMI(f, d) = Hits(d + f )Hits(d)?Hits(f )
+The PMI scores are converted to binary features for a
+Naive Bayes Classifier, which outputs a probability asso-
+ciated with each fact.
+Given product class C with instances I and reviews R,
+OPINE?s goal is to find the set of (feature, opinions) tuples
+{(f, oi, ...oj)} s.t. f ? F and oi, ...oj ? O, where:
+a) F is the set of product class features in R.
+b) O is the set of opinion phrases in R.
+c) opinions associated with a particular feature are
+ranked based on their strength.
+OPINE?s solution to this task is outlined in Figure 1. In
+the following, we describe in detail each step.
+Explicit Feature Extraction OPINE parses the re-
+views using the MINIPAR dependency parser (Lin, 1998)
+and applies a simple pronoun-resolution module to the
+parsed data. The system then finds explicitly men-
+tioned product features (E) using an extended version
+of KNOWITALL?s extract-and-assess strategy described
+above. OPINE extracts the following types of product fea-
+tures: properties, parts, features of product parts (e.g.,
+ScannerCoverSize), related concepts (e.g., Image
+32
+is related to Scanner) and parts and properties of re-
+lated concepts (e.g., ImageSize). When compared on
+this task with the most relevant previous review-mining
+system in (Hu and Liu, 2004), OPINE obtains a 22% im-
+provement in precision with only a 3% reduction in recall
+on the relevant 5 datasets. One third of this increase is due
+to OPINE?s feature assessment step and the rest is due to
+the use of Web PMI statistics.
+Opinion Phrases OPINE extracts adjective, noun, verb
+and adverb phrases attached to explicit features as poten-
+tial opinion phrases. OPINE then collectively assigns pos-
+itive, negative or neutral semantic orientation (SO) labels
+to their respective head words. This problem is similar to
+labeling problems in computer vision and OPINE uses a
+well-known computer vision technique, relaxation label-
+ing, as the basis of a 3-step SO label assignment proce-
+dure. First, OPINE identifies the average SO label for a
+word w in the context of the review set. Second, OPINE
+identifies the average SO label for each word w in the
+context of a feature f and of the review set (?hot? has
+a negative connotation in ?hot room?, but a positive one
+in ?hot water?). Finally, OPINE identifies the SO label of
+word w in the context of feature f and sentence s. For ex-
+ample, some people like large scanners (?I love this large
+scanner?) and some do not (?I hate this large scanner?).
+The phrases with non-neutral head words are retained as
+opinion phrases and their polarity is established accord-
+ingly. On the task of opinion phrase extraction, OPINE
+obtains a precision of 79% and a recall of 76% and on the
+task of opinion phrase polarity extraction OPINE obtains
+a precision of 86% and a recall of 84%.
+Implicit Features Opinion phrases refer to properties,
+which are sometimes implicit (e.g., ?tiny phone? refers to
+the phone size). In order to extract such properties, OPINE
+first clusters opinion phrases (e.g., tiny and small will
+be placed in the same cluster), automatically labels the
+clusters with property names (e.g., Size) and uses them
+to build implicit features (e.g., PhoneSize). Opinion
+phrases are clustered using a mixture of WordNet infor-
+mation (e.g., antonyms are placed in the same cluster) and
+lexical pattern information (e.g., ?clean, almost spotless?
+suggests that ?clean? and ?spotless? are likely to refer to
+the same property). (Hu and Liu, 2004) doesn?t handle
+implicit features, so we have evaluated the impact of im-
+plicit feature extraction on two separate sets of reviews
+in the Hotels and Scanners domains. Extracting implicit
+features (in addition to explicit features) has resulted in a
+2% increase in precision and a 6% increase in recall for
+OPINE on the task of feature extraction.
+Ranking Opinion Phrases Given an opinion cluster,
+OPINE uses the final probabilities associated with the SO
+labels in order to derive an initial opinion phrase strength
+ranking (e.g., great > good > average) in the manner
+of (Turney, 2003). OPINE then uses Web-derived con-
+straints on the relative strength of phrases in order to im-
+prove this ranking. Patterns such as ?a1, (*) even a2? are
+good indicators of how strong a1 is relative to a2. OPINE
+bootstraps a set of such patterns and instantiates them
+with pairs of opinions in order to derive constraints such
+as strength(deafening) > strength(loud). OPINE
+also uses synonymy and antonymy-based constraints
+such as strength(clean) = strength(dirty). The con-
+straint set induces a constraint satisfaction problem
+whose solution is a ranking of the respective cluster opin-
+ions (the remaining opinions maintain their default rank-
+ing). OPINE?s accuracy on the opinion ranking task is
+87%. Finally, OPINE outputs a set of (feature, ranked
+opinions) tuples for each product.
+3 Related Work
+The previous review-mining systems most relevant to
+our work are (Hu and Liu, 2004) and (Kobayashi et
+al., 2004). The former?s precision on the explicit fea-
+ture extraction task is 22% lower than OPINE?s while
+the latter employs an iterative semi-automatic approach
+which requires significant human input; neither handles
+implicit features. Unlike previous research on identifying
+the subjective character and the polarity of phrases and
+sentences ((Hatzivassiloglou and Wiebe, 2000; Turney,
+2003) and many others), OPINE identifies the context-
+sensitive polarity of opinion phrases. In contrast to super-
+vised methods which distinguish among strength levels
+for sentences or clauses ((Wilson et al, 2004) and oth-
+ers), OPINEuses an unsupervised constraint-based opin-
+ion ranking approach.
+References
+O. Etzioni, M. Cafarella, D. Downey, S. Kok, A. Popescu,
+T. Shaked, S. Soderland, D. Weld, and A. Yates. 2005. Un-
+supervised named-entity extraction from the web: An exper-
+imental study. Artificial Intelligence, 165(1):91?134.
+V. Hatzivassiloglou and J. Wiebe. 2000. Effects of Adjec-
+tive Orientation and Gradability on Sentence Subjectivity. In
+COLING, pages 299?305.
+M. Hu and B. Liu. 2004. Mining and Summarizing Customer
+Reviews. In KDD, pages 168?177, Seattle, WA.
+N. Kobayashi, K. Inui, K. Tateishi, and T. Fukushima. 2004.
+Collecting Evaluative Expressions for Opinion Extraction.
+In IJCNLP, pages 596?605.
+D. Lin. 1998. Dependency-based evaluation of MINIPAR. In
+Workshop on Evaluation of Parsing Systems at ICLRE.
+P. Turney. 2003. Inference of Semantic Orientation from Asso-
+ciation. In CoRR cs. CL/0309034.
+T. Wilson, J. Wiebe, and R. Hwa. 2004. Just how mad are you?
+finding strong and weak opinion clauses. In AAAI, pages
+761?769.
+33
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 116?127, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Linking Named Entities to Any Database
+Avirup Sil?
+Temple University
+Philadelphia, PA
+avi@temple.edu
+Ernest Cronin?
+St. Joseph?s University
+Philadelphia, PA
+ernest.cronin@gmail.com
+Penghai Nie
+St. Joseph?s University
+Philadelphia, PA
+nph87903@gmail.com
+Yinfei Yang
+St. Joseph?s University
+Philadelphia, PA
+yangyin7@gmail.com
+Ana-Maria Popescu
+Yahoo! Labs
+Sunnyvale, CA
+amp@yahoo-inc.com
+Alexander Yates
+Temple University
+Philadelphia, PA
+yates@temple.edu
+Abstract
+Existing techniques for disambiguating named
+entities in text mostly focus on Wikipedia as
+a target catalog of entities. Yet for many
+types of entities, such as restaurants and
+cult movies, relational databases exist that
+contain far more extensive information than
+Wikipedia. This paper introduces a new task,
+called Open-Database Named-Entity Disam-
+biguation (Open-DB NED), in which a system
+must be able to resolve named entities to sym-
+bols in an arbitrary database, without requir-
+ing labeled data for each new database. We
+introduce two techniques for Open-DB NED,
+one based on distant supervision and the other
+based on domain adaptation. In experiments
+on two domains, one with poor coverage by
+Wikipedia and the other with near-perfect cov-
+erage, our Open-DB NED strategies outper-
+form a state-of-the-art Wikipedia NED system
+by over 25% in accuracy.
+1 Introduction
+Named-entity disambiguation (NED) is the task of
+linking names mentioned in text with an established
+catalog of entities (Bunescu and Pasca, 2006; Rati-
+nov et al2011). It is a vital first step for se-
+mantic understanding of text, such as in grounded
+semantic parsing (Kwiatkowski et al2011), as
+well as for information retrieval tasks like person
+name search (Chen and Martin, 2007; Mann and
+Yarowsky, 2003).
+NED requires a catalog of symbols, called refer-
+ents, to which named-entities will be resolved. Most
+NED systems today use Wikipedia as the catalog of
+referents, but exclusive focus on Wikipedia as a tar-
+get for NED systems has significant drawbacks: de-
+spite its breadth, Wikipedia still does not contain all
+or even most real-world entities mentioned in text.
+As one example, it has poor coverage of entities that
+are mostly important in a small geographical region,
+such as hotels and restaurants, which are widely dis-
+cussed on the Web. 57% of the named-entities in
+the Text Analysis Conference?s (TAC) 2009 entity
+linking task refer to an entity that does not appear
+in Wikipedia (McNamee et al2009). Wikipedia is
+clearly a highly valuable resource, but it should not
+be thought of as the only one.
+Instead of relying solely on Wikipedia, we pro-
+pose a novel approach to NED, which we refer to
+as Open-DB NED: the task is to resolve an en-
+tity to Wikipedia or to any relational database that
+meets mild conditions about the format of the data,
+described below. Leveraging structured, relational
+data should allow systems to achieve strong accu-
+racy, as with domain-specific or database-specific
+NED techniques like Hoffart et al NED system
+for YAGO (Hoffart et al2011). And because of
+the availability of huge numbers of databases on
+the Web, many for specialized domains, a success-
+ful system for this task will cover entities that a
+Wikipedia NED or database-specific system cannot.
+We investigate two complementary learning
+strategies for Open-DB NED, both of which signifi-
+cantly relax the assumptions of traditional NED sys-
+tems. The first strategy, a distant supervision ap-
+proach, uses the relational information in a given
+database and a large corpus of unlabeled text to
+learn a database-specific model. The second strat-
+116
+egy, a domain adaptation approach, assumes a sin-
+gle source database that has accompanying labeled
+data. Classifiers in this setting must learn a model
+that transfers from the source database to any new
+database, without requiring new training data for the
+new database. Experiments show that both strategies
+outperform a state-of-the-art Wikipedia NED sys-
+tem by wide margins without requiring any labeled
+data from the test domain, highlighting the signifi-
+cant advantage of having domain-specific relational
+data.
+The next section contrasts Open-DB NED with
+previous work. Section 3 formalizes the task. Sec-
+tions 4 and 5 present our distant supervision strategy
+and domain-adaptation strategy, respectively. Sec-
+tion 6 introduces a technique that is a hybrid of the
+two learning strategies. Section 7 describes our ex-
+periments, and Section 8 concludes.
+2 Previous Work
+As mentioned above, restricting the catalog of ref-
+erents to Wikipedia, as most recent NED systems
+do (Bunescu and Pasca, 2006; Mihalcea and Cso-
+mai, 2007; Fader et al2009; Han and Zhao, 2009;
+Kulkarni et al2009; Ratinov et al2011), can re-
+strict the coverage of the system. Zhou et al2010)
+estimate that 23% of names in Yahoo! news arti-
+cles have no referent in Wikipedia, and Cucerzan
+(2007) estimates the rate at 16% in MSNBC news
+articles. There is reason to suspect that these esti-
+mates are on the low side, however, as news tends to
+cover popular entities, which are most likely to ap-
+pear in Wikipedia; the mentions in TAC?s 2009 en-
+tity linking task are drawn from both newswire and
+blogs, and have a far higher rate (57%) of missing
+Wikipedia entries. Lin et al2012) find that 33% of
+mentions in a corpus of 500 million Web documents
+cannot be linked to Wikipedia.
+NED systems that are focused on specific do-
+mains (or verticals) greatly benefit from reposito-
+ries of domain-specific knowledge, only a subset
+of which may be found in Wikipedia. For exam-
+ple, Pantel and Fuxman (2011) use a query-click
+graph to resolve names in search engine queries to a
+large product catalog from a commercial search en-
+gine, while Dalvi et al2009; 2012) focus on movie
+and restaurant databases. Bellare and McCallum
+(2009) use the sequence information available in ci-
+tation text to link author, title, and venue names to a
+publication database. Open-DB NED systems work
+on any database, so they can serve as baselines for
+domain-specific NED tasks, as well as provide dis-
+ambiguation for domains where no domain-specific
+NED system exists.
+Numerous previous studies have considered dis-
+tant or weak supervision from a single relational
+database as an alternative to manual supervision for
+information extraction (Hoffmann et al2011; Weld
+et al2009; Bellare and McCallum, 2007; Bunescu
+and Mooney, 2007; Mintz et al2009; Riedel et al
+2010; Yao et al2010). In contrast to these sys-
+tems, our distant supervision NED system provides
+a meta-algorithm for generating an NED system for
+any database and any entity type.
+Existing domain adaptation or transfer learning
+approaches are inappropriate for the Open-DB NED
+task, either because they require labeled data in both
+the source and target domains (Daume? III et al
+2010; Ben-David et al2010), or because they lever-
+age some notion of distributional similarity between
+words in the source and target domains (Blitzer et
+al., 2006; Huang and Yates, 2009), which does not
+apply to the database symbols across the two do-
+mains. Instead, our domain adaptation technique
+uses domain-independent features of relational data,
+which apply regardless of the actual contents of the
+database, as explained further below.
+3 The Open-DB NED Problem and
+Assumptions
+3.1 Problem Formulation
+A mention is an occurrence of a named-entity
+in a document. Formally, a mention m =
+(d, start, end) is a triple consisting of a document
+d, as well as a start and end position for the men-
+tion within the document. We say that d is the
+context of m. A relational database is a 2-tuple
+(S,R). Here, S is a set of symbols for constants,
+attributes, and relations in the database, and R =
+{r1, . . . , rn} is a set of relation instances of the form
+ri = {(c1,1, . . . , c1,ki), . . . , (cni,1, . . . , cni,ki)},
+where each cj is taken from S, ki is the arity of re-
+lation ri and ni is the number of known instances
+of ri. We will write example database symbols in
+117
+movie 
+id title year 
+1 Next Door 1975 
+2 Next Door 2005 
+3 Next Door 2008 
+4 Next Door 2008 
+5 Next Door 2010 
+? ? ? 
+actor 
+id name 
+1 Nicole Kreux 
+2 Richard Ryan 
+3 Kristoffer Joner 
+4 Lee Perkins 
+5 Carla Valentine 
+? ? 
+acted_in 
+movie_id actor_id role 
+5 1 Evelyn 
+5 2 Bruce 
+2 3 John 
+1 4 Kid 
+3 5 Elana 
+? ? ? 
+player 
+id name height position 
+1 Carlos Lee 6?2? LF 
+2 Rob Bironas 6?0? K 
+3 Chris Johnson 6?3? 3B 
+4 Chris Johnson 5?11? RB 
+5 Chris Johnson 6?1? DB 
+? ? ? 
+team 
+id name 
+1 San Diego Padres 
+2 Houston Texans 
+3 Tennessee Titans 
+4 Oakland Raiders 
+5 Houston Astros 
+? ? 
+plays_for 
+player_id team_id 
+4 3 
+5 2 
+3 5 
+1 5 
+2 3 
+? ? 
+Figure 1: Example movie database (above) and sports
+database (below) in BCNF.
+teletype, and mentions in ?quotations.? For a
+particular database DB, we refer to its components
+as DB.S and DB.R. For a set of databases D, de-
+fine the set of referents as SD = (
+?
+DB?DDB.S)?
+{OOD}, where OOD is a special symbol indicat-
+ing something that is ?out of database?, or not found
+in any of the databases in D.
+Given a corpus C, a set of mentions M that oc-
+cur in C, and a set of databases D, the Open-DB
+NED task is to produce a function f : M ? SD,
+which identifies an appropriate target symbol from
+one of the databases in D, or determines that the
+mention is OOD. Note that this problem formula-
+tion assumes no labeled data. This is significantly
+more challenging than traditional NED settings, but
+allows the system to generalize easily to any new
+database. In the domain adaptation section below,
+we relax this condition somewhat, to allow labeled
+data for a small number of initial databases; the sys-
+tem must then transfer what it learns from the la-
+beled domains to any new database. Also note that
+the focus for this paper is disambiguation; we as-
+sume that the set of mentions are correctly demar-
+cated in the input text. Previous systems, such as
+Lex (Downey et al2007), have investigated the task
+of finding correct named-entity boundaries in text.
+3.2 Assumptions
+To allow our systems to handle arbitrary databases,
+we need to make some assumptions about a standard
+format for the data. We will assume that databases
+are provided in a particular form, called Boyce-Codd
+Normal Form (BCNF) (Silberschatz et al2010).
+A relational schema is said to be in BCNF when
+all redundancy based on functional dependency has
+been removed, although other types of redundancy
+may still exist. Formally, a schema R is said to
+be in BCNF with respect to a set of functional de-
+pendencies F if for every one of the dependencies
+(X ? Y ) ? F , either
+1. Y ? X , meaning this is a trivial functional de-
+pendency, or
+2. X is a superkey, meaning that X is a set of at-
+tributes that together define a unique ID for the
+relation.
+In practice, this is a relatively safe assumption as
+database designers often aim for even stricter normal
+forms. For databases not in BCNF, such as tables
+extracted from Web pages, standard algorithms ex-
+ist for converting them into BCNF, given appropri-
+ate functional dependencies, although there are sets
+of functional dependencies for which BCNF is not
+achievable. Figure 1 shows two example databases
+in BCNF. We use these tables as examples through-
+out the paper.
+We will additionally assume that all attributes, in-
+cluding names and nicknames, of entities that are
+covered by the database are treated as functional de-
+pendencies of the entity. Again, in practice, this
+is a fairly safe assumption as this is part of good
+database design, but if a database does not con-
+form to this, then there will be some entities in the
+database that our algorithms cannot resolve to. This
+assumption implies that it is enough to use the set of
+superkeys for relations as the set of possible refer-
+ents; our algorithms make use of this fact.
+Finally, we will assume the existence of a func-
+tion ?(s, t) which indicates whether the text t is a
+valid surface form of database symbol s. Our exper-
+iments in Section 7.3 explore several possible simple
+definitions for this function.
+4 A Distant Supervision Strategy for
+Open-DB NED
+Our first approach to the Open-DB NED problem re-
+lies on the fact that, while many mentions are indeed
+ambiguous and difficult to resolve correctly, most
+118
+mentions have only a very small number of possi-
+ble referents in a given database. ?Chris Johnson?
+is the name of doubtless thousands of people, but
+for articles that are reasonably well-aligned with our
+sports database, most of the time the name will refer
+to just three different people. Most sports names are
+in fact less ambiguous still. Thus, taking a corpus of
+unlabeled sports articles, we use the information in
+the database to provide (uncertain) labels, and then
+train a log-linear model from this probabilistically-
+labeled data.
+This strategy requires a set of features for the
+model. Traditionally, such features would be hand-
+crafted for a particular domain and database. As a
+first step towards our Open-DB system, we present
+a log-linear model for disambiguation, as well as a
+simple feature-generation algorithm that produces a
+large set of useful features from a BCNF database.
+We then present a distant-supervision learning pro-
+cedure for this model.
+4.1 Disambiguation Model
+Let SD be the set of possible referents. We construct
+a vector of feature functions f(m, s) describing the
+degree to which m and s ? SD appear to match
+one another. The feature functions are described be-
+low. The model includes a vector of weights w, one
+weight per feature function, and sets the probability
+of entity s given m and w as:
+P (s|m,w) =
+exp (w ? f(m, s))
+?
+s??SD
+exp (w ? f(m, s?))
+(1)
+4.2 Database-driven Feature Generation
+Figure 2 shows our algorithm for automatically gen-
+erating feature functions fi(m, s) from a BCNF
+database. As mentioned above, we only need to con-
+sider resolving to database symbols s that are keys,
+or unique IDs, for some tuple in a database. For
+an entity in the database with key id, the feature
+generation algorithm generates two types of feature
+functions: attribute counts and similar entity counts.
+Each of these features measures the similarity be-
+tween the information stored in the database about
+the entity id, and the information in the text in d sur-
+rounding mention m.
+An attribute count feature function fatti,j (m, id)
+for the jth attribute of relation ri counts how many
+Algorithm: Feature Generation
+Input: DB, a database in BCNF
+Output: F, a set of feature functions
+Initialization: F? ?
+Attribute Count Feature Functions:
+For each relation ri ? DB.R
+For each j in {1, . . . , ki}
+Define function fatti,j (m, id):
+count? 0
+Identify the tuple t ? ri containing id
+val? tj
+count? count +
+ContextMatches(val,m)
+return count
+F? F ? {fatti,j }
+Similar-Entity Count Feature Functions:
+For each relation ri ? DB.R
+For each j in {1, . . . , ki}
+Define function fsimi,j (m, id):
+count? 0
+Identify the tuple t ? ri containing id
+val? tj
+Identify the set of similar tuples T ?:
+T ? = {t?|t? ? ri, t?j = val}
+For each tuple t? ? T ?
+For each j? ? {1, . . . , ki}
+val? ? t?j
+count? count +
+ContextMatches(val?,m)
+return count
+F? F ? {fsimi,j }
+Figure 2: Feature generation algorithm. The
+ContextMatches(s,m) function counts how many
+times a string that matches database symbol s appears
+in the context of m. In our implementation, we use all
+of d(m) as the context. Matching between strings and
+database symbols is discussed in Sec. 7.3.
+attributes of the entity id appear near m. For exam-
+ple, if id is 5 in the movie relation in Figure 1, the
+feature function for attribute year would count how
+often 2010 matches the text surrounding mention
+m. Defining precisely whether a database symbol
+?matches? a word or phrase is a subtle issue; we ex-
+plore several possibilities in Section 7.3. In addition
+119
+to attribute counts for attributes within a single rela-
+tion, we also use attributes from relations that have
+been inner-joined on primary key and foreign key
+pairs. For example, for movies, we include attributes
+such as director name, genre, and actor name. High
+values for these attribute count features indicate that
+the text around m closely matches the information
+in the database about entity id, and therefore id is a
+strong candidate for the referent of m. We use the
+whole document as the context for finding matches,
+although other variants are worth future investiga-
+tion.
+A similar entity count feature function
+fsimi,j (m, id) for the jth attribute in relation ri
+counts how many entities similar to id are men-
+tioned in the neighborhood of m. As an example,
+consider a mention of ?Chris Johnson?, id = 3,
+and the similar entity feature for the position
+attribute of the players relation in the sports
+database. The feature function would first identify
+that 3B is the position of the player with id = 3. It
+would then identify all players that had the same
+position. Finally, it would count how often any
+attributes of this set of players appear near ?Chris
+Johnson?. Likewise, the similar entity feature for
+the team id attribute would count how many
+teammates of the player with id = 3 appear near
+?Chris Johnson?. A high count for this teammate
+feature is a strong clue that id is the correct referent
+for m, while a high count for players of the same
+position is a weak but still valuable clue.
+4.3 Parameter Estimation via Distant
+Supervision
+Using string similarity, we can heuristically deter-
+mine that three IDs with name attribute Chris
+Johnson are highly likely to be the correct target
+for a mention of ?Chris Johnson?. Our distant su-
+pervision parameter estimation strategy is to move
+as much probability mass as possible onto the set
+of realistic referents obtained via string similarity.
+Since our features rely on finding attributes and sim-
+ilar entities, the side effect of this strategy is that
+most of the probability mass for a particular mention
+is moved onto the one target ID with high attribute
+count and similar entity count features, thus disam-
+biguating the entity. Although the string-similarity
+heuristic is typically noisy, the strong information in
+the database and the fact that many entity mentions
+are typically not ambiguous allows the technique to
+learn effectively from unlabeled text.
+Let ?(m,DB) be a heuristic string-matching
+function that returns a set of plausible ID values in
+databaseDB for mentionm. The objective function
+for this training procedure is a modified marginal log
+likelihood (MLL) function that encourages probabil-
+ity mass to be placed on the heuristically-matched
+targets:
+MLL(M,w) =
+?
+m?M
+log
+?
+id??(m,DB)
+P (id|m,w)
+This objective is smooth but non-convex. We use
+a gradient-based optimization procedure that finds a
+local maximum. Our implementation uses an open-
+source version of the LBFG-S optimization tech-
+nique (Liu and Nocedal, 1989). The gradient of our
+objective is given by
+?LL(M,w)
+?wi
+=
+?
+m?M
+Eid??(m,DB) [fi(m, id)]
+?Eid?DB.S [fi(m, id)]
+where the expectations are taken according to
+P (id|m,w).
+5 A Domain-Adaptation Strategy for
+Open-DB NED
+Our domain-adaptation strategy builds an Open-DB
+NED system by training it on labeled examples from
+an initial database or small set of initial databases.
+Unlike traditional NED, however, the purpose in
+Open-DB NED is to resolve to any database. Thus
+the strategy must take care to build a model that
+can transfer what it has learned to a new database,
+without requiring additional labeled data for the new
+database.
+At first, the problem seems intractable ? just
+because a system can disambiguate between ?Next
+Door?, the 2005 Norwegian film, and ?Next Door?,
+the 1975 short film by director Andrew Silver, that
+seems to provide little benefit for disambiguating be-
+tween different athletes named ?Andre Smith.? The
+crux of the problem lies in the fact that database-
+driven features are domain-specific. Counting how
+many times the director of a movie appears is highly
+120
+useful in the movie domain, but worthless in the
+sports domain.
+Our solution works by re-defining the problem in
+such a way that we can define domain-independent
+and database-independent features. For example,
+rather than counting how often the director of
+a movie appears in the context around a movie
+mention, we create a domain-independent Count
+Att(m, s) feature function that counts how often any
+attribute of s appears in the context of m. For
+movies, Count Att will add together counts for ap-
+pearances of a movie?s production year and IMDB
+rating, among other attributes. In the sports domain,
+Count Att will add together counts for appearances
+of a player?s height, position, salary, etc.. But in ei-
+ther domain, the feature is well-defined, and in either
+domain, larger values of the feature indicate a better
+match between m and s. Thus there is a hope for
+training a model with domain-independent features
+like Count Att on labeled data from one domain, say
+movies, and producing a model that has high accu-
+racy on the sports domain.
+We first formalize the notion of a domain adap-
+tation NED model, and then describe our algorithm
+for producing such a model. We say that a domain
+consists of a database DB as well as a distribution
+D(M), whereM is the space of mentions. For in-
+stance, the movie domain might consist of the Inter-
+net Movie Database (IMDB) and a distribution that
+places most probability mass on documents about
+movies and Hollywood stars. In domain adapta-
+tion, a system observes a set of training examples
+(m, s, g(m, s)), where instances m ? M are drawn
+from a source domain?s distribution DS and refer-
+ents s are drawn from the source domain?s database
+DBS . The labels g(m, s) are boolean values in-
+dicating a correct or incorrect match between the
+mention and referent. The system must then learn
+a hypothesis for classifying examples (m, s) drawn
+from a target domain?s distributionDT and database
+DBT . Note that for domain adaptation, we can-
+not use the more traditional problem formulation in
+which the referent s is a label (i.e., s = g(m)) for the
+mention, since the set of possible referents changes
+from domain to domain, and therefore the output of
+g would be completely different from one domain to
+the next.
+Table 1 lists the domain-independent features
+Domain-Independent Feature Functions
+Count Att:
+?
+i,j f
+att
+i,j (m, s)
+Count Sim:
+?
+i,j f
+sim
+i,j (m, s)
+Count All: Count Att + Count Sim
+Count Unique:
+?
+i,j
+{
+0 if fatti,j (m, s) = 0,
+1 if fatti,j (m, s) > 0.
+Count Num:
+?
+i,j|jis a numeric att. f
+att
+i,j (m, s)
+Table 1: Primary feature functions for a domain adapta-
+tion approach to NED. These features made the biggest
+difference in our experiments, but we also tested varia-
+tions such as counting unique numeric attribute appear-
+ances, counting unique similar entities, counting relation
+name appearances, counting extended attributed appear-
+ances, and others.
+used in our domain adaptation model. These fea-
+tures use the attribute counts and similar entity
+counts from the distant supervision model as subrou-
+tines. By aggregating over those domain-dependent
+feature functions, the domain adaptation system ar-
+rives at feature functions that can be defined for any
+database, rather than for a specific database.
+Note that there is a tradeoff between the do-
+main adaptation technique and the distant super-
+vision technique. The domain adaptation model
+has access to labeled data, unlike the distant su-
+pervision model. In addition, the domain adapta-
+tion model requires no text whatsoever from the tar-
+get domain, not even an unlabeled corpus, to set
+weights for the target domain. Once trained, it is
+ready for NED over any database that meets our as-
+sumptions, out of the box. However, because the
+model needs to be able to transfer to arbitrary new
+domains, the domain adaptation model is restricted
+to domain-independent features, which are ?coarser-
+grained.? That is, the distant supervision model has
+the ability to place more weight on attributes like
+director rather than genre, or team rather than po-
+sition, if those attributes are more discriminative.
+The domain adaptation model cannot place differ-
+ent weights on the different attributes, since those
+weights would not transfer across databases.
+As with distant supervision, the domain adapta-
+tion strategy uses a log-linear model over these fea-
+ture functions. We use standard techniques for train-
+ing the model using labeled data from the source do-
+121
+main: conditional log likelihood (CLL) as the objec-
+tive function, and LBFG-S for convex optimization.
+CLL(L,w) =
+?
+(m,id,label)?L
+logP (label|m, id,w)
+The training algorithm is guaranteed to converge to
+the globally optimal parameter setting for this objec-
+tive function over the training data. The manually
+annotated data contains only positive examples; to
+generate negative examples, we use the same name-
+matching heuristic ?(m,DB) to identify a set of po-
+tentially confusing bad matches. On test data, we
+use the trained model to choose the id for a given m
+with the highest probability of being correct.
+6 A Hybrid Model
+The distant supervision and domain adaptation
+strategies use two very different sources of evidence
+for training a disambiguation classifier: the string-
+matching heuristic and unlabeled text from the target
+domain for the the distant supervision model, and
+aggregate features over labeled text from a separate
+domain for domain adaptation. This begs the ques-
+tion, do these sources of evidence complement one
+another? To address this question, we design a Hy-
+brid model with features and training strategies from
+both distant supervision and domain adaptation.
+The training data consists of a set LS of labeled
+mentions from a source domain, a source database
+DBS , a set of unlabeled mentions MT from the tar-
+get domain, and the target-domain database DBT .
+The full feature set of the Hybrid model is the union
+of the distant supervision feature functions for the
+target domain and the domain-independent domain
+adaptation feature functions. Note that the distant
+supervision feature functions are domain-specific,
+so they almost always will be uniformly zero on LS ,
+but the domain adaptation feature functions will be
+activated on both LS and MT . The combined train-
+ing objective for the Hybrid model is:
+LL(LS ,MT ,w) = CLL(LS ,w) +MLL(MT ,w)
+7 Experiments
+Our experiments compare our strategies for Open-
+DB NED against one another, as well as against a
+Wikipedia NED system from previous work, on two
+domains: sports and movies.
+7.1 Data
+For the movie domain, we collected a set of
+156 cult movie titles from an online movie site
+(www.olivefilms.com). For each movie title, we ex-
+ecuted a Web search using a commercial search en-
+gine, and collected the top five documents for each
+title from the search engine?s results. Nearly all top-
+five results included at least one mention of an en-
+tity not found in Wikipedia; overall, only 16% of the
+mentions could be linked to Wikipedia. After strip-
+ping javascript and html annotations, we removed
+documents with fewer than 50 words, leaving a to-
+tal of 770 documents. We select one occurrence of
+any of the 156 movie titles from each document as
+our set of mentions. Many titles are ambiguous not
+just among different movies with the same name, but
+also among novels, plays, geographical entities, and
+assorted other types of entities. To provide labels for
+these mentions, we use both a movie database and
+Wikipedia. We downloaded the complete data dump
+from the online Internet Movie Database (IMDB,
+www.imdb.com). For our set of possible referents,
+we use the set of all key values in IMDB, and the set
+of all Wikipedia articles. Annotators manually la-
+beled each mention using this set of referents. Table
+2 shows summary statistics about this labeled data.
+For the sports domain, we downloaded all player
+data from Yahoo!, Inc.?s sports database for the
+years 2011-2012 and two American sports leagues,
+the National Football League (NFL) and Major
+League Baseball (MLB). From the database, we ex-
+tracted ambiguous player names and team names,
+including names like ?Philadelphia? which may re-
+fer to Philadelphia Eagles in the NFL data,
+Philadelphia Phillies in the MLB data, or
+the city of Philadelphia itself (in both types of
+data). We then collected 1300 Yahoo! news arti-
+cles which include a mention that partially matches
+at least one of these database symbols. We manu-
+ally labeled a random sample of 564 mentions from
+this data, including 279 player name mentions and
+285 city name mentions. Many player name and
+place name mentions are ambiguous between the
+two sports leagues, as well as with teams or play-
+ers from other leagues. In order to focus on the
+hardest cases, we specifically exclude mentions like
+?Philadelphia? from the labeled data if any of their
+122
+domain |M | E|?(m,DB)| OOD Wiki
+movies 770 2.6 13% 16%
+sports 549 4.5 0% 100%
+Table 2: Number of mentions, average number of refer-
+ents per mention, % of mentions that are OOD, and %
+of mentions that are in Wikipedia in our movie and sports
+data.
+unambiguous completions appears in the same arti-
+cle (that is, if either of the team names ?Philadelphia
+Eagles? or ?Philadelphia Phillies? appears in the
+same article, we exclude the ?Philadelphia? men-
+tion). As before, the set of possible referents in-
+cludes the symbol OOD, key values from the sports
+database, and Wikipedia articles, and a given men-
+tion may be labeled with both a sports entity and a
+Wikipedia article, if appropriate. All of our data is
+available from the last author?s website.
+7.2 Evaluation Metric
+We report on a version of exact-match accuracy. The
+system chooses the most likely label s? for each m.
+This is judged correct if s? matches the correct label
+s exactly, or (in cases where both a Wikipedia and a
+database entity are considered correct) if one of the
+labels matches s? exactly. This metric allows systems
+to resolve against either reference, Wikipedia or an-
+other database, without requiring it to match both if
+the same entity appears in both references.
+7.3 Exact or Partial Matching?
+One important question in the design of our systems
+is how to determine the ?match? between database
+symbols and text. This question comes into play in
+two components of our systems: it affects the com-
+putation of feature functions that count how often a
+match of some attribute is found in text, and it af-
+fects which set of heuristically-determined database
+entities are considered to be possible matches for a
+given mention.
+We experiment with two different matching
+strategies between a symbol s and text t, exact
+matching and partial matching. Exact matching
+?exact(s, t) requires the sequence of characters in s
+to appear exactly (modulo character encoding) in t.
+For instance, the database value Chris Johnson
+System Accuracy
+No-Wikipedia Domain Adapt. 0.61
+DocSim-Wikipedia Domain Adapt. 0.69
+Table 3: Including a simple document-similarity feature
+for comparing a mention?s context with a Wikipedia page
+provides an 8% improvement over ignoring Wikipedia in-
+formation.
+would match ?Chris Johnson?, but not ?C. John-
+son? or ?Johnson? in text. For partial matching,
+we used different tests for numeric and textual en-
+tities. For numeric entities, ?partial matched s and
+t if the numeric value of one was within 10% of
+the other, so that 5312 would match ?5,000.? We
+made no attempt to convert numeric phrases, such
+as ?3.6 million?, into numeric values. For textual
+entities, ?partial matched s and t if at least one
+token from each matched exactly. Thus Chris
+Johnson matches both ?Chris? and ?C. Johnson?.
+We found ?partial to be consistently superior for
+computing ?(m,DB), since it has much better re-
+call for mentions like ?Philadelphia?. On the other
+hand, if we use ?partial for computing our models?
+feature functions, like the Count Att(m, s) in the do-
+main adaptation model, counts varied widely across
+domains. A simple version of the domain adapta-
+tion classifier (only the Count All and Count Unique
+features) trained on sports data and tested on movies
+achieved an accuracy of 24% using ?partial, com-
+pared with 61% using ?exact. For all remaining
+tests, we used ?exact for computing features, and
+?partial for computing ?(m,DB).
+7.4 Incorporating Wikipedia referents
+Thus far, all of our features work on relational data,
+not Wikipedia. In order to allow our systems to link
+to Wikipedia, we create a single ?document simi-
+larity? feature describing the similarity between the
+text around a mention and the text appearing on a
+Wikipedia page. We build a vector space model of
+both the document containing the mention and the
+Wikipedia page, remove stopwords, and use cosine
+similarity to compute this feature.
+To evaluate the effectiveness of this Wikipedia
+feature, we tested two versions of our domain adap-
+tation system, both trained on sports data and tested
+123
+0.13 
+0.4 0.43 
+0.54 0.65 
+0.71 0.72 0.73 
+0 
+0.21 
+0.33 
+1 
+0.54 0.63 0.62 
+0.66 
+00.1
+0.20.3
+0.40.5
+0.60.7
+0.80.9
+1
+Accu
+racy
+ 
+Open-DB NED Test 
+Movies Sports
+Figure 3: All three Open-DB NED strategies out-
+perform a state-of-the-art Wikipedia NED system by
+25% or more on sports and movies, and outperform
+a Wikipedia NED system with oracle information by
+14% or more on the movie data. Differences between
+the Modified Zhou Wikifier and the Open-DB strategies
+are statistically significant (p < 0.01, Fisher?s exact test)
+on both domains.
+on the movies domain. The first version involves
+no Wikipedia information whatsoever, thus it has no
+reason to select a Wikipedia article over OOD. The
+second system includes the document similarity fea-
+ture. Table 3 shows the results of these systems. En-
+couragingly, our single document similarity feature
+produces a significant improvement over the model
+without Wikipedia information, so we use this fea-
+ture in all of our systems tested below. More so-
+phisticated use of Wikipedia is certainly possible,
+and an important question for future work is how
+to combine Open-DB NED more seamlessly with
+Wikipedia NED.
+7.5 Comparing Open-DB NED Strategies
+For each domain, we compare our domain-
+adaptation strategy, distant supervision, and hy-
+brid strategies. The domain-adaptation model is
+trained on the labeled data for sports when testing
+on movies, and vice versa. We use a movies test set
+of 180 mentions that is separate from the develop-
+ment data used for the above tests. For the distant
+supervision strategy, we use the entire collection of
+texts from each domain as input (1300 articles for
+sports, 770 articles for movies), with the labels re-
+moved during training.
+We compare against a state-of-the-art Wikipedia
+NED system used in production by a major Web
+company. This system is a modified version of the
+system described by Zhou et al2010), where cer-
+tain features have been removed for efficiency. We
+refer to this as the Modified-Zhou Wikifier. This
+system uses a gradient-boosted decision tree and
+multiple local and global features for computing
+the similarity between a mention?s context and a
+Wikipedia article. We also test a hypothetical sys-
+tem, Oracle Wikifier, which is given no information
+about entities in IMDB, but is assumed to be able
+to correctly resolve any mention that refers to an
+entity found in Wikipedia. Thus, this system has
+perfect accuracy on mentions that can be found in
+Wikipedia, and accuracy similar to a baseline that
+predicts randomly on all mentions that fall outside
+of Wikipedia1. Oracle-Wikifier serves as an upper
+bound on systems that have no access to a domain-
+specific database. In addition, we compare against
+two standard baselines: a classifier that always pre-
+dicts OOD, and a classifier that chooses randomly.
+Finally, we compare against a system that trains the
+domain adaptation model using distant supervision
+(?DA Trained with DS?).
+Figure 3 shows our results. All three Open-DB
+approaches outperform the baseline techniques on
+this test by wide margins, with the Hybrid model in-
+creasing by 30% or more over the random baseline.
+On the movie domain, the Hybrid model outper-
+forms the Oracle Wikifier by nearly 20%. Encour-
+agingly, the Hybrid model consistently outperforms
+both distant supervision and domain adaptation, sug-
+gesting that the two sources of evidence are partially
+complementary. Distant supervision performs better
+on the movies test, whereas domain adaptation has
+the advantage on sports. The differences among all
+three Open-DB approaches is relatively small, com-
+pared with the difference between these approaches
+and Oracle Wikifier on the movie data.
+The domain adaptation system outperforms DA
+Trained with DS on both domains, suggesting
+that labeled data from a separate domain is bet-
+ter evidence for parameter estimates than unlabeled
+data from the same domain. The distant super-
+vision system also outperforms DA Trained with
+1Alternatively, one could make the oracle system predict
+OOD on all mentions that fall outside of Wikipedia. Random
+predictions perform better on our data.
+124
+DS on both domains, suggesting that the fine-
+grained, domain-specific features do in fact provide
+more helpful information than the coarser-grained,
+domain-independent features of the domain adapta-
+tion model.
+All of the Open-DB NED systems outperform the
+Modified Zhou Wikifier on both data sets by a wide
+margin. In fact the Modified Zhou Wikifier has sim-
+ilar results on both domains, despite the fact that
+Wikipedia has far greater coverage on sports than
+movies. In part, the poor performance of the Modi-
+fied Zhou Wikifier reflects the difficult nature of the
+task. In previous experiments on an MSNBC news
+test set it reached 85% accuracy, but a random clas-
+sifier there achieved 60% accuracy compared with
+21% on our sports data. Another difficulty with
+the Modified Zhou Wikifier is its strong preference
+for globally common entities. It consistently clas-
+sifies mentions that are ambiguous between a city
+and a team (like ?Chicago? in ?Chicago sweeps the
+Red Sox?) as cities when they should be resolved
+to teams, in large part because Chicago is a more
+common referent in general text than either of the
+baseball teams that play in that city. In sports arti-
+cles, however, both meanings are common, and only
+the surrounding context can help determine the cor-
+rect referent.
+Besides wikifiers, NED systems may also be
+compared with dictionary-based word sense disam-
+biguation techniques like the Lesk algorithm2 (Lesk,
+1986). The Lesk algorithm is ?open? in the sense
+that it works for arbitrary dictionaries, and it defines
+a vector space model of the dictionary definitions
+that may be likened to the attribute-value model in
+our representation of entities in the database. Our
+approach, however, estimates parameters for a sta-
+tistical model from data, whereas the Lesk algorithm
+uses an equal weight for all attributes. To make an
+empirical comparison, we created a variant of the
+Lesk algorithm for relational data: we took the dis-
+ambiguation model from Eqn. 1, supplied all of
+the features from the distant supervision model, and
+manually set w = 1. This ?relational Lesk? model
+achieves an accuracy of 0.11 on movies, and 0.15
+on sports, significantly below the random baseline.
+Giving equal weight to noisy attributes like genre
+2We thank the reviewers for making this connection.
+and more discriminative attributes like director
+significantly hurts the performance.
+For both the movie and sports domain, approx-
+imately 80% of the Hybrid model?s errors are be-
+cause of predicting database symbols, when the cor-
+rect referent is a Wikipedia page or OOD. This
+nearly always occurs because some words in the
+context of a mention match an attribute of an in-
+correct database referent. For instance, the crime
+genre is an attribute for several movies, but it also
+matches in contexts surrounding book titles and nu-
+merous other entities. In the movie domain, most of
+the remaining errors are incorrect OOD predictions
+for mentions that should resolve to the database, but
+the article contains no attributes or similar entities
+to the database entity. In the sports domain, many
+of the remaining errors were due to predicting in-
+correct player referents. Quite often, this was be-
+cause the document discusses a fantasy sports league
+or team, where players from different professional
+sports teams are mixed together on a ?fantasy team?
+belonging to a fan of the sport. Since players in the
+fantasy leagues have different teammates than they
+do in the database, these articles consistently con-
+fuse our methods.
+8 Conclusion and Future Work
+This paper introduces the task of Open-DB Named
+Entity Disambiguation, and presents two distinct
+strategies for solving this task. Experiments indicate
+that a mixture of the two strategies significantly out-
+performs a state-of-the-art Wikipedia NED system,
+on a dataset where Wikipedia has good coverage and
+on another dataset where Wikipedia has poor cover-
+age. The results indicate that there is a significant
+benefit to leveraging other sources of knowledge in
+addition to Wikipedia, and that it is possible to lever-
+age this knowledge without requiring labeled data
+for each new source. The initial success of these
+Open-DB NED approaches indicates that this task is
+a promising area for future research, including ex-
+citing extensions that link large numbers of domain-
+specific databases to text.
+Acknowledgments
+This work was supported in part by a gift from Ya-
+hoo!, Inc.
+125
+References
+Kedar Bellare and Andrew McCallum. 2007. Learn-
+ing extractors from unlabeled text using relevant data-
+bases. In Sixth International Workshop on Information
+Integration on the Web.
+Kedar Bellare and Andrew McCallum. 2009. General-
+ized Expectation Criteria for Bootstrapping Extractors
+using Record-Text Alignment. In Empirical Methods
+in Natural Language Processing (EMNLP-09).
+Shai Ben-David, John Blitzer, Koby Crammer, Alex
+Kulesza, Fernando Pereira, and Jennifer Wortman
+Vaughan. 2010. A theory of learning from different
+domains. Machine Learning, 79:151?175.
+John Blitzer, Ryan McDonald, and Fernando Pereira.
+2006. Domain adaptation with structural correspon-
+dence learning. In EMNLP.
+Razvan Bunescu and Raymond Mooney. 2007. Learning
+to extract relations from the web using minimal super-
+vision. In Proceedings of the 45th Annual Meeting of
+the Association for Computational Linguistics (ACL-
+07).
+R. Bunescu and M. Pasca. 2006. Using encyclope-
+dic knowledge for named entity disambiguation. In
+Proceedings of the 11th Conference of the European
+Chapter of the Association for Computational Linguis-
+tics (EACL-06).
+Ying Chen and James Martin. 2007. Towards Ro-
+bust Unsupervised Personal Name Disambiguation. In
+EMNLP, pages 190?198.
+Silviu Cucerzan. 2007. Large-scale named entity dis-
+ambiguation based on wikipedia data. In Proceedings
+of the 2007 Joint Conference on Empirical Methods
+in Natural Language Processing and Computational
+Natural Language Learning (EMNLP-CoNLL), pages
+708?716.
+Nilesh N. Dalvi, Ravi Kumar, Bo Pang, and Andrew
+Tomkins. 2009. Matching Reviews to Objects using a
+Language Model. In EMNLP, pages 609?618.
+Nilesh N. Dalvi, Ravi Kumar, and Bo Pang. 2012. Object
+matching in tweets with spatial models. In WSDM,
+pages 43?52.
+Hal Daume? III, Abhishek Kumar, and Avishek Saha.
+2010. Frustratingly easy semi-supervised domain
+adaptation. In Proceedings of the ACL Workshop on
+Domain Adaptation (DANLP).
+D. Downey, M. Broadhead, and O. Etzioni. 2007. Lo-
+cating complex named entities in web text. In Procs.
+of the 20th International Joint Conference on Artificial
+Intelligence (IJCAI 2007).
+Anthony Fader, Stephen Soderland, and Oren Etzioni.
+2009. Scaling wikipedia-based named entity disam-
+biguation to arbitrary web text. In Proceedings of
+the WikiAI 09 - IJCAI Workshop: User Contributed
+Knowledge and Artificial Intelligence: An Evolving
+Synergy.
+Xianpei Han and Jun Zhao. 2009. Named entity dis-
+ambiguation by leveraging Wikipedia semantic knowl-
+edge. In Proceeding of the 18th ACM Conference
+on Information and Knowledge Management (CIKM),
+pages 215?224.
+Johannes Hoffart, Mohamed Amir Yosef, Ilaria Bordino,
+Hagen Furstenau, Manfred Pinkal, Marc Spaniol,
+Bilyana Taneva, Stefan Thater, and Gerhard Weikum1.
+2011. Robust Disambiguation of Named Entities in
+Text. In EMNLP, pages 782?792.
+Raphael Hoffmann, Congle Zhang, Xiao Ling, Luke
+Zettlemoyer, and Daniel S. Weld. 2011. Knowledge-
+Based Weak Supervision for Information Extraction of
+Overlapping Relations. In Proceedings of the Annual
+Meeting of the Association for Computational Linguis-
+tics (ACL).
+Fei Huang and Alexander Yates. 2009. Distributional
+representations for handling sparsity in supervised se-
+quence labeling. In Proceedings of the Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL).
+Sayali Kulkarni, Amit Singh, Ganesh Ramakrishnan, and
+Soumen Chakrabarti. 2009. Collective annotation
+of wikipedia entities in web text. In Proceedings of
+the 15th ACM SIGKDD International Conference on
+Knowledge Discovery and Data Mining (KDD), pages
+457?466.
+Tom Kwiatkowski, Luke Zettlemoyer, Sharon Goldwater,
+and Mark Steedman. 2011. Lexical Generalization
+in CCG Grammar Induction for Semantic Parsing. In
+Proceedings of the Conference on Empirical Methods
+in Natural Language Processing (EMNLP).
+M.E. Lesk. 1986. Automatic sense disambiguation us-
+ing machine readable dictionaries: How to tell a pine
+cone from an ice cream cone. In Proceedings of the
+SIGDOC Conference.
+Thomas Lin, Mausam, and Oren Etzioni. 2012. Entity
+linking at web scale. In Knowledge Extraction Work-
+shop (AKBC-WEKEX), 2012.
+D.C. Liu and J. Nocedal. 1989. On the limited mem-
+ory method for large scale optimization. Mathemati-
+cal Programming B, 45(3):503?528.
+G.S. Mann and D. Yarowsky. 2003. Unsupervised per-
+sonal name disambiguation. In CoNLL.
+Paul McNamee, Mark Dredze, Adam Gerber, Nikesh
+Garera, Tim Finin, James Mayfield, Christine Pi-
+atko, Delip Rao, David Yarowsky, and Markus Dreyer.
+2009. HLTCOE Approaches to Knowledge Base Pop-
+ulation at TAC 2009. In Text Analysis Conference.
+Rada Mihalcea and Andras Csomai. 2007. Wikify!:
+Linking documents to encyclopedic knowledge. In
+126
+Proceedings of the Sixteenth ACM Conference on
+Information and Knowledge Management (CIKM),
+pages 233?242.
+Mike Mintz, Steven Bills, Rion Snow, and Daniel Juraf-
+sky. 2009. Distant supervision for relation extrac-
+tion without labeled data. In Proceedings of the 47th
+Annual Meeting of the Association for Computational
+Linguistics (ACL-2009), pages 1003?1011.
+Patrick Pantel and Ariel Fuxman. 2011. Jigs and Lures:
+Associating Web Queries with Structured Entities. In
+ACL.
+L. Ratinov, D. Roth, D. Downey, and M. Anderson.
+2011. Local and global algorithms for disambiguation
+to wikipedia. In Proc. of the Annual Meeting of the
+Association of Computational Linguistics (ACL).
+Sebastian Riedel, Limin Yao, and Andrew McCallum.
+2010. Modeling relations and their mentions without
+labeled text. In Proceedings of the Sixteenth Euro-
+pean Conference on Machine Learning (ECML-2010),
+pages 148?163.
+Avi Silberschatz, Henry F. Korth, and S. Sudarshan.
+2010. Database System Concepts. McGraw-Hill,
+sixth edition.
+Daniel S. Weld, Raphael Hoffmann, and Fei Wu. 2009.
+Using Wikipedia to Bootstrap Open Information Ex-
+traction. In ACM SIGMOD Record.
+Limin Yao, Sebastian Riedel, and Andrew McCallum.
+2010. Collective cross-document relation extraction
+without labelled data. In Proceedings of the 2010 Con-
+ference on Empirical Methods in Natural Language
+Processing (EMNLP-2010), pages 1013?1023.
+Yiping Zhou, Lan Nie, Omid Rouhani-Kalleh, Flavian
+Vasile, and Scott Gaffney. 2010. Resolving surface
+forms to wikipedia topics. In Proceedings of the 23rd
+International Conference on Computational Linguis-
+tics (Coling), pages 1335?1343.
+127
+Proceedings of the NAACL HLT 2010 Workshop on Computational Linguistics in a World of Social Media, pages 31?32,
+Los Angeles, California, June 2010. c?2010 Association for Computational Linguistics
+Detecting controversies in Twitter: a first study
+Marco Pennacchiotti
+Yahoo! Labs
+Sunnyvale, CA.
+pennac@yahoo-inc.com
+Ana-Maria Popescu
+Yahoo! Labs
+Sunnyvale, CA.
+amp@yahoo-inc.com
+Social media gives researchers a great opportunity
+to understand how the public feels and thinks about
+a variety of topics, from political issues to entertain-
+ment choices. While previous research has explored
+the likes and dislikes of audiences, we focus on a
+related but different task of detecting controversies
+involving popular entities, and understanding their
+causes. Intuitively, if people hotly debate an entity
+in a given period of time, there is a good chance of a
+controversy occurring. Consequently, we use Twit-
+ter data, boosted with knowledge extracted from the
+Web, as a starting approach: This paper introduces
+our task, an initial method and encouraging early re-
+sults.
+Controversy Detection. We focus on detect-
+ing controversies involving known entities in Twit-
+ter data. Let a snapshot denote a triple s =
+(e,?t, tweets), where e is an entity, ?t is a time
+period and tweets is the set of tweets from the tar-
+get time period which refer to the target entity.1. Let
+cont(s) denote the level of controversy associated
+with entity e in the context of the snapshot s. Our
+task is as follows:
+Task. Given an entity set E and a snapshot set
+S = {(e,?t, tweets)|e ? E}, compute the con-
+troversy level cont(s) for each snapshot s in S and
+rank S with respect to the resulting scores.
+Overall Solution. Figure 1 gives an overview of
+our solution. We first select the set B ? S, consist-
+ing of candidate snapshots that are likely to be con-
+troversial (buzzy snapshots). Then, for each snap-
+shot in B, we compute the controversy score cont,
+by combining a timely controversy score (tcont) and
+a historical controversy score (hcont).
+Resources. Our method uses a sentiment lexi-
+con SL (7590 terms) and a controversy lexicon CL
+1We use 1-day as the time period ?t. E.g. s=(?Brad
+Pitt?,12/11/2009,tweets)
+Algorithm 0.1: CONTROVERSYDETECTION(S, Twitter)
+select buzzy snapshots B ? S
+for s ? B{
+tcont(s) = ? ?MixSent(s) + (1? ?) ? Controv(s))
+cont(s) = ? ? tcont(s) + (1? ?) ? hcont(s)
+rank B on scores
+return (B)
+Figure 1: Controversy Detection: Overview
+(750 terms). The sentiment lexicon is composed by
+augmenting the set of positive and negative polarity
+terms in OpinionFinder 1.5 2 (e.g. ?love?,?wrong?)
+with terms bootstrapped from a large set of user
+reviews. The controversy lexicon is compiled by
+mining controversial terms (e.g. ?trial?, ?apology?)
+from Wikipedia pages of people included in the
+Wikipedia controversial topic list.
+Selecting buzzy snapshots. We make the simple
+assumption that if in a given time period, an entity is
+discussed more than in the recent past, then a contro-
+versy involving the entity is likely to occurr in that
+period. We model the intuition with the score:
+b(s) =
+|tweetss|
+(
+?
+i?prev(s,N)
+|tweetsi|)/N
+where tweetss is the set of tweets in the snapshot
+s; and prev(s,N) is the set of snapshots referring to
+the same entity of s, in N time periods previous to
+s. In our experiment, we use N = 2, i.e. we focus
+on two days before s. We retain as buzzy snapshots
+only those with b(s) > 3.0.
+Historical controversy score. The hcont score
+estimates the overall controversy level of an entity
+in Web data, independently of time. We consider
+hcont our baseline system, to which we compare
+the Twitter-based models. The score is estimated
+on Web document data using the CL lexicon as fol-
+2J. Wiebe, T. Wilson, and C. Cardie. 2005. Annotating ex-
+pressions of opinions and emotions in language. In Language
+Resources and Evaluation.
+31
+lows: hcont(e) = k/|CL|, where k is the number of
+controversy terms t? s.t. PMI(e, t?) > A3.
+Timely controversy score. tcont estimates the
+controversy of an entity by analyzing the discussion
+among Twitter?s users in a given time period, i.e. in
+a given snapshot. It is a linear combination (tuned
+with ? ? [0, 1]) of two scores:
+MixSent(s): reflects the relative disagreement
+about the entity in the Twitter data from snapshot
+s. First, each of the N tweets in s is placed in one of
+the following sets: Positive (Pos), Negative (Neg),
+Neutral (Neu), based on the number of positive and
+negative SL terms in the tweet. MixSent is com-
+puted as:
+MixSent(s) =
+Min(|Pos|, |Neg|)
+Max(|Pos)|, |Neg|)
+?
+|Pos|+ |Neg|
+N
+Controv(s): this score reflects the presence of
+explicit controversy terms in tweets. It is computed
+as: Controv(s) = |ctv|/N , where ctv is the set of
+tweets in s which contain at least one controversy
+term from CL.
+Overall controversy score. The overall score
+is a linear combination of the timely and historical
+scores: cont(s) = ??tcont(s)+(1??)?hcont(s),
+where ? ? [0, 1] is a parameter.
+Experimental Results
+We evaluate our model on the task of ranking snap-
+shots according to their controversy level. Our cor-
+pus is a large set of Twitter data from Jul-2009 to
+Feb-2010. The set of entities E is composed of
+104,713 celebrity names scraped from Wikipedia
+for the Actor, Athlete, Politician and Musician cat-
+egories. The overall size of S amounts to 661,226
+(we consider only snapshots with a minimum of 10
+tweets). The number of buzzy snapshots in B is
+30,451. For evaluation, we use a gold standard of
+120 snapshots randomly sampled from B, and man-
+ually annotated as controversial or not-controversial
+by two expert annotators (detailed guidelines will be
+presented at the workshop). Kappa-agreement be-
+tween the annotators, estimated on a subset of 20
+snapshots, is 0.89 (?almost perfect? agreement). We
+experiment with different ? and ? values, as re-
+ported in Table 1, in order to discern the value of
+final score components. We use Average Precision
+3PMI is computed based on the co-occurrences of entities
+and terms in Web documents; here we use A = 2.
+Model ? ? AP AROC
+hcont (baseline) 0.0 0.0 0.614 0.581
+tcont-MixSent 1.0 1.0 0.651 0.642
+tcont-Controv 0.0 1.0 0.614 0.611
+tcont-combined 0.5 1.0 0.637 0.642
+cont 0.5 0.5 0.628 0.646
+cont 0.8 0.8 0.643 0.642
+cont 1.0 0.5 0.660 0.662
+Table 1: Controversial Snapshot Detection: results over
+different model parametrizations
+(AP), and the area under the ROC curve (AROC) as
+our evaluation measures.
+The results in Table 1 show that all Twitter-based
+models perform better than the Web-based baseline.
+The most effective basic model is MixSent, sug-
+gesting that the presence of mixed polarity sentiment
+terms in a snapshot is a good indicator of contro-
+versy. For example, ?Claudia Jordan? appears in a
+snapshot with a mix of positive and negative terms
+-in a debate about a red carpet appearance- but the
+hcont and Controv scores are low as there is no
+record of historical controversy or explicit contro-
+versy terms in the target tweets. Best overall per-
+formance is achieved by a mixed model combining
+the hcont and theMixSent score (last row in Table
+label 1). There are indeed cases in which the evi-
+dence from MixSent is not enough - e.g., a snap-
+shot discussing ?Jesse Jackson? ?s appearance on a
+tv show lacks common positive or negative terms,
+but reflects users? confusion nevertheless; however,
+?Jesse Jackson? has a high historical controversy
+score, which leads our combined model to correctly
+assign a high controversy score to the snapshot. In-
+terestingly, most controversies in the gold standard
+refer to micro-events (e.g., tv show, award show or
+athletic event appearances), rather than more tradi-
+tional controversial events found in news streams
+(e.g., speeches about climate change, controversial
+movie releases, etc.); this further strengthens the
+case that Twitter is a complementary information
+source wrt news corpora.
+We plan to follow up on this very preliminary
+investigation by improving our Twitter-based sen-
+timent detection, incorporating blog and news data
+and generalizing our controversy model (e.g., dis-
+covering the ?what? and the ?why? of a controversy,
+and tracking common controversial behaviors of en-
+tities over time).
+32

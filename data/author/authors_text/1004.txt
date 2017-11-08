@@ -1,0 +1,4077 @@
+Proceedings of the 2007 Joint Conference on Empirical Methods in Natural Language Processing and Computational
+Natural Language Learning, pp. 827?836, Prague, June 2007. c?2007 Association for Computational Linguistics
+Bootstrapping Information Extraction from Field Books
+Sander Canisius and Caroline Sporleder
+ILK / Communication and Information Sciences
+Tilburg University, P.O. Box 90153, 5000 LE Tilburg, The Netherlands
+{S.V.M.Canisius,C.Sporleder}@uvt.nl
+Abstract
+We present two machine learning ap-
+proaches to information extraction from
+semi-structured documents that can be used
+if no annotated training data are available,
+but there does exist a database filled with
+information derived from the type of docu-
+ments to be processed. One approach em-
+ploys standard supervised learning for infor-
+mation extraction by artificially constructing
+labelled training data from the contents of
+the database. The second approach com-
+bines unsupervised Hidden Markov mod-
+elling with language models. Empirical
+evaluation of both systems suggests that it is
+possible to bootstrap a field segmenter from
+a database alone. The combination of Hid-
+den Markov and language modelling was
+found to perform best at this task.
+1 Introduction
+Over the past decades much textual data has be-
+come available in electronic form. Many text types
+are inherently more or less structured, for example,
+classified advertisements for appartments, medical
+records, or logs of archaeological finds or zoological
+specimens collected during expeditions. Such doc-
+uments consist of a number of shorter texts (or en-
+tries), each describing an individual object (e.g., an
+appartment, or an archaeological find) or event (e.g.,
+a patient presenting to a health care provider). These
+descriptions in turn typically consist of different seg-
+ments (or fields) which contain information of a spe-
+cific type drawn from a more or less given inven-
+tory. Example (1), for instance, shows two descrip-
+tions of zoological specimens (a snake and three
+frogs) collected during an expedition. The descrip-
+tions contain different segments giving information
+about the specimens and the circumstances of their
+collection. For example, in the first description, Lep-
+tophis and ahaetulla refer, respectively, to the genus
+and species of the specimen, road to Overtoom men-
+tions the place of collection, in bush above water en-
+codes information about the biotope, in the process
+of eating Hyla minuta is a remark about the circum-
+stances of collection, 16-V-1968 gives the collection
+date and RMNH 15100 the registration number.
+(1) Leptophis ahaetulla, road to Overtoom, in bush
+above water in the process of eating Hyla minuta
+16-V-1968. RMNH 15100
+Hyla minuta 1 ? 2 ? Las Claritas, 9-VI-1978 quak-
+ing near water 50 cm above water surface, near sec-
+ondary vegetation, 200 m, M.S. Hoogmoed, RMNH
+27217 27219
+Unfortunately, this inherent structure is rarely
+made explicit. While the different object or event
+descriptions might be indicated by additional white-
+space or other formatting means, as in the example
+above, the individual fields within a description are
+typically not marked in any way. However, knowl-
+edge of the inherent structure would be very bene-
+ficial for information extraction and retrieval. For
+instance, texts in their raw form only allow key word
+search. To retrieve all entries describing specimens
+of type Hyla minuta from a zoological field report,
+one can only search for occurrences of that string
+anywhere in the document. This can return false
+827
+positives, such as the first description in (1) above,
+which does contain the string but is not about a Hyla
+minuta specimen but about a specimen of type Lep-
+tophis ahaetulla (the string Hyla minuta just hap-
+pens to occur in the SPECIAL REMARKS field). On
+the other hand, if the genus and species information
+in an entry was explicitly marked, it would be pos-
+sible to query specifically for entries whose GENUS
+is Hyla and whose SPECIES is minuta, thus avoiding
+the retrieval of entries in which this string occurs in
+another field.
+The task of automatically finding and labelling
+segments in object or event descriptions has been
+referred to as field segmentation (Grenager et al,
+2005).1 It can be seen as a sequence labelling prob-
+lem, where each text is viewed as a sequence of
+tokens and the aim is to assign each token a label
+indicating to what segment the token belongs (e.g.,
+BIOTOPE or LOCATION). If training data in the form
+of texts annotated with segment information was
+readily available, the problem could be approached
+by training a sequence labeller in a supervised ma-
+chine learning set-up. However, manually annotated
+data is rarely available. Creating it from scratch is
+not only time consuming but usually also requires
+a certain amount of expert knowledge. Moreover,
+the sequence labeller has to be re-trained for each
+new domain (e.g., natural history vs. archaeology)
+and possibly also each sub-domain (e.g., insects vs.
+mammals) due to the fact that the inventory of fields
+varies.
+Thus, fully supervised machine learning is not
+feasible for this task. In this paper, we explore two
+approaches which require no or only a very small
+amount of manually labelled training data. Both
+approaches exploit the fact that there are often re-
+sources derived from the original documents that
+can potentially be utilised to bootstrap a sequence
+labeller in the absence of labelled training data. It
+is common practice, for example, that information
+contained in (semi-structured) field reports or medi-
+cal records is manually entered into a database, usu-
+ally in an attempt to make the data more accessi-
+1The task differs from many other information extraction
+problems in which the aim is to extract short pieces of relevant
+information from larger text of largely irrelevant information.
+In field segmentation, all or most of the information in the input
+document is assumed to be relevant and the task is to segment it
+into fields containing different types of information.
+ble and easier to search. In such databases, each
+row corresponds to an entry in the original docu-
+ment (e.g., a zoological specimen) and the database
+columns correspond to the fields one would like to
+discern in the original document. Manually convert-
+ing raw text documents into databases is a labori-
+ous task though, and it is rather common that the
+database covers only a small fraction of the objects
+described in the original texts. The research question
+we address in this paper is whether it is possible to
+bootstrap a domain-specific field segmentation sys-
+tem from an existing, manually created database for
+that domain. Such a system could then be applied to
+the remaining texts in that domain, which could then
+be segmented (semi-)automatically and possibly be
+added to the original database.
+A database does not make perfect training mate-
+rial for a field segmenter though, as it is only de-
+rived from the original document and there are typ-
+ically significant (and sometimes systematic) differ-
+ences between the two data sources: First, while
+the ordering of the segments in a semi-structured
+text document is often not entirely fixed, some or-
+derings are more likely than others. This informa-
+tion is lost in the derived databases. Second, the
+databases may contain information that is not nor-
+mally present in the underlying text documents, for
+example information relating to the storage of an
+object in a collection. Conversely, some of the de-
+tails present in the texts might be omitted from the
+database, e.g., the SPECIAL REMARKS field might
+be significantly shortened in the database. Third,
+pieces of information are frequently re-written when
+entered in the database, in some cases these differ-
+ences may be systematic, e.g., dates, person names,
+or registration numbers might be written in a differ-
+ent format. Also, field boundaries in the text docu-
+ments are sometimes indicated by punctuation, such
+as commas, and fields sometimes start with explicit
+key words, such as collector. Both of these features
+are missing from the database.
+Despite of this, these databases will provide cer-
+tain clues about the structure and content of differ-
+ent segments in the text documents. We exploit this
+in two different ways: (i) by concatenating database
+fields to artificially create annotated training data for
+a supervised machine learner, and (ii) by using the
+database to build language models for the field seg-
+828
+mentation task.
+2 Related Work
+Most approaches to field segmentation and related
+information extraction tasks, such as filling tem-
+plates with information about specific events, have
+been supervised. Freitag and Kushmerick (2000)
+combine a pattern learner with boosting to perform
+field segmentation in raw texts and in highly struc-
+tured texts such as web pages and test this approach
+on a variety of field segmentation and template fill-
+ing tasks. Kushmerick et al (2001) address the prob-
+lem of extracting contact information from busi-
+ness cards. They mainly focus on field labelling,
+bypassing the segmentation step by assuming that
+each line on a business card only contains one field
+(though a field like ADDRESS may span several
+lines). Their method combines a text classifier, for
+assigning likely labels to each field, with a trained
+Hidden Markov Model (HMM) for learning order-
+ing constraints between fields. Borkar et al (2001)
+identify fields in international postal addresses and
+bibliographic records by nesting HMMs: an outer
+HMM for modelling field transitions and a num-
+ber of inner HMMs for modelling token transitions
+within fields. Viola and Narasimhand (2005) also
+deal with address segmentation but employ a trained
+context-free grammar.
+One of the few unsupervised approaches is pro-
+vided by Grenager et al (2005), who perform field
+segmentation on bibliographic records and classified
+advertisements, using EM to fit an HMM to the data.
+They show that an unconstrained model does not
+learn the field structure very well and propose aug-
+menting the model with a limited amount of domain-
+unspecific background knowledge, for example, by
+modifying the transition model to bias it towards
+recognising larger-scale patterns.
+3 Learning Field Segmentation from
+Databases
+3.1 Data
+We tested our approach on two datasets provided
+by Naturalis, the Dutch National Museum of Nat-
+ural History2 Each dataset consists of (i) a number
+2http://www.naturalis.nl
+of field book entries describing the circumstances
+under which animal specimens were collected, and
+(ii) a database containing similar information about
+the same group of animals but in a more structured
+form. The latter were used for training, the former
+for testing. While the databases were manually cre-
+ated from the corresponding field books, we made
+sure that the field book entries we selected for test-
+ing did not overlap with the database entries. The
+two data sets are described below. Table 1 lists the
+main properties of the data.
+Reptiles and Amphibians (RA) This dataset de-
+scribes a number of reptile and amphibian speci-
+mens. The database consists of 16,670 entries and
+41 columns. The columns relate, for example, to the
+circumstances of a specimen?s collection, its taxo-
+nomic classification, how and where it is stored, who
+entered the entry into the database and when. Many
+database cells are empty. Those that are filled come
+in a variety of format, i.e., numbers, dates, individ-
+ual words, and free text of various lengths. 22 of
+the columns contained information that was miss-
+ing from the field books, e.g., information relating
+to the storage of the specimens; these columns were
+excluded from the experiments.
+From the corresponding field books, 210 entries
+were selected randomly and manually annotated
+with segment information. To test the reliability of
+the manual annotation, 50 entries were labelled by
+two annotators. The inter-annotator accuracy on the
+token level was 92.84% and the kappa .92. The num-
+ber of distinct field types found in the entries was 19,
+some of which only occurred in two entries, others
+occurred in virtually every entry. The average field
+length was four tokens, with a maximum average of
+21 for the SPECIAL REMARKS field, and a minimum
+of one for fields such as SPECIES. The average num-
+ber of tokens per entry was 60. Punctuation marks
+that did not clearly belong to any field were labelled
+as OTHER. In the experiments, 200 entries were used
+for testing and 10 for parameter tuning.
+Pisces The second dataset contains information
+about the stations where fish specimens were caught.
+The database consists of 1,375 entries and four
+columns which provide information on the location
+of the stations. From the corresponding field books,
+we manually labelled 100 entries. Compared to the
+829
+RA Pisces
+# entries in DB 16,670 1,375
+# fields 19 4
+entry length (avg.) 60.17 39.79
+segment length (avg.) 4.08 4.75
+Table 1: Properties of the two datasets
+first data set, this set is much more regular, with less
+variation in the number of segments per entry and in
+the average segment length. The field book entries
+are also much shorter and there are fewer segments
+(see Table 1).
+3.2 Baselines
+In order to get a sense of the difficulty of the task, we
+implemented five baseline approaches. For the first,
+Majority (MajB), we always assign the field label
+that occurs most frequently in the manually labelled
+test data, namely SPECIAL REMARKS. The other
+four baselines implement different look-up strate-
+gies, using the database to determine which label
+should be assigned to a token or token sequence.
+Exact (ExactB) looks for substrings in a field
+book entry which exactly match the content of a
+database cell and then assigns each token in the
+matched string the corresponding column label from
+the database. There are normally several ways to
+match a field book entry to the database cells; we
+employed a greedy search, labelling the longest
+matching substrings first. All tokens that could
+not be matched in this way were assigned the label
+OTHER.
+Unigram (UniB) assigns each token the column
+label of the database cell in which it occurs most
+frequently. If a token is not found in the database, it
+is assigned the label OTHER.
+Trigram (TriB) assigns each token the most fre-
+quent column label of the trigram centred on it. If
+a trigram is not found in the database, the baseline
+backs off to the two bigrams covering the token and
+then to the unigram. If the token is not found in the
+database, OTHER is assigned.
+Trigram+Voting (TriB+Vote) is based on a tech-
+nique proposed by Van den Bosch and Daelemans
+(2005) for sequence labelling tasks. The main idea
+is to assign labels to trigrams in the sequence using
+a sliding window. Because each token, except the
+boundary tokens, is contained in three different tri-
+grams (i.e., the one centred on the token to its left,
+the one centred on itself, and the one centred on the
+token to its right), each token gets three labels as-
+signed to it, over which voting can be performed. In
+our case the labels are assigned by database look-up.
+If a trigram is not found in the database, no label is
+assigned to it. If the labels assigned to a given token
+differ, majority voting is used to resolve the conflict.
+If this does not break the tie (i.e., because all three
+trigrams assign different labels), the label of the tri-
+gram that occurs most frequently in the database is
+assigned. We also implemented two post-processing
+rules: (i) turning the label OTHER between two iden-
+tical neighbouring labels into the surrounding labels,
+and (ii) labelling commas as OTHER if the neigh-
+bouring labels are not identical.
+3.3 Supervised Learning from Automatically
+Generated Training Data
+Our first strategy was to automatically generate
+training data for a supervised machine learner from
+the database. Since the rows in the database corre-
+spond to field book entries and the columns corre-
+sponds to the fields that we want to identify, train-
+ing data can be obtained by concatenating the cells
+in each database row. The order of the fields in the
+field book entries is not fixed and this should also be
+reflected in the artificially generated training data.
+However, the field sequence is not entirely random,
+i.e., not all sequences are equally likely. If a small
+amount of manually annotated data is available, the
+field transition probabilities can be estimated from
+this, otherwise the best one can do is to assume uni-
+form probabilities for all possible orderings. We
+experimented with both strategies, creating two dif-
+ferent training sets, one in which the database cells
+were concatenated randomly with uniform probabil-
+ities, and another in which the cells were concate-
+nated to reflect the field ordering probabilities esti-
+mated from ten entries in the manually labelled de-
+velopment set.3 When estimating the field transition
+3We found that 10 annotated entries are enough for this pur-
+pose; the field segmentation results we obtained by estimating
+the sequence probabilities for the training set from 100 entries
+were not significantly different. This is probably because the
+probabilities are only used indirectly, i.e. to bias the field order-
+ings for the generated training data. If the probabilities were
+used directly in the model, the amount of manually annotated
+data would probably matter much more.
+830
+probabilities, we computed a probability distribution
+over the initial fields of an entry as well as the condi-
+tional probability distributions of a field x following
+a field y for all seen segment pairs in the ten entries.
+To account for unobserved events, we used Laplace
+smoothing.
+The artificially created training data were then
+converted to a token-based representation in which
+each token corresponds to an instance to be labelled
+with the field to which it belongs. On the whole, we
+had just under 700,000 instances (i.e., tokens) in our
+training data. We implemented 107 features, falling
+in three classes:
+? the neighbouring tokens (in a window of 5 cen-
+tering on the token in focus)
+? the typographic properties of the focus token
+(word vs. number, capitalisation, number of
+characters in the token etc.)
+? the tfidf weight of the focus token in its con-
+text with respect to each of the columns in the
+database (i.e., the fields)
+The tfidf-based features were computed for a win-
+dow of three, centering on the token in focus. For all
+n-grams in this window covering the token in focus
+(i.e., the trigram, the two bigrams, and the unigram
+of the focus token), we calculated the tfidf simi-
+larity with the columns in the database, where the
+similarity between an n-gram ti and a column colx
+is defined as:
+tfidfti,colx = tfti,colx log idfti
+The term frequency, tfti,colx is the number of oc-
+currences of ti in colx divided by the number of oc-
+currences of all n-grams of length n in colx (0 if
+the n-gram does not occur in the column). The in-
+verse document frequency, idfti , is the number of
+all columns in the database divided by the number
+of columns containing ti. A high tfidf weight for a
+given n-gram in a given column means that it fre-
+quently occurs in that column but rarely in other
+columns, thus it is a good indicator for that column.
+The training data was then used to train a
+memory-based machine learner (TiMBL (Daele-
+mans et al, 2004), default settings, k = 3, numeric
+features declared) to determine which field each to-
+ken belongs to.4
+4We chose TiMBL because it has been applied successfully
+3.4 Hidden Markov Models
+Our second approach combines language modelling
+and Hidden Markov Models (HMMs) (Rabiner,
+1989). Hidden Markov Models have been in use for
+information extraction tasks for a long time. A prob-
+abilistic model is trained to assign a label, or state
+to each of a sequence of observations, where both
+labels and observations are expected to be sequen-
+tially correlated; hence the popularity of HMMs in
+natural language processing and information extrac-
+tion. Recently, a large number of more sophisticated
+learning techniques have largely replaced HMMs
+for information extraction; however unlike most of
+those newer techniques, HMMs offer the advantage
+of having a well-established unsupervised training
+procedure: the Baum-Welch algorithm (Baum et al,
+1970).
+Training a Hidden Markov Model, whether su-
+pervised or unsupervised, comes down to estimating
+three probability distributions.
+1. An initial state distribution pi, which models
+the probability of the first observation of a se-
+quence to have a certain label.
+2. A state-transition distribution A, modelling the
+conditional probability of being in a certain
+state s, given that the previous state was s?.
+3. A state-emission distribution B, which models
+the conditional probability of observing a cer-
+tain object o given some state s.
+For information extraction tasks, the typical in-
+terpretation of an observation as referred to above,
+is that of a token, where the entire observation se-
+quence commonly corresponds to one sentence. In
+the current study, we chose to apply HMMs on a
+somewhat higher level, where an observation corre-
+sponds to a segment of the field book entry. Ideally,
+one such segment maps one-to-one to a cell in the
+specimen database, though we leave open the possi-
+bility of merging several segments into one database
+cell.
+Provided that a field book entry can be segmented
+reliably, we have turned one part of the learn-
+ing problem, that of estimating the state-emission
+to sequence labelling tasks (Van den Bosch and Canisius, 2006;
+Van den Bosch and Daelemans, 2005).
+831
+distribution, into one for which we have (almost)
+perfect supervised training data: the contents of
+the database cells. The general form of a Hid-
+den Markov Model?s state-emission distribution is
+P (o|s), where s is the state, i.e. a field type in our
+case, and o is the observation. As mentioned be-
+fore, we treat a segment of tokens as one observa-
+tion, therefore our state-emission distribution will
+look like P (o = t1, t2, ..., tn|s). Essentially, what
+we have here is a language model, conditioned on
+the current state. Since the specimen database pro-
+vides a large amount of labelled segment sequences,
+any probabilistic language modelling method can be
+used to estimate the state-emission distribution.
+Whereas the specimen database provides suffi-
+cient information to estimate the state-emission dis-
+tribution in a fully supervised way, the initial-state
+and state-transition distributions cannot be derived
+from the database alone. Columns in a database
+are either unordered or ordered in a way that does
+not necessarily reflect the order they had in the field
+book entries they were extracted from. However, the
+original field book entries do show a rather system-
+atic structure. Often, using information about the
+order fields typically occur in, seems to be the only
+way to distinguish certain field types from one an-
+other. To estimate the two missing probability dis-
+tributions, the Baum-Welch algorithm was used, up-
+dating the initial-state and state-transition distribu-
+tions, while keeping the state-emission distributions
+unchanged.
+3.4.1 Segmentation of Field Book Entries
+In our setup, the Hidden Markov Model expects
+the input texts to be pre-segmented. To come up
+with a good initial segmentation of an input entry,
+we again chose a language-modelling approach. It is
+expected that segment boundaries can best be recog-
+nised by looking for unusual token subsequences;
+that is, token sequences that are highly unlikely to
+occur within a field according to the information we
+obtained from the specimen database about what a
+typical segment does look like. A bigram language
+model has been trained on the contents of all the
+columns of the specimen database. Using this lan-
+guage model and the Viterbi algorithm, the globally
+most-likely segmentation of the input text is pre-
+dicted.
+3.4.2 The State-emission Model
+The state-emission model is constructed by train-
+ing a separate bigram language model for each col-
+umn of the specimen database. Combining those
+gives us the conditional distribution required for a
+Hidden Markov Model. However, in a database, not
+every column has necessarily been filled for every
+record. For example, in the Reptiles and Amphib-
+ians database, there are columns that only contain
+actual data as infrequently as in 5% of the records.
+Relative to columns that contain data more often,
+these sparsely-filled columns tend to be overesti-
+mated when simply computing a likelihood accord-
+ing to the language model. For this reason, a penalty
+term is added to the state-emission distribution cor-
+responding to the probability that a record contains
+data for the given column. The likelihood com-
+puted by the language model and the corresponding
+penalty term are then simply multiplied.
+3.4.3 Language Modelling
+For building both types of language model pre-
+sented in the two previous sections, we used n-
+gram language modelling as implemented by the
+SRI Language Modelling Toolkit (Stolcke, 2002).
+With this toolkit, high-order n-gram models can be
+built, where the sparsity problem often encountered
+with such models is tackled by various smoothing
+methods. We supplemented this built-in n-gram
+smoothing, with our own smoothing on the token
+level by replacing low-frequent words with symbols
+reflecting certain orthographic features of the origi-
+nal word, and numbers with a symbol only encoding
+the number of digits in the original number.
+In addition to these general measures to deal
+with sparsity, we also applied a small number of
+knowledge-driven modifications to the training data
+for the language models. The need for those is
+caused by the fact that the contents of the specimen
+database are almost, but not entirely extracted liter-
+ally from the original field book entries. For exam-
+ple, for the second entry of Example 1, the following
+information is stored in the database.
+Genus Hyla
+Species minuta
+Gender 1 f + 2 m
+Place Las Claritas
+832
+Collection date 9-6-1978
+Biotope quaking near water 50 cm above water sur-
+face, near secondary vegetation
+Height 200 m
+Collector M.S. Hoogmoed
+Registration number 27217 27219
+Comparing just this single field book entry with
+its corresponding database record, one can already
+see several mismatches. The gender symbols ? and
+? in the field book texts are stored as m and f in
+the database. The collection date 9-VI-1978, has
+been converted to 9-6-1978 before adding it to the
+database, i.e. the Roman numeral for the month
+number has been mapped to the corresponding Ara-
+bic numeral. As a final example, in the field book en-
+try the registration number for the specimen is pre-
+ceded by the symbol RMNH; in the database this stan-
+dard symbol is stripped of and only the number is
+stored. Each of these differences, while only small,
+will hinder the performance of a language model
+trained on the contents of the database and applied
+to field book texts.
+As a simple illustration of this, when encounter-
+ing the symbol RMNH in a field book entry, this most
+likely indicates the start of a new (registration num-
+ber) segment. However, in the database, on which
+all language models are trained, RMNH never occurs
+as a symbol in the registration number column; it
+does occur a few times in the column for special re-
+marks but never at the start of the text. As a result,
+a segmentation model trained on the contents of the
+database, on encountering the symbol RMNH will al-
+ways opt for continuing the existing segment as op-
+posed to starting a new one, which is most likely the
+better choice.
+Fortunately, many such mismatches between the
+text in field books and the database are systematic
+and can easily be covered by a small number of man-
+ually constructed rules that modify the training data
+for the language models. Among others, we added
+the RMNH symbol in front of registration numbers,
+and randomly changed some month numbers from
+Arabic numerals to Roman numerals.
+Another difference between the field books and
+the database that turned out to be rather crucial is
+the fact that many segments in the field book en-
+tries are separated by commas. Such commas used
+Token Segment
+Acc. Prec. Rec. F?=1 WDiff
+MajB 24.8 0.0 0.0 0.0 .346
+ExactB 16.0 25.7 23.1 24.3 .425
+UniB 27.0 8.9 22.8 12.8 .818
+TriB 43.8 12.9 24.8 16.9 .582
+TriB+Vote 45.1 14.9 27.8 19.4 .536
+MBL rand. 44.6 7.1 19.2 10.4 .568
+MBL bias 53.4 12.1 32.0 17.6 .533
+HMM 56.9 62.7 58.1 60.3 .177
+Table 2: Performance of all baseline and learning
+approaches on the Reptiles and Amphibians data,
+expressed in token accuracy, precision, recall, F-
+score, and WindowDiff. For WindowDiff, lower
+scores are better.
+as delimiters between fields do not appear in the
+database, where fields correspond to columns and
+boundaries between fields consequently do not have
+to be explicitly marked by punctuation. For exam-
+ple, the comma between Las Claritas and 9-VI-1978
+only serves to separate the Place segment from the
+Collection date segment; the comma is not copied
+to the database. However, commas do occur field-
+internally in the database, especially in longer fields
+such as SPECIAL REMARKS. Hence a language
+model trained on the database in its original form
+will never have encountered a comma functioning as
+a segment boundary marker and thus will not recog-
+nise that commas may be used for this purpose in the
+field book entries. To deal with this, we modified the
+training data for the segment model by randomly in-
+serting commas at the end of some segments. Exper-
+imental results point out that this modification has a
+large impact on the performance of the segmentation
+model.
+3.5 Results and Discussion
+To evaluate the performance of the two approaches,
+we applied them to the Reptiles and Amphibians
+database. First we computed baseline scores using
+the approaches described in Section 3.2. All result-
+ing scores are listed in Table 2.
+Performance of the systems was measured us-
+ing a number of different metrics, each reflecting
+different qualities of the output. The most basic
+one, token accuracy, simply measures the percent-
+age of tokens that were assigned the correct field
+833
+type. It has the disadvantage that it does not reflect
+the quality of the segments that were found. For a
+more segment-oriented evaluation, we used preci-
+sion, recall and F-score on correctly identified and
+labelled segments. As a last measure for segmen-
+tation quality we used WindowDiff (Pevzner and
+Hearst, 2002), which only evaluates segment bound-
+aries not the labels assigned to them. In comparison
+with F-score, it is more forgiving with respect to seg-
+ment boundaries that are slightly off.
+The baseline performance scores support our as-
+sumption that the contents of the database can be
+used to learn how to segment and label field book
+entries, i.e. the increasingly more sophisticated
+database matching strategies each cause a substan-
+tial performance improvement up to 45.1 token ac-
+curacy for the trigram lookup with voting strategy.
+The biggest problem of all baseline approaches is
+that their performance with respect to the segment-
+oriented measures is disappointing. Even trigram
+lookup with voting only reaches an F-score of 19.4.
+Looking at the performance of the two memory-
+based learners in Table 2 (MBL rand. was trained on
+randomly concatenated training data, MBL bias on
+data modelled after 10 training sequences), we see
+that the small amount of prior knowledge used for
+generating the artificial training data results in a sub-
+stantial improvement compared with the memory-
+based learner that was trained on randomly concate-
+nated training data with uniform probabilities.
+As can be seen in the last row of Table 2, the Hid-
+den Markov Model outperforms all other approaches
+in all aspects; it attains both the best token accuracy
+(56.9), and by far the best F-score (60.3). The most
+probable explanation for the superior performance
+of the HMM-based approach is that this approach
+models sequential constraints between different seg-
+ments, whereas the baselines and the memory-based
+models are predominantly local.
+In Table 3, we consider the effect that the
+knowledge-based rewriting rules discussed in Sub-
+section 3.4.3 have on the performance of both the
+segmentation and the labelling step. We evaluate
+both (i) the performance of the two processing steps
+separately?for labelling this presupposes perfectly
+segmented input? and (ii) the performance of the
+cascade of segmentation and labelling. As before,
+the performance of the labelling and the cascade is
+expressed in F-score on segments. Performance of
+the segmentation is measured in F-score on inserted
+segment boundaries.
+The first row of the table shows the scores if no
+modification rules are used. This proves detrimen-
+tal for the segmentation, only attaining an F-score
+of 28.4. With 62.3, the F-score for labelling is rea-
+sonable; however, the weakness of the segmentation
+causes the output of the entire cascade to be use-
+less. Modifying the training data for the segmen-
+tation model by randomly inserting a comma at the
+end of segments gives a substantial improvement in
+segmentation performance, and as a result the qual-
+ity of the cascade improves with it, as can be seen in
+the second row. All remaining rows list the scores
+of a single modification rule applied to the training
+data in addition to the comma rule. Each of the rules
+gives a slight performance increase. Using all rules
+together makes a big difference: the F-score of the
+cascade increases from 44.7 with the comma rule
+only, to 60.3.
+Rule Boundaries Labels Cascade
+None 28.4 62.3 17.2
+Comma 69.7 62.3 44.7
+Comma+Collection Date 69.7 64.4 46.8
+Comma+Reg. Number 72.9 68.6 50.9
+Comma+Gender 71.5 65.0 49.5
+Comma+Collector 70.4 65.8 45.3
+All 72.0 78.3 60.3
+Table 3: The effect of systematically modifying the
+training data for both the segmentation and labelling
+models. The comma rule is used only in the train-
+ing of the segmentation model. The other rules are
+named after the database field they are applied to.
+The scores reflect their performance when applied
+in conjunction with the comma rule.
+To confirm that the HMM-based approach carries
+over to other datasets, we also tested it on the Pisces
+data. The results of this experiment, as well as all
+baseline scores are presented in Table 4.5 The fact
+that this data set is more regular and contains fewer
+segments is reflected by the relatively high token ac-
+curacies attained by the baseline approaches. With
+5We did not test the memory-based approaches as these led
+to significantly worse results than the HMM-based model on the
+Reptiles and Amphibians data set.
+834
+the simple database lookup strategies, however, al-
+most no entire segments are predicted correctly. At-
+taining a token accuracy of 94.4 and an F-score of
+86.9, the performance of the Hidden Markov Model
+is again more than satisfactory, confirming the re-
+sults observed with the Reptiles and Amphibians
+data.
+Token Segment
+Acc. Prec. Rec. F?=1 WDiff
+MajB 50.0 0.0 0.0 0.0 .279
+ExactB 9.3 0.0 0.0 0.0 .565
+UniB 53.7 1.5 3.6 2.1 .588
+TriB 68.6 0.2 0.2 0.2 .359
+TriB+Vote 67.1 2.2 2.8 2.4 .384
+HMM 94.4 87.6 86.3 86.9 .049
+Table 4: Performance of Hidden Markov Model and
+all baseline approaches on the Pisces data, expressed
+in token accuracy, precision, recall, F-score, and
+WindowDiff. For WindowDiff, lower scores are bet-
+ter.
+4 Conclusion
+Information extraction is often used to automate the
+process of filling a structured database with content
+extracted from written texts. Supervised machine
+learning approaches have been successfully applied
+for creating systems capable of performing this task.
+However, the supervised nature of these approaches
+requires large amounts of annotated training data;
+the acquisition of which is often a laborious and
+time-consuming process. In this study, we experi-
+mented with two machine learning techniques that
+do not require such annotated training data, but can
+be trained on a database containing information de-
+rived from the type of documents targeted by the ap-
+plication.
+The first approach is an attempt to employ a stan-
+dard supervised machine learning algorithm, train-
+ing it on artificial labelled training data. These data
+are created by concatenating the contents of the cells
+of the database records in random order. Experi-
+ments with this approach pointed out that truly ran-
+dom concatenation of database fields results in weak
+performance; a rather simple baseline approach,
+which only matches substrings of a field book en-
+try with the contents of the database, leads to better
+results. However, if a small amount of annotated
+field book entries is available ?in this study, 10 en-
+tries turned out to be sufficient? one can estimate
+field ordering probabilities that can be used to gener-
+ate more realistic training data from the database. A
+machine learner trained on these data labelled 10%
+more tokens correctly than the system trained on the
+randomly generated data.
+Our second approach is based on unsupervised
+Hidden Markov modelling. First, an n-gram lan-
+guage model is used to divide the field book en-
+tries into unlabelled segments. Then, a Hidden
+Markov Model is trained on these segmented entries
+using the Baum-Welch algorithm to estimate state-
+transition probabilities. The resulting HMM labels
+the segments found in the preceding segmentation
+step. The HMM state-emission distributions are es-
+timated by training n-gram language models on the
+contents of the database columns.
+The performance of the HMM proved to be supe-
+rior to the other approaches, outperforming the su-
+pervised learner by labelling 56.9% of the tokens
+correctly, as well as attaining good results in terms
+of segment-level F-score (60.3). Experiments with
+the HMM approach on a second, independent data
+set confirmed its generality.
+Acknowledgements
+The research reported in this paper was funded
+by the Netherlands Organisation for Scientific Re-
+search (NWO) as part of the IMIX and CATCH pro-
+grammes. We are grateful to Antal van den Bosch,
+Marieke van Erp, Steve Hunt, and the staff at Natu-
+ralis, the Dutch National Museum for Natural His-
+tory, for interesting discussions and help in prepar-
+ing the data.
+References
+Leonard E. Baum, Ted Petrie, George Soules, and Nor-
+man Weiss. 1970. A Maximization Technique Occur-
+ring in the Statistical Analysis of Probabilistic Func-
+tions of Markov Chains. The Annals of Mathematical
+Statistics, 41(1):164?171.
+Vinayak Borkar, Kaustubh Deshmukh, and Sunita
+Sarawagi. 2001. Automatic segmentation of text into
+structured records. In Proceedings of the 2001 ACM
+SIGMOD International Conference on Management of
+Data, pages 175?186.
+835
+Walter Daelemans, Jakub Zavrel, Ko Van der Sloot, and
+Antal Van den Bosch, 2004. TiMBL: Tilburg Memory
+Based Learner, version 5.1, Reference Guide. ILK Re-
+search Group Technical Report Series no. 04-02.
+Dayne Freitag and Nicholas Kushmerick. 2000.
+Boosted wrapper induction. In Proceedings of the
+17th National Conference on Artificial Intelligence
+(AAAI/IAAI-2000), pages 577?583.
+Trond Grenager, Dan Klein, and Christopher D. Man-
+ning. 2005. Unsupervised learning of field segmen-
+tation models for information extraction. In Proceed-
+ings of the 43nd Annual Meeting of the Association for
+Computational Linguistics (ACL 2005), pages 371?
+378.
+Nicholas Kushmerick, Edward Johnston, and Stephen
+McGuinness. 2001. Information extraction by text
+classification. In Proceedings of the IJCAI-01 Work-
+shop on Adaptive Text Extraction and Mining.
+Lev Pevzner and Marti A. Hearst. 2002. A critique and
+improvement of an evaluation metric for text segmen-
+tation. Computational Linguistics, 28(1):19?36.
+Lawrence R. Rabiner. 1989. A tutorial on Hidden
+Markov Models and selected applications in speech
+recognition. Proceedings of the IEEE, 77(2):257?286.
+Andreas Stolcke. 2002. SRILM - an extensible language
+modeling toolkit. Proceedings of the International
+Conference on Spoken Language Processing (ICSLP
+2002), 2:901?904.
+Antal Van den Bosch and Sander Canisius. 2006.
+Improved morpho-phonological sequence processing
+with constraint satisfaction inference. In Proceed-
+ings of the Eighth Meeting of the ACL Special Interest
+Group in Computational Phonology (SIGPHON ?06).
+Antal Van den Bosch and Walter Daelemans. 2005. Im-
+proving sequence segmentation learning by predicting
+trigrams. In Proceedings of the Ninth Conference on
+Natural Language Learning, CoNLL-2005, pages 80?
+87.
+Paul Viola and Mukund Narasimhand. 2005. Learning
+to extract information from semi-structured text using
+a discriminative context free grammar. In Proceedings
+of the 28th Annual International ACM SIGIR Confer-
+ence on Research and Development in Information Re-
+trieval, pages 330?337.
+836
+Proceedings of the CoNLL Shared Task Session of EMNLP-CoNLL 2007, pp. 1124?1128,
+Prague, June 2007. c?2007 Association for Computational Linguistics
+A Constraint Satisfaction Approach to Dependency Parsing
+Sander Canisius
+ILK / Communication and Information Science
+Tilburg University, P.O. Box 90153,
+NL-5000 LE Tilburg, The Netherlands
+S.V.M.Canisius@uvt.nl
+Erik Tjong Kim Sang
+ISLA, University of Amsterdam,
+Kruislaan 403, NL-1098 SJ Amsterdam,
+The Netherlands
+erikt@science.uva.nl
+Abstract
+We present an adaptation of constraint satis-
+faction inference (Canisius et al, 2006b) for
+predicting dependency trees. Three differ-
+ent classifiers are trained to predict weighted
+soft-constraints on parts of the complex out-
+put. From these constraints, a standard
+weighted constraint satisfaction problem can
+be formed, the solution to which is a valid
+dependency tree.
+1 Introduction
+Like the CoNLL-2006 shared task, the 2007 shared
+task focuses on dependency parsing and aims at
+comparing state-of-the-art machine learning algo-
+rithms applied to this task (Nivre et al, 2007). For
+our official submission, we used the dependency
+parser described by Canisius et al (2006a). In this
+paper, we present a novel approach to dependency
+parsing based on constraint satisfaction. The method
+is an adaptation of earlier work using constraint sat-
+isfaction techniques for predicting sequential out-
+puts (Canisius et al, 2006b). We evaluated our ap-
+proach on all ten data sets of the 2007 shared task1.
+In the remainder of this paper, we will present the
+new constraint satisfaction method for dependency
+parsing in Section 2. The method is evaluated in
+Section 3, in which we will also present a brief error
+1Hajic? et al (2004), Aduriz et al (2003), Mart?? et al (2007),
+Chen et al (2003), Bo?hmova? et al (2003), Marcus et al
+(1993), Johansson and Nugues (2007), Prokopidis et al (2005),
+Csendes et al (2005), Montemagni et al (2003), Oflazer et al
+(2003)
+analysis. Finally, Section 4 presents our main con-
+clusions.
+2 Constraint Satisfaction Inference for
+Dependency Trees
+The parsing algorithm we used is an adaptation for
+dependency trees of the constraint satisfaction in-
+ference method for sequential output structures pro-
+posed by Canisius et al (2006b). The technique
+uses standard classifiers to predict a weighted con-
+straint satisfaction problem, the solution to which is
+the complete dependency tree. Constraints that are
+predicted each cover a small part of the complete
+tree, and overlap between them ensures that global
+output structure is taken into account, even though
+the classifiers only make local predictions in isola-
+tion of each other.
+A weighted constraint satisfaction problem (W-
+CSP) is a tuple (X,D,C,W ). Here, X =
+{x1, x2, . . . , xn} is a finite set of variables. D(x)
+is a function that maps each variable to its domain,
+and C is a set of constraints on the values assigned
+to the variables. For a traditional (non-weighted)
+constraint satisfaction problem, a valid solution is
+an assignment of values to the variables that (1) are
+a member of the corresponding variable?s domain,
+and (2) satisfy all constraints in the set C . Weighted
+constraint satisfaction, however, relaxes this require-
+ment to satisfy all constraints. Instead, constraints
+are assigned weights that may be interpreted as re-
+flecting the importance of satisfying that constraint.
+The optimal solution to a W-CSP is the solution that
+assigns those values that maximise the sum of the
+weights of satisfied constraints.
+1124
+Figure 1: Dependency tree for the sentence No it
+wasn?t Black Monday
+To adapt this framework to predicting a depen-
+dency tree for a sentence, we construct a constraint
+satisfaction problem by first introducing one vari-
+able xi for each token of the sentence. This vari-
+able?s value corresponds to the dependency relation
+that token is the modifier of, i.e. it should specify a
+relation type and a head token. The constraints of the
+CSP are predicted by a classifier, where the weight
+for a constraint corresponds to the classifier?s confi-
+dence estimate for the prediction.
+For the current study, we trained three classifiers
+to predict three different types of constraints.
+1. Cdep(head, modifier, relation), i.e. the re-
+sulting dependency tree should have a
+dependency arc from head to modifier la-
+belled with type relation. For the example
+tree in Figure 1, among others the constraint
+Cdep(head=was, modifier=No, relation=VMOD)
+should be predicted.
+2. Cdir(modifier, direction), the relative posi-
+tion (i.e. to its left or to its right) of
+the head of modifier. The tree in Fig-
+ure 1 will give rise to constraints such as
+Cdir(modifier=Black, direction=RIGHT).
+3. Cmod(head, relation), in the dependency
+tree, head should be modified by a relation
+of type relation. The constraints gener-
+ated for the word was in Figure 1 would
+be Cmod(head=was, relations=SBJ), and
+Cmod(head=was, relations=VMOD).
+Predicting constraints of type Cdep is essentially
+what is done by Canisius et al (2006a); a classi-
+fier is trained to predict a relation label, or a sym-
+bol signalling the absence of a relation, for each
+pair of tokens in a sentence2. The training data
+for this classifier consists of positive examples of
+constraints to generate, e.g. was, No, VMOD, and
+negative examples, of constraints not to generate,
+e.g. was, Black, NONE, but also No, was, NONE. In
+the aforementioned paper, it is shown that downsam-
+pling the negative class in the classifier?s training
+data improves the recall for predicted constraints.
+The fact that improved recall comes at the cost of a
+reduced precision is compensated for by our choice
+for the weighted constraint satisfaction framework:
+an overpredicted constraint may still be left unsatis-
+fied if other, conflicting constraints outweigh its own
+weight.
+In addition to giving rise to a set of constraints,
+this classifier differs from the other two in the sense
+that it is also used to predict the domains of the vari-
+ables, i.e. any dependency relation not predicted by
+this classifier will not be considered for inclusion in
+the output tree.
+Whereas the Cdep classifier classifies instances
+for each pair of words, the classifiers for Cdir and
+Cmod only classify individual tokens. The features
+for these classifiers have been kept simple and the
+same for both classifiers: a 5-slot wide window of
+both tokens and part-of-speech tags, centred on the
+token currently being classified. The two classifiers
+differ in the classes they predict. For Cdir , there are
+only three possible classes: LEFT, RIGHT, NONE.
+Instances classified as LEFT, or RIGHT give rise to
+constraints, whereas NONE implies that no Cdir con-
+straint is added for that token.
+For Cmod there is a rather large class space; a
+class label reflects all modifying relations for the to-
+ken, e.g. SBJ+VMOD. From this label, as many con-
+straints are generated as there are different relation
+types in the label.
+With the above, a weighted constraint satisfaction
+problem can be formulated that, when solved, de-
+scribes a dependency tree. As we formulated our
+problem as a constraint satisfaction problem, any
+off-the-shelf W-CSP solver could be used to obtain
+the best dependency parse. However, in general such
+solvers have a time complexity exponential in the
+2For reasons of efficiency and to avoid having too many neg-
+ative instances in the training data, we follow the approach of
+Canisius et al (2006a) of limiting the maximum distance be-
+tween a potential head and modifier.
+1125
+Language LAS ?06 UAS ?06
+Arabic 60.36 +1.2 78.61 +1.7
+Basque 64.23 +1.1 72.24 +2.1
+Catalan 77.33 +1.9 84.73 +3.1
+Chinese 71.73 +1.3 77.29 +2.5
+Czech 57.58 +1.4 75.61 +3.5
+English 79.47 +2.2 81.05 +2.8
+Greek 62.32 +2.0 76.42 +4.0
+Hungarian 66.86 +2.6 72.52 +4.7
+Italian 77.04 +1.5 81.24 +2.2
+Turkish 67.80 -0.3 75.58 +0.4
+Table 1: Performance of the system applied to the
+test data for each language. The ?06 columns show
+the gain/loss with respect to the parser of Canisius et
+al. (2006a).
+number of variables, and thus in the length of the
+sentence. As a more efficient alternative we chose to
+use the CKY algorithm for dependency parsing (Eis-
+ner, 2000) for computing the best solution, which
+has only cubic time complexity, but comes with the
+disadvantage of only considering projective trees as
+candidate solutions.
+3 Results and discussion
+We tested our system on all ten languages of the
+shared task. The three constraint classifiers have
+been implemented with memory-based learning. No
+language-specific parameter optimisation or feature
+engineering has been performed, but rather the exact
+same system has been applied to all languages. La-
+belled and unlabelled attachment scores are listed in
+Table 1. In addition, we show the increase/decrease
+in performance when compared with the parser of
+Canisius et al (2006a); for all languages but Turk-
+ish, there is a consistent increase, mostly somewhere
+between 1.0 and 2.0 percent in labelled attachment
+score.
+The parser by Canisius et al (2006a) can be
+considered a rudimentary implementation of con-
+straint satisfaction inference that only uses Cdep con-
+straints. The parser described in this paper elabo-
+rates this by adding (1) the Cmod and Cdir soft con-
+straints, and (2) projectivity and acyclicity hard con-
+straints, enforced implicitly by the CKY algorithm.
+To evaluate the effect of each of these constraints,
+Language ?06 Cdep Cmod/dep C
+dir/
+dep all
+Arabic 59.13 +0.3 +0.9 +0.9 +1.2
+Basque 63.17 +0.3 +0.4 +0.9 +1.1
+Catalan 75.44 +0.8 +1.2 +1.4 +1.9
+Chinese 70.45 +0.4 +1.2 +0.4 +1.3
+Czech 56.14 +0.5 +0.5 +1.1 +1.4
+English 77.27 +0.4 +1.4 +1.2 +2.2
+Greek 60.35 +0.4 +0.6 +1.6 +2.0
+Hungarian 64.31 +1.9 +1.3 +2.8 +2.6
+Italian 75.57 +0.2 +1.0 +1.1 +1.5
+Turkish 68.09 -0.2 -0.3 -0.3 -0.3
+Table 2: Performance of the parser by Canisius et al
+(2006a) and the performance gain of the constraint
+satisfaction inference parser with various constraint
+configurations.
+Table 2 shows the labelled attachment scores for
+several parser configurations; starting with the 2006
+parser, i.e. a parser with only Cdep constraints, then
+the CKY-driven Cdep parser, i.e. with acyclicity and
+projectivity constraints, then with Cmod, and Cdir
+separately, and finally, the full parser based on all
+constraints. It can be seen that supplementing the
+Cdep-only parser with hard constraints for acyclicity
+and projectivity already gives a small performance
+improvement. For some languages, such as Ital-
+ian (+0.2), this improvement is rather small, how-
+ever for Hungarian 1.9 is gained only by using CKY.
+The remaining columns show that adding more con-
+straints improves performance, and that for all lan-
+guages but Turkish and Hungarian, using all con-
+straints works best.
+While in comparison with the system of Canisius
+et al (2006a) the addition of extra constraints has
+clearly shown its use, we expect the Cdep classifier
+still to be the performance bottleneck of the sys-
+tem. This is mainly due to the fact that this classifier
+is also responsible for defining the domains of the
+CSP variables, i.e. which dependency relations will
+be considered for inclusion in the output. For this
+reason, we performed an error analysis of the out-
+put of the Cdep classifier and the effect it has on the
+performance of the complete system.
+In our error analysis, we distinguish three types of
+errors: 1) label errors, a correct dependency arc was
+added to the tree, but its label is incorrect, 2) recall
+1126
+Cdep prec. rec.
+Language prec. rec. %OOD %OOD
+Arabic 54.90 73.66 78.83 77.95
+Basque 55.82 74.10 85.05 83.66
+Catalan 65.19 87.25 80.29 80.00
+Chinese 65.10 76.49 83.79 82.94
+Czech 53.64 74.35 81.16 80.27
+English 59.37 90.08 67.51 66.63
+Greek 53.24 76.29 79.96 79.08
+Hungarian 44.71 78.64 69.08 67.45
+Italian 71.70 82.57 87.97 87.32
+Turkish 64.92 72.79 89.11 88.51
+Table 3: Columns two and three: precision and re-
+call on dependency predictions by the Cdep classi-
+fier. Columns four and five: percentage of depen-
+dency arc precision and recall errors caused by out-
+of-domain errors.
+errors, the true dependency tree contains an arc that
+is missing from the predicted tree, and 3) precision
+errors, the predicted tree contains a dependency arc
+that is not part of the true dependency parse.
+Label errors are always a direct consequence of
+erroneous Cdep predictions. If the correct arc was
+predicted, but with an incorrect label, then by defi-
+nition, the correct arc with the correct label cannot
+have been predicted at the same time. In case of the
+other two types of errors, the correct constraints may
+well have been predicted, but afterwards outweighed
+by other, conflicting constraints. Nevertheless, pre-
+cision and recall errors may also be caused by the
+fact that the Cdep classifier simply did not predict a
+dependency arc where it should have. We will refer
+to those errors as out-of-domain errors, since the do-
+main of at least one of the CSP variables does not
+contain the correct value. An out-of-domain error
+is a direct consequence of a recall error made by
+the Cdep classifier. To illustrate these interactions,
+Table 3 shows for all languages the precision and
+recall of the Cdep classifier, and the percentage of
+dependency precision and recall errors that are out-
+of-domain errors.
+The table reveals several interesting facts. For En-
+glish, which is the language for which our system at-
+tains its highest score, the percentage of dependency
+precision and recall errors caused by Cdep recall er-
+rors is the lowest of all languages. This can directly
+be related to the 90% recall of the English Cdep clas-
+sifier. Apparently, the weak precision (59%), caused
+by down-sampling the training data, is compensated
+for in the subsequent constraint satisfaction process.
+For Italian, the percentage of out-of-domain-
+related errors is much higher than for English. At
+the same time, the precision and recall of the Cdep
+classifier are much more in balance, i.e. a higher
+precision, but a lower recall. We tried breaking this
+balance in favour of a higher recall by applying an
+even stronger down-sampling of negative instances,
+and indeed the parser benefits from this. Labelled
+attachment increases from 77.04% to 78.41%. The
+precision and recall of this new Cdep classifier are
+58.65% and 87.15%, respectively.
+The lowest Cdep precision has been observed for
+Hungarian (44.71), which unfortunately is not mir-
+rored by a high recall score. Remarkably however,
+after English, Hungarian has the lowest percentage
+of dependency errors due to Cdep recall errors (69.08
+and 67.45). It is therefore hypothesised that not
+the low recall, but the low precision is the main
+cause for errors made on Hungarian. With this in
+mind, we briefly experimented with weaker down-
+sampling ratios in order to boost precision, but so
+far we did not manage to attain better results.
+4 Concluding remarks
+We have presented a novel dependency parsing
+method based on a standard constraint satisfaction
+framework. First results on a set of ten different lan-
+guages have been promising, but so far no extensive
+optimisation has been performed, which inevitably
+reflects upon the scores attained by the system. Fu-
+ture work will focus on tuning the many parameters
+our system has, as well as on experimenting with dif-
+ferent types of constraints to supplement or replace
+one or more of the three types used in this study.
+Acknowledgements
+The authors wish to thank Antal van den Bosch for
+discussions and suggestions. This research is funded
+by NWO, the Netherlands Organization for Scien-
+tific Research under the IMIX programme.
+1127
+References
+A. Abeille?, editor. 2003. Treebanks: Building and Using
+Parsed Corpora. Kluwer.
+I. Aduriz, M. J. Aranzabe, J. M. Arriola, A. Atutxa,
+A. Diaz de Ilarraza, A. Garmendia, and M. Oronoz.
+2003. Construction of a Basque dependency treebank.
+In Proc. of the 2nd Workshop on Treebanks and Lin-
+guistic Theories (TLT), pages 201?204.
+A. Bo?hmova?, J. Hajic?, E. Hajic?ova?, and B. Hladka?. 2003.
+The PDT: a 3-level annotation scenario. In Abeille?
+(Abeille?, 2003), chapter 7, pages 103?127.
+S. Canisius, T. Bogers, A. van den Bosch, J. Geertzen,
+and E. Tjong Kim Sang. 2006a. Dependency parsing
+by inference over high-recall dependency predictions.
+In Proceedings of CoNLL-X. New York, NY, USA.
+S. Canisius, A. van den Bosch, and W. Daelemans.
+2006b. Constraint Satisfaction Inference: Non-
+probabilistic Global Inference for Sequence Labelling.
+Proceedings of the EACL 2006 Workshop on Learning
+Structured Information in Natural Language Applica-
+tions, pages 9?16.
+K. Chen, C. Luo, M. Chang, F. Chen, C. Chen, C. Huang,
+and Z. Gao. 2003. Sinica treebank: Design criteria,
+representational issues and implementation. In Abeille?
+(Abeille?, 2003), chapter 13, pages 231?248.
+D. Csendes, J. Csirik, T. Gyimo?thy, and A. Kocsor. 2005.
+The Szeged Treebank. Springer.
+J. Eisner. 2000. Bilexical grammars and their cubic-
+time parsing algorithms. Advances in Probabilistic
+and Other Parsing Technologies, pages 29?62.
+J. Hajic?, O. Smrz?, P. Zema?nek, J. ?Snaidauf, and E. Bes?ka.
+2004. Prague Arabic dependency treebank: Develop-
+ment in data and tools. In Proc. of the NEMLAR In-
+tern. Conf. on Arabic Language Resources and Tools,
+pages 110?117.
+R. Johansson and P. Nugues. 2007. Extended
+constituent-to-dependency conversion for English. In
+Proc. of the 16th Nordic Conference on Computational
+Linguistics (NODALIDA).
+M. Marcus, B. Santorini, and M. Marcinkiewicz. 1993.
+Building a large annotated corpus of English: the Penn
+Treebank. Computational Linguistics, 19(2):313?330.
+M. A. Mart??, M. Taule?, L. Ma`rquez, and M. Bertran.
+2007. CESS-ECE: A multilingual and multilevel
+annotated corpus. Available for download from:
+http://www.lsi.upc.edu/?mbertran/cess-ece/.
+S. Montemagni, F. Barsotti, M. Battista, N. Calzolari,
+O. Corazzari, A. Lenci, A. Zampolli, F. Fanciulli,
+M. Massetani, R. Raffaelli, R. Basili, M. T. Pazienza,
+D. Saracino, F. Zanzotto, N. Nana, F. Pianesi, and
+R. Delmonte. 2003. Building the Italian Syntactic-
+Semantic Treebank. In Abeille? (Abeille?, 2003), chap-
+ter 11, pages 189?210.
+J. Nivre, J. Hall, S. Ku?bler, R. McDonald, J. Nils-
+son, S. Riedel, and D. Yuret. 2007. The CoNLL
+2007 shared task on dependency parsing. In Proc.
+of the CoNLL 2007 Shared Task. Joint Conf. on Em-
+pirical Methods in Natural Language Processing and
+Computational Natural Language Learning (EMNLP-
+CoNLL).
+K. Oflazer, B. Say, D. Zeynep Hakkani-Tu?r, and G. Tu?r.
+2003. Building a Turkish treebank. In Abeille?
+(Abeille?, 2003), chapter 15, pages 261?277.
+P. Prokopidis, E. Desypri, M. Koutsombogera, H. Papa-
+georgiou, and S. Piperidis. 2005. Theoretical and
+practical issues in the construction of a Greek depen-
+dency treebank. In Proc. of the 4th Workshop on Tree-
+banks and Linguistic Theories (TLT), pages 149?160.
+1128
+Memory-based semantic role labeling:
+Optimizing features, algorithm, and output
+Antal van den Bosch, Sander Canisius,
+Iris Hendrickx
+ILK / Computational Linguistics
+Tilburg University, P.O. Box 90153,
+NL-5000 LE Tilburg, The Netherlands
+{Antal.vdnBosch,S.V.M.Canisius,
+I.H.E.Hendrickx}@uvt.nl
+Walter Daelemans,
+Erik Tjong Kim Sang
+CNTS / Department of Linguistics
+University of Antwerp, Universiteitsplein 1,
+B-2610 Antwerpen, Belgium
+{Walter.Daelemans,
+Erik.TjongKimSang}@ua.ac.be
+1 Introduction
+In this paper we interpret the semantic role labeling prob-
+lem as a classification task, and apply memory-based
+learning to it in an approach similar to Buchholz et al
+(1999) and Buchholz (2002) for grammatical relation la-
+beling. We apply feature selection and algorithm parame-
+ter optimization strategies to our learner. In addition, we
+investigate the effect of two innovations: (i) the use of
+sequences of classes as classification output, combined
+with a simple voting mechanism, and (ii) the use of iter-
+ative classifier stacking which takes as input the original
+features and a pattern of outputs of a first-stage classifier.
+Our claim is that both methods avoid errors in sequences
+of predictions typically made by simple classifiers that
+are unaware of their previous or subsequent decisions in
+a sequence.
+2 Data and Features
+The CoNLL-2004 shared task (Carreras and Ma`rquez,
+2004) supplied data sets for the semantic role labeling
+task with several levels of annotation apart from the role
+labels to be predicted. Central to our approach is the
+choice to adopt the instance encoding analogous to Buch-
+holz et al (1999) to have our examples represent relations
+between pairs of verbs and chunks. That is, we transform
+the semantic role labeling task to a classification task in
+which we decide for all pairs of verbs and chunks whether
+they stand in a semantic role relation. Afterwards we con-
+sider all adjacent chunks to which the same role label is
+assigned by our classifier as belonging to the same argu-
+ment. All results reported below use this task representa-
+tion. Processing focuses on one verb at a time; verbs are
+treated independently.
+We did not employ the provided Propbank data nor
+the verb sense information available, nor did we use any
+other external source of information.
+Apart from the provided words and the predicted PoS
+tags, chunk labels, clause labels, and named-entity labels,
+provided beforehand, we have considered an additional
+set of automatically derived features:
+1. attenuated words (Eisner, 1996), i.e. wordforms
+occurring below a frequency threshold (of 10) are
+converted to a string capturing some of the original
+word form?s features (capitalization, whether it con-
+tains numbers or a hyphen, or suffix letters);
+2. the distance between the candidate role word and the
+verb, measured in intervening words, chunks, NP
+chunks or VP chunks (negative if the word is to the
+left, positive if it is to the right of the verb);
+3. preceding preposition: a feature containing the head
+word of the previous chunk if that was labeled as
+preposition;
+4. passive main verb: a binary feature which is on if
+the main verb is used in a passive construction;
+5. current clause: a binary feature which is on if the
+current word is in the same clause as the main verb;
+6. role pattern: the most frequently occurring role pat-
+tern of the main verb in the training data (contains
+the order of V and A0-A5).
+For every target verb in every sentence, the data sup-
+plied to the learners contains instances for every head
+word of non-VP chunks and for all words in VP chunks,
+and all words in all chunks containing a target verb (i.e.,
+more instances than chunks, to account for the fact that
+some roles are contained within chunks). Here is an ex-
+ample instance for the second chunk of the training data:
+expect -2 -1 0 morph-cap in IN
+NN PP passive clause A0VA1 A1
+This instance contains 12 features: the verb (1), dis-
+tance to the verb measured in chunks (2), NP chunks (3)
+and VP chunks (4), attenuated words (5?6), PoS tags (7?
+8), a chunk tag (9), passive main verb (10), current clause
+(11) and role pattern (12). The final item of the line is
+the required output class. Our choice of instance format
+is only slightly harmful for performance: with a perfect
+classifier we can still obtain a maximal F?=1 score of 99.1
+on the development data.
+3 Approach
+In this section we describe our approach to semantic role
+labeling. The core part of our system is a memory-based
+learner. During the development of the system we have
+used feature selection and parameter optimization by it-
+erative deepening. Additionally we have evaluated three
+extensions of the basic memory-based learning method:
+class n-grams, i.e. complex classes composed of se-
+quences of simple classes, iterative classifier stacking and
+automatic output post-processing.
+3.1 Memory-based learning
+Memory-based learning is a supervised inductive algo-
+rithm for learning classification tasks based on the k-
+nn algorithm (Cover and Hart, 1967; Aha et al, 1991)
+with various extensions for dealing with nominal features
+and feature relevance weighting. Memory-based learn-
+ing stores feature representations of training instances in
+memory without abstraction and classifies new (test) in-
+stances by matching their feature representation to all in-
+stances in memory, finding the most similar instances.
+From these ?nearest neighbors?, the class of the test item
+is extrapolated. See Daelemans et al (2003) for a de-
+tailed description of the algorithms and metrics used in
+our experiments. All memory-based learning experi-
+ments were done with the TiMBL software package1.
+In previous research, we have found that memory-
+based learning is rather sensitive to the chosen features
+and the particular setting of its algorithmic parameters
+(e.g. the number of nearest neighbors taken into account,
+the function for extrapolation from the nearest neighbors,
+the feature relevance weighting method used, etc.). In or-
+der to minimize the effects of this sensitivity, we have put
+much effort in trying to find the best set of features and
+the optimal learner parameters for this particular task.
+3.2 Feature selection
+We have employed bi-directional hill-climbing (Caruana
+and Freitag, 1994) for finding the features that were most
+suited for this task. This wrapper approach starts with the
+empty set of features and evaluates the learner for every
+individual feature on the development set. The feature
+associated with the best performance is selected and the
+process is repeated for every pair of features that includes
+the best feature. For every next best set of features, the
+1We used TiMBL version 5.0, available freely for research
+from http://ilk.uvt.nl.
+system evaluates each set that contains one extra feature
+or has one feature less. This process is repeated until the
+local search does not lead to a performance gain.
+3.3 Parameter optimization
+We used iterative deepening (ID) as a heuristic way of
+searching for optimal algorithm parameters. This tech-
+nique combines classifier wrapping (using the training
+material internally to test experimental variants) (Kohavi
+and John, 1997) with progressive sampling of training
+material (Provost et al, 1999). We start with a large pool
+of experiments, each with a unique combination of algo-
+rithmic parameter settings. Each settings combination is
+applied to a small amount of training material and tested
+on a small held-out set alo taken from the training set.
+Only the best settings are kept; the others are removed
+from the pool of competing settings. In subsequent itera-
+tions, this step is repeated, retaining the best-performing
+settings, with an exponentially growing amount of train-
+ing and held-out data ? until all training data is used or
+one best setting is left. Selecting the best settings at each
+step is based on classification accuracy on the held-out
+data; a simple one-dimensional clustering on the ranked
+list of accuracies determines which group of settings is
+selected for the next iteration.
+3.4 Class n-grams
+Alternative to predicting simple classes, sequential tasks
+can be rephrased as mappings from input examples to
+sequences of classes. Instead of predicting just A1 in
+the example given earlier, it is possible to predict a tri-
+gram of classes. The second example in the training data
+which we used earlier, is now labeled with the trigram
+A1 A1 A1, indicating that the chunk in focus has an A1
+relation with the verb, along with its left and right neigh-
+bor chunks (which are all part of the same A1 argument).
+expect -2 -1 0 morph-cap in
+IN NN PP passive clause A0VA1
+A1 A1 A1
+Predicting class trigrams offers two potential benefits.
+First, the classifier is forced to predict ?legal? sequences
+of classes; this potentially fixes a problem with simple
+classifiers which are blind to their previous or subsequent
+simple classifications in sequences, potentially resulting
+in impossible sequences such as A1 A0 A1. Second,
+if the classifier predicts the trigrams example by exam-
+ple, it produces a sequence of overlapping trigrams which
+may contain information that can boost classification ac-
+curacy. Effectively, each class is predicted three times, so
+that a simple majority voting can be applied: we simply
+take the middle prediction as the actual classification of
+the example unless the two other votes together suggest
+another class label.
+Prec. Recall F?=1 method
+a 51.6% 51.9% 51.8 feature selection
+b 57.3% 52.7% 54.9 parameter optimization
+c 58.8% 54.2% 56.4 feature selection
+d 59.5% 53.9% 56.5 parameter optimization
+e 64.3% 54.2% 58.8 classifier stacking
+f 66.3% 56.3% 60.9 parameter optimization
+g 66.5% 56.3% 60.9 feature selection
+h 68.1% 56.8% 61.9 classifier stacking
+i 68.3% 57.5% 62.4 feature selection
+j 68.9% 57.8% 62.9 classifier stacking
+k 69.1% 57.8% 63.0 classifier stacking
+50.6% 30.3% 37.9 baseline
+Table 1: Effects of cascaded feature selection, parameter
+optimization and classifier stacking on the performance
+measured on the development data set.
+3.5 Iterative classifier stacking
+Stacking (Wolpert, 1992) refers to a class of meta-
+learning systems that learn to correct errors made by
+lower-level classifiers. We implement stacking by adding
+a windowed sequence of previous and subsequent output
+class labels to the original input features. To generate
+the training material, we copy these windowed (unigram)
+class labels into the input, excluding the focus class label
+(which is a perfect predictor of the output class). To gen-
+erate test material, the output of the first-stage classifier
+trained on the original data is used.
+Stacking can be repeated; an nth-stage classifier can be
+built on the output of the n-1th-stage classifier. We im-
+plemented this by replacing the class features in the input
+of each nth-stage classifier by the output of the previous
+classifier.
+3.6 Automatic output post-processing
+Even while employing n-gram output classes and clas-
+sifier stacking, we noticed that our learner made sys-
+tematic errors caused by the lack of broader (sentential)
+contextual information in the instances and the classes.
+The most obvious of these errors was having multiple in-
+stances of arguments A0-A5 in one sentence. Although
+sentences with multiple A0-A3 arguments appear in the
+training data, they are quite rare (0.17%). When the
+learner assigns an A0 role to three different arguments
+in a sentence, most likely at least two of these are wrong.
+In order to reflect this fact, we have restricted the sys-
+tem to outputting at most one phrase of type A0-A5. If
+the learner predicts multiple arguments then only the one
+closest to the main verb is kept.
+Features a-b c-d e-f g-h i-k
+words -1?0 -2?1 -2?1 -2?1 -2?1
+PoS tags 0?1 0?1 0?1 -1?1 -1?1
+chunk tags 0 0?2 0?2 -1?1 -1?1
+NE tags ? ? ? ? ?
+output classes NA NA -3?3 -3?3 -3?3
+distances cNV cNVw cNVw Vw cNV
+main verb + + + + +
+role pattern + + + + +
+passive verb + + + + +
+current clause + + + + +
+previous prep. ? + + + ?
+Total 12 18 24 23 24
+Table 2: Features used in the different runs mentioned
+in Table 1. The numbers mentioned for words, part-of-
+speech tags, chunk tags, named entity tags and output
+classes show the position of the tokens with respect to
+the focus token (0). Distances are measured in chunks,
+NP chunks, VP chunks and words. In all other table en-
+tries, + denotes selection and ? omission.
+Parameters a b-c d-e f-k
+algorithm IB1 IB1 IB1 IB1
+distance metric O M J O
+switching threshold NA 2 2 NA
+feature weighting nw nw nw nw
+neighborhood size 1 15 19 1
+class weights Z ED1 ED1 Z
+Table 3: Parameters of the machines learner that were
+used in the different runs mentioned in Table 1. More
+information about the parameters and their values can be
+found in Daelemans et al (2003).
+4 Results
+We started with a feature selection process with the fea-
+tures described in section 2. This experiment used a
+basic k-nn classifier without feature weighting, a near-
+est neighborhood of size 1, attenuated words, and output
+post-processing. We evaluated the effect of trigram out-
+put classes by performing an experiment with and with-
+out them. The feature selection experiment without tri-
+gram output classes selected 10 features and obtained an
+F?=1 score of 46.3 on the development data set. The ex-
+periment that made use of combined classes selected 12
+features and reached a score of 51.8.
+We decided to continue using trigram output classes.
+Subsequently, we optimized the parameters of our ma-
+chine learner based on the features in the second experi-
+ment and performed another feature selection experiment
+with these parameters. The performance effects can be
+found in Table 1 (rows b and c). An additional parameter
+optimization step did not have a substantial effect (Ta-
+ble 1, row d).
+After training a stacked classifier while using the out-
+put of the best first stage learner, performance went
+up from 56.5 to 58.8. Additional feature selection
+and parameter optimization were useful at this level
+(F?=1=60.9, see Table 1). Most of our other performance
+gain was obtained by a continued process of classifier
+stacking. Parameter optimization did not result in im-
+proved performance when stacking more than one classi-
+fier. Feature selection was useful for the third-stage clas-
+sifier but not for the next one. Our final system obtained
+an F?=1 score of 63.0 on the development data (Table 1)
+and 60.1 on the test set (Table 4).
+5 Conclusion
+We have described a memory-based semantic role labeler.
+In the development of the system we have used feature
+selection through bi-directional hill-climbing and param-
+eter optimization through iterative deepening search. We
+have evaluated n-gram output classes, classifier stacking
+and output post-processing, all of which increased per-
+formance. An overview of the performance of the system
+on the test data can be found in Table 4.
+Acknowledgements
+Sander Canisius, Iris Hendrickx, and Antal van den
+Bosch are funded by NWO (Netherlands Organisation for
+Scientific Research). Erik Tjong Kim Sang is funded by
+IWT STWW as a researcher in the ATraNoS project.
+References
+D. W. Aha, D. Kibler, and M. Albert. 1991. Instance-
+based learning algorithms. Machine Learning, 6:37?
+66.
+S. Buchholz, J. Veenstra, and W. Daelemans. 1999. Cas-
+caded grammatical relation assignment. In EMNLP-
+VLC?99, the Joint SIGDAT Conference on Empirical
+Methods in Natural Language Processing and Very
+Large Corpora, June.
+S. Buchholz. 2002. Memory-Based Grammatical Rela-
+tion Finding. PhD thesis, University of Tilburg.
+X. Carreras and L. Ma`rquez. 2004. Introduction to the
+conll-2004 shared task: Semantic role labe ling. In
+Proceedings of CoNLL-2004. Boston, MA, USA.
+R. Caruana and D. Freitag. 1994. Greedy attribute se-
+lection. In Proceedings of the Eleventh International
+Conference on Machine Learning, pages 28?36, New
+Brunswick, NJ, USA. Morgan Kaufman.
+T. M. Cover and P. E. Hart. 1967. Nearest neighbor
+pattern classification. Institute of Electrical and Elec-
+Precision Recall F?=1
+Overall 67.12% 54.46% 60.13
+A0 80.41% 70.18% 74.95
+A1 62.04% 59.67% 60.83
+A2 46.29% 35.85% 40.41
+A3 59.42% 27.33% 37.44
+A4 67.44% 58.00% 62.37
+A5 0.00% 0.00% 0.00
+AM-ADV 25.00% 4.56% 7.71
+AM-CAU 0.00% 0.00% 0.00
+AM-DIR 33.33% 12.00% 17.65
+AM-DIS 58.38% 50.70% 54.27
+AM-EXT 53.85% 50.00% 51.85
+AM-LOC 38.79% 19.74% 26.16
+AM-MNR 48.00% 18.82% 27.04
+AM-MOD 97.11% 89.61% 93.21
+AM-NEG 74.67% 88.19% 80.87
+AM-PNC 44.44% 4.71% 8.51
+AM-PRD 0.00% 0.00% 0.00
+AM-TMP 58.84% 32.53% 41.90
+R-A0 80.26% 76.73% 78.46
+R-A1 78.95% 42.86% 55.56
+R-A2 100.00% 22.22% 36.36
+R-A3 0.00% 0.00% 0.00
+R-AA 0.00% 0.00% 0.00
+R-AM-LOC 0.00% 0.00% 0.00
+R-AM-MNR 0.00% 0.00% 0.00
+R-AM-PNC 0.00% 0.00% 0.00
+R-AM-TMP 66.67% 14.29% 23.53
+V 97.93% 97.93% 97.93
+Table 4: The performance of our system measured on the
+test data.
+tronics Engineers Transactions on Information Theory,
+13:21?27.
+W. Daelemans, J. Zavrel, K. Van der Sloot, and A. Van
+den Bosch. 2003. TiMBL: Tilburg memory based
+learner, version 5.0, reference guide. ILK Techni-
+cal Report 03-08, Tilburg University. available from
+http://ilk.uvt.nl/downloads/pub/papers/ilk.0308.ps.
+J. Eisner. 1996. An Empirical Comparison of Probabil-
+ity Models for Dependency Grammar. Technical Re-
+port IRCS-96-11, Institute for Research in Cognitive
+Science, University of Pennsylvania.
+R. Kohavi and G. John. 1997. Wrappers for feature
+subset selection. Artificial Intelligence Journal, 97(1?
+2):273?324.
+F. Provost, D. Jensen, and T. Oates. 1999. Efficient pro-
+gressive sampling. In Proceedings of the Fifth Interna-
+tional Conference on Knowledge Discovery and Data
+Mining, pages 23?32.
+D. H. Wolpert. 1992. On overfitting avoidance as bias.
+Technical Report SFI TR 92-03-5001, The Santa Fe
+Institute.
+Proceedings of the 9th Conference on Computational Natural Language Learning (CoNLL),
+pages 229?232, Ann Arbor, June 2005. c?2005 Association for Computational Linguistics
+Applying spelling error correction techniques
+for improving semantic role labelling
+Erik Tjong Kim Sang
+Informatics Institute
+University of Amsterdam, Kruislaan 403
+NL-1098 SJ Amsterdam, The Netherlands
+erikt@science.uva.nl
+Sander Canisius, Antal van den Bosch, Toine Bogers
+ILK / Computational Linguistics and AI
+Tilburg University, P.O. Box 90153,
+NL-5000 LE Tilburg, The Netherlands
+{S.V.M.Canisius,Antal.vdnBosch,
+A.M.Bogers}@uvt.nl
+1 Introduction
+This paper describes our approach to the CoNLL-
+2005 shared task: semantic role labelling. We do
+many of the obvious things that can be found in the
+other submissions as well. We use syntactic trees
+for deriving instances, partly at the constituent level
+and partly at the word level. On both levels we edit
+the data down to only the predicted positive cases
+of verb-constituent or verb-word pairs exhibiting a
+verb-argument relation, and we train two next-level
+classifiers that assign the appropriate labels to the
+positively classified cases. Each classifier is trained
+on data in which the features have been selected to
+optimize generalization performance on the particu-
+lar task. We apply different machine learning algo-
+rithms and combine their predictions.
+As a novel addition, we designed an automatically
+trained post-processing module that attempts to cor-
+rect some of the errors made by the base system.
+To this purpose we borrowed Levenshtein-distance-
+based correction, a method from spelling error cor-
+rection to repair mistakes in sequences of labels. We
+adapted the method to our needs and applied it for
+improving semantic role labelling output. This pa-
+per presents the results of our approach.
+2 Data and features
+The CoNLL-2005 shared task data sets provide sen-
+tences in which predicate?argument relations have
+been annotated, as well as a number of extra anno-
+tations like named entities and full syntactic parses
+(Carreras and Ma`rquez, 2005). We have used the
+parses for generating machine learning instances for
+pairs of predicates and syntactic phrases. In princi-
+ple each phrase can have a relation with each verb
+in the same sentence. However, in order to keep
+the number of instances at a reasonable number, we
+have only built instances for verb?phrase pairs when
+the phrase parent is an ancestor of the verb (400,128
+training instances). A reasonable number of ar-
+guments are individual words; these do not match
+with phrase boundaries. In order to be able to label
+these, we have also generated instances for all pairs
+of verbs and individual words using the same con-
+straint (another 542,217 instances). The parent node
+constraint makes certain that embedded arguments,
+which do not occur in these data sets, cannot be pre-
+dicted by our approach.
+Instances which are associated with verb?
+argument pairs receive the label of the argument as
+class while others in principle receive a NULL class.
+In an estimated 10% of the cases, the phrase bound-
+aries assigned by the parser are different from those
+in the argument annotation. In case of a mismatch,
+we have always used the argument label of the first
+word of a phrase as the class of the corresponding
+instance. By doing this we attempt to keep the posi-
+tional information of the lost argument in the train-
+ing data. Both the parser phrase boundary errors as
+well as the parent node constraint restrict the num-
+ber of phrases we can identify. The maximum recall
+score attainable with our phrases is 84.64% for the
+development data set.
+We have experimentally evaluated 30 features
+based on the previous work in semantic role la-
+belling (Gildea and Jurafsky, 2002; Pradhan et al,
+2004; Xue and Palmer, 2004):
+? Lexical features (5): predicate (verb), first
+phrase word, last phrase word and words im-
+mediately before and after the phrase.
+? Syntactic features (14): part-of-speech tags
+(POS) of: first phrase word, last phrase word,
+229
+word immediately before phrase and word im-
+mediately after phrase; syntactic paths from
+word to verb: all paths, only paths for words
+before verb and only paths for words after verb;
+phrase label, label of phrase parent, subcate-
+gorisation of verb parent, predicate frame from
+PropBank, voice, head preposition for preposi-
+tional phrases and same parents flag.
+? Semantic features (2): named entity tag for
+first phrase word and last phrase word.
+? Positional features (3): position of the phrase
+with respect to the verb: left/right, distance in
+words and distance in parent nodes.
+? Combination features (6): predicate + phrase
+label, predicate + first phrase word, predicate
++ last phrase word, predicate + first phrase
+POS, predicate + last phrase POS and voice +
+left/right.
+The output of two parsers was available. We have
+briefly experimented with the Collins parses includ-
+ing the available punctuation corrections but found
+that our approach reached a better performance with
+the Charniak parses. We report only on the results
+obtained with the Charniak parses.
+3 Approach
+This section gives a brief overview of the three main
+components of our approach: machine learning, au-
+tomatic feature selection and post-processing by a
+novel procedure designed to clean up the classifier
+output by correcting obvious misclassifications.
+3.1 Machine learning
+The core machine learning technique employed, is
+memory-based learning, a supervised inductive al-
+gorithm for learning classification tasks based on the
+k-nn algorithm. We use the TiMBL system (Daele-
+mans et al, 2003), version 5.0.0, patch-2 with uni-
+form feature weighting and random tiebreaking (op-
+tions: -w 0 -R 911). We have also evaluated two al-
+ternative learning techniques. First, Maximum En-
+tropy Models, for which we employed Zhang Le?s
+Maximum Entropy Toolkit, version 20041229 with
+default parameters. Second, Support Vector Ma-
+chines for which we used Taku Kudo?s YamCha
+(Kudo and Matsumoto, 2003), with one-versus-all
+voting and option -V which enabled us to ignore pre-
+dicted classes with negative distances.
+3.2 Feature selection
+In previous research, we have found that memory-
+based learning is rather sensitive to the chosen fea-
+tures. In particular, irrelevant or redundant fea-
+tures may lead to reduced performance. In order
+to minimise the effects of this sensitivity, we have
+employed bi-directional hill-climbing (Caruana and
+Freitag, 1994) for finding the features that were most
+suited for this task. This process starts with an empty
+feature set, examines the effect of adding or remov-
+ing one feature and then starts a new iteration with
+the set associated with the best performance.
+3.3 Automatic post-processing
+Certain misclassifications by the semantic role-
+labelling system described so far lead to unlikely and
+impossible relation assignments, such as assigning
+two indirect objects to a verb where only one is pos-
+sible. Our proposed classifier has no mechanism to
+detect these errors. One solution is to devise a post-
+processing step that transforms the resulting role as-
+signments until they meet certain basic constraints,
+such as the rule that each verb may have only sin-
+gle instances of the different roles assigned in one
+sentence (Van den Bosch et al, 2004).
+We propose an alternative automatically-trained
+post-processing method which corrects unlikely role
+assignments either by deleting them or by replacing
+them with a more likely one. We do not do this by
+knowledge-based constraint satisfaction, but rather
+by adopting a method for error correction based on
+Levenshtein distance (Levenshtein, 1965), or edit
+distance, as used commonly in spelling error correc-
+tion. Levenshtein distance is a dynamically com-
+puted distance between two strings, accounting for
+the number of deletions, insertions, and substitu-
+tions needed to transform the one string into the
+other. Levenshtein-based error correction typically
+matches a new, possibly incorrect, string to a trusted
+lexicon of assumedly correct strings, finds the lex-
+icon string with the smallest Levenshtein distance
+to the new string, and replaces the new string with
+the lexicon string as its likely correction. We imple-
+mented a roughly similar procedure. First, we gener-
+ated a lexicon of semantic role labelling patterns of
+A0?A5 arguments of verbs on the basis of the entire
+training corpus and the PropBank verb frames. This
+230
+lexicon contains entries such as abandon A0 V A1,
+and categorize A1 V A2 ? a total of 43,033 variable-
+length role labelling patterns.
+Next, given a new test sentence, we consider all
+of its verbs and their respective predicted role la-
+bellings, and compare each with the lexicon, search-
+ing the role labelling pattern with the same verb at
+the smallest Levenshtein distance (in case of an un-
+known verb we search in the entire lexicon). For
+example, in a test sentence the pattern emphasize A0
+V A1 A0 is predicted. One closest lexicon item is
+found at Levenshtein distance 1, namely emphasize
+A0 V A1, representing a deletion of the final A0. We
+then use the nearest-neighbour pattern in the lexicon
+to correct the likely error, and apply all deletions
+and substitutions needed to correct the current pat-
+tern according to the nearest-neighbour pattern from
+the trusted lexicon. We do not apply insertions, since
+the post-processor module does not have the infor-
+mation to decide which constituent or word would
+receive the inserted label. In case of multiple possi-
+ble deletions (e.g. in deleting one out of two A1s in
+emphasize A0 V A1 A1), we always delete the argu-
+ment furthest from the verb.
+4 Results
+In order to perform the optimisation of the seman-
+tic role labelling process in a reasonable amount of
+time, we have divided it in four separate tasks: prun-
+ing the data for individual words and the data for
+phrases, and labelling of these two data sets. Prun-
+ing amounts to deciding which instances correspond
+with verb-argument pairs and which do not. This
+resulted in a considerable reduction of the two data
+sets: 47% for the phrase data and 80% for the word
+data. The remaining instances are assumed to de-
+fine verb-argument pairs and the labelling tasks as-
+sign labels to them. We have performed a sepa-
+rate feature selection process in combination with
+the memory-based learner for each of the four tasks.
+First we selected the best feature set based on task
+accuracy. As soon as a working module for each of
+the tasks was available, we performed an extra fea-
+ture selection process for each of the modules, opti-
+mising overall system F?=1 while keeping the other
+three modules fixed.
+The effect of the features on the overall perfor-
+Words Phrases
+Features prune label prune label
+predicate -0.04 +0.05 -0.25 -0.52
+first word +0.38 +0.16 -0.17 +1.14
+last word ? ? -0.01 +1.12
+previous word -0.06 +0.02 -0.05 +0.74
+next word -0.04 -0.08 +0.44 -0.16
+part-of-speech first word -0.01 -0.02 -0.07 -0.11
+part-of-speech last word ? ? -0.14 -0.45
+previous part-of-speech -0.12 -0.06 +0.22 -1.14
+next part-of-speech -0.08 -0.12 -0.01 -0.21
+all paths +0.42 +0.10 +0.84 +0.75
+path before verb +0.00 -0.02 +0.00 +0.27
+path after verb -0.01 -0.01 -0.01 -0.06
+phrase label -0.01 -0.02 +0.13 -0.02
+parent label +0.03 -0.02 -0.03 +0.00
+voice +0.02 -0.04 -0.04 +1.85
+subcategorisation -0.01 +0.00 -0.02 +0.03
+PropBank frame -0.12 -0.03 -0.16 +1.04
+PP head +0.00 +0.00 -0.06 +0.08
+same parents -0.02 -0.01 +0.03 -0.05
+named entity first word +0.00 +0.00 +0.05 -0.11
+named entity last word ? ? -0.04 -0.12
+absolute position +0.00 +0.00 +0.00 -0.02
+distance in words +0.34 +0.04 +0.16 -0.96
+distance in parents -0.02 -0.02 +0.06 -0.04
+predicate + label -0.05 -0.07 -0.22 -0.47
+predicate + first word -0.05 +0.00 +0.13 +0.97
+predicate + last word ? ? -0.03 +0.08
+predicate + first POS -0.05 -0.06 -0.20 -0.50
+predicate + last POS ? ? -0.13 -0.40
+voice + position +0.02 -0.04 -0.05 -0.04
+Table 1: Effect of adding a feature to the best feature
+sets when memory-based learning is applied to the
+development set (overall F?=1). The process con-
+sisted of four tasks: pruning data sets for individual
+words and phrases, and labelling these two data sets.
+Selected features are shown in bold. Unfortunately,
+we have not been able to use all promising features.
+mance can be found in Table 1. One feature (syntac-
+tic path) was selected in all four tasks but in general
+different features were required for optimal perfor-
+mance in the four tasks. Changing the feature set
+had the largest effect when labelling the phrase data.
+We have applied the two other learners, Maximum
+Entropy Models and Support Vector Machines to the
+two labelling tasks, while using the same features as
+the memory-based learner. The performance of the
+three systems on the development data can be found
+in Table 3. Since the systems performed differently
+we have also evaluated the performance of a com-
+bined system which always chose the majority class
+assigned to an instance and the class of the strongest
+system (SVM) in case of a three-way tie. The com-
+bined system performed slightly better than the best
+231
+Precision Recall F?=1
+Development 76.79% 70.01% 73.24
+Test WSJ 79.03% 72.03% 75.37
+Test Brown 70.45% 60.13% 64.88
+Test WSJ+Brown 77.94% 70.44% 74.00
+Test WSJ Precision Recall F?=1
+Overall 79.03% 72.03% 75.37
+A0 85.65% 81.73% 83.64
+A1 76.97% 71.89% 74.34
+A2 71.07% 58.20% 63.99
+A3 69.29% 50.87% 58.67
+A4 75.56% 66.67% 70.83
+A5 100.00% 40.00% 57.14
+AM-ADV 64.36% 51.38% 57.14
+AM-CAU 75.56% 46.58% 57.63
+AM-DIR 48.98% 28.24% 35.82
+AM-DIS 81.88% 79.06% 80.45
+AM-EXT 87.50% 43.75% 58.33
+AM-LOC 62.50% 50.96% 56.15
+AM-MNR 64.52% 52.33% 57.78
+AM-MOD 96.76% 97.64% 97.20
+AM-NEG 97.38% 96.96% 97.17
+AM-PNC 45.98% 34.78% 39.60
+AM-PRD 50.00% 20.00% 28.57
+AM-REC 0.00% 0.00% 0.00
+AM-TMP 80.52% 70.75% 75.32
+R-A0 81.47% 84.38% 82.89
+R-A1 74.00% 71.15% 72.55
+R-A2 60.00% 37.50% 46.15
+R-A3 0.00% 0.00% 0.00
+R-A4 0.00% 0.00% 0.00
+R-AM-ADV 0.00% 0.00% 0.00
+R-AM-CAU 100.00% 25.00% 40.00
+R-AM-EXT 100.00% 100.00% 100.00
+R-AM-LOC 86.67% 61.90% 72.22
+R-AM-MNR 33.33% 33.33% 33.33
+R-AM-TMP 64.41% 73.08% 68.47
+V 97.36% 97.36% 97.36
+Table 2: Overall results (top) and detailed results on
+the WSJ test (bottom).
+individual system.
+5 Conclusion
+We have presented a machine learning approach to
+semantic role labelling based on full parses. We
+have split the process in four separate tasks: prun-
+ing the data bases of word-based and phrase-based
+examples down to only the positive verb-argument
+cases, and labelling the two positively classified data
+sets. A novel automatic post-processing procedure
+based on spelling correction, comparing to a trusted
+lexicon of verb-argument patterns from the training
+material, was able to achieve a performance increase
+by correcting unlikely role assignments.
+Learning algorithm Precision Recall F?=1
+without post-processing:
+Maximum Entropy Models 70.78% 70.03% 70.40
+Memory-Based Learning 70.70% 69.85% 70.27
+Support Vector Machines 75.07% 69.15% 71.98
+including post-processing:
+Maximum Entropy Models 74.06% 69.84% 71.89
+Memory-Based Learning 73.84% 69.88% 71.80
+Support Vector Machines 77.75% 69.11% 73.17
+Combination 76.79% 70.01% 73.24
+Table 3: Effect of the choice of machine learning
+algorithm, the application of Levenshtein-distance-
+based post-processing and the use of system combi-
+nation on the performance obtained for the develop-
+ment data set.
+Acknowledgements
+This research was funded by NWO, the Netherlands
+Organisation for Scientific Research, and by Senter-
+Novem IOP-MMI.
+References
+X. Carreras and L. Ma`rquez. 2005. Introduction to the CoNLL-
+2005 Shared Task: Semantic Role Labeling. In Proceedings
+of CoNLL-2005. Ann Arbor, MI, USA.
+R. Caruana and D. Freitag. 1994. Greedy attribute selection.
+In Proceedings of the Eleventh International Conference on
+Machine Learning, pages 28?36, New Brunswick, NJ, USA.
+Morgan Kaufman.
+W. Daelemans, J. Zavrel, K. van der Sloot, and A. van den
+Bosch. 2003. TiMBL: Tilburg memory based learner, ver-
+sion 5.0, reference guide. ILK Technical Report 03-10,
+Tilburg University.
+D. Gildea and D. Jurafsky. 2002. Automatic labeling of seman-
+tic roles. Computational Linguistics, 28(3):245?288.
+T. Kudo and Y. Matsumoto. 2003. Fast methods for kernel-
+based text analysis. In Proceedings of ACL-2003. Sapporo,
+Japan.
+V. Levenshtein. 1965. Binary codes capable of correcting
+deletions, insertions and reversals. Doklady Akademii Nauk
+SSSR, 163(4):845?848.
+S. Pradhan, W. Ward, K. Hacioglu, J. Martin, and D. Jurafsky.
+2004. Shallow semantic parsing using support vector ma-
+chines. In Proceedings of the HLT/NAACL 2004. Boston,
+MA.
+A. van den Bosch, S. Canisius, W. Daelemans, I Hendrickx,
+and E. Tjong Kim Sang. 2004. Memory-based semantic
+role labeling: Optimizing features, algorithm, and output. In
+Proceedings of the CoNLL-2004, Boston, MA, USA.
+N. Xue and M. Palmer. 2004. Calibrating features for semantic
+role labeling. In Proceedings of EMNLP-2004. Barcelona,
+Spain.
+232
+Constraint Satisfaction Inference:
+Non-probabilistic Global Inference for Sequence Labelling
+Sander Canisius and Antal van den Bosch
+ILK / Language and Information Science
+Tilburg University
+Tilburg, The Netherlands
+{S.V.M.Canisius,Antal.vdnBosch@uvt.nl}@uvt.nl
+Walter Daelemans
+CNTS, Department of Linguistics
+University of Antwerp
+Antwerp, Belgium
+Walter.Daelemans@ua.ac.be
+Abstract
+We present a new method for performing
+sequence labelling based on the idea of us-
+ing a machine-learning classifier to gen-
+erate several possible output sequences,
+and then applying an inference proce-
+dure to select the best sequence among
+those. Most sequence labelling methods
+following a similar approach require the
+base classifier to make probabilistic pre-
+dictions. In contrast, our method can
+be used with virtually any type of clas-
+sifier. This is illustrated by implement-
+ing a sequence classifier on top of a (non-
+probabilistic) memory-based learner. In
+a series of experiments, this method is
+shown to outperform two other methods;
+one naive baseline approach, and another
+more sophisticated method.
+1 Introduction
+In machine learning for natural language process-
+ing, many diverse tasks somehow involve pro-
+cessing of sequentially-structured data. For ex-
+ample, syntactic chunking, grapheme-to-phoneme
+conversion, and named-entity recognition are all
+usually reformulated as sequence labelling tasks:
+a task-specific global unit, such as a sentence or a
+word, is divided into atomic sub-parts, e.g. word
+or letters, each of which is separately assigned a
+label. The concatenation of those labels forms the
+eventual output for the global unit.
+More formally, we can define a sequence la-
+belling task as a tuple (x,y, `). The goal is to map
+an input vector x = ?x1, x2, . . . , xn? of tokens to
+an output sequence y = ?y1, y2, . . . , yn? of labels.
+The possible labels for each token are specified by
+a finite set `, that is, yi ? `,?i.
+In most real-world sequence labelling tasks, the
+values of the output labels are sequentially cor-
+related. For machine learning approaches to se-
+quence labelling this implies that classifying each
+token separately without considering the labels as-
+signed to other tokens in the sequence may lead
+to sub-optimal performance. Ideally, the complex
+mapping of the entire input sequence to its corre-
+sponding output sequence is considered one clas-
+sification case; the classifier then has access to all
+information stored in the sequence. In practise,
+however, both input and output sequences are far
+too sparse for such classifications to be performed
+reliably.
+A popular approach to circumvent the issues
+raised above is what we will refer to as the clas-
+sification and inference approach, covering tech-
+niques such as hidden markov models and condi-
+tional random fields (Lafferty et al, 2001). Rather
+than having a token-level classifier make local de-
+cisions independently of the rest of the sequence,
+the approach introduces an inference procedure,
+operating on the level of the sequence, using class
+likelihoods estimated by the classifier to optimise
+the likelihood of the entire output sequence.
+A crucial property of most of the classification
+and inference techniques in use today is that the
+classifier used at the token level must be able to
+estimate the likelihood for each potential class la-
+bel. This is in contrast with the more common
+view of a classifier having to predict just one class
+label for an instance which is deemed most opti-
+mal. Maximum-entropy models, which are used in
+many classification and inference techniques, have
+this property; they model the conditional class dis-
+tribution. In general, this is the case for all prob-
+abilistic classification methods. However, many
+general-purpose machine learning techniques are
+9
+not probabilistic. In order to design inference pro-
+cedures for those techniques, other principles than
+probabilistic ones have to be used.
+In this paper, we propose a non-probabilistic in-
+ference procedure that improves performance of a
+memory-based learner on a wide range of natural-
+language sequence processing tasks. We start
+from a technique introduced recently by Van den
+Bosch and Daelemans (2005), and reinterpret it as
+an instance of the classification and inference ap-
+proach. Moreover, the token-level inference pro-
+cedure proposed in the original work is replaced
+by a new procedure based on principles of con-
+straint satisfaction that does take into account the
+entire sequential context.
+The remainder of this paper is structured as fol-
+lows. Section 2 introduces the theoretical back-
+ground and starting point of the work presented in
+this paper: the trigram method, and memory-based
+learning. Next, the new constraint-satisfaction-
+based inference procedure for class trigrams is
+presented in Section 3. Experimental comparisons
+of a non-sequence-aware baseline classifier, the
+original trigram method, and the new classification
+and inference approach on a number of sequence
+labelling tasks are presented in Section 4 and dis-
+cussed in Section 5. Finally, our work is compared
+and contrasted with some related approaches in
+Section 6, and conclusions are drawn in Section 7.
+2 Theoretical background
+2.1 Class Trigrams
+A central weakness of approaches considering
+each token of a sequence as a separate classifica-
+tion case is their inability to coordinate labels as-
+signed to neighbouring tokens. Due to this, invalid
+label sequences, or ones that are highly unlikely
+may result. Van den Bosch and Daelemans (2005)
+propose to resolve parts of this issue by predict-
+ing trigrams of labels as a single atomic class la-
+bel, thereby labelling three tokens at once, rather
+than classifying each token separately. Predict-
+ing sequences of three labels at once makes sure
+that at least these short subsequences are known to
+be syntactically valid sequences according to the
+training data.
+Applying this general idea, Van den Bosch and
+Daelemans (2005) label each token with a com-
+plex class label composed of the labels for the pre-
+ceding token, the token itself, and the one follow-
+ing it in the sequence. If such class trigrams are
+assigned to all tokens in a sequence, the actual la-
+bel for each of those is effectively predicted three
+times, since every token but the first and last is
+covered by three class trigrams. Exploiting this
+redundancy, a token?s possibly conflicting predic-
+tions are resolved by voting over them. If two out
+of three trigrams suggest the same label, this label
+is selected; in case of three different candidate la-
+bels, a classifier-specific confidence metric is used
+to break the tie.
+Voting over class trigrams is but one possible
+approach to taking advantage of the redundancy
+obtained with predicting overlapping trigrams. A
+disadvantage of voting is that it discards one of
+the main benefits of the class trigram method: pre-
+dicted class trigrams are guaranteed to be syntac-
+tically correct according to the training data. The
+voting technique splits up the predicted trigrams,
+and only refers to their unigram components when
+deciding on the output label for a token; no attempt
+is made to keep the trigram sequence intact in the
+final output sequence. The alternative to voting
+presented later in this paper does try to retain pre-
+dicted trigrams as part of the output sequence.
+2.2 Memory-based learning
+The name memory-based learning refers to a class
+of methods based on the k-nearest neighbour rule.
+At training time, all example instances are stored
+in memory without attempting to induce an ab-
+stract representation of the concept to be learned.
+Generalisation is postponed until a test instance is
+classified. For a given test instance, the class pre-
+dicted is the one observed most frequently among
+a number of most-similar instances in the instance
+base. By only generalising when confronted with
+the instance to be classified, a memory-based
+learner behaves as a local model, specifically
+suited for that part of the instance space that the
+test instance belongs to. In contrast, learners that
+abstract at training time can only generalise glob-
+ally. This distinguishing property makes memory-
+based learners especially suited for tasks where
+different parts of the instance space are structured
+according to different rules, as is often the case in
+natural-language processing.
+For the experiments performed in this study we
+used the memory-based classifier as implemented
+by TiMBL (Daelemans et al, 2004). In TiMBL,
+similarity is defined by two parameters: a feature-
+level similarity metric, which assigns a real-valued
+10
+score to pairs of values for a given feature, and a
+set of feature weights, that express the importance
+of the various features for determining the simi-
+larity of two instances. Further details on both of
+these parameters can be found in the TiMBL man-
+ual. To facilitate the explanation of our inference
+procedure in Section 3, we will formally define
+some notions related to memory-based classifica-
+tion.
+The function Ns,w,k(x) maps a given instance
+x to the set of its nearest neighbours; here, the
+parameters s, w, and k are the similarity metric,
+the feature weights, and the number k of nearest
+neighbours, respectively. They will be considered
+given in the following, so we will refer to this
+specific instantiation simply as N(x). The func-
+tion wd(c,N(x)) returns the weight assigned to
+class c in the given neighbourhood according to
+the distance metric d; again we will use the nota-
+tion w(c,N(x)) to refer to a specific instantiation
+of this function. Using these two functions, we can
+formulate the nearest neighbour rule as follows.
+argmax
+c
+w(c,N(x))
+The class c maximising the above expression is
+returned as the predicted class for the instance x.
+3 Constraint Satisfaction Inference
+A strength of the class trigram method is the guar-
+antee that any trigram that is predicted by the base
+classifier represents a syntactically valid subse-
+quence of length three. This does not necessar-
+ily mean the trigram is a correct label assignment
+within the context of the current classification, but
+it does reflect the fact that the trigram has been
+observed in the training data, and, moreover, is
+deemed most likely according to the base classi-
+fier?s model. For this reason, it makes sense to try
+to retain predicted trigrams in the output label se-
+quence as much as possible.
+The inference method proposed in this section
+seeks to attain this goal by formulating the class
+trigram disambiguation task as a weighted con-
+straint satisfaction problem (W-CSP). Constraint
+satisfaction is a well-studied research area with ap-
+plications in numerous fields both inside and out-
+side of computer science. Weighted constraint sat-
+isfaction extends the traditional constraint satis-
+faction framework with soft constraints; such con-
+straints are not required to be satisfied for a so-
+lution to be valid, but constraints a given solution
+does satisfy, are rewarded according to weights as-
+signed to them.
+Formally, a W-CSP is a tuple (X,D,C,W ).
+Here, X = {x1, x2, . . . , xn} is a finite set of vari-
+ables. D(x) is a function that maps each variable
+to its domain, that is, the set of values that variable
+can take on. C is the set of constraints. While
+a variable?s domain dictates the values a single
+variable is allowed to take on, a constraint spec-
+ifies which simultaneous value combinations over
+a number of variables are allowed. For a tradi-
+tional (non-weighted) constraint satisfaction prob-
+lem, a valid solution would be an assignment of
+values to the variables that (1) are a member of the
+corresponding variable?s domain, and (2) satisfy
+all constraints in the set C . Weighted constraint
+satisfaction, however, relaxes this requirement to
+satisfy all constraints. Instead, constraints are as-
+signed weights that may be interpreted as reflect-
+ing the importance of satisfying that constraint.
+Let a constraint c ? C be defined as a func-
+tion that maps each variable assignment to 1 if the
+constraint is satisfied, or to 0 if it is not. In addi-
+tion, let W : C? IR+ denote a function that maps
+each constraint to a positive real value, reflecting
+the weight of that constraint. Then, the optimal so-
+lution to a W-CSP is given by the following equa-
+tion.
+x? = argmax
+x
+?
+c
+W (c)c(x)
+That is, the assignment of values to its variables
+that maximises the sum of weights of the con-
+straints that have been satisfied.
+Translating the terminology introduced earlier
+in this paper to the constraint satisfaction domain,
+each token of a sequence maps to a variable, the
+domain of which corresponds to the three candi-
+date labels for this token suggested by the trigrams
+covering the token. This provides us with a defini-
+tion of the function D, mapping variables to their
+domain. In the following, yi,j denotes the candi-
+date label for token xj predicted by the trigram
+assigned to token xi.
+D(xi) = {yi?1,i, yi,i, yi+1,i}
+Constraints are extracted from the predicted tri-
+grams. Given the goal of retaining predicted tri-
+grams in the output label sequence as much as pos-
+sible, the most important constraints are simply
+11
+the trigrams themselves. A predicted trigram de-
+scribes a subsequence of length three of the entire
+output sequence; by turning such a trigram into a
+constraint, we express the wish to have this trigram
+end up in the final output sequence.
+(xi?1, xi, xi+1) = (yi,i?1, yi,i, yi,i+1),?i
+No base classifier is flawless though, and there-
+fore not all predicted trigrams can be expected to
+be correct. Nevertheless, even an incorrect trigram
+may carry some useful information regarding the
+output sequence: one trigram also covers two bi-
+grams, and three unigrams. An incorrect trigram
+may still contain smaller subsequences, of length
+one or two, that are correct. Therefore, all of these
+are also mapped to constraints.
+(xi?1, xi) = (yi,i?1, yi,i), ?i
+(xi, xi+1) = (yi,i, yi,i+1), ?i
+xi?1 = yi,i?1, ?i
+xi = yi,i, ?i
+xi+1 = yi,i+1, ?i
+With such an amount of overlapping con-
+straints, the satisfaction problem obtained eas-
+ily becomes over-constrained, that is, no vari-
+able assignment exists that can satisfy all con-
+straints without breaking another. Only one in-
+correctly predicted class trigram already leads to
+two conflicting candidate labels for one of the to-
+kens at least. Yet, without conflicting candidate
+labels no inference would be needed to start with.
+The choice for the weighted constraint satisfaction
+method always allows a solution to be found, even
+in the presence of conflicting constraints. Rather
+than requiring all constraints to be satisfied, each
+constraint is assigned a certain weight; the optimal
+solution to the problem is an assignment of values
+to the variables that optimises the sum of weights
+of the constraints that are satisfied.
+Constraints can directly be traced back to a pre-
+diction made by the base classifier. If two con-
+straints are in conflict, the one which the classi-
+fier was most certain of should preferably be sat-
+isfied. In the W-CSP framework, this preference
+can be expressed by weighting constraints accord-
+ing to the classifier confidence for the originating
+trigram. For the memory-based learner, we define
+the classifier confidence for a predicted class ci
+as the weight assigned to that class in the neigh-
+bourhood of the test instance, divided by the total
+weight of all classes.
+w(ci,N(x))
+?
+c w(c,N(x))
+Let x denote a test instance, and c? its pre-
+dicted class. Constraints derived from this class
+are weighted according to the following rules.
+? for a trigram constraint, the weight is simply
+the base classifier?s confidence value for the
+class c?
+? for a bigram constraint, the weight is the sum
+of the confidences for all trigram classes in
+the nearest-neighbour set of x that assign the
+same label bigram to the tokens spanned by
+the constraint
+? for a unigram constraint, the weight is the
+sum of the confidences for all trigram classes
+in the nearest-neighbour set of x that assign
+the same label to the token spanned by the
+constraint
+4 Experiments
+To thoroughly evaluate our new inference proce-
+dure, and to show that it performs well over a
+wide range of natural-language sequence labelling
+tasks, we composed a benchmark set consisting of
+six different tasks, covering four areas in natural
+language processing: syntax (syntactic chunking),
+morphology (morphological analysis), phonology
+(grapheme-to-phoneme conversion), and informa-
+tion extraction (general, medical, and biomedical
+named-entity recognition). Below, the six data sets
+used for these tasks are introduced briefly.
+CHUNK is the task of splitting sentences into
+non-overlapping syntactic phrases or constituents.
+The data set, extracted from the WSJ Penn Tree-
+bank, and first used in the CoNLL-2000 shared
+task (Tjong Kim Sang and Buchholz, 2000), con-
+tains 211,727 training examples and 47,377 test
+instances.
+NER, named-entity recognition, involves iden-
+tifying and labelling named entities in text. We
+employ the English NER shared task data set
+used in the CoNLL-2003 conference (Tjong Kim
+Sang and De Meulder, 2003). This data set dis-
+criminates four name types: persons, organisa-
+tions, locations, and a rest category of ?miscellany
+names?. The data set is a collection of newswire
+12
+articles from the Reuters Corpus, RCV11. The
+given training set contains 203,621 examples; as
+test set we use the ?testb? evaluation set which
+contains 46,435 examples.
+MED is a data set extracted from a semantic an-
+notation of (parts of) two Dutch-language medi-
+cal encyclopedias. On the chunk-level of this an-
+notation, there are labels for various medical con-
+cepts, such as disease names, body parts, and treat-
+ments, forming a set of twelve concept types in to-
+tal. Chunk sizes range from one to a few tokens.
+The data have been split into training and test sets,
+resulting in 428,502 training examples and 47,430
+test examples.
+The GENIA corpus (Tateisi et al, 2002) is a col-
+lection of annotated abstracts taken from the Na-
+tional Library of Medicine?s MEDLINE database.
+Apart from part-of-speech tagging information,
+the corpus annotates a subset of the substances
+and the biological locations involved in reactions
+of proteins. Using a 90%?10% split for producing
+training and test sets, there are 458,593 training
+examples and 50,916 test examples.
+PHONEME refers to grapheme-to-phoneme con-
+version for English. The sequences to be la-
+belled are words composed of letters (rather than
+sentences composed of words). We based our-
+selves on the English part of the CELEX-2 lexi-
+cal data base (Baayen et al, 1993), from which
+we extracted 65,467 word-pronunciation pairs.
+This pair list has been aligned using expectation-
+maximisation to obtain sensible one-to-one map-
+pings between letters and phonemes (Daelemans
+and Van den Bosch, 1996). The classes to pre-
+dict are 58 different phonemes, including some
+diphones such as [ks] needed to keep the letter-
+phoneme alignment one-to-one. The resulting
+data set has been split into a training set of 515,891
+examples, and a test set of 57,279 examples.
+MORPHO refers to morphological analysis of
+Dutch words. We collected the morphologi-
+cal analysis of 336,698 Dutch words from the
+CELEX-2 lexical data base (Baayen et al, 1993),
+and represented the task such that it captures the
+three most relevant elements of a morphological
+analysis: (1) the segmentation of the word into
+morphemes (stems, derivational morphemes, and
+inflections), (2) the part-of-speech tagging infor-
+mation contained by each morpheme; and (3) all
+1Reuters Corpus, Volume 1, English language, 1996-08-
+20 to 1997-08-19.
+Task Baseline Voting CSInf Oracle
+CHUNK 91.9 92.7 93.1 95.8
+NER 77.2 80.2 81.8 86.5
+MED 64.7 67.5 68.9 74.9
+GENIA 55.8 60.1 61.8 70.6
+PHONEME 79.0 83.4 84.5 98.8
+MORPHO 41.3 46.1 51.9 62.2
+Table 1: Performances of the baseline method, and
+the trigram method combined both with majority
+voting, and with constraint satisfaction inference.
+The last column shows the performance of the (hy-
+pothetical) oracle inference procedure.
+spelling changes due to compounding, derivation,
+or inflection that would enable the reconstruction
+of the appropriate root forms of the involved mor-
+phemes.
+For CHUNK, and the three information extrac-
+tion tasks, instances represent a seven-token win-
+dow of words and their (predicted) part-of-speech
+tags. Each token is labelled with a class using the
+IOB type of segmentation coding as introduced by
+Ramshaw and Marcus (1995), marking whether
+the middle word is inside (I), outside (O), or at the
+beginning (B) of a chunk, or named entity. Per-
+formance is measured by the F-score on correctly
+identified and labelled chunks, or named entities.
+Instances for PHONEME, and MORPHO consist
+of a seven-letter window of letters only. The labels
+assigned to an instance are task-specific and have
+been introduced above, together with the tasks
+themselves. Generalisation performance is mea-
+sured on the word accuracy level: if the entire
+phonological transcription of the word is predicted
+correctly, or if all three aspects of the morpholog-
+ical analysis are predicted correctly, the word is
+counted correct.
+4.1 Results
+For the experiments, memory-based learners were
+trained and automatically optimised with wrapped
+progressive sampling (Van den Bosch, 2004) to
+predict class trigrams for each of the six tasks in-
+troduced above. Table 1 lists the performances of
+constraint satisfaction inference, and majority vot-
+ing applied to the output of the base classifiers, and
+compares them with the performance of a naive
+baseline method that treats each token as a sepa-
+rate classification case without coordinating deci-
+sions over multiple tokens.
+Without exception, constraint satisfaction infer-
+13
+ence outperforms majority voting by a consider-
+able margin. This shows that, given the same
+sequence of predicted trigrams, the global con-
+straint satisfaction inference manages better to re-
+cover sequential correlation, than majority voting.
+On the other hand, the error reduction attained by
+majority voting with respect to the baseline is in
+all cases more impressive than the one obtained
+by constraint satisfaction inference with respect to
+majority voting. However, it should be empha-
+sised that, while both methods trace back their ori-
+gins to the work of Van den Bosch and Daelemans
+(2005), constraint satisfaction inference is not ap-
+plied after, but instead of majority voting. This
+means, that the error reduction attained by major-
+ity voting is also attained, independently by con-
+straint satisfaction inference, but in addition con-
+straint satisfaction inference manages to improve
+performance on top of that.
+5 Discussion
+The experiments reported upon in the previous
+section showed that by globally evaluating the
+quality of possible output sequences, the con-
+straint satisfaction inference procedure manages to
+attain better results than the original majority vot-
+ing approach. In this section, we attempt to fur-
+ther analyse the behaviour of the inference pro-
+cedure. First, we will discuss the effect that the
+performance of the trigram-predicting base classi-
+fier has on the maximum performance attainable
+by any inference procedure. Next, we will con-
+sider specifically the effect of base classifier accu-
+racy on the performance of constraint satisfaction
+inference.
+5.1 Base classifier accuracy and inference
+procedure upper-bounds
+After trigrams have been predicted, for each token,
+at most three different candidate labels remain. As
+a result, if the correct label is not among them, the
+best inference procedure cannot correct that. This
+suggests that there is an upper-bound on the per-
+formance attainable by inference procedures oper-
+ating on less than perfect class trigram predictions.
+To illustrate what performance is still possible af-
+ter a base classifier has predicted the trigrams for
+a sequence, we devised an oracle inference proce-
+dure.
+An oracle has perfect knowledge about the true
+label of a token; therefore it is able to select this la-
+bel if it is among the three candidate labels. If the
+correct label is absent among the candidate labels,
+no inference procedure can possibly predict the
+correct label for the corresponding token, so the
+oracle procedure just selects randomly among the
+candidate labels, which will be incorrect anyway.
+Table 1 compares the performance of majority vot-
+ing, constraint satisfaction inference, and the ora-
+cle after an optimised base classifier has predicted
+class trigrams.
+5.2 Base classifier accuracy and constraint
+satisfaction inference performance
+There is a subtle balance between the quality of
+the trigram-predicting base classifier, and the gain
+that any inference procedure for trigram classes
+can reach. If the base classifier?s predictions are
+perfect, all three candidate labels will agree for all
+tokens in the sequence; consequently the inference
+procedure can only choose from one potential out-
+put sequence. On the other extreme, if all three
+candidate labels disagree for all tokens in the se-
+quence, the inference procedure?s task is to select
+the best sequence among 3n possible sequences,
+where n denotes the length of the sequence; it is
+likely that such a huge amount of candidate label
+sequences cannot be dealt with appropriately.
+Table 2 collects the base classifier accuracies,
+and the average number of potential output se-
+quences per sentence resulting from its predic-
+tions. For all tasks, the number of potential se-
+quences is manageable; far from the theoretical
+maximum 3n, even for GENIA, that, compared
+with the other tasks, has a relatively large num-
+ber of potential output sequences. The factors that
+have an effect on the number of sequences are
+rather complex. One important factor is the accu-
+racy of the trigram predictions made by the base
+classifier. To illustrate this, Figure 1 shows the
+number of potential output sequences as a function
+of the base classifier accuracy for the PHONEME
+task. There is an almost linear decrease of the
+number of possible sequences as the classifier ac-
+curacy improves. This shows that it is important
+to optimise the performance of the base classifier,
+since it decreases the number of potential output
+sequences to consider for the inference procedure.
+Other factors affecting the number of potential
+output sequences are the length of the sequence,
+and the number of labels defined for the task. Un-
+like classifier accuracy, however, these two factors
+14
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+ 10
+ 11
+ 65  70  75  80  85  90  95
+# 
+se
+qu
+en
+ce
+s
+base classifier accuracy
+Figure 1: Average number of potential output se-
+quences as a function of base classifier accuracy
+on the PHONEME task.
+Task Base acc. Avg. # seq.
+CHUNK 88.8 38.4
+NER 91.6 9.0
+MED 77.1 9.3
+GENIA 71.8 1719.3
+PHONEME 91.7 1.8
+MORPHO 80.9 2.8
+Table 2: The average number of potential output
+sequences that result from class trigram predic-
+tions made by a memory-based base classifier.
+are inherent properties of the task, and cannot be
+optimised.
+While we have shown that improved base clas-
+sifier accuracy has a positive effect on the num-
+ber of possible output sequences; we have not yet
+established a positive relation between the num-
+ber of possible output sequences and the perfor-
+mance of constraint satisfaction inference. Fig-
+ure 2 illustrates, again for the PHONEME task, that
+there is indeed a positive, even linear relation be-
+tween the accuracy of the base classifier, and the
+performance attained by inference. This relation
+exists for all inference procedures: majority vot-
+ing, as well as constraint satisfaction inference,
+and the oracle procedure. It is interesting to see
+how the curves for those three procedure compare
+with each other.
+The oracle always outperforms the other two
+procedures by a wide margin. However, its in-
+crease is less steep. Constraint satisfaction in-
+ference consistently outperforms majority voting,
+though the difference between the two decreases
+as the base classifier?s predictions improve. This
+is to be expected, since more accurate predictions
+means more majorities will appear among candi-
+ 45
+ 50
+ 55
+ 60
+ 65
+ 70
+ 75
+ 80
+ 85
+ 90
+ 95
+ 65  70  75  80  85  90  95
+se
+qu
+en
+ce
+ a
+cc
+ur
+ac
+y
+base classifier accuracy
+oracle
+constraint satisfaction inference
+majority voting
+Figure 2: Performance of majority voting, con-
+straint satisfaction inference, and the oracle infer-
+ence procedure as a function of base classifier ac-
+curacy on the PHONEME task.
+date labels, and the predictive quality of such ma-
+jorities improves as well. In the limit ?with a per-
+fect base classifier? all three curves will meet.
+6 Related work
+Many learning techniques specifically designed
+for sequentially-structured data exist. Given our
+goal of developing a method usable with non-
+probabilistic classifiers, we will not discuss the
+obvious differences with the many probabilistic
+methods. In this section, we will contrast our work
+with two other approaches that also apply prin-
+ciples of constraint satisfaction to sequentially-
+structured data.
+Constraint Satisfaction with Classifiers (Pun-
+yakanok and Roth, 2001) performs the somewhat
+more specific task of identifying phrases in a se-
+quence. Like our method, the task of coordinating
+local classifier decisions is formulated as a con-
+straint satisfaction problem. The variables encode
+whether or not a certain contiguous span of tokens
+forms a phrase. Hard constraints enforce that no
+two phrases in a solution overlap.
+Similarly to our method, classifier confidence
+estimates are used to rank solutions in order of
+preference. Unlike in our method, however, both
+the domains of the variables and the constraints
+are prespecified; the classifier is used only to esti-
+mate the cost of potential variable assignments. In
+our approach, the classifier predicts the domains
+of the variables, the constraints, and the weights
+of those.
+Roth and Yih (2005) replace the Viterbi algo-
+15
+rithm for inference in conditional random fields
+with an integer linear programming formulation.
+This allows arbitrary global constraints to be in-
+corporated in the inference procedure. Essentially,
+the method adds constraint satisfaction function-
+ality on top of the inference procedure. In our
+method, constraint satisfaction is the inference
+procedure. Nevertheless, arbitrary global con-
+straints (both hard and soft) can easily be incor-
+porated in our framework as well.
+7 Conclusion
+The classification and inference approach is a pop-
+ular and effective framework for performing se-
+quence labelling in tasks where there is strong
+interaction between output labels. Most existing
+inference procedures expect a base classifier that
+makes probabilistic predictions, that is, rather than
+predicting a single class label, a conditional proba-
+bility distribution over the possible classes is com-
+puted. The inference procedure presented in this
+paper is different in the sense that it can be used
+with any classifier that is able to estimate a confi-
+dence score for its (non-probabilistic) predictions.
+Constraint satisfaction inference builds upon
+the class trigram method introduced by Van den
+Bosch and Daelemans (2005), but reinterprets it
+as a strategy for generating multiple potential out-
+put sequences, from which it selects the sequence
+that has been found to be most optimal according
+to a weighted constraint satisfaction formulation
+of the inference process. In a series of experi-
+ments involving six sequence labelling task cover-
+ing several different areas in natural language pro-
+cessing, constraint satisfaction inference has been
+shown to improve substantially upon the perfor-
+mance achieved by a simpler inference procedure
+based on majority voting, proposed in the original
+work on the class trigram method.
+The work presented in this paper shows there is
+potential for alternative interpretations of the clas-
+sification and inference framework that do not rely
+on probabilistic base classifiers. Future work may
+well be able to further improve the performance
+of constraint satisfaction inference, for example,
+by using more optimised constraint weighting
+schemes. In addition, alternative ways of formu-
+lating constraint satisfaction problems from classi-
+fier predictions may be explored; not only for se-
+quence labelling, but also for other domains that
+could benefit from global inference.
+References
+R. H. Baayen, R. Piepenbrock, and H. van Rijn. 1993.
+The CELEX lexical data base on CD-ROM. Lin-
+guistic Data Consortium, Philadelphia, PA.
+W. Daelemans and A. Van den Bosch. 1996.
+Language-independent data-oriented grapheme-to-
+phoneme conversion. In J. P. H. Van Santen,
+R. W. Sproat, J. P. Olive, and J. Hirschberg, edi-
+tors, Progress in Speech Processing, pages 77?89.
+Springer-Verlag, Berlin.
+W. Daelemans, J. Zavrel, K. Van der Sloot, and A. Van
+den Bosch. 2004. TiMBL: Tilburg memory based
+learner, version 5.1.0, reference guide. Technical
+Report ILK 04-02, ILK Research Group, Tilburg
+University.
+J. Lafferty, A. McCallum, and F. Pereira. 2001. Con-
+ditional random fi elds: Probabilistic models for seg-
+menting and labeling sequence data. In Proceed-
+ings of the 18th International Conference on Ma-
+chine Learning, Williamstown, MA.
+V. Punyakanok and D. Roth. 2001. The use of classi-
+fi ers in sequential inference. In NIPS-13; The 2000
+Conference on Advances in Neural Information Pro-
+cessing Systems, pages 995?1001. The MIT Press.
+L.A. Ramshaw and M.P. Marcus. 1995. Text chunk-
+ing using transformation-based learning. In Pro-
+ceedings of the 3rd ACL/SIGDAT Workshop on Very
+Large Corpora, Cambridge, Massachusetts, USA,
+pages 82?94.
+D. Roth andW. Yih. 2005. Integer linear programming
+inference for conditional random fi elds. In Proc. of
+the International Conference on Machine Learning
+(ICML), pages 737?744.
+Yuka Tateisi, Hideki Mima, Ohta Tomoko, and Junichi
+Tsujii. 2002. Genia corpus: an annotated research
+abstract corpus in molecular biology domain. InHu-
+man Language Technology Conference (HLT 2002),
+pages 73?77.
+E. Tjong Kim Sang and S. Buchholz. 2000. Introduc-
+tion to the CoNLL-2000 shared task: Chunking. In
+Proceedings of CoNLL-2000 and LLL-2000, pages
+127?132.
+E. Tjong Kim Sang and F. De Meulder. 2003. In-
+troduction to the conll-2003 shared task: Language-
+independent named entity recognition. In W. Daele-
+mans and M. Osborne, editors, Proceedings of
+CoNLL-2003, pages 142?147. Edmonton, Canada.
+A. Van den Bosch and W. Daelemans. 2005. Improv-
+ing sequence segmentation learning by predicting
+trigrams. In I. Dagan and D. Gildea, editors, Pro-
+ceedings of the Ninth Conference on Computational
+Natural Language Learning.
+A. Van den Bosch. 2004. Wrapped progressive
+sampling search for optimizing learning algorithm
+parameters. In R. Verbrugge, N. Taatgen, and
+L. Schomaker, editors, Proceedings of the 16th
+Belgian-Dutch Conference on Artificial Intelligence,
+pages 219?226, Groningen, The Netherlands.
+16
+Proceedings of the 10th Conference on Computational Natural Language Learning (CoNLL-X),
+pages 176?180, New York City, June 2006. c?2006 Association for Computational Linguistics
+Dependency Parsing by Inference over High-recall Dependency Predictions
+Sander Canisius, Toine Bogers,
+Antal van den Bosch, Jeroen Geertzen
+ILK / Computational Linguistics and AI
+Tilburg University, P.O. Box 90153,
+NL-5000 LE Tilburg, The Netherlands
+{S.V.M.Canisius,A.M.Bogers,
+Antal.vdnBosch,J.Geertzen}@uvt.nl
+Erik Tjong Kim Sang
+Informatics Institute
+University of Amsterdam, Kruislaan 403
+NL-1098 SJ Amsterdam, The Netherlands
+erikt@science.uva.nl
+1 Introduction
+As more and more syntactically-annotated corpora
+become available for a wide variety of languages,
+machine learning approaches to parsing gain inter-
+est as a means of developing parsers without having
+to repeat some of the labor-intensive and language-
+specific activities required for traditional parser de-
+velopment, such as manual grammar engineering,
+for each new language. The CoNLL-X shared task
+on multi-lingual dependency parsing (Buchholz et
+al., 2006) aims to evaluate and advance the state-of-
+the-art in machine learning-based dependency pars-
+ing by providing a standard benchmark set compris-
+ing thirteen languages1. In this paper, we describe
+two different machine learning approaches to the
+CoNLL-X shared task.
+Before introducing the two learning-based ap-
+proaches, we first describe a number of baselines,
+which provide simple reference scores giving some
+sense of the difficulty of each language. Next, we
+present two machine learning systems: 1) an ap-
+proach that directly predicts all dependency relations
+in a single run over the input sentence, and 2) a cas-
+cade of phrase recognizers. The first approach has
+been found to perform best and was selected for sub-
+mission to the competition. We conclude this paper
+with a detailed error analysis of its output for two of
+the thirteen languages, Dutch and Spanish.
+1The data sets were extracted from various existing tree-
+banks (Hajic? et al, 2004; Simov et al, 2005; Simov and Osen-
+ova, 2003; Chen et al, 2003; Bo?hmova? et al, 2003; Kromann,
+2003; van der Beek et al, 2002; Brants et al, 2002; Kawata and
+Bartels, 2000; Afonso et al, 2002; Dz?eroski et al, 2006; Civit
+Torruella and Mart?? Anton??n, 2002; Nilsson et al, 2005; Oflazer
+et al, 2003; Atalay et al, 2003)
+2 Baseline approaches
+Given the diverse range of languages involved in
+the shared task, each having different characteristics
+probably requiring different parsing strategies, we
+developed four different baseline approaches for as-
+signing labeled dependency structures to sentences.
+All of the baselines produce strictly projective struc-
+tures. While the simple rules implementing these
+baselines are insufficient for achieving state-of-the-
+art performance, they do serve a useful role in giving
+a sense of the difficulty of each of the thirteen lan-
+guages. The heuristics for constructing the trees and
+labeling the relations used by each of the four base-
+lines are described below.
+Binary right-branching trees The first baseline
+produces right-branching binary trees. The first to-
+ken in the sentence is marked as the top node with
+HEAD 0 and DEPREL ROOT. For the rest of the
+tree, token n ? 1 serves as the HEAD of token n.
+Figure 1 shows an example of the kind of tree this
+baseline produces.
+Binary left-branching trees The binary left-
+branching baseline mirrors the previous baseline.
+The penultimate token in the sentence is marked as
+the top node with HEAD 0 and DEPREL ROOT
+since punctuation tokens can never serve as ROOT2.
+For the rest of the tree, the HEAD of token n is token
+n+1. Figure 2 shows an example of a tree produced
+by this baseline.
+2We simply assume the final token in the sentence to be
+punctuation.
+176
+Inward-branching trees In this approach, the
+first identified verb3 is marked as the ROOT node.
+The part of the sentence to the left of the ROOT is
+left-branching, the part to the right of the ROOT is
+right-branching. Figure 3 shows an example of a
+tree produced by this third baseline.
+Nearest neighbor-branching trees In our most
+complex baseline, the first verb is marked as the
+ROOT node and the other verbs (with DEPREL vc)
+point to the closest preceding verb. The other to-
+kens point in the direction of their nearest neighbor-
+ing verb, i.e. the two tokens at a distance of 1 from
+a verb have that verb as their HEAD, the two tokens
+at a distance of 2 have the tokens at a distance of 1
+as their head, and so on until another verb is a closer
+neighbor. In the case of ties, i.e. tokens that are
+equally distant from two different verbs, the token is
+linked to the preceding token. Figure 4 clarifies this
+kind of dependency structure in an example tree.
+verb verb punct
+ROOT
+Figure 1: Binary right-branching tree for an example
+sentence with two verbs.
+verb verb punct
+ROOT
+Figure 2: Binary left-branching tree for the example
+sentence.
+verb verb punct
+ROOT
+Figure 3: Binary inward-branching tree for the ex-
+ample sentence.
+3We consider a token a verb if its CPOSTAG starts with a
+?V?. This is an obviously imperfect, but language-independent
+heuristic choice.
+ROOT
+verb verb punct
+Figure 4: Nearest neighbor-branching tree for the
+example sentence.
+Labeling of identified relations is done using a
+three-fold back-off strategy. From the training set,
+we collect the most frequent DEPREL tag for each
+head-dependent FORM pair, the most frequent DE-
+PREL tag for each FORM, and the most frequent
+DEPREL tag in the entire training set. The rela-
+tions are labeled in this order: first, we look up if the
+FORM pair of a token and its head was present in
+the training data. If not, then we assign it the most
+frequent DEPREL tag in the training data for that
+specific token FORM. If all else fails we label the
+token with the most frequent DEPREL tag in the en-
+tire training set (excluding punct4 and ROOT).
+language baseline unlabeled labeled
+Arabic left 58.82 39.72
+Bulgarian inward 41.29 29.50
+Chinese NN 37.18 25.35
+Czech NN 34.70 22.28
+Danish inward 50.22 36.83
+Dutch NN 34.07 26.87
+German NN 33.71 26.42
+Japanese right 67.18 64.22
+Portuguese right 25.67 22.32
+Slovene right 24.12 19.42
+Spanish inward 32.98 27.47
+Swedish NN 34.30 21.47
+Turkish right 49.03 31.85
+Table 1: The labeled and unlabeled scores for the
+best performing baseline for each language (NN =
+nearest neighbor-branching).
+The best baseline performance (labeled and un-
+labeled scores) for each language is listed in Table
+1. There was no single baseline that outperformed
+the others on all languages. The nearest neighbor
+baseline outperformed the other baselines on five
+of the thirteen languages. The right-branching and
+4Since the evaluation did not score on punctuation.
+177
+inward-branching baselines were optimal on four
+and three languages respectively. The only language
+where the left-branching trees provide the best per-
+formance is Arabic.
+3 Parsing by inference over high-recall
+dependency predictions
+In our approach to dependency parsing, a machine
+learning classifier is trained to predict (directed) la-
+beled dependency relations between a head and a de-
+pendent. For each token in a sentence, instances are
+generated where this token is a potential dependent
+of each of the other tokens in the sentence5. The
+label that is predicted for each classification case
+serves two different purposes at once: 1) it signals
+whether the token is a dependent of the designated
+head token, and 2) if the instance does in fact corre-
+spond to a dependency relation in the resulting parse
+of the input sentence, it specifies the type of this re-
+lation, as well.
+The features we used for encoding instances for
+this classification task correspond to a rather simple
+description of the head-dependent pair to be clas-
+sified. For both the potential head and dependent,
+there are features encoding a 2-1-2 window of words
+and part-of-speech tags6; in addition, there are two
+spatial features: a relative position feature, encoding
+whether the dependent is located to the left or to the
+right of its potential head, and a distance feature that
+expresses the number of tokens between the depen-
+dent and its head.
+One issue that may arise when considering each
+potential dependency relation as a separate classifi-
+cation case is that inconsistent trees are produced.
+For example, a token may be predicted to be a de-
+pendent of more than one head. To recover a valid
+dependency tree from the separate dependency pre-
+dictions, a simple inference procedure is performed.
+Consider a token for which the dependency relation
+is to be predicted. For this token, a number of clas-
+sification cases have been processed, each of them
+5To prevent explosion of the number of classification cases
+to be considered for a sentence, we restrict the maximum dis-
+tance between a token and its potential head. For each language,
+we selected this distance so that, on the training data, 95% of the
+dependency relations is covered.
+6More specifically, we used the part-of-speech tags from the
+POSTAG column of the shared task data files.
+indicating whether and if so how the token is related
+to one of the other tokens in the sentence. Some of
+these predictions may be negative, i.e. the token is
+not a dependent of a certain other token in the sen-
+tence, others may be positive, suggesting the token
+is a dependent of some other token.
+If all classifications are negative, the token is as-
+sumed to have no head, and consequently no depen-
+dency relation is added to the tree for this token; the
+node in the dependency tree corresponding to this
+token will then be an isolated one. If one of the clas-
+sifications is non-negative, suggesting a dependency
+relation between this token as a dependent and some
+other token as a head, this dependency relation is
+added to the tree. Finally, there is the case in which
+more than one prediction is non-negative. By defi-
+nition, at most one of these predictions can be cor-
+rect; therefore, only one dependency relation should
+be added to the tree. To select the most-likely can-
+didate from the predicted dependency relations, the
+candidates are ranked according to the classification
+confidence of the base classifier that predicted them,
+and the highest-ranked candidate is selected for in-
+sertion into the tree.
+For our base classifier we used a memory-based
+learner as implemented by TiMBL (Daelemans et
+al., 2004). In memory-based learning, a machine
+learning method based on the nearest-neighbor rule,
+the class for a given test instance is predicted by per-
+forming weighted voting over the class labels of a
+certain number of most-similar training instances.
+As a simple measure of confidence for such a pre-
+diction, we divide the weight assigned to the major-
+ity class by the total weight assigned to all classes.
+Though this confidence measure is a rather ad-hoc
+one, which should certainly not be confused with
+any kind of probability, it tends to work quite well
+in practice, and arguably did so in the context of
+this study. The parameters of the memory-based
+learner have been optimized for accuracy separately
+for each language on training and development data
+sampled internally from the training set.
+The base classifier in our parser is faced with a
+classification task with a highly skewed class dis-
+tribution, i.e. instances that correspond to a depen-
+dency relation are largely outnumbered by those that
+do not. In practice, such a huge number of nega-
+tive instances usually results in classifiers that tend
+178
+to predict fairly conservatively, resulting in high pre-
+cision, but low recall. In the approach introduced
+above, however, it is better to have high recall, even
+at the cost of precision, than to have high precision at
+the cost of recall. A missed relation by the base clas-
+sifier can never be recovered by the inference proce-
+dure; however, due to the constraint that each token
+can only be a dependent of one head, excessive pre-
+diction of dependency relations can still be corrected
+by the inference procedure. An effective method for
+increasing the recall of a classifier is down-sampling
+of the training data. In down-sampling, instances
+belonging to the majority class (in this case the neg-
+ative class) are removed from the training data, so
+as to obtain a more balanced distribution of negative
+and non-negative instances.
+Figure 5 shows the effect of systematically re-
+moving an increasingly larger part of the negative in-
+stances from the training data. First of all, the figure
+confirms that down-sampling helps to improve re-
+call, though it does so at the cost of precision. More
+importantly however, it also illustrates that this im-
+proved recall is beneficial for the performance of the
+dependency parser. The shape of the performance
+curve of the dependency parser closely follows that
+of the recall. Remarkably, parsing performance con-
+tinues to improve with increasingly stronger down-
+sampling, even though precision drops considerably
+as a result of this. This shows that the confidence
+of the classifier for a certain prediction is a suffi-
+ciently reliable indication of the quality of that pre-
+diction for fixing the over-prediction of dependency
+relations. Only when the number of negative train-
+ing instances is reduced to equal the number of pos-
+itive instances, the performance of the parser is neg-
+atively affected. Based on a quick evaluation of var-
+ious down-sampling ratios on a 90%-10% train-test
+split of the Dutch training data, we decided to down-
+sample the training data for all languages with a ratio
+of two negative instances for each positive one.
+Table 2 lists the unlabeled and labeled attachment
+scores of the resulting system for all thirteen lan-
+guages.
+4 Cascaded dependency parsing
+One of the alternative strategies explored by us was
+modeling the parsing process as a cascaded pair of
+ 0
+ 20
+ 40
+ 60
+ 80
+ 100
+ 2 4 6 8 10
+Sampling ratio
+PrecisionRecallSystem LAS
+Figure 5: The effect of down-sampling on precision
+and recall of the base classifier, and on labeled ac-
+curacy of the dependency parser. The x-axis refers
+to the number of negative instances for each posi-
+tive instance in the training data. Training and test-
+ing was performed on a 90%-10% split of the Dutch
+training data.
+basic learners. This approach is similar to Yamada
+and Matsumoto (2003) but we only use their Left
+and Right reduction operators, not Shift. In the first
+phase, each learner predicted dependencies between
+neighboring words. Dependent words were removed
+and the remaining words were sent to the learners for
+further rounds of processing until all words but one
+had been assigned a head. Whenever crossing links
+prevented further assignments of heads to words, the
+learner removed the remaining word requiring the
+longest dependency link. When the first phase was
+finished another learner assigned labels to pairs of
+words present in dependency links.
+Unlike in related earlier work (Tjong Kim Sang,
+2002), we were unable to compare many different
+learner configurations. We used two different train-
+ing files for the first phase: one for predicting the
+dependency links between adjacent words and one
+for predicting all other links. As a learner, we used
+TiMBL with its default parameters. We evaluated
+different feature sets and ended up with using words,
+lemmas, POS tags and an extra pair of features with
+the POS tags of the children of the focus word. With
+this configuration, this cascaded approach achieved
+a labeled score of 62.99 on the Dutch test data com-
+pared to 74.59 achieved by our main approach.
+179
+language unlabeled labeled
+Arabic 74.59 57.64
+Bulgarian 82.51 78.74
+Chinese 82.86 78.37
+Czech 72.88 60.92
+Danish 82.93 77.90
+Dutch 77.79 74.59
+German 80.01 77.56
+Japanese 89.67 87.41
+Portuguese 85.61 77.42
+Slovene 74.02 59.19
+Spanish 71.33 68.32
+Swedish 85.08 79.15
+Turkish 64.19 51.07
+Table 2: The labeled and unlabeled scores for the
+submitted system for each of the thirteen languages.
+5 Error analysis
+We examined the system output for two languages
+in more detail: Dutch and Spanish.
+5.1 Dutch
+With a labeled attachment score of 74.59 and an
+unlabeled attachment score of 77.79, our submitted
+Dutch system performs somewhat above the average
+over all submitted systems (labeled 70.73, unlabeled
+75.07). We review the most notable errors made by
+our system.
+From a part-of-speech (CPOSTAG) perspective,
+a remarkable relative amount of head and depen-
+dency errors are made on conjunctions. A likely
+explanation is that the tag ?Conj? applies to both co-
+ordinating and subordinating conjunctions; we did
+not use the FEATS information that made this dis-
+tinction, which would have likely solved some of
+these errors.
+Left- and right-directed attachment to heads is
+roughly equally successful. Many errors are made
+on relations attaching to ROOT; the system appears
+to be overgenerating attachments to ROOT, mostly
+in cases when it should have generated rightward
+attachments. Unsurprisingly, the more distant the
+head is, the less accurate the attachment; especially
+recall suffers at distances of three and more tokens.
+The most frequent attachment error is generat-
+ing a ROOT attachment instead of a ?mod? (mod-
+ifier) relation, often occurring at the start of a sen-
+tence. Many errors relate to ambiguous adverbs such
+as bovendien (moreover), tenslotte (after all), and
+zo (thus), which tend to occur rather frequently at
+the beginning of sentences in the test set, but less
+so in the training set. The test set appears to con-
+sist largely of formal journalistic texts which typi-
+cally tend to use these marked rhetorical words in
+sentence-initial position, while the training set is a
+more mixed set of texts from different genres plus
+a significant set of individual sentences, often man-
+ually constructed to provide particular examples of
+syntactic constructions.
+5.2 Spanish
+The Spanish test data set was the only data set on
+which the alternative cascaded approach (72.15) out-
+performed our main approach (68.32). A detailed
+comparison of the output files of the two systems
+has revealed two differences. First, the amount of
+circular links, a pair of words which have each other
+as head, was larger in the analysis of the submitted
+system (7%) than in the cascaded analysis (3%) and
+the gold data (also 3%). Second, the number of root
+words per sentence (always 1 in the gold data) was
+more likely to be correct in the cascaded analysis
+(70% correct; other sentences had no root) than in
+the submitted approach (40% with 20% of the sen-
+tences being assigned no roots and 40% more than
+one root). Some of these problems might be solvable
+with post-processing
+Acknowledgements
+This research is funded by NWO, the Netherlands
+Organization for Scientific Research under the IMIX
+programme, and the Dutch Ministry for Economic
+Affairs? IOP-MMI programme.
+References
+S. Buchholz, E. Marsi, A. Dubey, and Y. Krymolowski. 2006.
+CoNLL-X shared task on multilingual dependency parsing.
+In Proc. of the Tenth Conf. on Computational Natural Lan-
+guage Learning (CoNLL-X). SIGNLL.
+W. Daelemans, J. Zavrel, K. Van der Sloot, and A. Van den
+Bosch. 2004. TiMBL: Tilburg memory based learner, ver-
+sion 5.1, reference guide. Technical Report ILK 04-02, ILK
+Research Group, Tilburg University.
+Erik Tjong Kim Sang. 2002. Memory-based shallow parsing.
+Journal of Machine Learning Research, 2(Mar):559?594.
+Hiroyasu Yamada and Yuji Matsumoto. 2003. Statistical de-
+pendency analysis with support vector machines. In 8th In-
+ternational Workshop of Parsing Technologies (IWPT2003).
+Nancy, France.
+180
+Proceedings of the Eighth Meeting of the ACL Special Interest Group on Computational Phonology at HLT-NAACL 2006, pages 41?49,
+New York City, USA, June 2006. c?2006 Association for Computational Linguistics
+Improved morpho-phonological sequence processing with
+constraint satisfaction inference
+Antal van den Bosch and Sander Canisius
+ILK / Language and Information Science
+Tilburg University, P.O. Box 90153, NL-5000 LE Tilburg, The Netherlands
+{Antal.vdnBosch,S.V.M.Canisius}@uvt.nl
+Abstract
+In performing morpho-phonological se-
+quence processing tasks, such as letter-
+phoneme conversion or morphological
+analysis, it is typically not enough to base
+the output sequence on local decisions that
+map local-context input windows to sin-
+gle output tokens. We present a global
+sequence-processing method that repairs
+inconsistent local decisions. The approach
+is based on local predictions of overlap-
+ping trigrams of output tokens, which
+open up a space of possible sequences;
+a data-driven constraint satisfaction infer-
+ence step then searches for the optimal
+output sequence. We demonstrate signifi-
+cant improvements in terms of word accu-
+racy on English and Dutch letter-phoneme
+conversion and morphological segmenta-
+tion, and we provide qualitative analyses
+of error types prevented by the constraint
+satisfaction inference method.
+1 Introduction
+The fields of computational phonology and mor-
+phology were among the earlier fields in compu-
+tational linguistics to adopt machine learning algo-
+rithms as a means to automatically construct pro-
+cessing systems from data. For instance, letter-
+phoneme conversion was already pioneered, with
+neural networks initially, at the end of the 1980s
+(Sejnowski and Rosenberg, 1987), and was shortly
+after also investigated with memory-based learn-
+ing and analogical approaches (Weijters, 1991; Van
+den Bosch and Daelemans, 1993; Yvon, 1996)
+and decision trees (Torkkola, 1993; Dietterich
+et al, 1995). The development of these data-
+driven systems was thrusted by the early existence
+of lexical databases, originally compiled to serve
+(psycho)linguistic research purposes, such as the
+CELEX lexical database for Dutch, English, and
+German (Baayen et al, 1993). Many researchers
+have continued and are still continuing this line of
+work, generally producing successful systems with
+satisfactory, though still imperfect performance.
+A key characteristic of many of these early sys-
+tems is that they perform decomposed or simplified
+versions of the full task. Rather than predicting the
+full phonemization of a word given its orthography
+in one go, the task is decomposed in predicting in-
+dividual phonemes or subsequences of phonemes.
+Analogously, rather than generating a full word-
+form, many morphological generation systems pro-
+duce transformation codes (e.g., ?add -er and um-
+laut?) that need to be applied to the input string by
+a post-processing automaton. These task simplifi-
+cations are deliberately chosen to avoid sparseness
+problems to the machine learning systems. Such
+systems tend to perform badly when there are many
+low-frequent and too case-specific classes; task de-
+composition allows them to be robust and generic
+when they process unseen words.
+This task decomposition strategy has a severe
+drawback in sequence processing tasks. Decom-
+posed systems do not have any global method to
+check whether their local decisions form a globally
+41
+coherent output. If a letter-phoneme conversion sys-
+tem predicts schwas on every vowel in a polysyllabic
+word such as parameter because it is uncertain about
+the ambiguous mapping of each of the as and es, it
+produces a bad pronunciation. Likewise, if a mor-
+phological analysis system segments a word such as
+being as a prefix followed by an inflection, making
+the locally most likely guesses, it generates an anal-
+ysis that could never exist, since it lacks a stem.
+Global models that coordinate, mediate, or en-
+force that the output is a valid sequence are typi-
+cally formulated in the form of linguistic rules, ap-
+plied during processing or in post-processing, that
+constrain the space of possible output sequences.
+Some present-day research in machine learning
+of morpho-phonology indeed focuses on satisfy-
+ing linguistically-motivated constraints as a post-
+processing or filtering step; e.g., see (Daya et al,
+2004) on identifying roots in Hebrew word forms.
+Optimality Theory (Prince and Smolensky, 2004)
+can also be seen as a constraint-based approach to
+language processing based on linguistically moti-
+vated constraints. In contrast to being motivated by
+linguistic theory, constraints in a global model can
+be learned automatically from data as well. In this
+paper we propose such a data-driven constraint sat-
+isfaction inference method, that finds a globally ap-
+propriate output sequence on the basis of a space of
+possible sequences generated by a locally-operating
+classifier predicting output subsequences. We show
+that the method significantly improves on the ba-
+sic method of predicting single output tokens at a
+time, on English and Dutch letter-phoneme conver-
+sion and morphological analysis.
+This paper is structured as follows. The constraint
+satisfaction inference method is outlined in Sec-
+tion 2. We describe the four morpho-phonological
+processing tasks, and the lexical data from which we
+extracted examples for these tasks, in Section 3. We
+subsequently list the outcomes of the experiments
+in Section 4, and conclude with a discussion of our
+findings in Section 5.
+2 Class trigrams and constraint
+satisfaction inference
+Both the letter-phoneme conversion and the morpho-
+logical analysis tasks treated in this paper can be
+seen as sequentially-structured classification tasks,
+where sequences of letters are mapped to sequences
+of phonemes or morphemes. Such sequence-to-
+sequence mappings are a frequently reoccurring
+phenomenon in natural language processing, which
+suggests that it is preferable to take care of the issue
+of classifying sequential data once at the machine
+learning level, rather than repeatedly and in different
+ways at the level of practical applications. Recently,
+a machine learning approach for sequential data has
+been proposed by Van den Bosch and Daelemans
+(2005) that is suited for discrete machine-learning
+algorithms such as memory-based learners, which
+have been shown to perform well on word phonem-
+ization and morphological analysis before (Van den
+Bosch and Daelemans, 1993; Van den Bosch and
+Daelemans, 1999). In the remainder of this paper,
+we use as our classifier of choice the IB1 algorithm
+(Aha et al, 1991) with feature weighting, as im-
+plemented in the TiMBL software package1 (Daele-
+mans et al, 2004).
+In the approach to sequence processing proposed
+by Van den Bosch and Daelemans (2005), the el-
+ements of the input sequence (in the remainder of
+this paper, we will refer to words and letters rather
+than the more general terms sequences and sequence
+elements) are assigned overlapping subsequences of
+output symbols. This subsequence corresponds to
+the output symbols for a focus letter, and one let-
+ter to its left and one letter to its right. Predicting
+such trigram subsequences for each letter of a word
+eventually results in three output symbol predictions
+for each letter. In many cases, those three predic-
+tions will not agree, resulting in a number of po-
+tential output sequences. We will refer to the pro-
+cedure for selecting the final output sequence from
+the space of alternatives spanned by the predicted
+trigrams as an inference procedure, analogously to
+the use of this term in probabilistic sequence clas-
+sification methods (Punyakanok and Roth, 2001).
+The original work on predicting class trigrams im-
+plemented a simple inference procedure by voting
+over the three predicted symbols (Van den Bosch
+and Daelemans, 2005).
+Predicting trigrams of overlapping output sym-
+bols has been shown to be an effective approach
+1TiMBL URL: http://ilk.uvt.nl/timbl/
+42
+to improve sequence-oriented natural language pro-
+cessing tasks such as syntactic chunking and named-
+entity recognition, where an input sequence of to-
+kens is mapped to an output sequence of symbols
+encoding a syntactic or semantic segmentation of the
+sentence. Letter-phoneme conversion and morpho-
+logical analysis, though sequentially structured on
+another linguistic level, may be susceptible to bene-
+fiting from this approach as well.
+In addition to the practical improvement shown
+to be obtained with the class trigram method, there
+is also a more theoretical attractiveness to it. Since
+the overlapping trigrams that are predicted are just
+atomic symbols to the underlying learning algo-
+rithm, a classifier will only predict output symbol
+trigrams that are actually present in the data it was
+trained on. Consequently, predicted trigrams are
+guaranteed to be syntactically valid subsequences
+in the target task. There is no such guarantee in
+approaches to sequence classification where an iso-
+lated local classifier predicts single output symbols
+at a time, without taking into account predictions
+made elsewhere in the word.
+While the original voting-based inference proce-
+dure proposed by Van den Bosch and Daelemans
+(2005) manages to exploit the sequential informa-
+tion stored in the predicted trigrams to improve upon
+the performance of approaches that do not consider
+the sequential structure of their output at all, it does
+so only partly. Essentially, the voting-based infer-
+ence procedure just splits the overlapping trigrams
+into their unigram components, thereby retaining
+only the overlapping symbols for each individual let-
+ter. As a result, the guaranteed validity of the trigram
+subsequences is not put to use. In this section we de-
+scribe an alternative inference procedure, based on
+principles of constraint satisfaction, that does man-
+age to use the sequential information provided by
+the trigram predictions.
+At the foundation of this constraint-satisfaction-
+based inference procedure, more briefly constraint
+satisfaction inference, is the assumption that the
+output symbol sequence should preferably be con-
+structed by concatenating the predicted trigrams of
+output symbols, rather than by chaining individual
+symbols. However, as the underlying base classifier
+is by no means perfect, predicted trigrams should not
+be copied blindly to the output sequence; they may
+be incorrect. If a trigram prediction is considered to
+be of insufficient quality, the procedure backs off to
+symbol bigrams or even symbol unigrams.
+The intuitive description of the inference proce-
+dure is formalized by expressing it as a weighted
+constraint satisfaction problem (W-CSP). Constraint
+satisfaction is a well-studied research area with
+many diverse areas of application. Weighted con-
+straint satisfaction extends the traditional constraint
+satisfaction framework with soft constraints; such
+constraints are not required to be satisfied for a solu-
+tion to be valid, but constraints a given solution does
+satisfy are rewarded according to weights assigned
+to them. Soft constraints are perfect for expressing
+our preference for symbol trigrams, with the possi-
+bility of a back off to lower-degree n-grams if there
+is reason to doubt the quality of the trigram predic-
+tions.
+Formally, a W-CSP is a tuple (X,D,C,W ).
+Here, X = {x1, x2, . . . , xn} is a finite set of vari-
+ables. D(x) is a function that maps each variable
+to its domain, that is, the set of values that variable
+can take on. C is the set of constraints. While a
+variable?s domain dictates the values a single vari-
+able is allowed to take on, a constraint specifies
+which simultaneous value combinations over a num-
+ber of variables are allowed. For a traditional (non-
+weighted) constraint satisfaction problem, a valid
+solution would be an assignment of values to the
+variables that (1) are a member of the corresponding
+variable?s domain, and (2) satisfy all constraints in
+the set C . Weighted constraint satisfaction, however,
+relaxes this requirement to satisfy all constraints. In-
+stead, constraints are assigned weights that may be
+interpreted as reflecting the importance of satisfying
+that constraint.
+Let a constraint c ? C be defined as a function
+that maps each variable assignment to 1 if the con-
+straint is satisfied, or to 0 if it is not. In addition, let
+W : C? IR+ denote a function that maps each con-
+straint to a positive real value, reflecting the weight
+of that constraint. Then, the optimal solution to a
+W-CSP is given by the following equation.
+x? = arg max
+x
+?
+c
+W (c)c(x)
+43
+Figure 1: Illustration of the constraints yielded by a given sequence of predicted class trigrams for the word
+hand. The constraints on the right have been marked with a number (between parentheses) that refers to the
+trigram prediction on the left from which the constraint was derived.
+That is, the assignment of values to its variables
+that maximizes the sum of weights of the constraints
+that have been satisfied.
+Translating the terminology used in morpho-
+phonological tasks to the constraint satisfaction do-
+main, each letter maps to a variable, the domain of
+which corresponds to the three overlapping candi-
+date symbols for this letter suggested by the trigrams
+covering the letter. This provides us with a defini-
+tion of the function D, mapping variables to their
+domain. In the following, yi,j denotes the candi-
+date symbol for letter xj predicted by the trigram
+assigned to letter xi.
+D(xi) = {yi?1,i, yi,i, yi+1,i}
+Constraints are extracted from the predicted tri-
+grams. Given the goal of retaining predicted tri-
+grams in the output symbol sequence as much as
+possible, the most important constraints are simply
+the trigrams themselves. A predicted trigram de-
+scribes a subsequence of length three of the entire
+output sequence; by turning such a trigram into a
+constraint, we express the wish to have this trigram
+end up in the final output sequence.
+(xi?1, xi, xi+1) = (yi,i?1, yi,i, yi,i+1),?i
+No base classifier is flawless though, and there-
+fore not all predicted trigrams can be expected to be
+correct. Yet, even an incorrect trigram may carry
+some useful information regarding the output se-
+quence: one trigram also covers two bigrams, and
+three unigrams. An incorrect trigram may still con-
+tain smaller subsequences of length one or two that
+are correct. Therefore, all of these are also mapped
+to constraints.
+(xi?1, xi) = (yi,i?1, yi,i), ?i
+(xi, xi+1) = (yi,i, yi,i+1), ?i
+xi?1 = yi,i?1, ?i
+xi = yi,i, ?i
+xi+1 = yi,i+1, ?i
+To illustrate the above procedure, Figure 1 shows
+the constraints yielded by a given output sequence
+of class trigrams for the word ?hand?. With such an
+amount of overlapping constraints, the satisfaction
+problem obtained easily becomes over-constrained,
+that is, no variable assignment exists that can sat-
+isfy all constraints without breaking another. Even
+only one incorrectly predicted class trigram already
+leads to two conflicting candidate symbols for one
+of the letters at least. In Figure 1, this is the case
+for the letter ?d?, for which both the symbol ?d? and
+?t? are predicted. On the other hand, without con-
+flicting candidate symbols, no inference would be
+needed to start with. The choice for the weighted
+constraint satisfaction method always allows a solu-
+tion to be found, even in the presence of conflict-
+ing constraints. Rather than requiring all constraints
+to be satisfied, each constraint is assigned a certain
+weight; the optimal solution to the problem is an as-
+signment of values to the variables that optimizes the
+44
+Focus Trigram output classes
+Left context letter Right context Phonemization Morph. analysis
+b o o k b u s -
+b o o k i b u - s - -
+b o o k i n u - k - - -
+b o o k i n g - k I - - i
+o o k i n g k I N - i -
+o k i n g I N - i - -
+k i n g N - - -
+Table 1: Seven labeled examples of phonemization and morphological analysis trigram mappings created
+for the word booking.
+sum of weights of the constraints that are satisfied.
+As weighted constraints are defined over overlap-
+ping subsequences of the output sequence, the best
+symbol assignment for each letter with respect to the
+weights of satisfied constraints is decided upon on a
+global sequence level. This may imply taking into
+account symbol assignments for surrounding letters
+to select the best output symbol for a certain letter.
+In contrast, in non-global approaches, ignorant of
+any sequential context, only the local classifier pre-
+diction with highest confidence is considered for se-
+lecting a letter?s output symbol. By formulating our
+inference procedure as a constraint satisfaction prob-
+lem, global output optimization comes for free: in
+constraint satisfaction, the aim is also to find a glob-
+ally optimal assignment of variables taking into ac-
+count all constraints defined over them. Yet, for such
+a constraint satisfaction formulation to be effective,
+good constraint weights should be chosen, that is,
+weights that favor good output sequences over bad
+ones.
+Constraints can directly be traced back to a pre-
+diction made by the base classifier. If two con-
+straints are in conflict, the one which the classifier
+was most certain of should preferably be satisfied.
+In the W-CSP framework, this preference can be ex-
+pressed by weighting constraints according to the
+classifier confidence for the originating trigram. For
+the memory-based learner, we define the classifier
+confidence for a predicted class as the weight as-
+signed to that class in the neighborhood of the test
+instance, divided by the total weight of all classes.
+Let x denote a test instance, and c? its pre-
+dicted class. Constraints derived from this class are
+weighted according to the following rules:
+? for a trigram constraint, the weight is simply
+the base classifier?s confidence value for the
+class c?;
+? for a bigram constraint, the weight is the sum
+of the confidences for all trigram classes in the
+nearest-neighbor set of x that assign the same
+symbol bigram to the letters spanned by the
+constraint;
+? for a unigram constraint, the weight is the sum
+of the confidences for all trigram classes in the
+nearest-neighbor set of x that assign the same
+symbol to the letter spanned by the constraint.
+This weighting scheme results in an inference
+procedure that behaves exactly as we already de-
+scribed intuitively in the beginning of this section.
+The preference for retaining the predicted trigrams
+in the output sequence is translated into high rewards
+for output sequences that do so, since such output se-
+quences not only receive credit for the satisfied tri-
+gram constraints, but also for all the bigram and un-
+igram constraints derived from that trigram; they are
+necessarily satisfied as well. Nonetheless, this pref-
+erence for trigrams may be abandoned if composing
+a certain part of the output sequence from several
+symbol bigrams or even unigrams results in higher
+rewards than when trigrams are used. The latter may
+happen in cases where the base classifier is not con-
+fident about its trigram predictions.
+45
+3 Data preparation
+In our experiments we train classifiers on English
+and Dutch letter-phoneme conversion and morpho-
+logical analysis. All data for the experiments de-
+scribed in this paper are extracted from the CELEX
+lexical databases for English and Dutch (Baayen et
+al., 1993). We encode the examples for our base
+classifiers in a uniform way, along the following pro-
+cedure. Given a word and (i) an aligned phone-
+mic transcription or (ii) an aligned encoding of a
+morphological analysis, we generate letter-by-letter
+windows. Each window takes one letter in focus,
+and includes three neighboring letters to the left
+and to the right. Each seven-letter input window
+is associated to a trigram class label, composed of
+the focus class label aligned with the middle let-
+ter, plus its immediately preceding and following
+class labels. Table 1 displays the seven examples
+made on the basis of the word booking, with tri-
+gram classes (as explained in Section 2) both for
+the letter-phoneme conversion task and for the mor-
+phological analysis task. The full aligned phone-
+mic transcription of booking is [bu-kIN-] (using the
+SAMPA coding of the international phonetic alpha-
+bet), and the morphological analysis of booking is
+[book]stem[ing]inflection. The dashes in the phone-
+mic transcription are inserted to ensure a one-to-
+one mapping between letters and phonemes; the in-
+sertion was done by automatical alignment through
+expectation-maximization (Dempster et al, 1977).
+The English word phonemization data, extracted
+from the CELEX lexical database, contains 65,467
+words, on the basis of which we create a database
+of 573,170 examples. The Dutch word phonemiza-
+tion data set consists of 293,825 words, totaling to
+3,181,345 examples. Both data sets were aligned us-
+ing the expectation-maximization algorithm (Demp-
+ster et al, 1977), using a phonemic null character to
+equalize the number of symbols in cases in which
+the phonemic transcription is shorter than the ortho-
+graphic word, and using ?double phonemes? (e.g.
+[X] for [ks]) in cases where the phonemic transcrip-
+tion is longer, as in taxi ? [tAksi].
+CELEX contains 336,698 morphological analy-
+ses of Dutch (which we converted to 3,209,090
+examples), and 65,558 analyses of English words
+(573,544 examples). We converted the available
+Left Focus Right Trigram
+context letter context class
+a b n o A 0
+a b n o r A 0 0
+a b n o r m 0 0 0
+a b n o r m a 0 0 0
+b n o r m a l 0 0 0
+n o r m a l i 0 0 0
+o r m a l i t 0 0 0+Da
+r m a l i t e 0 0+Da A ?N
+m a l i t e i 0+Da A ?N 0
+a l i t e i t A ?N 0 0
+l i t e i t e 0 0 0
+i t e i t e n 0 0 0
+t e i t e n 0 0 plural
+e i t e n 0 plural 0
+i t e n plural 0
+Table 2: Examples with morphological analysis tri-
+gram classes derived from the example word abnor-
+maliteiten.
+morphological information for the two languages in
+a coding scheme which is rather straightforward in
+the case of English, and somewhat more compli-
+cated for Dutch. For English, as exemplified in Ta-
+ble 1, a simple segmentation label marks the begin-
+ning of either a stem, an inflection (?s? and ?i? in
+Table 1), a stress-affecting affix, or a stress-neutral
+affix (?1? and ?2?, not shown in Table 1). The cod-
+ing scheme for Dutch incorporates additional infor-
+mation on the part-of-speech of every stem and non-
+inflectional affix, the type of inflection, and also en-
+codes all spelling changes between the base lemma
+forms and the surface word form.
+To illustrate the more complicated construction of
+examples for Dutch morphological analysis, Table 2
+displays the 15 instances derived from the Dutch
+example word abnormaliteiten (abnormalities) and
+their associated classes. The class of the first in-
+stance is A, which signifies that the morpheme start-
+ing in a is an adjective (A). The class of the eighth
+instance, 0+Da, indicates that at that position no seg-
+ment starts (0), but that an a was deleted at that po-
+sition (+Da, ?delete a? here). Next to deletions, in-
+sertions (+I) and replacements (+R, with a deletion
+and an insertion argument) can also occur. Together
+46
+Language Task Unigrams Trigrams
+English Letter-phon. 58 13,005
+Morphology 5 80
+Dutch Letter-phon. 201 17,538
+Morphology 3,831 14,795
+Table 3: Numbers of unigram and trigram classes
+for the four tasks.
+these two classification labels code that the first mor-
+pheme is the adjective abnormaal. The second mor-
+pheme, the suffix iteit, has class A ?N. This com-
+plex tag, which is in fact a rewrite rule, indicates that
+when iteit attaches right to an adjective (encoded by
+A ), the new combination becomes a noun (?N).
+Rewrite rule class labels occur exclusively with suf-
+fixes, that do not have a part-of-speech tag of their
+own, but rather seek an attachment to form a com-
+plex morpheme with the part-of-speech tag. Finally,
+the third morpheme is en, which is a plural inflection
+that by definition attaches to a noun.
+Logically, the number of trigram classes for each
+task is larger than the number of atomic classes;
+the actual numbers for the four tasks investigated
+here are displayed in Table 3. The English morpho-
+logical analysis task has the lowest number of tri-
+gram classes, 80, due to the fact that there are only
+five atomic classes in the original task, but for the
+other tasks the number of trigram classes is quite
+high; above 10,000. With these numbers of classes,
+several machine learning algorithms are practically
+ruled out, given their high sensitivity to numbers of
+classes (e.g., support vector machines or rule learn-
+ers). Memory-based learning algorithms, however,
+are among a small set of machine learning algo-
+rithms that are insensitive to the number of classes
+both in learning and in classification.
+4 Results
+We performed experiments with the memory-based
+learning algorithm IB1, equipped with constraint
+satisfaction inference post-processing, on the four
+aforementioned tasks. In one variant, IB1 was sim-
+ply used to predict atomic classes, while in the other
+variant IB1 predicted trigram classes, and constraint
+satisfaction inference was used for post-processing
+the output sequences. We chose to measure the gen-
+Language Method Word accuracy
+English Unigram 80.0 ?0.75
+CSInf 85.4 ?0.71
+Dutch Unigram 41.3 ?0.48
+CSInf 51.9 ?0.48
+Table 4: Word accuracies on English and Dutch
+morphological analysis by the default unigram clas-
+sifier and the trigram method with constraint satis-
+faction inference, with confidence intervals.
+Language Method Word accuracy
+English Unigram 79.0 ?0.82
+CSInf 84.5 ?0.76
+Dutch Unigram 92.8 ?0.25
+CSInf 94.4 ?0.22
+Table 5: Word accuracies on English and Dutch
+letter-phoneme conversion by the default unigram
+classifier and the trigram method with constraint sat-
+isfaction inference, with confidence intervals.
+eralization performance of our trained classifiers on
+a single 90% training set ? 10% test set split of each
+data set (after shuffling the data randomly at the
+word level), and measuring the percentage of fully
+correctly phonemized words or fully correctly mor-
+phologically analyzed words ? arguably the most
+critical and unbiased performance metric for both
+tasks. Additionally we performed bootstrap resam-
+pling (Noreen, 1989) to obtain confidence intervals.
+Table 4 lists the word accuracies obtained on the
+English and Dutch morphological analysis tasks.
+Constraint satisfaction inference significantly out-
+performs the systems that predict atomic unigram
+classes, by a large margin. While the absolute differ-
+ences in scores between the two variants of English
+morphological analysis is 5.4%, the error reduction
+is an impressive 27%.
+Table 5 displays the word phonemization accu-
+racies of both variants on both languages. Again,
+significant improvements over the baseline classifier
+can be observed; the confidence intervals are widely
+apart. Error reductions for both languages are im-
+pressive: 26% for English, and 22% for Dutch.
+47
+5 Discussion
+We have presented constraint satisfaction inference
+as a global method to repair errors made by a local
+classifier. This classifier is a memory-based learner
+predicting overlapping trigrams, creating a space of
+possible output sequences in which the inference
+procedure finds the globally optimal one. This glob-
+ally optimal sequence is the one that adheres best to
+the trigram, bigram, and unigram sub-sequence con-
+straints present in the predictions of the local classi-
+fier, weighted by the confidences of the classifier, in
+a back-off order from trigrams to unigrams.
+The method is shown to significantly outperform
+a memory-based classifier predicting atomic classes
+and lacking any global post-processing, which has
+previously been shown to exhibit successful perfor-
+mance (Van den Bosch and Daelemans, 1993; Van
+den Bosch and Daelemans, 1999). (While this was
+the reason for using memory-based learning, we
+note that the constraint satisfaction inference and its
+underlying trigram-based classification method can
+be applied to any machine-learning classifier.) The
+large improvements (27% and 26% error reductions
+on the two English tasks, 18% and 22% on the two
+Dutch tasks) can arguably be taken as an indication
+that this method may be quite effective in general in
+morpho-phonological sequence processing tasks.
+Apparently, the constraint-satisfaction method is
+able to avoid more errors than to add them. At closer
+inspection, comparing cases in which the atomic
+classifier generates errors and constraint satisfaction
+inference does not, we find that the type of avoided
+error, when compared to the unigram classifier, dif-
+fers per task. On the morphological analysis task,
+we identify repairs where (1) a correct segmentation
+is inserted, (2) a false segmentation is not placed,
+and (3) a tag is switched. As Table 6 shows in its up-
+per four lines, in the case of English most repairs in-
+volve correctly inserted segmentations, but the other
+two categories are also quite frequent. In the case of
+Dutch the most common repair is a switch from an
+incorrect tag, placed at the right segmentation posi-
+tion, to the correct tag at that point. Given that there
+are over three thousand possible tags in our compli-
+cated Dutch morphological analysis task, this is in-
+deed a likely area where there is room for improve-
+ment.
+Morphological analysis repairs English Dutch
+Insert segmentation 193 1,087
+Delete segmentation 158 1,083
+Switch tag 138 2,505
+Letter-phoneme repairs English Dutch
+Alignment 1,049 239
+Correct vowel 32 94
+Correct consonant 275 73
+Table 6: Numbers of repaired errors divided over
+three categories of morphological analysis classifi-
+cations (top) and letter-phoneme conversions (bot-
+tom) of the constraint satisfaction inference method
+as compared to the unigram classifier.
+The bottom four lines of Table 6 lists the counts of
+repaired errors in word phonemization in both lan-
+guages, where we distinguish between (1) alignment
+repairs between phonemes and alignment symbols
+(where phonemes are corrected to phonemic nulls,
+or vice versa), (2) switches from incorrect non-null
+phonemes to correct vowels, and (3) switches from
+incorrect non-null phonemes to correct consonants.
+Contrary to expectation, it is not the second vowel
+category in which most repairs are made (many of
+the vowel errors in fact remain in the output), but
+the alignment category, in both languages. At points
+where the local unigram classifier sometimes incor-
+rectly predicts a phoneme twice, where it should
+have predicted it along with a phonemic null, the
+constraint satisfaction inference method never gen-
+erates a double phoneme. Hence, the method suc-
+ceeds in generating sequences that are possible, and
+avoiding impossible sub-sequences. At the same
+time, a possible sequence is not necessarily the cor-
+rect sequence, so this method can be expected to still
+make errors on the identity of labels in the output se-
+quence.
+In future work we plan to test a range of n-gram
+widths exceeding the current trigrams. Preliminary
+results suggest that the method retains a positive ef-
+fect over the baseline with n > 3, but it does not
+outperform the n = 3 case. We also intend to test
+the method with a range of different machine learn-
+ing methods, since as we noted before the constraint-
+satisfaction inference method and its underlying n-
+gram output subsequence classification method can
+48
+be applied to any machine learning classification al-
+gorithm in principle, as is already supported by pre-
+liminary work in this direction.
+Also, we plan comparisons to the work of
+Stroppa and Yvon (2005) and Damper and East-
+mond (1997) on sequence-global analogy-based
+models for morpho-phonological processing, since
+the main difference between this related work and
+ours is that both alternatives are based on work-
+ing units of variable width, rather than our fixed-
+width n-grams, and also their analogical reasoning
+is based on interestingly different principles than our
+k-nearest neighbor classification rule, such as the
+use of analogical proportions by Stroppa and Yvon
+(2005).
+Acknowledgements
+This research was funded by NWO, the Netherlands
+Organization for Scientific Research, as part of the
+IMIX Programme. The authors would like to thank
+Walter Daelemans for fruitful discussions, and three
+anonymous reviewers for their insightful comments.
+References
+D. W. Aha, D. Kibler, and M. Albert. 1991. Instance-
+based learning algorithms. Machine Learning, 6:37?
+66.
+R. H. Baayen, R. Piepenbrock, and H. van Rijn. 1993.
+The CELEX lexical data base on CD-ROM. Linguistic
+Data Consortium, Philadelphia, PA.
+W. Daelemans, J. Zavrel, K. Van der Sloot, and A. Van
+den Bosch. 2004. TiMBL: Tilburg memory based
+learner, version 5.1.0, reference guide. Technical Re-
+port ILK 04-02, ILK Research Group, Tilburg Univer-
+sity.
+R. I. Damper and J. F. G. Eastmond. 1997. Pronuncia-
+tion by analogy: impact of implementational choices
+on performance. Language and Speech, 40:1?23.
+E. Daya, D. Roth, and S. Wintner. 2004. Learning
+Hebrew roots: Machine learning with linguistic con-
+straints. In Dekang Lin and Dekai Wu, editors, Pro-
+ceedings of EMNLP 2004, pages 357?364, Barcelona,
+Spain, July. Association for Computational Linguis-
+tics.
+A.P. Dempster, N.M. Laird, and D.B. Rubin. 1977. Max-
+imum likelihood from incomplete data via the EM al-
+gorithm. Journal of the Royal Statistical Society, Se-
+ries B (Methodological), 39(1):1?38.
+T. G. Dietterich, H. Hild, and G. Bakiri. 1995. A com-
+parison of ID3 and backpropagation for English text-
+to-speech mapping. Machine Learning, 19(1):5?28.
+E. Noreen. 1989. Computer-intensive methods for test-
+ing hypotheses: an introduction. John Wiley and sons.
+A. Prince and P. Smolensky. 2004. Optimality The-
+ory: Constraint Interaction in Generative Grammar.
+Blackwell Publishers.
+V. Punyakanok and D. Roth. 2001. The use of classifiers
+in sequential inference. In NIPS-13; The 2000 Con-
+ference on Advances in Neural Information Processing
+Systems, pages 995?1001. The MIT Press.
+T.J. Sejnowski and C.S. Rosenberg. 1987. Parallel net-
+works that learn to pronounce english text. Complex
+Systems, 1:145?168.
+N. Stroppa and F. Yvon. 2005. An analogical learner
+for morphological analysis. In Proceedings of the
+9th Conference on Computational Natural Language
+Learning, pages 120?127. Association for Computa-
+tional Linguistics.
+K. Torkkola. 1993. An efficient way to learn English
+grapheme-to-phoneme rules automatically. In Pro-
+ceedings of the International Conference on Acoustics,
+Speech, and Signal Processing (ICASSP), volume 2,
+pages 199?202, Minneapolis.
+A. Van den Bosch and W. Daelemans. 1993. Data-
+oriented methods for grapheme-to-phoneme conver-
+sion. In Proceedings of the 6th Conference of the
+EACL, pages 45?53.
+A. Van den Bosch and W. Daelemans. 1999. Memory-
+based morphological analysis. In Proceedings of the
+37th Annual Meeting of the ACL, pages 285?292, San
+Francisco, CA. Morgan Kaufmann.
+A. Van den Bosch and W. Daelemans. 2005. Improv-
+ing sequence segmentation learning by predicting tri-
+grams. In I. Dagan and D. Gildea, editors, Proceed-
+ings of the Ninth Conference on Computational Natu-
+ral Language Learning.
+A. Weijters. 1991. A simple look-up procedure supe-
+rior to NETtalk? In Proceedings of the International
+Conference on Artificial Neural Networks - ICANN-91,
+Espoo, Finland.
+F. Yvon. 1996. Prononcer par analogie: motivation,
+formalisation et e?valuation. Ph.D. thesis, Ecole Na-
+tionale Supe?rieure des Te?le?communication, Paris.
+49

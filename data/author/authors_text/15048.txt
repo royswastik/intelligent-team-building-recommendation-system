@@ -1,0 +1,3229 @@
+Proceedings of the 2010 Conference on Empirical Methods in Natural Language Processing, pages 492?501,
+MIT, Massachusetts, USA, 9-11 October 2010. c?2010 Association for Computational Linguistics
+A Multi-Pass Sieve for Coreference Resolution
+Karthik Raghunathan, Heeyoung Lee, Sudarshan Rangarajan, Nathanael Chambers,
+Mihai Surdeanu, Dan Jurafsky, Christopher Manning
+Computer Science Department
+Stanford University, Stanford, CA 94305
+{kr,heeyoung,sudarshn,natec,mihais,jurafsky,manning}@stanford.edu
+Abstract
+Most coreference resolution models determine
+if two mentions are coreferent using a single
+function over a set of constraints or features.
+This approach can lead to incorrect decisions
+as lower precision features often overwhelm
+the smaller number of high precision ones. To
+overcome this problem, we propose a simple
+coreference architecture based on a sieve that
+applies tiers of deterministic coreference mod-
+els one at a time from highest to lowest preci-
+sion. Each tier builds on the previous tier?s
+entity cluster output. Further, our model prop-
+agates global information by sharing attributes
+(e.g., gender and number) across mentions in
+the same cluster. This cautious sieve guar-
+antees that stronger features are given prece-
+dence over weaker ones and that each deci-
+sion is made using all of the information avail-
+able at the time. The framework is highly
+modular: new coreference modules can be
+plugged in without any change to the other
+modules. In spite of its simplicity, our ap-
+proach outperforms many state-of-the-art su-
+pervised and unsupervised models on several
+standard corpora. This suggests that sieve-
+based approaches could be applied to other
+NLP tasks.
+1 Introduction
+Recent work on coreference resolution has shown
+that a rich feature space that models lexical, syn-
+tactic, semantic, and discourse phenomena is cru-
+cial to successfully address the task (Bengston and
+Roth, 2008; Haghighi and Klein, 2009; Haghighi
+and Klein, 2010). When such a rich representation
+is available, even a simple deterministic model can
+achieve state-of-the-art performance (Haghighi and
+Klein, 2009).
+By and large most approaches decide if two men-
+tions are coreferent using a single function over all
+these features and information local to the two men-
+tions.1 This is problematic for two reasons: (1)
+lower precision features may overwhelm the smaller
+number of high precision ones, and (2) local infor-
+mation is often insufficient to make an informed de-
+cision. Consider this example:
+The second attack occurred after some rocket firings
+aimed, apparently, toward [the israelis], apparently in
+retaliation. [we]?re checking our facts on that one. ...
+the president, quoted by ari fleischer, his spokesman, is
+saying he?s concerned the strike will undermine efforts
+by palestinian authorities to bring an end to terrorist at-
+tacks and does not contribute to the security of [israel].
+Most state-of-the-art models will incorrectly link
+we to the israelis because of their proximity and
+compatibility of attributes (both we and the israelis
+are plural). In contrast, a more cautious approach is
+to first cluster the israelis with israel because the de-
+monymy relation is highly precise. This initial clus-
+tering step will assign the correct animacy attribute
+(inanimate) to the corresponding geo-political
+entity, which will prevent the incorrect merging with
+the mention we (animate) in later steps.
+We propose an unsupervised sieve-like approach
+to coreference resolution that addresses these is-
+1As we will discuss below, some approaches use an addi-
+tional component to infer the overall best mention clusters for a
+document, but this is still based on confidence scores assigned
+using local information.
+492
+sues. The approach applies tiers of coreference
+models one at a time from highest to lowest pre-
+cision. Each tier builds on the entity clusters con-
+structed by previous models in the sieve, guarantee-
+ing that stronger features are given precedence over
+weaker ones. Furthermore, each model?s decisions
+are richly informed by sharing attributes across the
+mentions clustered in earlier tiers. This ensures that
+each decision uses all of the information available
+at the time. We implemented all components in our
+approach using only deterministic models. All our
+components are unsupervised, in the sense that they
+do not require training on gold coreference links.
+The contributions of this work are the following:
+? We show that a simple scaffolding framework
+that deploys strong features through tiers of
+models performs significantly better than a
+single-pass model. Additionally, we propose
+several simple, yet powerful, new features.
+? We demonstrate how far one can get with sim-
+ple, deterministic coreference systems that do
+not require machine learning or detailed se-
+mantic information. Our approach outperforms
+most other unsupervised coreference models
+and several supervised ones on several datasets.
+? Our modular framework can be easily extended
+with arbitrary models, including statistical or
+supervised models. We believe that our ap-
+proach also serves as an ideal platform for the
+development of future coreference systems.
+2 Related Work
+This work builds upon the recent observation that
+strong features outweigh complex models for coref-
+erence resolution, in both supervised and unsuper-
+vised learning setups (Bengston and Roth, 2008;
+Haghighi and Klein, 2009). Our work reinforces this
+observation, and extends it by proposing a novel ar-
+chitecture that: (a) allows easy deployment of such
+features, and (b) infuses global information that can
+be readily exploited by these features or constraints.
+Most coreference resolution approaches perform
+the task by aggregating local decisions about pairs
+of mentions (Bengston and Roth, 2008; Finkel and
+Manning, 2008; Haghighi and Klein, 2009; Stoy-
+anov, 2010). Two recent works that diverge from
+this pattern are Culotta et al (2007) and Poon and
+Domingos (2008). They perform coreference reso-
+lution jointly for all mentions in a document, using
+first-order probabilistic models in either supervised
+or unsupervised settings. Haghighi and Klein (2010)
+propose a generative approach that models entity
+clusters explicitly using a mostly-unsupervised gen-
+erative model. As previously mentioned, our work
+is not constrained by first-order or Bayesian for-
+malisms in how it uses cluster information. Ad-
+ditionally, the deterministic models in our tiered
+model are significantly simpler, yet perform gener-
+ally better than the complex inference models pro-
+posed in these works.
+From a high level perspective, this work falls un-
+der the theory of shaping, defined as a ?method of
+successive approximations? for learning (Skinner,
+1938). This theory is known by different names in
+many NLP applications: Brown et al (1993) used
+simple models as ?stepping stones? for more com-
+plex word alignment models; Collins (1999) used
+?cautious? decision list learning for named entity
+classification; Spitkovsky et al (2010) used ?baby
+steps? for unsupervised dependency parsing, etc. To
+the best of our knowledge, we are the first to apply
+this theory to coreference resolution.
+3 Description of the Task
+Intra-document coreference resolution clusters to-
+gether textual mentions within a single document
+based on the underlying referent entity. Mentions
+are usually noun phrases (NPs) headed by nominal
+or pronominal terminals. To facilitate comparison
+with most of the recent previous work, we report re-
+sults using gold mention boundaries. However, our
+approach does not make any assumptions about the
+underlying mentions, so it is trivial to adapt it to pre-
+dicted mention boundaries (e.g., see Haghighi and
+Klein (2010) for a simple mention detection model).
+3.1 Corpora
+We used the following corpora for development and
+evaluation:
+? ACE2004-ROTH-DEV2 ? development split
+of Bengston and Roth (2008), from the corpus
+used in the 2004 Automatic Content Extraction
+(ACE) evaluation. It contains 68 documents
+and 4,536 mentions.
+2We use the same corpus names as (Haghighi and Klein,
+2009) to facilitate comparison with previous work.
+493
+? ACE2004-CULOTTA-TEST ? partition of
+ACE 2004 corpus reserved for testing by sev-
+eral previous works (Culotta et al, 2007;
+Bengston and Roth, 2008; Haghighi and Klein,
+2009). It consists of 107 documents and 5,469
+mentions.
+? ACE2004-NWIRE ? the newswire subset of
+the ACE 2004 corpus, utilized by Poon and
+Domingos (2008) and Haghighi and Klein
+(2009) for testing. It contains 128 documents
+and 11,413 mentions.
+? MUC6-TEST ? test corpus from the sixth
+Message Understanding Conference (MUC-6)
+evaluation. It contains 30 documents and 2,068
+mentions.
+We used the first corpus (ACE2004-ROTH-DEV)
+for development. The other corpora are reserved for
+testing. We parse all documents using the Stanford
+parser (Klein and Manning, 2003). The syntactic in-
+formation is used to identify the mention head words
+and to define the ordering of mentions in a given
+sentence (detailed in the next section). For a fair
+comparison with previous work, we do not use gold
+named entity labels or mention types but, instead,
+take the labels provided by the Stanford named en-
+tity recognizer (NER) (Finkel et al, 2005).
+3.2 Evaluation Metrics
+We use three evaluation metrics widely used in the
+literature: (a) pairwise F1 (Ghosh, 2003) ? com-
+puted over mention pairs in the same entity clus-
+ter; (b) MUC (Vilain et al, 1995) ? which measures
+how many predicted clusters need to be merged to
+cover the gold clusters; and (c) B3 (Amit and Bald-
+win, 1998) ? which uses the intersection between
+predicted and gold clusters for a given mention to
+mark correct mentions and the sizes of the the pre-
+dicted and gold clusters as denominators for preci-
+sion and recall, respectively. We refer the interested
+reader to (X. Luo, 2005; Finkel and Manning, 2008)
+for an analysis of these metrics.
+4 Description of the Multi-Pass Sieve
+Our sieve framework is implemented as a succes-
+sion of independent coreference models. We first de-
+scribe how each model selects candidate mentions,
+and then describe the models themselves.
+4.1 Mention Processing
+Given a mention mi, each model may either decline
+to propose a solution (in the hope that one of the
+subsequent models will solve it) or deterministically
+select a single best antecedent from a list of pre-
+vious mentions m1, . . . , mi?1. We sort candidate
+antecedents using syntactic information provided by
+the Stanford parser, as follows:
+Same Sentence ? Candidates in the same sentence
+are sorted using left-to-right breadth-first traversal
+of syntactic trees (Hobbs, 1977). Figure 1 shows an
+example of candidate ordering based on this traver-
+sal. The left-to-right ordering favors subjects, which
+tend to appear closer to the beginning of the sentence
+and are more probable antecedents. The breadth-
+first traversal promotes syntactic salience by rank-
+ing higher noun phrases that are closer to the top of
+the parse tree (Haghighi and Klein, 2009). If the
+sentence containing the anaphoric mention contains
+multiple clauses, we repeat the above heuristic sep-
+arately in each S* constituent, starting with the one
+containing the mention.
+Previous Sentence ? For all nominal mentions we
+sort candidates in the previous sentences using right-
+to-left breadth-first traversal. This guarantees syn-
+tactic salience and also favors document proximity.
+For pronominal mentions, we sort candidates in pre-
+vious sentences using left-to-right traversal in or-
+der to favor subjects. Subjects are more probable
+antecedents for pronouns (Kertz et al, 2006). For
+example, this ordering favors the correct candidate
+(pepsi) for the mention they:
+[pepsi] says it expects to double [quaker]?s
+snack food growth rate. after a month-long
+courtship, [they] agreed to buy quaker oats. . .
+In a significant departure from previous work,
+each model in our framework gets (possibly incom-
+plete) clustering information for each mention from
+the earlier coreference models in the multi-pass sys-
+tem. In other words, each mention mi may already
+be assigned to a cluster Cj containing a set of men-
+tions: Cj = {m
+j
+1, . . . ,m
+j
+k}; mi ? Cj . Unassigned
+mentions are unique members of their own cluster.
+We use this information in several ways:
+Attribute sharing ? Pronominal coreference reso-
+lution (discussed later in this section) is severely af-
+494
+S	 ?
+of	 ?
+will	 ?
+head	 ?
+NP	 ?
+Richard	 ?Levin	 ?
+the	 ?Globaliza?on	 ?Studies	 ?Center	 ?
+NP	 ?
+NP	 ?
+the	 ?Chancelor	 ?
+NP	 ?
+,	 ?
+VP	 ?
+NP	 ?
+PP	 ?
+this	 ?pres?gious	 ?university	 ?
+NP	 ?
+VP	 ?
+#1	 ?
+#2	 ?
+#3	 ?
+#4	 ?
+Figure 1: Example of left-to-right breadth-first tree
+traversal. The numbers indicate the order in which the
+NPs are visited.
+fected by missing attributes (which introduce pre-
+cision errors because incorrect antecedents are se-
+lected due to missing information) and incorrect at-
+tributes (which introduce recall errors because cor-
+rect links are not generated due to attribute mismatch
+between mention and antecedent). To address this
+issue, we perform a union of all mention attributes
+(e.g., number, gender, animacy) in a given cluster
+and share the result with all cluster mentions. If
+attributes from different mentions contradict each
+other we maintain all variants. For example, our
+naive number detection assigns singular to the
+mention a group of students and plural to five stu-
+dents. When these mentions end up in the same clus-
+ter, the resulting number attributes becomes the set
+{singular, plural}. Thus this cluster can later
+be merged with both singular and plural pronouns.
+Mention selection ? Traditionally, a coreference
+model attempts to resolve every mention in the text,
+which increases the likelihood of errors. Instead, in
+each of our models, we exploit the cluster informa-
+tion received from the previous stages by resolving
+only mentions that are currently first in textual order
+in their cluster. For example, given the following or-
+dered list of mentions, {m11, m
+2
+2, m
+2
+3, m
+3
+4, m
+1
+5, m
+2
+6},
+where the superscript indicates cluster id, our model
+will attempt to resolve only m22 and m
+3
+4. These two
+are the only mentions that have potential antecedents
+and are currently marked as the first mentions in
+their clusters. The intuition behind this heuristic
+is two-fold. First, early cluster mentions are usu-
+ally better defined than subsequent ones, which are
+likely to have fewer modifiers or are pronouns (Fox,
+1993). Several of our models use this modifier infor-
+mation. Second, by definition, first mentions appear
+closer to the beginning of the document, hence there
+are fewer antecedent candidates to select from, and
+fewer opportunities to make a mistake.
+Search Pruning ? Finally, we prune the search
+space using discourse salience. We disable coref-
+erence for first cluster mentions that: (a) are or start
+with indefinite pronouns (e.g., some, other), or (b)
+start with indefinite articles (e.g., a, an). One excep-
+tion to this rule is the model deployed in the first
+pass; it only links mentions if their entire extents
+match exactly. This model is triggered for all nom-
+inal mentions regardless of discourse salience, be-
+cause it is possible that indefinite mentions are re-
+peated in a document when concepts are discussed
+but not instantiated, e.g., a sports bar below:
+Hanlon, a longtime Broncos fan, thinks it is the perfect
+place for [a sports bar] and has put up a blue-and-orange
+sign reading, ?Wanted Broncos Sports Bar On This Site.?
+. . . In a Nov. 28 letter, Proper states ?while we have no
+objection to your advertising the property as a location
+for [a sports bar], using the Broncos? name and colors
+gives the false impression that the bar is or can be affili-
+ated with the Broncos.?
+4.2 The Modules of the Multi-Pass Sieve
+We now describe the coreference models imple-
+mented in the sieve. For clarity, we summarize them
+in Table 1 and show the cumulative performance as
+they are added to the sieve in Table 2.
+4.2.1 Pass 1 - Exact Match
+This model links two mentions only if they con-
+tain exactly the same extent text, including modifiers
+and determiners, e.g., the Shahab 3 ground-ground
+missile. As expected, this model is extremely pre-
+cise, with a pairwise precision over 96%.
+4.2.2 Pass 2 - Precise Constructs
+This model links two mentions if any of the con-
+ditions below are satisfied:
+Appositive ? the two nominal mentions are in an
+appositive construction, e.g., [Israel?s Deputy De-
+fense Minister], [Ephraim Sneh] , said . . . We
+use the same syntactic rules to detect appositions as
+Haghighi and Klein (2009).
+495
+Pass Type Features
+1 N exact extent match
+2 N,P appositive | predicate nominative | role appositive | relative pronoun | acronym | demonym
+3 N cluster head match & word inclusion & compatible modifiers only & not i-within-i
+4 N cluster head match & word inclusion & not i-within-i
+5 N cluster head match & compatible modifiers only & not i-within-i
+6 N relaxed cluster head match & word inclusion & not i-within-i
+7 P pronoun match
+Table 1: Summary of passes implemented in the sieve. The Type column indicates the type of coreference in each
+pass: N ? nominal or P ? pronominal. & and | indicate conjunction and disjunction of features, respectively.
+Predicate nominative ? the two mentions (nominal
+or pronominal) are in a copulative subject-object re-
+lation, e.g., [The New York-based College Board] is
+[a nonprofit organization that administers the SATs
+and promotes higher education] (Poon and Domin-
+gos, 2008).
+Role appositive ? the candidate antecedent is
+headed by a noun and appears as a modifier in an
+NP whose head is the current mention, e.g., [[ac-
+tress] Rebecca Schaeffer]. This feature is inspired
+by Haghighi and Klein (2009), who triggered it only
+if the mention is labeled as a person by the NER.
+We constrain this heuristic more in our work: we
+allow this feature to match only if: (a) the mention
+is labeled as a person, (b) the antecedent is animate
+(we detail animacy detection in Pass 7), and (c) the
+antecedent?s gender is not neutral.
+Relative pronoun ? the mention is a relative pro-
+noun that modifies the head of the antecedent NP,
+e.g., [the finance street [which] has already formed
+in the Waitan district].
+Acronym ? both mentions are tagged as NNP and
+one of them is an acronym of the other, e.g., [Agence
+France Presse] . . . [AFP]. We use a simple acronym
+detection algorithm, which marks a mention as an
+acronym of another if its text equals the sequence
+of upper case characters in the other mention. We
+will adopt better solutions for acronym detection in
+future work (Schwartz, 2003).
+Demonym ? one of the mentions is a demonym of
+the other, e.g., [Israel] . . . [Israeli]. For demonym
+detection we use a static list of countries and their
+gentilic forms from Wikipedia.3
+All the above features are extremely precise. As
+shown in Table 2 the pairwise precision of the sieve
+3
+http://en.wikipedia.org/wiki/List_of_adjectival_and_
+demonymic_forms_of_place_names
+after adding these features is over 95% and recall
+increases 5 points.
+4.2.3 Pass 3 - Strict Head Matching
+Linking a mention to an antecedent based on the
+naive matching of their head words generates a lot
+of spurious links because it completely ignores pos-
+sibly incompatible modifiers (Elsner and Charniak,
+2010). For example, Yale University and Harvard
+University have similar head words, but they are ob-
+viously different entities. To address this issue, this
+pass implements several features that must all be
+matched in order to yield a link:
+Cluster head match ? the mention head word
+matches any head word in the antecedent clus-
+ter. Note that this feature is actually more relaxed
+than naive head matching between mention and an-
+tecedent candidate because it is satisfied when the
+mention?s head matches the head of any entity in the
+candidate?s cluster. We constrain this feature by en-
+forcing a conjunction with the features below.
+Word inclusion ? all the non-stop4 words in the
+mention cluster are included in the set of non-stop
+words in the cluster of the antecedent candidate.
+This heuristic exploits the property of discourse that
+it is uncommon to introduce novel information in
+later mentions (Fox, 1993). Typically, mentions
+of the same entity become shorter and less infor-
+mative as the narrative progresses. For example,
+the two mentions in . . . intervene in the [Florida
+Supreme Court]?s move . . . does look like very dra-
+matic change made by [the Florida court] point to
+the same entity, but the two mentions in the text be-
+low belong to different clusters:
+The pilot had confirmed . . . he had turned onto
+4Our stop word list includes person titles as well.
+496
+MUC B3 Pairwise
+Passes P R F1 P R F1 P R F1
+{1} 95.9 31.8 47.8 99.1 53.4 69.4 96.9 15.4 26.6
+{1,2} 95.4 43.7 59.9 98.5 58.4 73.3 95.7 20.6 33.8
+{1,2,3} 92.1 51.3 65.9 96.7 62.9 76.3 91.5 26.8 41.5
+{1,2,3,4} 91.7 51.9 66.3 96.5 63.5 76.6 91.4 27.8 42.7
+{1,2,3,4,5} 91.1 52.6 66.7 96.1 63.9 76.7 90.3 28.4 43.2
+{1,2,3,4,5,6} 89.5 53.6 67.1 95.3 64.5 76.9 88.8 29.2 43.9
+{1,2,3,4,5,6,7} 83.7 74.1 78.6 88.1 74.2 80.5 80.1 51.0 62.3
+Table 2: Cumulative performance on development (ACE2004-ROTH-DEV) as passes are added to the sieve.
+[the correct runway] but pilots behind him say
+he turned onto [the wrong runway].
+Compatible modifiers only ? the mention?s mod-
+ifiers are all included in the modifiers of the an-
+tecedent candidate. This feature models the same
+discourse property as the previous feature, but it fo-
+cuses on the two individual mentions to be linked,
+rather than their entire clusters. For this feature we
+only use modifiers that are nouns or adjectives.
+Not i-within-i ? the two mentions are not in an i-
+within-i construct, i.e., one cannot be a child NP
+in the other?s NP constituent (Haghighi and Klein,
+2009).
+This pass continues to maintain high precision
+(91% pairwise) while improving recall significantly
+(over 6 points pairwise and almost 8 points MUC).
+4.2.4 Passes 4 and 5 - Variants of Strict Head
+Passes 4 and 5 are different relaxations of the
+feature conjunction introduced in Pass 3, i.e.,
+Pass 4 removes the compatible modifiers
+only feature, while Pass 5 removes the word
+inclusion constraint. All in all, these two passes
+yield an improvement of 1.7 pairwise F1 points,
+due to recall improvements. Table 2 shows that the
+word inclusion feature is more precise than
+compatible modifiers only, but the latter
+has better recall.
+4.2.5 Pass 6 - Relaxed Head Matching
+This pass relaxes the cluster head match heuris-
+tic by allowing the mention head to match any word
+in the cluster of the candidate antecedent. For ex-
+ample, this heuristic matches the mention Sanders
+to a cluster containing the mentions {Sauls, the
+judge, Circuit Judge N. Sanders Sauls}. To maintain
+high precision, this pass requires that both mention
+and antecedent be labeled as named entities and the
+types coincide. Furthermore, this pass implements
+a conjunction of the above features with word
+inclusion and not i-within-i. This pass
+yields less than 1 point improvement in most met-
+rics.
+4.2.6 Pass 7 - Pronouns
+With one exception (Pass 2), all the previous
+coreference models focus on nominal coreference
+resolution. However, it would be incorrect to say
+that our framework ignores pronominal coreference
+in the first six passes. In fact, the previous mod-
+els prepare the stage for pronominal coreference by
+constructing precise clusters with shared mention at-
+tributes. These are crucial factors for pronominal
+coreference.
+Like previous work, we implement pronominal
+coreference resolution by enforcing agreement con-
+straints between the coreferent mentions. We use the
+following attributes for these constraints:
+Number ? we assign number attributes based on:
+(a) a static list for pronouns; (b) NER labels: men-
+tions marked as a named entity are considered sin-
+gular with the exception of organizations, which can
+be both singular or plural; (c) part of speech tags:
+NN*S tags are plural and all other NN* tags are sin-
+gular; and (d) a static dictionary from (Bergsma and
+Lin, 2006).
+Gender ? we assign gender attributes from static
+lexicons from (Bergsma and Lin, 2006; Ji and Lin,
+2009).
+Person ? we assign person attributes only to pro-
+nouns. However, we do not enforce this constraint
+when linking two pronouns if one appears within
+quotes. This is a simple heuristic for speaker de-
+tection, e.g., I and she point to the same person in
+497
+?[I] voted my conscience,? [she] said.
+Animacy ? we set animacy attributes using: (a)
+a static list for pronouns; (b) NER labels, e.g.,
+PERSON is animate whereas LOCATION is not; and
+(c) a dictionary boostrapped from the web (Ji and
+Lin, 2009).
+NER label ? from the Stanford NER.
+If we cannot detect a value, we set attributes to
+unknown and treat them as wildcards, i.e., they can
+match any other value.
+This final model raises the pairwise recall of our
+system almost 22 percentage points, with only an 8
+point drop in pairwise precision. Table 2 shows that
+similar behavior is measured for all other metrics.
+After all passes have run, we take the transitive clo-
+sure of the generated clusters as the system output.
+5 Experimental Results
+We present the results of our approach and other rel-
+evant prior work in Table 3. We include in the ta-
+ble all recent systems that report results under the
+same conditions as our experimental setup (i.e., us-
+ing gold mentions) and use the same corpora. We
+exclude from this analysis two notable works that
+report results only on a version of the task that in-
+cludes finding mentions (Haghighi and Klein, 2010;
+Stoyanov, 2010). The Haghighi and Klein (2009)
+numbers have two variants: with semantics (+S)
+and without (?S). To measure the contribution of
+our multi-pass system, we also present results from a
+single-pass variant of our system that uses all appli-
+cable features from the multi-pass system (marked
+as ?single pass? in the table).
+Our sieve model outperforms all systems on
+two out of the four evaluation corpora (ACE2004-
+ROTH-DEV and ACE2004-NWIRE), on all met-
+rics. On the corpora where our model is not best,
+it ranks a close second. For example, in ACE2004-
+CULOTTA-TEST our system has a B3 F1 score
+only .4 points lower than Bengston and Roth (2008)
+and it outperforms all unsupervised approaches. In
+MUC6-TEST, our sieve?s B3 F1 score is 1.8 points
+lower than Haghighi and Klein (2009) +S, but it out-
+performs a supervised system that used gold named
+entity labels. Finally, the multi-pass architecture al-
+ways beats the equivalent single-pass system with
+its contribution ranging between 1 and 4 F1 points
+depending on the corpus and evaluation metric.
+Our approach has the highest precision on all cor-
+pora, regardless of evaluation metric. We believe
+this is particularly useful for large-scale NLP appli-
+cations that use coreference resolution components,
+e.g., question answering or information extraction.
+These applications can generally function without
+coreference information so it is beneficial to provide
+such information only when it is highly precise.
+6 Discussion
+6.1 Comparison to Previous Work
+The sieve model outperforms all other systems on
+at least two test sets, even though most of the other
+models are significantly richer. Amongst the com-
+parisons, several are supervised (Bengston and Roth,
+2008; Finkel and Manning, 2008; Culotta et al,
+2007). The system of Haghighi and Klein (2009)
++S uses a lexicon of semantically-compatible noun
+pairs acquired transductively, i.e., with knowledge
+of the mentions in the test set. Our system does
+not rely on labeled corpora for training (like super-
+vised approaches) nor access to corpora during test-
+ing (like Haghighi and Klein (2009)).
+The system that is closest to ours is Haghighi and
+Klein (2009) ?S. Like us, they use a rich set of fea-
+tures and deterministic decisions. However, theirs
+is a single-pass model with a smaller feature set
+(no cluster-level, acronym, demonym, or animacy
+information). Table 3 shows that on the two cor-
+pora where results for this system are available, we
+outperform it considerably on all metrics. To un-
+derstand if the difference is due to the multi-pass
+architecture or the richer feature set we compared
+(Haghighi and Klein, 2009) ?S against both our
+multi-pass system and its single-pass variant. The
+comparison indicates that both these contributions
+help: our single-pass system outperforms Haghighi
+and Klein (2009) consistently, and the multi-pass ar-
+chitecture further improves the performance of our
+single-pass system between 1 and 4 F1 points, de-
+pending on the corpus and evaluation metric.
+6.2 Semantic Head Matching
+Recent unsupervised coreference work from
+Haghighi and Klein (2009) included a novel
+semantic component that matched related head
+words (e.g., AOL is a company) learned from select
+498
+MUC B3 Pairwise
+P R F1 P R F1 P R F1
+ACE2004-ROTH-DEV
+This work (sieve) 83.7 74.1 78.6 88.1 74.2 80.5 80.1 51.0 62.3
+This work (single pass) 82.2 72.6 77.1 86.8 72.6 79.1 76.0 47.6 58.5
+Haghighi and Klein (2009) ?S 78.3 70.5 74.2 84.0 71.0 76.9 71.3 45.4 55.5
+Haghighi and Klein (2009) +S 77.9 74.1 75.9 81.8 74.3 77.9 68.2 51.2 58.5
+ACE2004-CULOTTA-TEST
+This work (sieve) 80.4 71.8 75.8 86.3 75.4 80.4 71.6 46.2 56.1
+This work (single pass) 78.4 69.2 73.5 85.1 73.9 79.1 69.5 44.1 53.9
+Haghighi and Klein (2009) ?S 74.3 66.4 70.2 83.6 71.0 76.8 66.4 38.0 48.3
+Haghighi and Klein (2009) +S 74.8 77.7 79.6 79.6 78.5 79.0 57.5 57.6 57.5
+Culotta et al (2007) ? ? ? 86.7 73.2 79.3 ? ? ?
+Bengston and Roth (2008) 82.7 69.9 75.8 88.3 74.5 80.8 55.4 63.7 59.2
+MUC6-TEST
+This work (sieve) 90.5 68.0 77.7 91.2 61.2 73.2 90.3 53.3 67.1
+This work (single pass) 89.3 65.9 75.8 90.2 58.8 71.1 89.5 50.6 64.7
+Haghighi and Klein (2009) +S 87.2 77.3 81.9 84.7 67.3 75.0 80.5 57.8 67.3
+Poon and Domingos (2008) 83.0 75.8 79.2 ? ? ? 63.0 57.0 60.0
+Finkel and Manning (2008) +G 89.7 55.1 68.3 90.9 49.7 64.3 74.1 37.1 49.5
+ACE2004-NWIRE
+This work (sieve) 83.8 73.2 78.1 87.5 71.9 78.9 79.6 46.2 58.4
+This work (single pass) 82.2 71.5 76.5 86.2 70.0 77.3 76.9 41.9 54.2
+Haghighi and Klein (2009) +S 77.0 75.9 76.5 79.4 74.5 76.9 66.9 49.2 56.7
+Poon and Domingos (2008) 71.3 70.5 70.9 ? ? ? 62.6 38.9 48.0
+Finkel and Manning (2008) +G 78.7 58.5 67.1 86.8 65.2 74.5 76.1 44.2 55.9
+Table 3: Results using gold mention boundaries. Where available, we show results for a given corpus grouped in
+two blocks: the top block shows results of unsupervised systems and the bottom block contains supervised systems.
+Bold numbers indicate best results in a given block. +/-S indicates if the (Haghighi and Klein, 2009) system in-
+cludes/excludes their semantic component. +G marks systems that used gold NER labels.
+wikipedia articles. They first identified articles
+relevant to the entity mentions in the test set, and
+then bootstrapped from known syntactic patterns
+for apposition and predicate-nominatives in order to
+learn a database of related head pairs. They show
+impressive gains by using these learned pairs in
+coreference decisions. This type of learning using
+test set mentions is often described as transductive.
+Our work instead focuses on an approach that
+does not require access to the dataset beforehand.
+We thus did not include a similar semantic compo-
+nent in our system, given that running a bootstrap-
+ping learner whenever a new data set is encountered
+is not practical and, ultimately, reduces the usability
+of this NLP component. However, our results show
+that our sieve algorithm with minimal semantic in-
+formation still performs as well as the Haghighi and
+Klein (2009) system with semantics.
+6.3 Flexible Architecture
+The sieve architecture offers benefits beyond im-
+proved accuracy. Its modular design provides a flex-
+ibility for features that is not available in most su-
+pervised or unsupervised systems. The sieve al-
+lows new features to be seamlessly inserted with-
+out affecting (or even understanding) the other com-
+ponents. For instance, once a new high precision
+feature (or group of features) is inserted as its own
+stage, it will benefit later stages with more precise
+clusters, but it will not interfere with their particu-
+499
+lar algorithmic decisions. This flexibility is in sharp
+contrast to supervised classifiers that require their
+models to be retrained on labeled data, and unsu-
+pervised systems that do not offer a clear insertion
+point for new features. It can be difficult to fully
+understand how a system makes a single decision,
+but the sieve allows for flexible usage with minimal
+effort.
+6.4 Error Analysis
+Pronominal Nominal Proper Total
+Pronominal 49 / 237 116 / 317 104 / 595 269 / 1149
+Nominal 79 / 351 129 / 913 61 / 986 269 / 2250
+Proper 51 / 518 15 / 730 38 / 595 104 / 1843
+Total 179 / 1106 260 / 1960 203 / 2176 642 / 5242
+Table 4: Number of pair-wise errors produced by the
+sieve after transitive closure in the MUC6-TEST corpus.
+Rows indicate mention types; columns are types of an-
+tecedent. Each cell shows the number of precision/recall
+errors for that configuration. The total number of gold
+links in MUC6-TEST is 11,236.
+Table 4 shows the number of incorrect pair-wise
+links generated by our system on the MUC6-TEST
+corpus. The table indicates that most of our er-
+rors are for nominal mentions. For example, the
+combined (precision plus recall) number of errors
+for proper or common noun mentions is three times
+larger than the number of errors made for pronom-
+inal mentions. The table also highlights that most
+of our errors are recall errors. There are eight times
+more recall errors than precision errors in our output.
+This is a consequence of our decision to prioritize
+highly precise features in the sieve.
+The above analysis illustrates that our next effort
+should focus on improving recall. In order to under-
+stand the limitations of our current system, we ran-
+domly selected 60 recall errors (20 for each mention
+type) and investigated their causes. Not surprisingly,
+the causes are unique to each type.
+For proper nouns, 50% of recall errors are due to
+mention lengthening, mentions that are longer than
+their earlier mentions. For example, Washington-
+based USAir appears after USAir in the text, so our
+head matching components skip it because their high
+precision depends on disallowing new modifiers as
+the discourse proceeds. When the mentions were re-
+versed (as is the usual case), they match.
+The common noun recall errors are very differ-
+ent from proper nouns: 17 of the 20 random exam-
+ples can be classified as semantic knowledge. These
+errors are roughly evenly split between recognizing
+categories of names (e.g., Gitano is an organization
+name hence it should match the nominal antecedent
+the company), and understanding hypernym rela-
+tions like settlements and agreements.
+Pronoun errors come in two forms. Roughly 40%
+of these errors are attribute mismatches involving
+sometimes ambiguous uses of gender and number
+(e.g., she with Pat Carney). Another 40% are not se-
+mantic or attribute-based, but rather simply arise due
+to the order in which we check potential antecedents.
+In all these situations, the correct links are missed
+because the system chooses a closer (incorrect) an-
+tecedent.
+These four highlighted errors (lengthening, se-
+mantics, attributes, ordering) add up to 77% of all
+recall errors in the selected set. In general, each
+error type is particular to a specific mention type.
+This suggests that recall improvements can be made
+by focusing on one mention type without aversely
+affecting the others. Our sieve-based approach to
+coreference uniquely allows for such new models to
+be seamlessly inserted.
+7 Conclusion
+We presented a simple deterministic approach to
+coreference resolution that incorporates document-
+level information, which is typically exploited only
+by more complex, joint learning models. Our sieve
+architecture applies a battery of deterministic coref-
+erence models one at a time from highest to low-
+est precision, where each model builds on the pre-
+vious model?s cluster output. Despite its simplicity,
+our approach outperforms or performs comparably
+to the state of the art on several corpora.
+An additional benefit of the sieve framework is its
+modularity: new features or models can be inserted
+in the system with limited understanding of the other
+features already deployed. Our code is publicly re-
+leased5 and can be used both as a stand-alone coref-
+erence system and as a platform for the development
+of future systems.
+5http://nlp.stanford.edu/software/
+dcoref.shtml
+500
+The strong performance of our system suggests
+the use of sieves in other NLP tasks for which a va-
+riety of very high-precision features can be designed
+and non-local features can be shared; likely candi-
+dates include relation and event extraction, template
+slot filling, and author name deduplication.
+Acknowledgments
+We gratefully acknowledge the support of the
+Defense Advanced Research Projects Agency
+(DARPA) Machine Reading Program under Air
+Force Research Laboratory (AFRL) prime contract
+no. FA8750-09-C-0181. Any opinions, findings,
+and conclusion or recommendations expressed in
+this material are those of the author(s) and do not
+necessarily reflect the view of DARPA, AFRL, or
+the US government.
+Many thanks to Jenny Finkel for writing a reim-
+plementation of much of Haghighi and Klein (2009),
+which served as the starting point for the work re-
+ported here. We also thank Nicholas Rizzolo and
+Dan Roth for helping us replicate their experimen-
+tal setup, and Heng Ji and Dekang Lin for providing
+their gender lexicon.
+References
+B. Amit and B. Baldwin. 1998. Algorithms for scoring
+coreference chains. In MUC-7.
+E. Bengston and D. Roth. 2008. Understanding the value
+of features for coreference resolution. In EMNLP.
+S. Bergsma and D. Lin. 2006. Bootstrapping Path-Based
+Pronoun Resolution. In ACL-COLING.
+P.F. Brown, V.J. Della Pietra, S.A. Della Pietra, and R.L.
+Mercer. 1993. The mathematics of statistical machine
+translation: Parameter estimation. Computational Lin-
+guistics, 19.
+M. Collins and Y. Singer. 1999. Unsupervised models
+for named entity classification. In EMNLP-VLC.
+A. Culotta, M. Wick, R. Hall, and A. McCallum. 2007.
+First-order probabilistic models for coreference reso-
+lution. In NAACL-HLT.
+M. Elsner and E. Charniak. 2010. The same-head heuris-
+tic for coreference. In ACL.
+J. Finkel, T. Grenager, and C. Manning. 2005. Incorpo-
+rating non-local information into information extrac-
+tion systems by Gibbs sampling. In ACL.
+J. Finkel and C. Manning. 2008. Enforcing transitivity
+in coreference resolution. In ACL.
+B. A. Fox 1993. Discourse structure and anaphora:
+written and conversational English. Cambridge Uni-
+versity Press.
+J. Ghosh. 2003. Scalable clustering methods for data
+mining. Handbook of Data Mining, chapter 10, pages
+247?277.
+A. Haghighi and D. Klein. 2009. Simple coreference
+resolution with rich syntactic and semantic features.
+In EMNLP.
+A. Haghighi and D. Klein. 2010. Coreference resolution
+in a modular, entity-centered model. In HLT-NAACL.
+J.R. Hobbs. 1977. Resolving pronoun references. Lin-
+gua.
+H. Ji and D. Lin. 2009. Gender and animacy knowl-
+edge discovery from web-scale n-grams for unsuper-
+vised person mention detection. In PACLIC.
+L. Kertz, A. Kehler, and J. Elman. 2006. Grammatical
+and Coherence-Based Factors in Pronoun Interpreta-
+tion. In Proceedings of the 28th Annual Conference of
+the Cognitive Science Society.
+D. Klein and C. Manning. 2003. Accurate unlexicalized
+parsing. In ACL.
+X. Luo. 2005. On coreference resolution performance
+metrics. In HTL-EMNLP.
+H. Poon and P. Domingos. 2008. Joint unsuper-
+vised coreference resolution with Markov Logic. In
+EMNLP.
+A.S. Schwartz and M.A. Hearst. 2003. A simple
+algorithm for identifying abbrevation definitions in
+biomedical text. In Pacific Symposium on Biocomput-
+ing.
+B.F. Skinner. 1938. The behavior of organisms: An ex-
+perimental analysis. Appleton-Century-Crofts.
+V.I. Spitkovsky, H. Alshawi, and D. Jurafsky. 2010.
+From baby steps to leapfrog: How ?less is more? in
+unsupervised dependency parsing. In NAACL.
+V. Stoyanov, N. Gilbert, C. Cardie, and E. Riloff. 2010.
+Conundrums in noun phrase coreference resolution:
+making sense of the state-of-the-art. In ACL-IJCNLP.
+M. Vilain, J. Burger, J. Aberdeen, D. Connolly, and L.
+Hirschman. 1995. A model-theoretic coreference
+scoring scheme. In MUC-6.
+501
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 489?500, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Joint Entity and Event Coreference Resolution across Documents
+Heeyoung Lee, Marta Recasens, Angel Chang, Mihai Surdeanu, Dan Jurafsky
+Stanford University, Stanford, CA 94305
+{heeyoung,recasens,angelx,mihais,jurafsky}@stanford.edu
+Abstract
+We introduce a novel coreference resolution
+system that models entities and events jointly.
+Our iterative method cautiously constructs
+clusters of entity and event mentions using lin-
+ear regression to model cluster merge opera-
+tions. As clusters are built, information flows
+between entity and event clusters through fea-
+tures that model semantic role dependencies.
+Our system handles nominal and verbal events
+as well as entities, and our joint formulation
+allows information from event coreference to
+help entity coreference, and vice versa. In a
+cross-document domain with comparable doc-
+uments, joint coreference resolution performs
+significantly better (over 3 CoNLL F1 points)
+than two strong baselines that resolve entities
+and events separately.
+1 Introduction
+Most coreference resolution systems focus on enti-
+ties and tacitly assume a correspondence between
+entities and noun phrases (NPs). Focusing on NPs
+is a way to restrict the challenging problem of coref-
+erence resolution, but misses coreference relations
+like the one between hanged and his suicide in (1),
+and between placed and put in (2).
+1. (a) One of the key suspected Mafia bosses ar-
+rested yesterday has hanged himself.
+(b) Police said Lo Presti had hanged himself.
+(c) His suicide appeared to be related to clan feuds.
+2. (a) The New Orleans Saints placed Reggie Bush
+on the injured list on Wednesday.
+(b) Saints put Bush on I.R.
+As (1c) shows, NPs can also refer to events, and
+so corefer with phrases other than NPs (Webber,
+1988). By being anchored in spatio-temporal dimen-
+sions, events represent the most frequent referent of
+verbal elements. In addition to time and location,
+events are characterized by their participants or ar-
+guments, which often correspond with discourse en-
+tities. This two-way feedback between events and
+their arguments (or entities) is the core of our ap-
+proach. Since arguments play a key role in describ-
+ing an event, knowing that two arguments corefer
+is useful for finding coreference relations between
+events, and knowing that two events corefer is use-
+ful for finding coreference relations between enti-
+ties. In (1), the coreference relation between One
+of the key suspected Mafia bosses arrested yesterday
+and Lo Presti can be found by knowing that their
+predicates (i.e., has hanged and had hanged) core-
+fer. On the other hand, the coreference relations be-
+tween the arguments Saints and Bush in (2) helps
+to determine the coreference relation between their
+predicates placed and put.
+In this paper, we take a holistic approach to coref-
+erence. We annotate a corpus with cross-document
+coreference relations for nominal and verbal men-
+tions. We focus on both intra and inter-document
+coreference because this scenario is at the same time
+more challenging and more relevant to real-world
+applications such as news aggregation. We use this
+corpus to train a model that jointly addresses refer-
+ences to both entities and events across documents.
+The contributions of this work are the following:
+? We introduce a novel approach for entity and
+event coreference resolution. At the core of
+489
+our approach is an iterative algorithm that cau-
+tiously constructs clusters of entity and event
+mentions using linear regression to model clus-
+ter merge operations. Importantly, our model
+allows information to flow between clusters of
+both types through features that model context
+using semantic role dependencies.
+? We annotate and release a new corpus with
+coreference relations between both entities and
+events across documents. The relations anno-
+tated are both intra and inter-document, which
+more accurately models real-world scenarios.
+? We evaluate our cross-document coreference
+resolution system on this corpus and show that
+our joint approach significantly outperforms
+two strong baselines that resolve entities and
+events separately.
+2 Related Work
+Entity coreference resolution is a well studied prob-
+lem with many successful techniques for identify-
+ing mention clusters (Ponzetto and Strube, 2006;
+Haghighi and Klein, 2009; Stoyanov et al2009;
+Haghighi and Klein, 2010; Raghunathan et al2010;
+Rahman and Ng, 2011, inter alia). Most of these
+techniques focus on matching compatible noun pairs
+using various syntactic and semantic features, with
+efforts targeted toward improving features and clus-
+tering models.
+Prior work showed that models that jointly resolve
+mentions across multiple entities result in better per-
+formance than simply resolving mentions in a pair-
+wise fashion (Denis and Baldridge, 2007; Poon and
+Domingos, 2008; Wick et al2008; Lee et al2011,
+inter alia). A natural extension is to perform coref-
+erence jointly across both entities and events. Yet
+there has been little attempt in this direction.
+We know of only limited work that incorporates
+event-related information in entity coreference, typ-
+ically by incorporating the verbs in context as fea-
+tures. For instance, Haghighi and Klein (2010) in-
+clude the governor of the head of nominal mentions
+as features in their model. Rahman and Ng (2011)
+also used event-related information by looking at
+which semantic role the entity mentions can have
+and the verb pairs of their predicates. We confirm
+that such features are useful but also show that the
+complementary features for verbal mentions lead to
+even better performance, especially when event and
+entity clusters are jointly modeled.
+Compared to the extensive work on entity coref-
+erence, the related problem of event coreference re-
+mains relatively under-explored, with minimal work
+on how entity and event coreference can be con-
+sidered jointly on an open domain. Early work on
+event coreference for MUC (Humphreys et al1997;
+Bagga and Baldwin, 1999) focused on scenario-
+specific events. More recently, there have been
+approaches that looked at event coreference for
+wider domains. Chen and Ji (2009) proposed us-
+ing spectral graph clustering to cluster events. Be-
+jan and Harabagiu (2010) proposed a nonparamet-
+ric Bayesian model for open-domain event resolu-
+tion. However, most of this prior work focused only
+on event coreference, whereas we address both en-
+tities and events with a single model. Humphreys
+et al1997) considered entities as well as events,
+but due to the lack of a corpus annotated with event
+coreference, their approach was only evaluated im-
+plicitly in the MUC-6 template filling task. To our
+knowledge, the only previous work that considered
+entity and event coreference resolution jointly is
+He (2007), but limited to the medical domain and
+focused on just five semantic categories.
+3 Architecture
+Following the intuition introduced in Section 1, our
+approach iteratively builds clusters of event and en-
+tity mentions jointly. As more information becomes
+available (e.g., finding out that two verbal mentions
+have arguments that belong to the same entity clus-
+ter), the features of both entity and event mentions
+are re-generated, which prompts future clustering
+operations. Our model follows a cautious (or ?baby
+steps?) approach, which we previously showed to be
+successful for entity coreference resolution (Raghu-
+nathan et al2010; Lee et al2011). However,
+unlike our previous work, which used deterministic
+rules, in this paper we learn a coreference resolution
+model using linear regression. Algorithm 1 summa-
+rizes the flow of the proposed algorithm. We detail
+its steps next. We describe the training procedure in
+Section 4 and the features used in Section 5.
+490
+Algorithm 1: Joint Coreference Resolution
+input : set of documents D
+input : coreference model ?
+// clusters of mentions:
+E= {}1
+// clusters of documents:
+C = clusterDocuments(D)2
+foreach document cluster c in C do3
+// all mentions in one doc cluster:
+M = extractMentions(c)4
+// singleton mention clusters:
+E ? = buildSingletonClusters(M)5
+// high-precision deterministic sieves:
+E ? = applyHighPrecisionSieves(E ?)6
+// iterative event/entity coreference:
+while ? e1, e2 ? E ?s.t. score(e1, e2,?) > 0.5 do7
+(e1, e2) = arg max e1,e2?E? score(e1, e2,?)8
+E ? = merge(e1, e2, E ?)9
+// pronoun sieve:
+E ? = applyPronounSieve(E ?)10
+// append to global output:
+E = E + E ?11
+output : E
+3.1 Document Clustering
+Our approach starts with several steps that reduce
+the search space for the actual coreference resolution
+task. The first is document clustering, which clusters
+the set of input documents (D) into a set of docu-
+ment clusters (C). In the subsequent steps we only
+cluster mentions that appear in the same document
+cluster. We found this to be very useful in practice
+because, in addition to reducing the search space, it
+provides a word sense disambiguation mechanism
+based on corpus-wide topics. For example, with-
+out document clustering, our algorithm may decide
+to cluster two mentions of the verb hit, but know-
+ing that one belongs to a cluster containing earth-
+quake reports and the other to a cluster with reports
+on criminal activities, this decision can be avoided.1
+Any non-parametric clustering algorithm can be
+used in this step. In this paper, we used the algo-
+rithm proposed by Surdeanu et al2005). This algo-
+rithm is an Expectation Maximization (EM) variant
+where the initial points (and the number of clusters)
+are selected from the clusters generated by a hierar-
+chical agglomerative clustering algorithm using ge-
+1Since different mentions of the verb say in the same topic
+might refer to different events, they are only merged if they have
+coreferent arguments.
+ometric heuristics. This algorithm performs well on
+our data. For example, in the training dataset, only
+two topics (handling different earthquake events) are
+incorrectly merged into the same cluster.
+3.2 Mention Extraction
+In this step (4 in Algorithm 1) we extract nominal,
+pronominal, and verbal mentions. We extract nom-
+inal and pronominal mentions using the mention
+identification component in the publicly download-
+able Stanford coreference resolution system (Raghu-
+nathan et al2010; Lee et al2011). We consider
+as verbal mentions all words whose part of speech
+starts with VB, with the exception of some auxil-
+iary/copulative verbs (have, be and seem). For each
+of the identified mentions we build a singleton clus-
+ter (step 5 in Algorithm 1).
+Crucially, we do not make a formal distinction be-
+tween entity and event mentions. This distinction is
+not trivial to implement (e.g., is the noun earthquake
+an entity or an event mention?) and an imperfect
+classification would negatively affect the following
+coreference resolution. Instead, we simply classify
+mentions into verbal or nominal, and use this dis-
+tinction later during feature generation (Section 5).
+To compare event nouns (e.g., development) with
+verbal mentions, the ?derivationally related form?
+relation in WordNet is used.
+3.3 High-precision Entity Resolution Sieves
+To further reduce the problem?s search space, in
+step 6 of Algorithm 1 we apply a set of high-
+precision filters from the Stanford coreference res-
+olution system. This system is a collection of deter-
+ministic models (or ?sieves?) for entity coreference
+resolution that incorporate lexical, syntactic, seman-
+tic, and discourse information. These sieves are ap-
+plied from higher to lower precision. As clusters are
+built, information such as mention gender and num-
+ber is propagated across mentions in the same clus-
+ter, which helps subsequent decisions. The Stanford
+system obtained the highest score at the CoNLL-
+2011 shared task on English coreference resolution.
+For this step, we selected all the sieves from the
+Stanford system with the exception of the pronoun
+resolution sieve. All the remaining sieves (listed
+in Table 1) have high precision because they em-
+ploy linguistic heuristics with little ambiguity, e.g.,
+491
+High-precision sieves
+Discourse processing sieve
+Exact string match sieve
+Relaxed string match sieve
+Precise constructs sieve (e.g., appositives)
+Strict head match sieves
+Proper head noun match sieve
+Relaxed head matching sieve
+Table 1: Deterministic sieves in step 6 of Algorithm 1.
+one sieve clusters together two entity mentions only
+when they have the same head word. Note that all
+these heuristics were designed for within-document
+coreference. They work well in our context be-
+cause we apply them in individual document clus-
+ters, where the one-sense-per-discourse principle
+still holds (Yarowsky, 1995).
+Importantly, these sieves do not address verbal
+mentions. That is, all verbal mentions are still in sin-
+gleton clusters after this step. Furthermore, none of
+these sieves use features that facilitate the joint reso-
+lution of nominal and verbal mentions (e.g., features
+from semantic role frames). All these limitations are
+addressed next.
+3.4 Iterative Entity/Event Resolution
+In this stage (steps 7 ? 9 in Algorithm 1), we con-
+struct entity and event clusters using a cautious or
+?baby steps? approach. We use a single linear re-
+gressor (?) to model cluster merge operations be-
+tween both verbal and nominal clusters. Intuitively,
+the linear regressor models the quality of the merge
+operation, i.e., a score larger than 0.5 indicates that
+more than half of the mention pairs introduced by
+this merge are correct. We discuss the training pro-
+cedure that yields this scoring function in Section 4.
+In each iteration, we perform the merge operation
+that has the highest score. Once two clusters are
+merged (step 9) we regenerate all the mention fea-
+tures to reflect the current clusters. We stop when no
+merging operation with an overall benefit is found.
+This iterative procedure is the core of our joint
+coreference resolution approach. This algorithm
+transparently merges both entity and event men-
+tions and, importantly, allows information to flow
+between clusters of both types as merge operations
+take place. For example, assume that during iter-
+ation i we merge the two hanged verbs in the first
+example in Section 1 (because they have the same
+lemma). Because of this merge, in iteration i+ 1 the
+nominal mentions Lo Presti and One of the key sus-
+pected Mafia bosses have the same semantic role for
+verbs assigned to the same cluster. This is a strong
+hint that these two nominal mentions belong to the
+same cluster. Indeed, the feature that models this
+structure received one of the highest weights in our
+linear regression model (see Section 7).
+3.5 Pronoun Sieve
+Our approach concludes with the pronominal coref-
+erence resolution sieve from the Stanford system.
+This sieve is necessary because our current reso-
+lution algorithm ignores mention ordering and dis-
+tance (i.e., in step 7 we compare all clusters regard-
+less of where their mentions appear in the text). As
+previous work has proved, the structure of the text is
+crucial for pronominal coreference (Hobbs, 1978).
+For this reason, we handle pronouns outside of the
+main algorithm block.
+4 Training the Cluster Merging Model
+Two observations drove our choice of model and
+training algorithm. First, modeling the merge op-
+eration as a classification task is not ideal, because
+only a few of the resulting clusters are entirely cor-
+rect or incorrect. In practice, most of the clusters
+will contain some mention pairs that are correct and
+some that are not. Second, generating training data
+for the merging model is not trivial: a brute force
+approach that looks at all the possible combinations
+is exponential in the number of mentions. This is
+both impractical and unnecessary, as some of these
+combinations are unlikely to be seen in practice.
+We address these observations with Algorithm 2.
+The algorithm uses gold coreference labels to train a
+linear regressor that models the quality of the clus-
+ters produced by merge operations. We define the
+quality score q of a new cluster as the percentage of
+new mention pairs (i.e., not present in either one of
+the clusters to be merged) that are correct:
+q =
+linkscorrect
+linkscorrect + linksincorrect
+(1)
+where links(in)correct is the number of newly intro-
+duced (in)correct pairwise mention links when two
+clusters are merged.
+492
+Algorithm 2: Training Procedure
+input : set of documents D
+input : correct mention clusters G
+C = clusterDocuments(D)1
+// linear regression coreference model:
+? = assignInitialWeights(C,G)2
+// repeat for T epochs:
+for t = 1 to T do3
+// training data for linear regressor:
+? = {}4
+foreach document cluster c in C do5
+M = extractMentions(c)6
+E = buildSingletonClusters(M)7
+E = applyHighPrecisionSieves(E)8
+// gather training examples
+// as clusters are built:
+while ? e1, e2 ? Es.t. sco(e1, e2,?) > 0.5 do9
+forall e?1, e
+?
+2 ? E do10
+q = qualityOfMerge(e?1, e
+?
+2,G)11
+? = append(e?1, e
+?
+2, q,?)12
+(e1, e2) = arg max e1,e2?E sco(e1, e2,?)13
+E = merge(e1, e2, E)14
+// train using data from last epoch:
+?? = trainLinearRegressor(?)15
+// interpolate with older model:
+? = ?? + (1? ?)??16
+output : ?
+We address the potential explosion in training data
+size by considering only merge operations that are
+likely to be inspected by the algorithm as it runs.
+To achieve this, Algorithm 2 repeatedly runs the ac-
+tual clustering algorithm (as given by the current
+model ?) over the training dataset (steps 5 ? 14).2
+When the algorithm iteratively constructs its clus-
+ters (steps 9 ? 14), we generate training data from
+all possible cluster pairs available during a particular
+iteration (steps 10 ? 12). For each pair, we compute
+its score using Equation 1 (step 11) and add it to the
+training corpus ? (step 12). Note that this avoids in-
+specting many of the possible cluster combinations:
+once a cluster is built (e.g., during the previous iter-
+ations or by the deterministic sieves in step 8), we
+do not generate training data from its members, but
+rather treat it as an atomic unit. On the other hand,
+our approach generates more training data than on-
+line learning, which trains using only the actual de-
+cisions taken during inference in each iteration (i.e.,
+2We skip the pronoun sieve here because it does not affect
+the decisions taken during the iterative resolution steps.
+the pair (e1, e2) in step 13).
+After each epoch we have a new training cor-
+pus ?, which we use to train the new linear regres-
+sion model ?? (step 15), which is then interpolated
+with the old one (step 16).
+Our training procedure is similar in spirit to trans-
+formation based learning (TBL) (Brill, 1995). Sim-
+ilarly to TBL, our approach repeatedly applies the
+model over the training data and attempts to mini-
+mize the error rate of the current model. However,
+while TBL learns rules that directly minimize the
+current error rate, our approach achieves this indi-
+rectly, by incorporating the reduction in error rate in
+the score of the generated datums. This allows us
+to fit a linear regression to this task, which, as dis-
+cussed before, is a better model for this task.
+Just like any hill-climbing algorithm, our ap-
+proach has the risk of converging to a local max-
+imum. To mitigate this risk, we do not initialize
+our model ? with random weights, but rather use
+hints from the deterministic sieves. This procedure
+(listed in step 2) runs the high-precision sieves in-
+troduced in Section 3.3 and, just like the data gen-
+eration loop in Algorithm 2, creates training exam-
+ples from the clusters available after every merge
+operation. Since these deterministic models address
+only nominal clusters, at the end we generate train-
+ing data for events by inspecting all the pairs of sin-
+gleton verbal clusters. Using this data, we train the
+initial linear regression model.
+We trained our model using L2 regularized linear
+regression with a regularization coefficient of 1.0.
+We did not tune the regularization coefficient. We
+ran the training algorithm for 10 epochs, although
+we observed minimal changes after three epochs.
+We tuned the interpolation weight (?) to a value
+of 0.7 using our development corpus.
+5 Features
+We list in Table 2 the features used by the lin-
+ear regression model. As the table indicates, our
+feature set relies heavily on semantic roles, which
+were extracted using the SwiRL semantic role la-
+beling (SRL) system (Surdeanu et al2007).3 Be-
+cause SwiRL addresses only verbal predicates, we
+extended it to handle nominal predicates. In this
+3http://www.surdeanu.name/mihai/swirl/
+493
+Feature Name
+Applies to
+Entities (E)
+or Events (V)
+Description and Example
+Entity Heads E
+Cosine similarity of the head-word vectors of two clusters. The head-word vector
+stores the head words of all mentions in a cluster and their frequencies. For example,
+the vector for the three-mention cluster {Barack Obama, President Obama, US
+president}, is {Obama:2, president:1}.
+Event Lemmas V
+Cosine similarity of the lemma vectors of two clusters. For example, the lemma
+vector for the cluster {murdered, murders, hitting} is {murder:2, hit:1}.
+Links between
+Synonyms
+E, V
+The percentage of newly-introduced mention links after the merge that are WordNet
+synonyms (Fellbaum, 1998). For example, when merging the following two clus-
+ters, {hit, strike} and {strike, join, say}, two out of the six new links are between
+words that belong to the same WordNet synset: (hit ? strike) and (strike ? strike).
+Number of Coreferent
+Arguments or
+Predicates
+E, V
+The total number of shared arguments and predicates between mentions in the
+two clusters. We use the cluster IDs of the corresponding arguments/predicates
+to check for identity. For example, when comparing the event clusters {bought}
+and {acquired}, extracted from the sentences [AMD]Arg0 bought [ATI]Arg1 and
+[AMD]Arg0 acquired [ATI]Arg1, the value of this feature is 2 because the two men-
+tions share one Arg0 and one Arg1 argument (assuming that the clusters {AMD,
+AMD} and {ATI, ATI} were previously created). For entity clusters, this feature
+counts the number of coreferent predicates. In addition to PropBank-style roles, for
+event mentions we also include the closest left and right entity mentions in order to
+capture any arguments missed by the SRL system.
+Coreferent Arguments
+in a Specific Role?
+E, V
+Indicator feature set to 1 if the two clusters have at least one coreferent argument in
+a given role. We generate one variant of this feature for each argument label, e.g.,
+Arg0, Arg1, etc. For example, the value of this feature for Arg0 for the clusters
+{bought} and {acquired} in the above example is 1.
+Coreferent Predicate in
+a Specific Role?
+E
+Indicator feature set to 1 if the two clusters have at least one coreferent predicate for
+a given role. For example, for the clusters {the man} and {the person}, extracted
+from the sentences helped [the man]Arg1 and helped [the person]Arg1, the value of
+this feature is 1 if the two helped verbs were previously clustered together.
+2nd Order Similarity of
+Mention Words
+E
+Cosine similarity of vectors containing words that are distributionally similar to
+words in the cluster mentions. We built these vectors by extracting the top-ten
+most-similar words in Dekang Lin?s similarity thesaurus (Lin, 1998) for all the
+nouns/adjectives/verbs in a cluster. For example, for the singleton cluster {a new
+home}, we construct this vector by expanding new and home to: {new:1, original:1,
+old:1, existing:1, current:1, unique:1, modern:1, different:1, special:1, major:1,
+small:1, home:1, house:1, apartment:1, building:1, hotel:1, residence:1, office:1,
+mansion:1, school:1, restaurant:1, hospital:1 }.
+Number; Animacy;
+Gender; NE Label
+E
+Cosine similarity of number, gender, animacy, and NE label vectors. For example,
+the number and gender vectors for the two-mention cluster {systems, a pen} are
+Number = {singular:1, plural:1}, Gender = {neutral:2}.
+Table 2: List of features used when comparing two clusters. If any of the two clusters contains a verbal mention we
+consider the merge an operation between event (V) clusters; otherwise it is a merge between entity (E) clusters. We
+append to all entity features the suffix Proper or Common based on the type of the head word of the first mention in
+each of the two clusters. We use the suffix Proper only if both head words are proper nouns.
+paper we used a single heuristic: the possessor of
+a nominal event?s predicate is marked as its Arg0,
+e.g., Logan is the Arg0 to run in Logan?s run.4
+4A principled solution to this problem is to use an SRL sys-
+tem for nominal predicates trained using NomBank (Meyers et
+al., 2004). We will address this in future work.
+494
+We extracted named entity labels using the named
+entity recognizer from the Stanford CoreNLP suite.
+6 Evaluation
+6.1 Corpus
+The training and test data sets were derived from
+the EventCorefBank (ECB) corpus5 created by Be-
+jan and Harabagiu (2010) to study event coreference
+since standard corpora such as OntoNotes (Pradhan
+et al2007) contain a small number of annotated
+event clusters. The ECB corpus consists of 482 doc-
+uments from Google News clustered into 43 topics,
+where a topic is described as a seminal event. The
+reason for including comparable documents was to
+increase the number of cross-document coreference
+relations. Bejan and Harabagiu (2010) only anno-
+tated a selection of events.
+For the purpose of our study, we extended the
+original corpus in two directions: (i) fully anno-
+tated sentences, and (ii) entity coreference relations.
+In addition, we removed relations other than coref-
+erence (e.g., subevent, purpose, related, etc.) that
+had been originally annotated. We revised and com-
+pleted the original annotation by annotating every
+entity and event in the sentences that were (partially)
+annotated. The annotation was performed by four
+experts, using the Callisto annotation tool.6 The
+annotation guidelines and the generated corpus are
+available here.7
+Our annotation of the ECB corpus followed the
+OntoNotes (Pradhan et al2007) standard for coref-
+erence annotation, with a few extensions to handle
+events. For nouns, we annotated full NPs (with all
+modifiers), excluding appositive phrases and nomi-
+nal predicates. Only premodifiers that were proper
+nouns or possessive phrases were annotated. For
+events, we annotated the semantic head of the verb
+phrase. We extended the OntoNotes guidelines by
+also annotating singletons (but we do not score
+them; see below), and by including all events men-
+tions (not only those mentioned at least once with an
+NP). This required us to be specific with respect to:
+5http://faculty.washington.edu/bejan/
+data/ECB1.0.tar.gz
+6http://callisto.mitre.org
+7http://nlp.stanford.edu/pubs/
+jcoref-corpus.zip
+Training Dev Test Total
+# Topics 12 3 28 43
+# Documents 112 39 331 482
+# Entities 459 46 563 1068
+# Entity Mentions 1723 259 3465 5447
+# Events 300 30 444 774
+# Event Mentions 751 140 1642 2533
+Table 3: Corpus statistics.
+?ENTITY COREFID=?26?? A publicist ?/ENTITY? ?EVENT
+COREFID=?4?? says ?/EVENT? ?ENTITY COREFID=?23??
+Tara Reid ?/ENTITY? has ?EVENT COREFID=?3?? checked
+?/EVENT? ?ENTITY COREFID=?23?? herself ?/ENTITY? ?EVENT
+COREFID=?3*?? into ?/EVENT? ?ENTITY COREFID=?28?? rehab
+?/ENTITY?.
+Figure 1: Annotation example.
+Light verbs Verbs such as give and make followed
+by a noun (e.g., make an offer) were not anno-
+tated, but the noun was.
+Phrasal verbs We annotated the verb together with
+the preposition or adverb (e.g., check in).
+Idioms They were annotated with all their elements
+(e.g., booze it up).
+The first topic was annotated by all four anno-
+tators as burn-in. Afterwards, annotation disagree-
+ments were resolved between all annotators and the
+next three topics were annotated again by all four an-
+notators to measure agreement. Following Passon-
+neau (2004), we computed an inter-annotator agree-
+ment of ? = 0.55 (Krippendorff, 2004) on these
+three topics, indicating moderate agreement among
+the annotators. Given the complexity of the task, we
+consider this to be a good score. For example, the
+average of the CoNLL F1 between any two annota-
+tors is 73.58, which is much higher than the system
+scores reported in the literature.
+After annotating the four topics, disagreements
+were resolved again and all the documents in the
+four topics were corrected to match the consensus.
+The rest of the corpus was split between the four an-
+notators, and each document was annotated by a sin-
+gle annotator. Figure 1 shows an example. Table 3
+shows the corpus statistics, including the training,
+development (dev) and test set splits. The dev topics
+were used for tuning the interpolation parameter ?
+from Section 4.
+495
+MUC B3 CEAF-?4 BLANC
+System R P F1 R P F1 R P F1 R P F1 CoNLL F1
+Baseline 1
+Wo/ SRL
+Entity 47.4 72.3 57.2 44.1 82.7 57.5 42.5 21.9 28.9 60.1 78.3 64.8 47.9
+Event 56.0 56.8 56.4 59.8 71.9 65.3 32.2 31.6 31.9 63.5 68.8 65.7 51.2
+Both 49.9 75.4 60.0 44.9 83.9 58.5 46.2 23.3 31.0 60.9 81.2 66.1 49.8
+Baseline 2
+With SRL
+Entity 52.7 73.0 61.2 48.6 80.8 60.7 41.8 24.1 30.6 63.4 78.4 68.2 50.8
+Event 59.2 57.0 58.1 62.3 70.8 66.3 31.5 33.2 32.3 65.4 68.0 66.6 52.2
+Both 54.5 76.4 63.7 48.7 82.6 61.3 46.3 25.5 32.9 63.9 81.1 69.2 52.6
+This paper
+Entity 60.7 70.6 65.2 55.5 74.9 63.7 39.3 29.5 33.7 66.9 79.6 71.5 54.2
+Event 62.7 62.8 62.7 62.5 73.9 67.7 34.0 33.9 33.9 67.6 78.5 71.7 54.8
+Both 61.2 75.9 67.8 53.9 79.0 64.1 45.2 30.0 35.8 67.1 82.2 72.3 55.9
+Table 4: Performance of the two baselines and our model. We report scores for entity clusters, event clusters and the
+complete task using five metrics.
+6.2 Evaluation
+We use five coreference evaluation metrics widely
+used in the literature:
+MUC (Vilain et al1995) Link-based metric which
+measures how many predicted and gold clus-
+ters need to be merged to cover the gold and
+predicted clusters, respectively.
+B3 (Bagga and Baldwin, 1998) Mention-based
+metric which measures the proportion of over-
+lap between predicted and gold clusters for a
+given mention.
+CEAF (Luo, 2005) Entity-based metric that, unlike
+B3, enforces a one-to-one alignment between
+gold and predicted clusters. We employ the
+entity-based version of CEAF.
+BLANC (Recasens and Hovy, 2011) Metric based
+on the Rand index (Rand, 1971) that consid-
+ers both coreference and non-coreference links
+to address the imbalance between singleton and
+coreferent mentions.
+CoNLL F1 Average of MUC, B3, and CEAF-?4.
+This was the official metric in the CoNLL-2011
+shared task (Pradhan et al2011).
+We followed the CoNLL-2011 evaluation methodol-
+ogy, that is, we removed all singleton clusters, and
+apposition/copular relations before scoring.
+We evaluated the systems on three different set-
+tings: only on entity clusters, only on event clus-
+ters, and on the complete task, i.e., both entities and
+events. Note that the gold corpus separates clusters
+into entity and event clusters (see Table 3), but our
+system does not make this distinction at runtime.
+In order to compute the entity-only and event-only
+scores in Table 4, we implemented the following
+procedure: (a) when scoring entity clusters, we re-
+moved all mentions that were found to be coreferent
+with at least one gold event mention and not coref-
+erent with any gold entity mentions; and (b) we per-
+formed the opposite action when scoring event clus-
+ters. This procedure is necessary because our men-
+tion identification component is not perfect, i.e., it
+generates mentions that do not exist in the gold an-
+notation. Furthermore, this procedure is conserva-
+tive with respect to the clustering errors of our sys-
+tem, e.g., all spurious mentions that our system in-
+cludes in a cluster with a gold entity mention are
+considered for the entity score, regardless of their
+gold type (event or entity).
+6.3 Results
+Table 4 compares the performance of our system
+against two strong baselines that resolve entities and
+events separately. Baseline 1 uses a modified Stan-
+ford coreference resolution system after our doc-
+ument clustering and mention identification steps.
+Because the original Stanford system implements
+only entity coreference, we extended it with an extra
+sieve that implements lemma matching for events.
+This additional sieve merges two verbal clusters
+(i.e., clusters that contain at least one verbal men-
+tion) or a verbal and a nominal cluster when at least
+two lemmas of mention head words are the same be-
+tween clusters, e.g., helped and the help.
+The second baseline adds two more sieves to
+Baseline 1. Both these sieves model entity and event
+496
+contextual information using semantic roles. The
+first sieve merges two nominal clusters when two
+mentions in the respective clusters have the same
+head words and two mentions (possibly with dif-
+ferent heads) modify with the same role label two
+predicates that have the same lemma. For exam-
+ple, this sieve merges the clusters {Obama, the pres-
+ident} (seen in the text [Obama]Arg0 attended and
+[the president]Arg1 was elected) and {Obama} (seen
+in the text [Obama]Arg1 was elected), because they
+share a mention with the same head word (Obama)
+and two mentions modify with the same role (Arg1)
+predicates with the same lemma (elect). The sec-
+ond sieve implements the complementary action for
+event clusters. That is, it merges two verbal clusters
+when at least two mentions have the same lemma
+and at least two mentions have semantic arguments
+with the same role label and the same lemma.
+7 Discussion
+The first block in Table 4 indicates that lemma
+matching is a strong baseline for event resolution.
+Most of the event scores for Baseline 1 are actually
+higher than the corresponding entity scores, which
+were obtained using the highest ranked system at the
+CoNLL-2011 shared task (Lee et al2011). Adding
+contextual information using semantic roles (Base-
+line 2) helps both entities and events. The CoNLL
+F1 for Baseline 2 increases almost 3 points for enti-
+ties and 1 point for events. This demonstrates that
+local syntactico-semantic context is important for
+coreference resolution even in a cross-document set-
+ting and that the current state-of-the-art in SRL can
+model this context accurately.
+The best scores (almost unanimously) are ob-
+tained by the model proposed in this paper, which
+scores 3.4 CoNLL F1 points higher than Baseline 2
+for entities, and 2.6 points higher for events. For the
+complete task, our approach scores 3.3 CoNLL F1
+points higher than Baseline 2, and 6.1 points higher
+than Baseline 1. This demonstrates that a holistic
+approach to coreference resolution improves the res-
+olution of both entities and events more than models
+that address aspects of the task separately. To fur-
+ther understand our experiments, we listed the top
+five entity/event features with the highest weights in
+our model in Table 5. The table indicates that six out
+of the ten features serve the purpose of passing infor-
+Entity Feature Weight
+Entity Heads ? Proper 1.10
+Coreferent Predicate for ArgM-LOC ? Common 0.45
+Entity Heads ? Common 0.36
+Coreferent Predicate for Arg0 ? Proper 0.29
+Coreferent Predicate for Arg2 ? Common 0.28
+Event Feature Weight
+Event Lemmas 0.45
+Coreferent Argument for Arg1 0.19
+Links between Synonym 0.16
+Coreferent Argument for Arg2 0.13
+Number of Coreferent Arguments 0.07
+Table 5: Top five features with the highest weights.
+mation between entity and event clusters. For exam-
+ple, the ?Coreferent Argument for Arg1? feature is
+triggered when two event clusters have Arg1 argu-
+ments that already belong to the same entity cluster.
+This allows information from previous entity coref-
+erence operations to impact future merges of event
+clusters. This is the crux of our iterative approach to
+joint coreference resolution.
+Finally, we performed an error analysis by man-
+ually evaluating 100 errors. We distinguished nine
+major types of errors. Their ratios together with a
+description and an example are given in Table 6.
+This work demonstrates that an approach that
+jointly models entities and events is better for cross-
+document coreference resolution. However, our
+model can be improved. For example, document
+clustering and coreference resolution can be solved
+jointly, which we expect would improve both tasks.
+Furthermore, our iterative coreference resolution
+procedure (Algorithm 1) could be modified to ac-
+count for mention ordering and distance, which
+would allow us to include pronominal resolution in
+our joint model, rather than addressing it with a sep-
+arate deterministic sieve.
+8 Conclusion
+We have presented a holistic model for cross-
+document coreference resolution that jointly solves
+references to events and entities by handling both
+nominal and verbal mentions. Our joint resolution
+algorithm allows event coreference to help improve
+entity coreference, and vice versa. In addition, our
+iterative procedure, based on a linear regressor that
+models the quality of cluster merges, allows each
+497
+Error Type (Ratio)
+Description
+Example
+Pronoun resolution
+(36%)
+The pronoun is incorrectly resolved by the pronominal sieve of the Stanford deterministic entity
+system. These errors include (only a small number of) event pronouns.
+He said Timmons aimed and missed his target.
+Semantics beyond
+role frames
+(20%)
+The semantics of the coreference relation cannot be captured by role frames or WordNet.
+Israeli forces on Tuesday killed at least 40 people . . . The Israeli army said the UN school in the
+Jabaliya refugee camp was hit . . . and that the dead included a number of Hamas militants.
+Arguments of
+nominal events
+(17%)
+The arguments of two nominal events are not detected and thus not coreferred.
+The attack on the school has caused widespread shock across Israel . . . while Israeli forces on
+Tuesday killed at least 40 people during an attack on a United Nations-run school in Gaza.
+Cascaded errors
+(7%)
+Entities or events are not coreferred due to errors in a previous merge iteration in the same
+semantic frame. In the example below, we failed to link the two die verbs, which leads to the
+listed entity error.
+An Australian climber who survived two nights stuck on Mount Cook after seeing his brother
+die . . . Dr Mark Vinar, 43, is presumed dead . . .
+Initial high-precision
+sieves
+(6%)
+An error made by the initial high-precision entity resolution sieves is propagated to our model.
+Timmons told police he fired when he thought he saw someone in the other group reach for
+a gun . . . 15-year-old Timmons was at the scene of the shooting and had a gun.
+Phrasal verbs
+(6%)
+The meaning of a phrasal verb is not captured.
+A relative unknown will take over the title role of Doctor Who . . . But the casting of Smith is
+a stroke of genius.
+Linear regression
+(4%)
+Recall error made by the regression model when the features are otherwise correct.
+The Interior Department on Thursday issued ?revised? regulations . . . Interior Secretary Dirk
+Kempthorne announced major changes . . .
+Mention detection
+(3%)
+The mention detection module detects a spurious mention.
+Police have arrested a man . . . in the parking lot crosswalk at Sam?s Club in Bloomington.
+SRL
+(1%)
+The SRL system fails to label the semantic role. In this example, jail is detected as the ArgM-
+MNR of hanged instead of ArgM-LOC.
+A Mafia boss in Palermo hanged himself in jail.
+Table 6: Error analysis. Mentions to be resolved are in bold face, correct antecedents are in italics, and our system?s
+predictions are underlined.
+merging state to benefit from the previous merged
+entity and event mentions. This approach allows us
+to start with a set of high-precision coreference rela-
+tions and gradually add new ones to increase recall.
+The experimental evaluation shows that our coref-
+erence algorithm gives markedly better F1 for both
+entities and events, outperforming two strong base-
+lines that handle entities and events separately, mea-
+sured by all the standard measures: MUC, B3,
+CEAF-?4, BLANC and the official CoNLL-2011
+metric. This is noteworthy since each measure has
+been shown to place primary emphasis in evaluating
+a different aspect of the coreference resolution task.
+Our system is tailored for cross-document coref-
+erence resolution on a corpus that contains news ar-
+ticles that repeatedly report on a smaller number of
+topics. This makes it particularly suitable for real-
+world applications such as multi-document summa-
+rization and cross-document information extraction.
+We also release our labeled corpus to facilitate ex-
+tensions and comparisons to our work.
+Acknowledgements
+We acknowledge the support of Defense Advanced Re-
+search Projects Agency (DARPA) Machine Reading Pro-
+gram under Air Force Research Laboratory (AFRL)
+prime contract no. FA8750-09-C-0181. Any opinions,
+findings, and conclusion or recommendations expressed
+in this material are those of the author(s) and do not nec-
+essarily reflect the view of the DARPA, AFRL, or the US
+government. MR is supported by a Beatriu de Pino?s post-
+doctoral scholarship (2010 BP-A 00149) from Generali-
+tat de Catalunya. AC is supported by a SAP Stanford
+Graduate Fellowship. We also gratefully thank Cosmin
+Bejan for sharing his code and the useful discussions.
+498
+References
+Amit Bagga and Breck Baldwin. 1998. Algorithms
+for scoring coreference chains. In Proceedings of
+the LREC 1998 Workshop on Linguistic Coreference,
+pages 563?566.
+Amit Bagga and Breck Baldwin. 1999. Cross-document
+event coreference: Annotations, experiments, and ob-
+servations. In Proceedings of the ACL 1999 Workshop
+on Coreference and Its Applications, pages 1?8.
+Cosmin Bejan and Sanda Harabagiu. 2010. Unsuper-
+vised Event Coreference Resolution with Rich Lin-
+guistic Features. In Proceedings of ACL 2010, pages
+1412?1422.
+Eric Brill. 1995. Transformation-based error-driven
+learning and natural language processing: a case study
+in part of speech tagging. Computational Linguistics,
+21(4):543?565.
+Zheng Chen and Heng Ji. 2009. Graph-based event
+coreference resolution. In Proceedings of the ACL-
+IJCNLP 2009 Workshop on Graph-based Methods for
+Natural Language Processing, pages 54?57.
+Pascal Denis and Jason Baldridge. 2007. Joint determi-
+nation of anaphoricity and coreference resolution us-
+ing integer programming. In Proceedings of NAACL-
+HLT 2007.
+Christiane Fellbaum. 1998. WordNet: An Electronic
+Lexical Database. MIT Press, Cambridge.
+Aria Haghighi and Dan Klein. 2009. Simple coreference
+resolution with rich syntactic and semantic features. In
+Proceedings of EMNLP 2009, pages 1152?1161.
+Aria Haghighi and Dan Klein. 2010. Coreference resolu-
+tion in a modular, entity-centered model. In Proceed-
+ings of HLT-NAACL 2010, pages 385?393.
+Tian He. 2007. Coreference Resolution on Entities and
+Events for Hospital Discharge Summaries. Thesis,
+Massachusetts Institute of Technology.
+Jerry R. Hobbs. 1978. Resolving pronoun references.
+Lingua, 44(4):311?338.
+Kevin Humphreys, Robert Gaizauskas, and Saliha Az-
+zam. 1997. Event coreference for information extrac-
+tion. In Proceedings of the Workshop On Operational
+Factors In Practical Robust Anaphora Resolution For
+Unrestricted Texts, pages 75?81.
+Klaus Krippendorff. 2004. Content Analysis: An In-
+troduction to its Methodology. Sage, Thousand Oaks,
+CA, second edition.
+Heeyoung Lee, Yves Peirsman, Angel Chang, Nathanael
+Chambers, Mihai Surdeanu, and Dan Jurafsky. 2011.
+Stanford?s multi-pass sieve coreference resolution sys-
+tem at the CoNLL-2011 shared task. In Proceedings
+of CoNLL 2011: Shared Task, pages 28?34.
+Dekang Lin. 1998. Automatic retrieval and clustering of
+similar words. In Proceedings of COLING-ACL 1998,
+pages 768?774.
+Xiaoqiang Luo. 2005. On coreference resolution perfor-
+mance metrics. In Proceedings of HLT-EMNLP 2005,
+pages 25?32.
+A. Meyers, R. Reeves, C. Macleod, R. Szekely, V. Zielin-
+ska, B. Young, and R. Grishman. 2004. The Nom-
+Bank project: an interim report. In Proceedings of the
+HLT-NAACL 2004 Workshop on Frontiers in Corpus
+Annotation, pages 24?31.
+Rebecca Passonneau. 2004. Computing reliability for
+coreference annotation. In Proceedings of LREC
+2004, pages 1503?1506.
+Simone Paolo Ponzetto and Michael Strube. 2006.
+Exploiting semantic role labeling, WordNet and
+Wikipedia for coreference resolution. In Proceedings
+of HLT-NAACL 2006, pages 192?199.
+Hoifung Poon and Pedro Domingos. 2008. Joint unsu-
+pervised coreference resolution with Markov logic. In
+Proceedings of EMNLP 2008, pages 650?659.
+Sameer S. Pradhan, Lance Ramshaw, Ralph Weischedel,
+Jessica MacBride, and Linnea Micciulla. 2007. Un-
+restricted coreference: Identifying entities and events
+in OntoNotes. In Proceedings of ICSC 2007, pages
+446?453.
+Sameer Pradhan, Lance Ramshaw, Mitchell Marcus,
+Martha Palmer, Ralph Weischedel, and Nianwen Xue.
+2011. CoNLL-2011 shared task: Modeling unre-
+stricted coreference in OntoNotes. In Proceedings of
+CoNLL 2011: Shared Task, pages 1?27.
+Karthik Raghunathan, Heeyoung Lee, Sudarshan Ran-
+garajan, Nathanael Chambers, Mihai Surdeanu, Dan
+Jurafsky, and Chris Manning. 2010. A multi-pass
+sieve for coreference resolution. In Proceedings of
+EMNLP 2010, pages 492?501.
+Altaf Rahman and Vincent Ng. 2011. Coreference
+resolution with world knowledge. In Proceedings of
+ACL 2011, pages 814?824.
+William M. Rand. 1971. Objective criteria for the eval-
+uation of clustering methods. Journal of the American
+Statistical Association, 66(336):846?850.
+Marta Recasens and Eduard Hovy. 2011. BLANC: Im-
+plementing the Rand index for coreference evaluation.
+Natural Language Engineering, 17(4):485?510.
+Veselin Stoyanov, Nathan Gilbert, Claire Cardie, and
+Ellen Riloff. 2009. Conundrums in noun phrase coref-
+erence resolution: Making sense of the state-of-the-art.
+In Proceedings of ACL-IJCNLP 2009, pages 656?664.
+Mihai Surdeanu, Jordi Turmo, and Alicia Ageno. 2005.
+A hybrid unsupervised approach for document cluster-
+ing. In Proceedings of KDD 2005, pages 685?690.
+499
+Mihai Surdeanu, Llu??s Ma`rquez, Xavier Carreras, and
+Pere R. Comas. 2007. Combination strategies for se-
+mantic role labeling. Journal of Artificial Intelligence
+Research, 29:105?151.
+Marc Vilain, John Burger, John Aberdeen, Dennis Con-
+nolly, and Lynette Hirschman. 1995. A model-
+theoretic coreference scoring scheme. In Proceedings
+of MUC-6, pages 45?52.
+Bonnie Lynn Webber. 1988. Discourse deixis: reference
+to discourse segments. In Proceedings of ACL 1988,
+pages 113?122.
+Michael L. Wick, Khashayar Rohanimanesh, Karl
+Schultz, and Andrew McCallum. 2008. A unified ap-
+proach for schema matching, coreference and canoni-
+calization. In Proceedings of KDD 2008, pages 722?
+730.
+David Yarowsky. 1995. Unsupervised word sense dis-
+ambiguation rivaling supervised methods. In Proceed-
+ings of ACL 1995, pages 189?196.
+500
+Proceedings of NAACL-HLT 2013, pages 221?229,
+Atlanta, Georgia, 9?14 June 2013. c?2013 Association for Computational Linguistics
+Using Out-of-Domain Data for Lexical Addressee Detection in
+Human-Human-Computer Dialog
+Heeyoung Lee1? Andreas Stolcke2 Elizabeth Shriberg2
+1Dept. of Electrical Engineering, Stanford University, Stanford, California, USA
+2Microsoft Research, Mountain View, California, USA
+heeyoung@stanford.edu, {anstolck,elshribe}@microsoft.com
+Abstract
+Addressee detection (AD) is an important
+problem for dialog systems in human-human-
+computer scenarios (contexts involving mul-
+tiple people and a system) because system-
+directed speech must be distinguished from
+human-directed speech. Recent work on AD
+(Shriberg et al, 2012) showed good results
+using prosodic and lexical features trained on
+in-domain data. In-domain data, however, is
+expensive to collect for each new domain. In
+this study we focus on lexical models and in-
+vestigate how well out-of-domain data (either
+outside the domain, or from single-user sce-
+narios) can fill in for matched in-domain data.
+We find that human-addressed speech can be
+modeled using out-of-domain conversational
+speech transcripts, and that human-computer
+utterances can be modeled using single-user
+data: the resulting AD system outperforms
+a system trained only on matched in-domain
+data. Further gains (up to a 4% reduction in
+equal error rate) are obtained when in-domain
+and out-of-domain models are interpolated.
+Finally, we examine which parts of an utter-
+ance are most useful. We find that the first
+1.5 seconds of an utterance contain most of
+the lexical information for AD, and analyze
+which lexical items convey this. Overall, we
+conclude that the H-H-C scenario can be ap-
+proximated by combining data from H-C and
+H-H scenarios only.
+?Work done while first author was an intern with Microsoft.
+1 Introduction
+Before a spoken dialog system can recognize and in-
+terpret a user?s speech, it should ideally determine
+if speech was even meant to be interpreted by the
+system. We refer to this task as addressee detec-
+tion (AD). AD is often overlooked, especially in tra-
+ditional single-user scenarios, because with the ex-
+ception of self-talk, side-talk or background speech,
+the majority of speech is usually system-directed.
+As dialog systems expand to more natural contexts
+and multiperson environments, however, AD can be-
+come a crucial part of the system?s operational re-
+quirements. This is particularly true for systems in
+which explicit system addressing (e.g., push-to-talk
+or required keyword addressing) is undesirable.
+Past research on addressee detection has focused
+on human-human (H-H) settings, such as meetings,
+sometimes with multimodal cues (op den Akker and
+Traum, 2009). Early systems relied primarily on re-
+jection of H-H utterances either because they could
+not be interpreted (Paek et al, 2000), or because they
+yielded low speech recognition confidence (Dowd-
+ing et al, 2006). Some systems combine gaze
+with lexical and syntactic cues to detect H-H speech
+(Katzenmaier et al, 2004). Others use relatively
+simple prosodic features based on pitch and energy
+in addition to those derived from automatic speech
+recognition (ASR) (Reich et al, 2011).
+With some exceptions (Bohus and Horvitz, 2011;
+Shriberg et al, 2012), relatively little work has
+looked at the human-human-computer (H-H-C) sce-
+nario, i.e. at contexts involving two or more people
+who interact both with a system and with each other.
+221
+Shriberg et al (2012) found that novel prosodic
+features were more accurate than lexical or seman-
+tic features based on speech recognition for the ad-
+dressee task. The corpus, also used herein, is com-
+prised of H-H-C dialog in which roughly half of the
+computer-addressed speech consisted of a small set
+of fixed commands. While the word-based features
+map directly to the commands, they had trouble
+distinguishing all other (noncommand) computer-
+directed speech from human-directed speech. This
+is because addressee detection in the H-H-C sce-
+nario becomes even more challenging when the sys-
+tem is designed for natural speech, i.e., utterances
+that are conversational in form and not limited to
+command phrases with restricted syntax. Further-
+more, H-H utterances can be about the domain of
+the system (e.g., discussing the dialog task), mak-
+ing AD based on language content more difficult.
+The prosodic features were good at both types of
+distinctions?even improving performance signifi-
+cantly when combined with true-word (cheating)
+lexical features that have 100% accuracy on the
+commands. Nevertheless, the prior work showed
+that lexical n-grams are useful for addressee detec-
+tion in the H-H-C scenario.
+A problem with lexical features is that they are
+highly task- and domain-dependent. As with other
+language modeling tasks, one usually has to collect
+matched training data in significant quantities. Data
+collection is made more cumbersome and expensive
+by the multi-user aspect of the scenario. Thus, for
+practical reasons alone, it would be much better if
+the language models for AD could be trained on
+out-of-domain data, and if whatever in-domain data
+is needed could be limited to single-user interac-
+tion. We show in this paper that precisely this train-
+ing scenario is feasible and achieves results that are
+comparable or better than using completely matched
+H-H-C training data.
+In addition to studying the role of out-of-domain
+data for lexical AD models, we also examine which
+words are useful, and how soon in elapsed time they
+are available. Whereas most prior work in AD has
+looked at processing of entire utterances, we con-
+sider an online processing version where AD deci-
+sions are to be made as soon as possible after an
+utterance was initiated. We find that most of the
+addressee-relevant lexical information can be found
+Figure 1: Conversational Browser dialog system en-
+vironment with multi-human scenario
+in the first 1.5 seconds, and analyze which words
+convey this information.
+2 Data
+We use in-domain and out-of-domain data from var-
+ious sources. The corpora used in this work differ in
+size, domain, and scenario.
+2.1 In-domain data
+In-domain data is collected from interactions be-
+tween two users and a ?Conversational Browser?
+(CB) spoken dialog system. We used the same
+methodology as Shriberg et al (2012), but using ad-
+ditional data. As depicted in Figure 1, the system
+shows a browser on a large TV screen and users
+are asked to use natural language for a variety of
+information-seeking tasks. For more details about
+the dialog system and language understanding ap-
+proach, see Hakkani-Tu?r et al (2011a; 2011b).
+We split the in-domain data into training, devel-
+opment, and test sets, preserving sessions. Each ses-
+sion is about 5 to 40 minutes long. Even though
+the whole conversation is recorded, only the seg-
+ments captured by the speech recognition system
+are used in our experiments. Each utterance seg-
+ment belongs to one of four types: computer-
+command (C-command), comprising navigational
+commands to the system, computer-noncommand
+(C-noncommand), which are computer-directed ut-
+terances other than commands, human-directed (H),
+and mixed (M) utterances, which contain a combina-
+222
+Table 1: In-domain corpus
+(a) Sizes, distribution, and ASR word error rates of in-
+domain utterance types
+Data set Train Dev Test WER
+Transcribed words 6,490 11,298 9,486
+ASR words 4,649 6,360 5,514 59.3%
+H (%) 19.1 48.6 37.0 87.6%
+C-noncomm. (%) 38.3 27.8 32.2 32.6%
+C-command (%) 39.9 18.7 27.2 19.7%
+M (%) 2.7 4.9 3.6 69.6%
+(b) Example utterances by type
+Type Example
+H Do you want to watch a
+movie?
+C-noncommand How is the weather today?
+C-command Scroll down, Go back.
+M Show me sandwich shops.
+Oh, are you vegetarian?
+tion of human- and computer-directed speech. The
+sizes and distribution of all utterance types, as well
+as sample utterances are shown in Table 1.
+The ASR system used in the system was based on
+off-the-shelf acoustic models and had only the lan-
+guage model adapted to the domain, using very lim-
+ited data. Consequently, as shown in the right-most
+column of Table 1(a), the word error rates (WERs)
+are quite high, especially for human-directed utter-
+ances. While these could be improved with tar-
+geted effort, we consider this a realistic application
+scenario, where in-domain training data is typically
+scarce, at least early in the development process.
+Therefore, any lexically based AD methods need to
+be robust to poor ASR accuracy.
+2.2 Out-of-domain data
+To replace the hard-to-obtain in-domain H-H-C data
+for training, we use the four out-of-domain corpora
+(two H-C and two H-H) shown in Table 2.
+Single-user CB data comes from the same Con-
+versational Browser system as the in-domain data,
+but with only one user present. This data can there-
+fore be used for modeling H-C speech. Bing anchor
+text (Huang et al, 2010) is a large n-gram corpus of
+anchor text associated with links on web pages en-
+Table 2: Out-of-domain corpora. ?Single-user CB?
+is a corpus collected in same environment as the H-
+H-C in-domain data, except that only a single user
+was present.
+Corpus Addressee Size
+Single-user CB H-C 21.9k words
+Bing anchor text H-C 1.3B bigrams
+Fisher H-H 21M words
+ICSI meetings H-H 0.7M words
+Single user CB, Bing ?  out-of-domain 
+in-domain  (HC) 
+in-domain (HH) 
+Fisher, ICSI meeting ?  out-of-domain 
+Language model for human directed utterances (H)  
+Language model for computer directed utterances (C)  
+?(?|?) 
+1? ??? ?(?|?)?(?|?) 
+?(?|?) 
+Figure 2: Language model-based score computation
+for addressee detection
+countered by the Bing search engine. When users
+want to follow a link displayed on screen, they usu-
+ally speak a variant of the anchor text for the link.
+We hypothesized that this corpus might aid the mod-
+eling of computer-noncommand type utterances in
+which such ?verbal clicks? are frequent. Fisher tele-
+phone conversations and ICSI meetings are both cor-
+pora of human-directed speech. The Fisher corpus
+(Cieri et al, 2004) comprises two-person telephone
+conversations between strangers on prescribed top-
+ics. The ICSI meeting corpus (Janin et al, 2003)
+contains multiparty face-to-face technical discus-
+sions among colleagues.
+3 Method
+3.1 Language modeling for addressee detection
+We use a lexical AD system that is based on mod-
+eling word n-grams in the two addressee-based ut-
+terance classes, H (for H-H) and C (for H-C utter-
+ances). This approach is similar to language model-
+based approaches to speaker and language recogni-
+tion, and was shown to be quite effective for this
+task (Shriberg et al, 2012). Instead of making
+hard decisions, the system outputs a score that is
+223
+the length-normalized likelihood ratio of the two
+classes:
+1
+|w|
+log
+P (w|C)
+P (w|H)
+, (1)
+where |w| is the number of words in the recognition
+output w for an utterance. P (w|C) and P (w|H) are
+obtained from class-specific language models. Fig-
+ure 2 gives a flow-chart of the score computation.
+Class likelihoods are obtained from standard tri-
+gram backoff language models, using Witten-Bell
+discounting for smoothing (Witten and Bell, 1991).
+For combining various training data sources, we use
+language model adaptation by interpolation (Bel-
+legarda, 2004). First, a separate model is trained
+from each source. The probability estimates from
+in-domain and out-of-domain models are then aver-
+aged in a weighted fashion:
+P (wk|hk) = ?Pin(wk|hk) + (1? ?)Pout(wk|hk)
+(2)
+where wk is the k-th word, hk is the (n ? 1)-gram
+history for the wordwk. ? is the interpolation weight
+and is obtained by tuning a task-related metric on the
+development set. We investigated optimizing ? for
+either model perplexity or classification accuracy, as
+discussed below.
+3.2 Part-of-speech-based modeling
+So far we have only been modeling the lexical forms
+of words in utterances. If we encounter a word never
+before seen, it would appear as an out-of-vocabulary
+item in all class-specific language models, and not
+contribute much to the decision. More generally, if
+a word is rare, its n-gram statistics will be unreliable
+and poorly modeled by the system. (The sparseness
+issue is exacerbated by small amounts of training
+data as in our scenario.)
+One common approach to deal with data sparse-
+ness in language modeling is to model n-grams over
+word classes rather than raw words (Brown et al,
+1992). For example, if we have an utterance How
+is the weather in Paris?, the addressee probabilities
+are likely to be similar had we seen London instead
+of Paris. Therefore, replacing words with properly
+chosen word class labels can give better generaliza-
+tion from the observed training data. Among the
+many methods proposed to class words for language
+modeling purposes we chose part-of-speech (POS)
+tagging over other, purely data-derived classing al-
+gorithms (Brown et al, 1992), for two reasons. First,
+our goal here is not to minimize the perplexity of the
+data, but to enhance discrimination among utterance
+classes. Second, a data-driven class inference algo-
+rithm would suffer from the same sparseness issues
+when it comes to unseen and rare words (as no ro-
+bust statistics are available to infer an unseen word?s
+best class in the class induction step). A POS tag-
+ger, on the other hand, can do quite well on unseen
+words, using context and morphological cues.
+A hidden Markov model tagger using POS-
+trigram statistics and context-independent class
+membership probabilities was used for tagging all
+LM training data. The tagger itself had been
+trained on the Switchboard (conversational tele-
+phone speech) transcripts of the Penn Treebank-
+3 corpus (Marcus et al, 1999), and used the 39
+Treebank POS labels. To strike a compromise be-
+tween generalization and discriminative power in
+the language model, we retained the topN most fre-
+quent word types from the in-domain training data
+as distinct tokens, and varied N as a metaparam-
+eter. Barzilay and Lee (2003) used a similar idea
+to generalize patterns by substituting words with
+slots. This strategy will tend to preserve words that
+are either generally frequent function and domain-
+independent words, capturing stylistic and syntac-
+tic patterns, or which are frequent domain-specific
+words, and can thus help characterize computer-
+directed utterances.
+Here is a sample sentence and its transformed ver-
+sion:
+Original: Let?s find an Italian restaurant
+around this area.
+POS-tagged: Let?s find an JJ NN around this
+area.
+The words except Italian and restaurant are un-
+changed because they are in the list of N most fre-
+quent words. We transformed all training and test
+data in this fashion and then modeled n-gram statis-
+tics as before. The one exception was the Bing
+anchor-text data, which was only available in the
+form of word n-grams (the sentence context required
+for accurate POS tagging was missing).
+224
+Table 3: Addressee detection performance (EER) with different training sets
+ASR Transcript
+Baseline (in-domain only) 31.1 17.3
+Fisher+ICSI, Single-user CB+Bing (out-of-domain only) 27.8 14.2
+Baseline + Fisher+ICSI, Single CB + Bing (both-all) 26.9 14.0
+Baseline + ICSI, Single-user CB (both-small) 26.6 13.0
+3.3 Evaluation metrics
+Typically, an application-dependent threshold would
+be applied to the decision score to convert it into a
+binary decision. The optimal threshold is a func-
+tion of prior class probabilities and error costs. As
+in Shriberg et al (2012), we used equal error rate
+(EER) to compare systems, since we are interested
+in the discriminative power of the decision score in-
+dependent of priors and costs. EER is the probability
+of false detections and misses at the operating point
+at which the two types of errors are equally proba-
+ble. A prior-free metric such as EER is more mean-
+ingful than classification accuracy because the utter-
+ance type distribution is heavily skewed (Table 1),
+and because the rate of human- versus computer-
+directed speech can vary widely depending on the
+particular people, domain, and context. We also use
+classification accuracy (based on data priors) in one
+analysis below, because EERs are not comparable
+for different test data subdivisions.
+3.4 Online model
+The actual dialog system used in this work pro-
+cesses utterances after receiving an entire segment
+of speech from the recognition subsystem. How-
+ever, we envision that a future version of the sys-
+tem would perform addressee detection in an online
+manner, making a decision as soon as enough evi-
+dence is gathered. This raises the question how soon
+the addressee can be detected once the user starts
+speaking. We simulate this processing mode using a
+windowed AD model.
+As shown in Figure 3, we define windows start-
+ing at the beginning of the utterance and investigate
+how AD performance changes as a function of win-
+dow size. We use only the words and n-grams falling
+completely within a given window. For example, the
+word find would be excluded from Window 1 in Fig-
+  >????         find       an     Italian    restaurant   around  this         area 
+Window 1  
+Window 2  ? 
+Figure 3: The window model
+ure 3.
+The benefit of early detection in this case is that
+once speech is classified as human-directed, it does
+not need to be sent to the speech recognizer and sub-
+sequent semantic processing. This saves processing
+time, especially if processing happens on a server.
+Based on the window model performance, we can
+assess the feasibility of an online AD model, which
+can be approached by shifting the detection window
+through time and finding addressee changes.
+4 Results and Discussion
+Table 3 compares the performance of our system us-
+ing various training data sources. For diagnostic pur-
+poses we also compare performance based on recog-
+nized words (the realistic scenario) to that based on
+human transcripts (idealized, best-case word recog-
+nition).
+Somewhat surprisingly, the system trained on out-
+of-domain data alone performs better by 3.3 EER
+points on ASR output and 3.1 points on transcripts
+compared to the in-domain baseline. Combining
+in-domain and out-of-domain data (both-all, both-
+small) gives about 1 point additional EER gain. Note
+that training on in-domain data plus the smaller-size
+out-of-domain corpora (both-small) is better than
+using all available data (both-all).
+Figure 4 shows the detection error trade-off
+(DET) between false alarm and miss errors for the
+225
+8  7  6  
+5  
+4  
+3  2  1  
+Figure 4: Detection error trade-off (DET) curves for
+the systems in Table 3. Thin lines at the top right
+corner use ASR output (1-4); thick lines at the bot-
+tom left corner use reference transcripts (5-8). Each
+line number represents one of the systems in Table 3:
+1,5 = in-domain only, 2,6 = out-of-domain only, 4,7
+= both-all, 3,8 = both-small.
+systems in Table 3. The DET plot depicts perfor-
+mance not only at the EER operating point (which
+lies on the diagonal), but over the range of possible
+trade-offs between false alarm and miss error rates.
+As can be seen, replacing or combining in-domain
+data with out-of-domain data gives clear perfor-
+mance gains, regardless of operating point (score
+threshold), and for both reference and recognized
+words.
+Figure 5 shows H-H vs. H-C classification accu-
+racies on each of the four utterance subtypes listed
+in Table 1. It is clear that computer-command ut-
+terances are the easiest to classify; the accuracy is
+more than 90% using transcripts, and more than 85%
+using ASR output. This is not surprising, since
+commands are from a fixed small set of phrases.
+The biggest gain from use of out-of-domain data
+is found for computer-directed noncommand utter-
+ances. This is helpful, since in general it is the
+noncommand computer-directed utterances (rather
+than the commands) that are highly confusable with
+human-directed utterances: both use unconstrained
+natural language. We note that H-H utterance are
+very poorly recognized in the ASR condition when
+only out-of-domain data is used. This may be be-
+20 30
+40 50
+60 70
+80 90
+100
+baseline(in-domain only)out-of-domainonlyboth-all
+both-small
+ASR  REF  
+Figure 5: AD accuracies by utterance type
+Table 4: Perplexities (computed on dev set ASR
+words) by utterance type, for different training cor-
+pora. Interpolation refers to the combination of the
+three models listed in each case.
+Test class
+Training set H-C H-H
+In-domain H-C (ASR) 257 1856
+Single-user CB 104 1237
+Bing anchor text 356 789
+Interpolation 58 370
+In-domain H-H (ASR) 887 1483
+Fisher 995 795
+ICSI meeting 2007 1583
+Interpolation 355 442
+cause the human-human corpora used in training
+consist of transcripts, whereas the ASR output for
+human-directed utterances is very errorful, creating
+a severe train-test mismatch.
+As for the optimization of the mixing weight ?,
+we found that minimizing perplexity on the devel-
+opment set of each class is effective. This is a
+standard optimization approach for interpolated lan-
+guage models, and can be carried out efficiently us-
+ing an expectation maximization algorithm. We also
+tried search-based optimization using the classifica-
+tion metric (EER) as the criterion. While this ap-
+proach could theoretically give better results (since
+perplexity is not a discriminative criterion) we found
+no significant improvement in our experiments.
+226
+Table 4 shows the perplexities by class of lan-
+guage models trained on different corpora. We can
+take these as an indication of training/test mismatch
+(lower perplexity indicating better match). We also
+find substantial perplexity reductions from interpo-
+lating models. In order to make perplexities compa-
+rable, we trained all models using the union of the
+vocabularies from the different sources.
+In spite of perplexity being a good way to opti-
+mize the weighting of sources, it is not clear that it
+is a good criterion for selecting data sources. For
+example, we see that the Fisher model has a much
+lower perplexity on H-H utterances than the ICSI
+meeting model. However, as reflected in Table 3,
+the H language model that leaves out the Fisher data
+actually performed better. The most likely expla-
+nation is that the Fisher corpus is an order of mag-
+nitude larger than the ICSI corpus, and that sheer
+data size, not stylistic similarity, may account for the
+lower perplexity of the Fisher model. Further inves-
+tigation is needed regarding good criteria for corpus
+selection for classification tasks such as AD.
+Table 5 shows the EER performance of the POS-
+based model, for various sizes N of the most-
+frequent word list. We observe that the partial re-
+placement of words with POS tags indeed improves
+over the baseline model performance, by 1.5 points
+on ASR output and by 1.1 points on transcripts.
+We also see that the gain over the corresponding
+word-only model is largest for the in-domain base-
+line model, and less or non-existent for the out-of-
+domain model. This is consistent with the notion
+that the in-domain model suffers the most from data
+sparseness, and therefore has the most to gain from
+better generalization.
+Interpolating with out-of-domain data still helps
+here. The optimal N differs for ASR output versus
+transcripts. The POS-based model with N = 300
+improves the EER by 0.5 points on ASR output,
+and N = 1000 improves the EER by 0.8 points on
+transcripts. Here we use relatively large amounts of
+training data, thus the performance gain is smaller,
+though still meaningful.
+Figure 6 shows the performance of the system
+using time windows anchored at the beginnings of
+utterances. We incrementally increase the window
+width from 0.5 seconds to 3 seconds and compare
+results to using full utterances. The leveling off of
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+0.5 1 1.5 2 3 full
+Equ
+al er
+ror r
+ate 
+Window width (seconds) 
+ASR baselineASR outsideASR both-allASR both-smallREF baselineREF outsideREF both-allREF both-small
+Figure 6: Simulated online performance on incre-
+mental windows
+Table 6: The top 15 first words in utterances
+ASR H-C Transcript H-C ASR H-H Transcript H-H
+go go play I
+scroll scroll go ohh
+start start is so
+show stop it yeah
+stop show what it?s
+bing find this you
+search Bing show uh
+find search how okay
+play pause bing what
+pause play select it
+look look okay and
+what uh does that?s
+select what start is
+how how so no
+the ohh I we
+the error plots indicates that most addressee infor-
+mation is contained in the first 1 to 1.5 seconds,
+although some additional information is found in
+the later part of utterances (the plots never level off
+completely). This pattern holds for both in-domain
+and out-of-domain training, as well as for combined
+models.
+To give an intuitive understanding of where this
+early addressee-relevant information comes from,
+we tabulated the top 15 word unigrams in each ut-
+terance class, are shown in Table 6. Note that
+the substantial differences between the third and
+fourth columns in the table reflect the high ASR
+error rate for human-directed utterances, whereas
+227
+Table 5: Performance of POS-based model with various top-N word lists (EER)
+Training data top100 top200 top300 top400 top500 top1000 top2000 Original
+ASR baseline 31.6 31.0 29.6 30.1 30.2 31.4 31.5 31.1
+out-of-domain only 36.5 37.0 37.2 36.9 36.8 36.6 37.3 27.8
+both-all 28.2 26.6 26.1 26.7 27.4 26.9 27.6 26.9
+both-small 28.0 26.5 26.2 26.6 26.4 26.3 26.5 26.6
+REF baseline 17.1 16.2 16.6 17.1 16.7 17.0 17.2 17.3
+out-of-domain only 17.6 17.6 17.5 17.2 17.1 17.2 18.1 14.2
+both-all 12.5 12.5 12.5 12.7 12.8 13.2 13.5 14.0
+both-small 13.0 13.2 12.8 13.2 12.8 12.2 12.7 13.0
+for computer-directed utterances, the frequent first
+words are mostly recognized correctly.
+In computer-directed utterances we see mostly
+command verbs, which, due to the imperative syn-
+tax of these commands occur in utterance-initial po-
+sition. Human-directed utterances are characterized
+by subject pronouns such as I and it, or answer parti-
+cles such as yeah and okay, which likewise occur in
+initial position. Based on word frequency and syn-
+tax alone it is thus clear why the beginnings of utter-
+ances contain strong lexical cues.
+5 Conclusion
+We explored the use of outside data for training
+lexical addressee detection systems for the human-
+human-computer scenario. Advantages include sav-
+ing the time and expense of an in-domain data col-
+lection, as well as performance gains even when
+some in-domain data is available. We show that H-
+C training data can be obtained from a single-user
+H-C collection, and that H-H speech can be mod-
+eled using general conversational speech. Using the
+outside training data, we obtain results that are even
+better than results using matched (but smaller) H-
+H-C training data. Results can be improved consid-
+erably by adapting H-C and H-H language models
+with small amounts of matched H-H-C data, via in-
+terpolation. The main reason for the improvement is
+better detection of computer-directed noncommand
+utterances, which tend to be confusable with human-
+directed utterances. Another effective way to over-
+come scarce training data is to replace the less fre-
+quent words with part-of-speech labels. In both
+baseline and interpolated model, we found that POS-
+based models that keep an appropriate number of the
+topN most frequent word types can further improve
+the system?s performance.
+In a second study we found that the most salient
+phrases for lexical addressee detection occur within
+the first 1 to 1.5 seconds of speech in each utter-
+ance. It reflects a syntactic tendency of class-specific
+words to occur utterance-initially, which shows the
+feasibility of the online AD system.
+Acknowledgments
+We thank our Microsoft colleagues Madhu
+Chinthakunta, Dilek Hakkani-Tu?r, Larry Heck,
+Lisa Stiefelman, and Gokhan Tu?r for developing
+the dialog system used in this work, as well as for
+many valuable discussions. Ashley Fidler was in
+charge of much of the data collection and annotation
+required for this study. We also thank Dan Jurafsky
+for useful feedback.
+228
+References
+Regina Barzilay and Lillian Lee. 2003. Learning to
+paraphrase: An unsupervised approach using multiple-
+sequence alignment. In Proceedings HLT-NAACL
+2003, pages 16?23, Edmonton, Canada.
+Jerome R. Bellegarda. 2004. Statistical language model
+adaptation: review and perspectives. Speech Commu-
+nication, 42:93?108.
+Dan Bohus and Eric Horvitz. 2011. Multiparty turn tak-
+ing in situated dialog: Study, lessons, and directions.
+In Proceedings ACL SIGDIAL, pages 98?109, Port-
+land, OR.
+Peter F. Brown, Vincent J. Della Pietra, Peter V. deSouza,
+Jenifer C. Lai, and Robert L. Mercer. 1992. Class-
+based n-gram models of natural language. Computa-
+tional Linguistics, 18(4):467?479.
+Christopher Cieri, David Miller, and Kevin Walker.
+2004. The Fisher corpus: a resource for the next gen-
+erations of speech-to-text. In Proceedings 4th Interna-
+tional Conference on Language Resources and Evalu-
+ation, pages 69?71, Lisbon.
+John Dowding, Richard Alena, William J. Clancey,
+Maarten Sierhuis, and Jeffrey Graham. 2006. Are
+you talking to me? dialogue systems supporting mixed
+teams of humans and robots. In Proccedings AAAI
+Fall Symposium: Aurally Informed Performance: Inte-
+grating Machine Listening and Auditory Presentation
+in Robotic Systems, Washington, DC.
+Dilek Hakkani-Tu?r, Gokhan Tur, and Larry Heck. 2011a.
+Research challenges and opportunities in mobile appli-
+cations [dsp education]. IEEE Signal Processing Mag-
+azine, 28(4):108 ?110.
+Dilek Z. Hakkani-Tu?r, Go?khan Tu?r, Larry P. Heck, and
+Elizabeth Shriberg. 2011b. Bootstrapping domain de-
+tection using query click logs for new domains. In
+Proceedings Interspeech, pages 709?712.
+Jian Huang, Jianfeng Gao, Jiangbo Miao, Xiaolong Li,
+Kuansang Wang, and Fritz Behr. 2010. Exploring web
+scale language models for search query processing. In
+Proceedings 19th International Conference on World
+Wide Web, pages 451?460, Raleigh, NC.
+Adam Janin, Don Baron, Jane Edwards, Dan Ellis,
+David Gelbart, Nelson Morgan, Barbara Peskin, Thilo
+Pfau, Elizabeth Shriberg, Andreas Stolcke, and Chuck
+Wooters. 2003. The ICSI meeting corpus. In Pro-
+ceedings IEEE ICASSP, volume 1, pages 364?367,
+Hong Kong.
+Michael Katzenmaier, Rainer Stiefelhagen, and Tanja
+Schultz. 2004. Identifying the addressee in human-
+human-robot interactions based on head pose and
+speech. In Proceedings 6th International Conference
+on Multimodal Interfaces, ICMI, pages 144?151, New
+York, NY, USA. ACM.
+Mitchell P. Marcus, Beatrice Santorini, Mary Ann
+Marcinkiewicz, and Ann Taylor. 1999. Treebank-3.
+Linguistic Data Consortium, catalog item LDC99T42.
+Rieks op den Akker and David Traum. 2009. A com-
+parison of addressee detection methods for multiparty
+conversations. In Proceedings of Diaholmia, pages
+99?106.
+Tim Paek, Eric Horvitz, and Eric Ringger. 2000. Con-
+tinuous listening for unconstrained spoken dialog. In
+Proceedings ICSLP, volume 1, pages 138?141, Bei-
+jing.
+Daniel Reich, Felix Putze, Dominic Heger, Joris Ijssel-
+muiden, Rainer Stiefelhagen, and Tanja Schultz. 2011.
+A real-time speech command detector for a smart con-
+trol room. In Proceedings Interspeech, pages 2641?
+2644, Florence.
+Elizabeth Shriberg, Andreas Stolcke, Dilek Hakkani-Tu?r,
+and Larry Heck. 2012. Learning when to listen:
+Detecting system-addressed speech in human-human-
+computer dialog. In Proceedings Interspeech, Port-
+land, OR.
+Ian H. Witten and Timothy C. Bell. 1991. The zero-
+frequency problem: Estimating the probabilities of
+novel events in adaptive text compression. IEEE
+Transactions on Information Theory, 37(4):1085?
+1094.
+229
+Proceedings of the 15th Conference on Computational Natural Language Learning: Shared Task, pages 28?34,
+Portland, Oregon, 23-24 June 2011. c?2011 Association for Computational Linguistics
+Stanford?s Multi-Pass Sieve Coreference Resolution System at the
+CoNLL-2011 Shared Task
+Heeyoung Lee, Yves Peirsman, Angel Chang, Nathanael Chambers,
+Mihai Surdeanu, Dan Jurafsky
+Stanford NLP Group
+Stanford University, Stanford, CA 94305
+{heeyoung,peirsman,angelx,natec,mihais,jurafsky}@stanford.edu
+Abstract
+This paper details the coreference resolution
+system submitted by Stanford at the CoNLL-
+2011 shared task. Our system is a collection
+of deterministic coreference resolution mod-
+els that incorporate lexical, syntactic, seman-
+tic, and discourse information. All these mod-
+els use global document-level information by
+sharing mention attributes, such as gender and
+number, across mentions in the same cluster.
+We participated in both the open and closed
+tracks and submitted results using both pre-
+dicted and gold mentions. Our system was
+ranked first in both tracks, with a score of 57.8
+in the closed track and 58.3 in the open track.
+1 Introduction
+This paper describes the coreference resolution sys-
+tem used by Stanford at the CoNLL-2011 shared
+task (Pradhan et al, 2011). Our system extends
+the multi-pass sieve system of Raghunathan et
+al. (2010), which applies tiers of deterministic coref-
+erence models one at a time from highest to lowest
+precision. Each tier builds on the entity clusters con-
+structed by previous models in the sieve, guarantee-
+ing that stronger features are given precedence over
+weaker ones. Furthermore, this model propagates
+global information by sharing attributes (e.g., gender
+and number) across mentions in the same cluster.
+We made three considerable extensions to the
+Raghunathan et al (2010) model. First, we added
+five additional sieves, the majority of which address
+the semantic similarity between mentions, e.g., us-
+ing WordNet distance, and shallow discourse under-
+standing, e.g., linking speakers to compatible pro-
+nouns. Second, we incorporated a mention detection
+sieve at the beginning of the processing flow. This
+sieve filters our syntactic constituents unlikely to be
+mentions using a simple set of rules on top of the
+syntactic analysis of text. And lastly, we added a
+post-processing step, which guarantees that the out-
+put of our system is compatible with the shared task
+and OntoNotes specifications (Hovy et al, 2006;
+Pradhan et al, 2007).
+Using this system, we participated in both the
+closed1 and open2 tracks, using both predicted and
+gold mentions. Using predicted mentions, our sys-
+tem had an overall score of 57.8 in the closed track
+and 58.3 in the open track. These were the top scores
+in both tracks. Using gold mentions, our system
+scored 60.7 in the closed track in 61.4 in the open
+track.
+We describe the architecture of our entire system
+in Section 2. In Section 3 we show the results of sev-
+eral experiments, which compare the impact of the
+various features in our system, and analyze the per-
+formance drop as we switch from gold mentions and
+annotations (named entity mentions and parse trees)
+to predicted information. We also report in this sec-
+tion our official results in the testing partition.
+1Only the provided data can be used, i.e., WordNet and gen-
+der gazetteer.
+2Any external knowledge source can be used. We used
+additional animacy, gender, demonym, and country and states
+gazetteers.
+28
+2 System Architecture
+Our system consists of three main stages: mention
+detection, followed by coreference resolution, and
+finally, post-processing. In the first stage, mentions
+are extracted and relevant information about men-
+tions, e.g., gender and number, is prepared for the
+next step. The second stage implements the ac-
+tual coreference resolution of the identified men-
+tions. Sieves in this stage are sorted from highest
+to lowest precision. For example, the first sieve (i.e.,
+highest precision) requires an exact string match be-
+tween a mention and its antecedent, whereas the
+last one (i.e., lowest precision) implements pronom-
+inal coreference resolution. Post-processing is per-
+formed to adjust our output to the task specific con-
+straints, e.g., removing singletons.
+It is important to note that the first system stage,
+i.e., the mention detection sieve, favors recall heav-
+ily, whereas the second stage, which includes the ac-
+tual coreference resolution sieves, is precision ori-
+ented. Our results show that this design lead to
+state-of-the-art performance despite the simplicity
+of the individual components. This strategy has
+been successfully used before for information ex-
+traction, e.g., in the BioNLP 2009 event extraction
+shared task (Kim et al, 2009), several of the top sys-
+tems had a first high-recall component to identify
+event anchors, followed by high-precision classi-
+fiers, which identified event arguments and removed
+unlikely event candidates (Bjo?rne et al, 2009). In
+the coreference resolution space, several works have
+shown that applying a list of rules from highest to
+lowest precision is beneficial for coreference reso-
+lution (Baldwin, 1997; Raghunathan el al., 2010).
+However, we believe we are the first to show that this
+high-recall/high-precision strategy yields competi-
+tive results for the complete task of coreference res-
+olution, i.e., including mention detection and both
+nominal and pronominal coreference.
+2.1 Mention Detection Sieve
+In our particular setup, the recall of the mention de-
+tection component is more important than its preci-
+sion, because any missed mentions are guaranteed
+to affect the final score, but spurious mentions may
+not impact the overall score if they are left as sin-
+gletons, which are discarded by our post-processing
+step. Therefore, our mention detection algorithm fo-
+cuses on attaining high recall rather than high preci-
+sion. We achieve our goal based on the list of sieves
+sorted by recall (from highest to lowest). Each sieve
+uses syntactic parse trees, identified named entity
+mentions, and a few manually written patterns based
+on heuristics and OntoNotes specifications (Hovy et
+al., 2006; Pradhan et al, 2007). In the first and
+highest recall sieve, we mark all noun phrase (NP),
+possessive pronoun, and named entity mentions in
+each sentence as candidate mentions. In the follow-
+ing sieves, we remove from this set al mentions that
+match any of the exclusion rules below:
+1. We remove a mention if a larger mention with
+the same head word exists, e.g., we remove The
+five insurance companies in The five insurance
+companies approved to be established this time.
+2. We discard numeric entities such as percents,
+money, cardinals, and quantities, e.g., 9%,
+$10, 000, Tens of thousands, 100 miles.
+3. We remove mentions with partitive or quanti-
+fier expressions, e.g., a total of 177 projects.
+4. We remove pleonastic it pronouns, detected us-
+ing a set of known expressions, e.g., It is possi-
+ble that.
+5. We discard adjectival forms of nations, e.g.,
+American.
+6. We remove stop words in a predetermined list
+of 8 words, e.g., there, ltd., hmm.
+Note that the above rules extract both mentions in
+appositive and copulative relations, e.g., [[Yongkang
+Zhou] , the general manager] or [Mr. Savoca] had
+been [a consultant. . . ]. These relations are not an-
+notated in the OntoNotes corpus, e.g., in the text
+[[Yongkang Zhou] , the general manager], only the
+larger mention is annotated. However, appositive
+and copulative relations provide useful (and highly
+precise) information to our coreference sieves. For
+this reason, we keep these mentions as candidates,
+and remove them later during post-processing.
+2.2 Mention Processing
+Once mentions are extracted, we sort them by sen-
+tence number, and left-to-right breadth-first traversal
+29
+order in syntactic trees in the same sentence (Hobbs,
+1977). We select for resolution only the first men-
+tions in each cluster,3 for two reasons: (a) the first
+mention tends to be better defined (Fox, 1993),
+which provides a richer environment for feature ex-
+traction; and (b) it has fewer antecedent candidates,
+which means fewer opportunities to make a mis-
+take. For example, given the following ordered list
+of mentions, {m11, m
+2
+2, m
+2
+3, m
+3
+4, m
+1
+5, m
+2
+6}, where
+the subscript indicates textual order and the super-
+script indicates cluster id, our model will attempt
+to resolve only m22 and m
+3
+4. Furthermore, we dis-
+card first mentions that start with indefinite pronouns
+(e.g., some, other) or indefinite articles (e.g., a, an)
+if they have no antecedents that have the exact same
+string extents.
+For each selected mention mi, all previous men-
+tions mi?1, . . . , m1 become antecedent candidates.
+All sieves traverse the candidate list until they find
+a coreferent antecedent according to their criteria
+or reach the end of the list. Crucially, when com-
+paring two mentions, our approach uses informa-
+tion from the entire clusters that contain these men-
+tions instead of using just information local to the
+corresponding mentions. Specifically, mentions in
+a cluster share their attributes (e.g., number, gen-
+der, animacy) between them so coreference decision
+are better informed. For example, if a cluster con-
+tains two mentions: a group of students, which is
+singular, and five students, which is plural,
+the number attribute of the entire cluster becomes
+singular or plural, which allows it to match
+other mentions that are both singular and plural.
+Please see (Raghunathan et al, 2010) for more de-
+tails.
+2.3 Coreference Resolution Sieves
+2.3.1 Core System
+The core of our coreference resolution system is
+an incremental extension of the system described in
+Raghunathan et al (2010). Our core model includes
+two new sieves that address nominal mentions and
+are inserted based on their precision in a held-out
+corpus (see Table 1 for the complete list of sieves
+deployed in our system). Since these two sieves use
+3We initialize the clusters as singletons and grow them pro-
+gressively in each sieve.
+Ordered sieves
+1. Mention Detection Sieve
+2. Discourse Processing Sieve
+3. Exact String Match Sieve
+4. Relaxed String Match Sieve
+5. Precise Constructs Sieve (e.g., appositives)
+6-8. Strict Head Matching Sieves A-C
+9. Proper Head Word Match Sieve
+10. Alias Sieve
+11. Relaxed Head Matching Sieve
+12. Lexical Chain Sieve
+13. Pronouns Sieve
+Table 1: The sieves in our system; sieves new to this pa-
+per are in bold.
+simple lexical constraints without semantic informa-
+tion, we consider them part of the baseline model.
+Relaxed String Match: This sieve considers two
+nominal mentions as coreferent if the strings ob-
+tained by dropping the text following their head
+words are identical, e.g., [Clinton] and [Clinton,
+whose term ends in January].
+Proper Head Word Match: This sieve marks two
+mentions headed by proper nouns as coreferent if
+they have the same head word and satisfy the fol-
+lowing constraints:
+Not i-within-i - same as Raghunathan et al (2010).
+No location mismatches - the modifiers of two men-
+tions cannot contain different location named entities,
+other proper nouns, or spatial modifiers. For example,
+[Lebanon] and [southern Lebanon] are not coreferent.
+No numeric mismatches - the second mention cannot
+have a number that does not appear in the antecedent, e.g.,
+[people] and [around 200 people] are not coreferent.
+In addition to the above, a few more rules are
+added to get better performance for predicted men-
+tions.
+Pronoun distance - sentence distance between a pronoun
+and its antecedent cannot be larger than 3.
+Bare plurals - bare plurals are generic and cannot have a
+coreferent antecedent.
+2.3.2 Semantic-Similarity Sieves
+We first extend the above system with two
+new sieves that exploit semantics from WordNet,
+Wikipedia infoboxes, and Freebase records, drawing
+on previous coreference work using these databases
+(Ng & Cardie, 2002; Daume? & Marcu, 2005;
+Ponzetto & Strube, 2006; Ng, 2007; Yang & Su,
+30
+2007; Bengston & Roth, 2008; Huang et al, 2009;
+inter alia). Since the input to a sieve is a collection of
+mention clusters built by the previous (more precise)
+sieves, we need to link mention clusters (rather than
+individual mentions) to records in these three knowl-
+edge bases. The following steps generate a query for
+these resources from a mention cluster.
+First, we select the most representative mention
+in a cluster by preferring mentions headed by proper
+nouns to mentions headed by common nouns, and
+nominal mentions to pronominal ones. In case of
+ties, we select the longer string. For example, the
+mention selected from the cluster {President George
+W. Bush, president, he} is President George W.
+Bush. Second, if this mention returns nothing from
+the knowledge bases, we implement the following
+query relaxation algorithm: (a) remove the text fol-
+lowing the mention head word; (b) select the lowest
+noun phrase (NP) in the parse tree that includes the
+mention head word; (c) use the longest proper noun
+(NNP*) sequence that ends with the head word; (d)
+select the head word. For example, the query pres-
+ident Bill Clinton, whose term ends in January is
+successively changed to president Bill Clinton, then
+Bill Clinton, and finally Clinton. If multiple records
+are returned, we keep the top two for Wikipedia and
+Freebase, and all synsets for WordNet.
+Alias Sieve
+This sieve addresses name aliases, which are de-
+tected as follows. Two mentions headed by proper
+nouns are marked as aliases (and stored in the same
+entity cluster) if they appear in the same Wikipedia
+infobox or Freebase record in either the ?name? or
+?alias? field, or they appear in the same synset in
+WordNet. As an example, this sieve correctly de-
+tects America Online and AOL as aliases. We also
+tested the utility of Wikipedia categories, but found
+little gain over morpho-syntactic features.
+Lexical Chain Sieve
+This sieve marks two nominal mentions as coref-
+erent if they are linked by a WordNet lexical chain
+that traverses hypernymy or synonymy relations. We
+use all synsets for each mention, but restrict it to
+mentions that are at most three sentences apart, and
+lexical chains of length at most four. This sieve cor-
+rectly links Britain with country, and plane with air-
+craft.
+To increase the precision of the above two sieves,
+we use additional constraints before two mentions
+can match: attribute agreement (number, gender, an-
+imacy, named entity labels), no i-within-i, no loca-
+tion or numeric mismatches (as in Section 2.3.1),
+and we do not use the abstract entity synset in Word-
+Net, except in chains that include ?organization?.
+2.3.3 Discourse Processing Sieve
+This sieve matches speakers to compatible pro-
+nouns, using shallow discourse understanding to
+handle quotations and conversation transcripts. Al-
+though more complex discourse constraints have
+been proposed, it has been difficult to show improve-
+ments (Tetreault & Allen, 2003; 2004).
+We begin by identifying speakers within text. In
+non-conversational text, we use a simple heuristic
+that searches for the subjects of reporting verbs (e.g.,
+say) in the same sentence or neighboring sentences
+to a quotation. In conversational text, speaker infor-
+mation is provided in the dataset.
+The extracted speakers then allow us to imple-
+ment the following sieve heuristics:
+? ?I?s4 assigned to the same speaker are coreferent.
+? ?you?s with the same speaker are coreferent.
+? The speaker and ?I?s in her text are coreferent.
+For example, I, my, and she in the following sen-
+tence are coreferent: ?[I] voted for [Nader] because
+[he] was most aligned with [my] values,? [she] said.
+In addition to the above sieve, we impose speaker
+constraints on decisions made by subsequent sieves:
+? The speaker and a mention which is not ?I? in the
+speaker?s utterance cannot be coreferent.
+? Two ?I?s (or two ?you?s, or two ?we?s) assigned to
+different speakers cannot be coreferent.
+? Two different person pronouns by the same speaker
+cannot be coreferent.
+? Nominal mentions cannot be coreferent with ?I?,
+?you?, or ?we? in the same turn or quotation.
+? In conversations, ?you? can corefer only with the
+previous speaker.
+For example, [my] and [he] are not coreferent in the
+above example (third constraint).
+4We define ?I? as ?I?, ?my?, ?me?, or ?mine?, ?we? as first
+person plural pronouns, and ?you? as second person pronouns.
+31
+Annotations Coref R P F1
+Gold Before 92.8 37.7 53.6
+Gold After 75.1 70.1 72.6
+Not gold Before 87.9 35.6 50.7
+Not gold After 71.7 68.4 70.0
+Table 2: Performance of the mention detection compo-
+nent, before and after coreference resolution, with both
+gold and actual linguistic annotations.
+2.4 Post Processing
+To guarantee that the output of our system matches
+the shared task requirements and the OntoNotes
+annotation specification, we implement two post-
+processing steps:
+? We discard singleton clusters.
+? We discard the mention that appears later in
+text in appositive and copulative relations. For
+example, in the text [[Yongkang Zhou] , the
+general manager] or [Mr. Savoca] had been
+[a consultant. . . ], the mentions Yongkang Zhou
+and a consultant. . . are removed in this stage.
+3 Results and Discussion
+Table 2 shows the performance of our mention de-
+tection algorithm. We show results before and after
+coreference resolution and post-processing (when
+singleton mentions are removed). We also list re-
+sults with gold and predicted linguistic annotations
+(i.e., syntactic parses and named entity recognition).
+The table shows that the recall of our approach is
+92.8% (if gold annotations are used) or 87.9% (with
+predicted annotations). In both cases, precision is
+low because our algorithm generates many spurious
+mentions due to its local nature. However, as the ta-
+ble indicates, many of these mentions are removed
+during post-processing, because they are assigned
+to singleton clusters during coreference resolution.
+The two main causes for our recall errors are lack
+of recognition of event mentions (e.g., verbal men-
+tions such as growing) and parsing errors. Parsing
+errors often introduce incorrect mention boundaries,
+which yield both recall and precision errors. For
+example, our system generates the predicted men-
+tion, the working meeting of the ?863 Program? to-
+day, for the gold mention the working meeting of the
+?863 Program?. Due to this boundary mismatch,
+all mentions found to be coreferent with this pre-
+dicted mention are counted as precision errors, and
+all mentions in the same coreference cluster with the
+gold mention are counted as recall errors.
+Table 3 lists the results of our end-to-end system
+on the development partition. ?External Resources?,
+which were used only in the open track, includes: (a)
+a hand-built list of genders of first names that we cre-
+ated, incorporating frequent names from census lists
+and other sources, (b) an animacy list (Ji and Lin,
+2009), (c) a country and state gazetteer, and (d) a de-
+monym list. ?Discourse? stands for the sieve intro-
+duced in Section 2.3.3. ?Semantics? stands for the
+sieves presented in Section 2.3.2. The table shows
+that the discourse sieve yields an improvement of
+almost 2 points to the overall score (row 1 versus
+3), and external resources contribute 0.5 points. On
+the other hand, the semantic sieves do not help (row
+3 versus 4). The latter result contradicts our initial
+experiments, where we measured a minor improve-
+ment when these sieves were enabled and gold men-
+tions were used. Our hypothesis is that, when pre-
+dicted mentions are used, the semantic sieves are
+more likely to link spurious mentions to existing
+clusters, thus introducing precision errors. This sug-
+gests that a different tuning of the sieve parameters
+is required for the predicted mention scenario. For
+this reason, we did not use the semantic sieves for
+our submission. Hence, rows 2 and 3 in the table
+show the performance of our official submission in
+the development set, in the closed and open tracks
+respectively.
+The last three rows in Table 3 give insight on the
+impact of gold information. This analysis indicates
+that using gold linguistic annotation yields an im-
+provement of only 2 points. This implies that the
+quality of current linguistic processors is sufficient
+for the task of coreference resolution. On the other
+hand, using gold mentions raises the overall score by
+15 points. This clearly indicates that pipeline archi-
+tectures where mentions are identified first are inad-
+equate for this task, and that coreference resolution
+might benefit from the joint modeling of mentions
+and coreference chains.
+Finally, Table 4 lists our results on the held-out
+testing partition. Note that in this dataset, the gold
+mentions included singletons and generic mentions
+32
+Components MUC B3 CEAFE BLANC
+ER D S GA GM R P F1 R P F1 R P F1 R P F1 avg F1?
+58.8 56.5 57.6 68.0 68.7 68.4 44.8 47.1 45.9 68.8 73.5 70.9 57.3?
+59.1 57.5 58.3 69.2 71.0 70.1 46.5 48.1 47.3 72.2 78.1 74.8 58.6? ?
+60.1 59.5 59.8 69.5 71.9 70.7 46.5 47.1 46.8 73.8 78.6 76.0 59.1? ? ?
+60.3 58.5 59.4 69.9 71.1 70.5 45.6 47.3 46.4 73.9 78.2 75.8 58.8? ? ?
+63.8 61.5 62.7 71.4 72.3 71.9 47.1 49.5 48.3 75.6 79.6 77.5 61.0? ? ?
+73.6 90.0 81.0 69.8 89.2 78.3 79.4 52.5 63.2 79.1 89.2 83.2 74.2? ? ? ?
+74.0 90.1 81.3 70.2 89.3 78.6 79.7 53.1 63.7 79.5 89.6 83.6 74.5
+Table 3: Comparison between various configurations of our system. ER, D, S stand for External Resources, Discourse,
+and Semantics sieves. GA and GM stand for Gold Annotations, and Gold Mentions. The top part of the table shows
+results using only predicted annotations and mentions, whereas the bottom part shows results of experiments with gold
+information. Avg F1 is the arithmetic mean of MUC, B3, and CEAFE. We used the development partition for these
+experiments.
+MUC B3 CEAFE BLANC
+Track Gold Mention Boundaries R P F1 R P F1 R P F1 R P F1 avg F1
+Close Not Gold 61.8 57.5 59.6 68.4 68.2 68.3 43.4 47.8 45.5 70.6 76.2 73.0 57.8
+Open Not Gold 62.8 59.3 61.0 68.9 69.0 68.9 43.3 46.8 45.0 71.9 76.6 74.0 58.3
+Close Gold 65.9 62.1 63.9 69.5 70.6 70.0 46.3 50.5 48.3 72.0 78.6 74.8 60.7
+Open Gold 66.9 63.9 65.4 70.1 71.5 70.8 46.3 49.6 47.9 73.4 79.0 75.8 61.4
+Table 4: Results on the official test set.
+as well, whereas in development (lines 6 and 7 in Ta-
+ble 3), gold mentions included only mentions part of
+an actual coreference chain. This explains the large
+difference between, say, line 6 in Table 3 and line 4
+in Table 4.
+Our scores are comparable to previously reported
+state-of-the-art results for coreference resolution
+with predicted mentions. For example, Haghighi
+and Klein (2010) compare four state-of-the-art sys-
+tems on three different corpora and report B3 scores
+between 63 and 77 points. While the corpora used
+in (Haghighi and Klein, 2010) are different from the
+one in this shared task, our result of 68 B3 suggests
+that our system?s performance is competitive. In this
+task, our submissions in both the open and the closed
+track obtained the highest scores.
+4 Conclusion
+In this work we showed how a competitive end-to-
+end coreference resolution system can be built using
+only deterministic models (or sieves). Our approach
+starts with a high-recall mention detection compo-
+nent, which identifies mentions using only syntactic
+information and named entity boundaries, followed
+by a battery of high-precision deterministic corefer-
+ence sieves, applied one at a time from highest to
+lowest precision. These models incorporate lexical,
+syntactic, semantic, and discourse information, and
+have access to document-level information (i.e., we
+share mention attributes across clusters as they are
+built). For this shared task, we extended our ex-
+isting system with new sieves that model shallow
+discourse (i.e., speaker identification) and seman-
+tics (lexical chains and alias detection). Our results
+demonstrate that, despite their simplicity, determin-
+istic models for coreference resolution obtain com-
+petitive results, e.g., we obtained the highest scores
+in both the closed and open tracks (57.8 and 58.3
+respectively). The code used for this shared task is
+publicly released.5
+Acknowledgments
+We thank the shared task organizers for their effort.
+This material is based upon work supported by
+the Air Force Research Laboratory (AFRL) under
+prime contract no. FA8750-09-C-0181. Any opin-
+ions, findings, and conclusion or recommendations
+expressed in this material are those of the authors
+and do not necessarily reflect the view of the Air
+Force Research Laboratory (AFRL).
+5See http://nlp.stanford.edu/software/
+dcoref.shtml for the standalone coreference resolution
+system and http://nlp.stanford.edu/software/
+corenlp.shtml for Stanford?s suite of natural language
+processing tools, which includes this coreference resolution
+system.
+33
+References
+B. Baldwin. 1997. CogNIAC: high precision corefer-
+ence with limited knowledge and linguistic resources.
+In Proceedings of a Workshop on Operational Factors
+in Practical, Robust Anaphora Resolution for Unre-
+stricted Texts.
+E. Bengston & D. Roth. 2008. Understanding the value
+of features for coreference resolution. In EMNLP.
+Jari Bjo?rne, Juho Heimonen, Filip Ginter, Antti Airola,
+Tapio Pahikkala, and Tapio Salakoski. 2009. Ex-
+tracting Complex Biological Events with Rich Graph-
+Based Feature Sets. Proceedings of the Workshop on
+BioNLP: Shared Task.
+H. Daume? III and D. Marcu. 2005. A large-scale ex-
+ploration of effective global features for a joint entity
+detection and tracking model. In EMNLP-HLT.
+B. A. Fox 1993. Discourse structure and anaphora:
+written and conversational English. Cambridge Uni-
+versity Press.
+A. Haghighi and D. Klein. 2010. Coreference resolution
+in a modular, entity-centered model. In Proc. of HLT-
+NAACL.
+E. Hovy, M. Marcus, M. Palmer, L. Ramshaw, and R.
+Weischedel 2006. OntoNotes: The 90% Solution. In
+HLT/NAACL.
+Z. Huang, G. Zeng, W. Xu, and A. Celikyilmaz 2009.
+Accurate semantic class classifier for coreference res-
+olution. In EMNLP.
+J.R. Hobbs. 1977. Resolving pronoun references. Lin-
+gua.
+H. Ji and D. Lin. 2009. Gender and animacy knowl-
+edge discovery from web-scale n-grams for unsuper-
+vised person mention detection. In PACLIC.
+Jin-Dong Kim, Tomoko Ohta, Sampo Pyysalo, Yoshi-
+nobu Kano, and Jun?ichi Tsujii. 2009. Overview
+of the BioNLP?09 Shared Task on Event Extrac-
+tion. Proceedings of the NAACL-HLT 2009 Work-
+shop on Natural Language Processing in Biomedicine
+(BioNLP?09).
+V. Ng 2007. Semantic Class Induction and Coreference
+Resolution. In ACL.
+V. Ng and C. Cardie. 2002. Improving Machine Learn-
+ing Approaches to Coreference Resolution. in ACL
+2002
+S. Ponzetto and M. Strube. 2006. Exploiting semantic
+role labeling, Wordnet and Wikipedia for coreference
+resolution. Proceedings of NAACL.
+Sameer Pradhan, Lance Ramshaw, Ralph Weischedel,
+Jessica MacBride, and Linnea Micciulla. 2007. Unre-
+stricted Coreference: Indentifying Entities and Events
+in OntoNotes. In Proceedings of the IEEE Interna-
+tional Conference on Semantic Computing (ICSC).
+Sameer Pradhan, Lance Ramshaw, Mitchell Marcus,
+Martha Palmer, Ralph Weischedel, and Nianwen Xue.
+2011. CoNLL-2011 Shared Task: Modeling Unre-
+stricted Coreference in OntoNotes. In Proceedings
+of the Fifteenth Conference on Computational Natural
+Language Learning (CoNLL 2011).
+K. Raghunathan, H. Lee, S. Rangarajan, N. Chambers,
+M. Surdeanu, D. Jurafsky, and C. Manning 2010.
+A Multi-Pass Sieve for Coreference Resolution. In
+EMNLP.
+J. Tetreault and J. Allen. 2003. An Empirical Evalua-
+tion of Pronoun Resolution and Clausal Structure. In
+Proceedings of the 2003 International Symposium on
+Reference Resolution.
+J. Tetreault and J. Allen. 2004. Dialogue Structure and
+Pronoun Resolution. In DAARC.
+X. Yang and J. Su. 2007. Coreference Resolution Us-
+ing Semantic Relatedness Information from Automat-
+ically Discovered Patterns. In ACL.
+34

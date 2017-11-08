@@ -1,0 +1,780 @@
+Proceedings of NAACL HLT 2007, Companion Volume, pages 17?20,
+Rochester, NY, April 2007. c?2007 Association for Computational Linguistics
+K-Best Suffix Arrays 
+ 
+ 
+Kenneth Church 
+ 
+Bo Thiesson 
+ 
+Robert Ragno 
+Microsoft Microsoft Microsoft 
+One Microsoft Way One Microsoft Way One Microsoft Way 
+Redmond, WA 98052 Redmond, WA 98052 Redmond, WA 98052 
+church@microsoft.com thiesson@microsoft.com rragno@microsoft.com 
+ 
+Abstract 
+Suppose we have a large dictionary of 
+strings.  Each entry starts with a figure of 
+merit (popularity).  We wish to find the k-
+best matches for a substring, s, in a dicti-
+noary, dict.  That is,  grep s dict | sort ?n | 
+head ?k, but we would like to do this in 
+sublinear time.  Example applications: (1) 
+web queries with popularities, (2) prod-
+ucts with prices and (3) ads with click 
+through rates.  This paper proposes a 
+novel index, k-best suffix arrays, based on 
+ideas borrowed from suffix arrays and kd-
+trees.  A standard suffix array sorts the 
+suffixes by a single order (lexicographic) 
+whereas k-best suffix arrays are sorted by 
+two orders (lexicographic and popularity). 
+Lookup time is between log N and sqrt N. 
+1 Standard Suffix Arrays 
+This paper will introduce k-best suffix arrays, 
+which are similar to standard suffix arrays (Manber 
+and Myers, 1990),  an index that makes it conven-
+ient to compute the frequency and location of a 
+substring, s, in a long sequence, corpus.  A suffix 
+array, suf, is an array of all N suffixes, sorted al-
+phabetically.  A suffix, suf[i], also known as a 
+semi-infinite string, is a string that starts at position 
+j in the corpus and continues to the end of the cor-
+pus.  In practical implementations, a suffix is a 4-
+byte integer, j.  In this way, an int (constant space) 
+denotes a long string (N bytes). 
+The make_standard_suf program below creates 
+a standard suffix array.  The program starts with a 
+corpus, a global variable containing a long string 
+of N characters.  The program allocates the suffix 
+array suf and initializes it to a vector of N ints (suf-
+fixes) ranging from 0 to N?1.  The suffix array is 
+sorted by lexicographic order and returned. 
+ 
+int* make_standard_suf () { 
+  int N = strlen(corpus); 
+  int* suf = (int*)malloc(N * sizeof(int)); 
+  for (int i=0; i<N; i++) suf[i] = i; 
+  qsort(suf, N, sizeof(int), lexcomp); 
+  return suf;} 
+ 
+int lexcomp(int* a, int* b) 
+{ return strcmp(corpus + *a, corpus + *b);} 
+ 
+This program is simple to describe (but inefficient, 
+at least in theory) because strcmp can take O(N) 
+time in the worst case (where the corpus contains 
+two copies of an arbitrarily long string).  See 
+http://cm.bell-labs.com/cm/cs/who/doug/ssort.c for 
+an implementation of the O(N log N) Manber and 
+Myers algorithm.  However, in practice, when the 
+corpus is a dictionary of relatively short entries 
+(such as web queries), the worst case is unlikely to 
+come up.  In which case, the simple make_suf pro-
+gram above is good enough, and maybe even better 
+than the O(N log N) solution. 
+1.1 Standard Suffix Array Lookup 
+To compute the frequency and locations of a sub-
+string s, use a pair of binary searches to find i and 
+j, the locations of the first and last suffix in the suf-
+fix array that start with s.  Each suffix between i 
+and j point to a location of s in the corpus.  The 
+frequency is simply: j ? i + 1.   
+Here is some simple code.  We show how to 
+find the first suffix.  The last suffix is left as an 
+exercise.  As above, we ignore the unlikely worst 
+17
+case (two copies of a long string).  See references 
+mentioned above for worst case solutions. 
+ 
+void standard_lookup(char* s, int* suf, int N){ 
+  int* i = find_first_suf(s, suf, N); 
+  int* j = find_last_suf(s, suf, N); 
+  for (int* k=i; k<=j; k++) output(*k);} 
+ 
+int* find_first_suf(char* s, int* suf, int N) { 
+  int len = strlen(s); 
+  int* high = suf + N; 
+  while (suf + 2 < high) { 
+    int* mid = suf + (high?suf)/2; 
+    int c = strncmp(s, corpus + *mid, len); 
+    if (c == 0) high = mid+1; 
+    else if (c < 0) high = mid; 
+    else suf = mid;}   
+  for ( ; suf < high; suf++) 
+    if (strncmp(s, corpus + *suf, len) == 0) 
+      return suf; 
+  return NULL;} // not found 
+2 K-Best Suffix Arrays 
+K-best suffix arrays are like standard suffix arrays, 
+except there are two orders instead of one.  In addi-
+tion to lexicographic order, we assume a figure of 
+merit, which we will refer to as popularity.  For 
+example, the popularity of a string could be its fre-
+quency in a search log.  The code below assumes 
+that the corpus is a sequence of strings that comes 
+pre-sorted by popularity, and then the popularities 
+have been stripped off.   These assumptions make 
+it very easy to compare two strings by popularity.  
+All popcomp has to do is to compare the two posi-
+tions in the corpus.1 
+The make_kbest_suf program below is similar to 
+the make_standard_suf program above except we 
+now sort by the two orders at alternating depths in 
+the tree.  First we sort lexicographically and then 
+we sort by popularity and so on, using a construc-
+tion similar to KD-Trees (Bentley, 1975).  The 
+code below is simple to describe (though there are 
+more efficient implementations that avoid unnec-
+essary qsorts). 
+ 
+int* make_kbest_suf () { 
+  int N = strlen(corpus); 
+  int* suf = (int*)malloc(N * sizeof(int)); 
+                                                          
+1
+ With a little extra book keeping, one can keep a table on the 
+side that makes it possible to map back and forth between 
+popularity rank and the actual popularity.  This turns out to be 
+useful for some applications. 
+  for (int i=0; i<N; i++) suf[i]=i; 
+  process(suf, suf+N, 0); 
+  return suf;} 
+ 
+void process(int* start, int* end, int depth) { 
+  int* mid = start + (end ? start)/2; 
+  if (end <= start+1) return; 
+  qsort(start, end-start, sizeof(int),  
+            (depth & 1) ? popcomp : lexcomp); 
+  process(start, mid, depth+1); 
+  process(mid+1, end, depth+1);} 
+ 
+int popcomp(int* a, int* b) {   
+  if (*a > *b) return 1; 
+  if (*a < *b) return ?1; 
+  return 0;} 
+ 
+2.1 K-Best Suffix Array Lookup 
+To find the k-best matches for a particular sub-
+string s, we do what we would normally do for 
+standard suffix arrays on lexicographic splits.  
+However, on popularity splits, we search the more 
+popular half first and then we search the less popu-
+lar half, if necessary. 
+An implementation of kbest-lookup is given be-
+low.  D denotes the depth of the search thus far.  
+Kbest-lookup is initially called with D of 0.  Pro-
+pose maintains a heap of the k-best matches found 
+thus far.  Done returns true if its argument is less 
+popular than the kth best match found thus far. 
+ 
+void kbest_lookup(char* s, int* suf, int N, int D){ 
+  int* mid = suf + N/2; 
+  int len = strlen(s); 
+ 
+  if (N==1 && strncmp(s, corpus+*suf, len)==0) 
+ propose(*suf);  
+  if (N <= 1) return; 
+ 
+  if (D&1) {   // popularity split 
+    kbest_lookup(s, suf, mid?suf, D+1); 
+    if (done(*mid)) return; 
+    if (strncmp(s, corpus + *mid, len) == 0)  
+ propose(*mid); 
+    kbest_lookup(s, mid+1, (suf+N)?mid?1,  
+   D+1);} 
+  else {   // lexicographic split 
+    int c = strncmp(s, corpus + *mid, len); 
+    int n = (suf+N)?mid?1; 
+    if (c < 0) kbest_lookup(s, suf, mid-suf, D+1); 
+    else if (c > 0) kbest_lookup(s, mid+1, n, D+1); 
+    else { kbest_lookup(s, suf, mid-suf, depth+1); 
+              propose(*mid); 
+              kbest_lookup(s, mid+1, n, D+1); }}} 
+18
+2.2 A Short Example: To be or not to be 
+Suppose we were given the text, ?to be or not to 
+be.?  We could then generate the following dic-
+tionary with frequencies (popularities). 
+ 
+Popularity Word 
+2 to 
+2 be 
+1 or 
+1 not 
+ 
+The dictionary is sorted by popularity.  We treat 
+the second column as an N=13 byte corpus (with 
+underscores at record boundaries): to_be_or_not_ 
+ 
+Standard  K-Best  
+suf corpus + suf[i] suf corpus + suf[i] 
+12 _ 2 _be_or_not_ 
+2 _be_or_not_ 3 be_or_not_ 
+8 _not_ 4 e_or_not_ 
+5 _or_not_ 5 _or_not_ 
+3 be_or_not_ 8 _not_ 
+4 e_or_not_ 12 _ 
+9 not_ 9 not_ 
+1 o_be_or_not_ 1 o_be_or_not_ 
+6 or_not_ 6 or_not_ 
+10 ot_ 0 to_be_or_not_ 
+7 r_not_ 7 r_not_ 
+11 t_ 10 ot_ 
+0 to_be_or_not_ 11 t_ 
+ 
+The standard suffix array is the 1st column of the 
+table above.  For illustrative convenience, we show 
+the corresponding strings in the 2nd column.  Note 
+that the 2nd column is sorted lexicographically. 
+The k-best suffix array is the 3rd column with the 
+corresponding strings in the 4th column.  The first 
+split is a lexicographic split at 9 (?not_?).  On both 
+sides of that split we have a popularity split at 5 
+(?_or_not_?) and 7 (?r_not_?). (Recall that relative 
+popularity depends on corpus position.)  Following 
+there are 4 lexicographic splits, and so on. 
+If k-best lookup were given the query string s = 
+?o,? then it would find 1 (o_be_or_not_), 6 
+(or_not_) and 10 (ot_) as the best choices (in that 
+order).   The first split is a lexicographic split.  All 
+the matches are below 9 (not_).  The next split is 
+on popularity.  The matches above this split (1&6) 
+are as popular as the matches below this split (10).   
+It is often desirable to output matching records 
+(rather than suffixes).  Records are output in popu-
+larity order.  The actual popularity can be output, 
+using the side table mentioned in footnote 1: 
+ 
+Popularity Record 
+2 to 
+1 or 
+1 not 
+2.3 Time and Space Complexity 
+The space requirements are the same for both stan-
+dard and k-best suffix arrays.  Both indexes are 
+permutations of the same suffixes. 
+The time requirements are quite different.  Stan-
+dard suffix arrays were designed to find all 
+matches, not the k-best.  Standard suffix arrays can 
+find all matches in O(log N) time.  However, if we 
+attempt to use standard suffix arrays to find the k-
+best, something they were not designed to do, then 
+it could take a long time to sort through the worst 
+case (an embarrassment of riches with lots of 
+matches).  When the query matches every string in 
+the dictionary, standard suffix arrays do not help us 
+find the best matches. K-best suffix arrays were 
+designed to handle an embarrassment of riches, 
+which is quite common, especially when the sub-
+string s is short.  Each popularity split cuts the 
+search space in half when there are lots of lexico-
+graphic matches. 
+The best case for k-best suffix arrays is when the 
+popularity splits always work in our favor and we 
+never have to search the less popular half.  The 
+worst case is when the popularity splits always fail, 
+such as when the query string s is not in the corpus. 
+In this case, we must always check both the popu-
+lar half and the unpopular half at each split, since 
+the failure to find a lexicographic match in the first 
+tells us nothing about the existence of matches in 
+the second. 
+Asymptotically, k-best lookup takes between log 
+N and sqrt N time.  To see this complexity result, 
+let P(N) be the work to process N items starting 
+with a popularity splits and let L(N) be the work to 
+process N items starting with a lexicographic 
+splits.  
+Thus, 
+19
+P(N) = ?L(N/2) + C1 
+L(N) = P(N/2) + C2 
+ 
+where ? = 2?p, when p is the probability that the 
+popular half contains sufficient matches.  ? lies 
+between 1 (best case) and 2 (worst case).  C1 and 
+C2 are constants.  Thus, 
+ 
+P(N) = ? P(N/4) + C                                       (1) 
+ 
+where C = C1 + ?C2.   Using the master method 
+(Cormen et al 2001), P(N) = O(log2N) in the best 
+case (?=1). In the worst case (?=2), P(N) = O(sqrt 
+N).  In general, for ? > 1, P(N) = O(N(log2 ?)/2). 
+In practical applications, we expect popularity 
+splits to work more often than not, and therefore 
+we expect the typical case to be closer to the best 
+case than the worst case.   
+3 Empirical Study 
+The plot below shows the k-best lookup time as 
+a function of square root of corpus size.  We ex-
+tracted sub-corpora from a 150 MB collection of 
+8M queries, sorted by popularity, according to the 
+logs from Microsoft www.live.com. All experi-
+ments were performed on a Pentium 4, 3.2GHz 
+dual processor machine with enough memory to 
+avoid paging. 
+The line of diamonds shows the worst case, 
+where we the query string is not in the index.  Note 
+that the diamonds fit the regression line quite well, 
+confirming the theory in the previous section:  The 
+worst case lookup is O(sqrt N). 
+0
+10
+20
+30
+40
+50
+0 1000 2000 3000
+Sqrt(Corpus size)
+Ti
+m
+e 
+(se
+c) 
+fo
+r 
+10
+k 
+lo
+o
+ku
+ps
+ 
+ 
+To simulate a more typical scenario, we con-
+structed random samples of queries by popularity, 
+represented by squares in the figure.  Note that the 
+squares are well below the line, demonstrating that 
+these queries are considerably easier than the worst 
+case. 
+K-best suffix arrays have been used in auto-
+complete applications (Church and Thiesson, 
+2005).  The triangles with the fastest lookup times 
+demonstrate the effectiveness of the index for this 
+application.  We started with the random sample 
+above, but replaced each query q in the sample 
+with a substring of q (of random size). 
+4 Conclusion 
+A new data structure, k-best suffix arrays, was pro-
+posed.  K-best suffix arrays are sorted by two or-
+ders, lexicographic and popularity, which make it 
+convenient to find the most popular matches, espe-
+cially when there are lots of matches.  In many ap-
+plications, such as the web, there are often 
+embarrassments of riches (lots of matches).  
+Lookup time varies from log N to sqrt N, de-
+pending on the effectiveness of the popularity 
+splits.  In the best case (e.g., very short query 
+strings that match nearly everything), the popular-
+ity splits work nearly every time and we rarely 
+have to search the less popular side of a popularity 
+split.  In this case, the time is close to log N.  On 
+the other hand, in the worst case (e.g., query 
+strings that match nothing), the popularity splits 
+never work, and we always have to search both 
+sides of a popularity split.  In this case, lookup 
+time is sqrt N.  In many cases, popularity splits 
+work more often than not, and therefore, perform-
+ance is closer to log N than sqrt N. 
+References  
+Jon Louis Bentley. 1975.  Multidimensional Binary 
+Search Trees Used for Associative Searching, Com-
+munications of the ACM, 18:9, pp. 509-517. 
+Kenneth Church and Bo Thiesson. 2005.  The Wild 
+Thing,  ACL, pp. 93-96. 
+ 
+Udi Manber and Gene Myers. 1990. Suffix Arrays: A 
+New Method for On-line String Searches,  SODA, pp. 
+319-327. 
+Thomas H. Cormen, Charles E. Leiserson, Ronald L. 
+Rivest, and Clifford Stein. 2001. Introduction to Al-
+gorithms, Second Edition. MIT Press and McGraw-
+Hill, pp.73?90. 
+20
+Proceedings of the ACL Interactive Poster and Demonstration Sessions,
+pages 93?96, Ann Arbor, June 2005. c?2005 Association for Computational Linguistics
+The Wild Thing! 
+ 
+Kenneth Church Bo Thiesson 
+Microsoft Research 
+Redmond, WA, 98052, USA 
+{church, thiesson}@microsoft.com 
+ 
+ 
+ 
+ 
+Abstract 
+Suppose you are on a mobile device with 
+no keyboard (e.g., a cell or PDA).  How 
+can you enter text quickly?  T9?  Graffiti? 
+This demo will show how language model-
+ing can be used to speed up data entry, both 
+in the mobile context, as well as the desk-
+top.  The Wild Thing encourages users to 
+use wildcards (*).  A language model finds 
+the k-best expansions.  Users quickly figure 
+out when they can get away with wild-
+cards.  General purpose trigram language 
+models are effective for the general case 
+(unrestricted text), but there are important 
+special cases like searching over popular 
+web queries, where more restricted lan-
+guage models are even more effective. 
+1 Motivation: Phone App 
+Cell phones and PDAs are everywhere.  Users love 
+mobility.  What are people doing with their phone?  
+You?d think they would be talking on their phones, 
+but a lot of people are typing.  It is considered rude 
+to talk on a cell in certain public places, especially 
+in Europe and Asia.  SMS text messaging enables 
+people to communicate, even when they can?t talk. 
+It is bizarre that people are typing on their 
+phones given how painful it is.   ?Talking on the 
+phone? is a collocation, but ?typing on the phone? 
+is not.  Slate (slate.msn.com/id/2111773) recently 
+ran a story titled: ?A Phone You Can Actually 
+Type On? with the lead: 
+?If you've tried to zap someone a text mes-
+sage recently, you've probably discovered 
+the huge drawback of typing on your cell 
+phone. Unless you're one of those cyborg 
+Scandinavian teenagers who was born with 
+a Nokia in his hand, pecking out even a 
+simple message is a thumb-twisting chore.?  
+ 
+There are great hopes that speech recognition 
+will someday make it unnecessary to type on your 
+phone (for SMS or any other app), but speech rec-
+ognition won?t help with the rudeness issue.  If 
+people are typing because they can?t talk, then 
+speech recognition is not an option.  Fortunately, 
+the speech community has developed powerful 
+language modeling techniques that can help even 
+when speech is not an option. 
+2 K-Best String Matching 
+Suppose we want to search for MSN using a cell 
+phone.  A standard approach would be to type 6 
+<pause> 777 <pause> 66, where 6  M, 777  S 
+and 66  N.  (The pauses are necessary for disam-
+biguation.)   Kids these days are pretty good at typ-
+ing this way, but there has to be a better solution. 
+T9 (www.t9.com) is an interesting alternative.  
+The user types 676 (for MSN).  The system uses a 
+(unigram) language model to find the k-best 
+matches.  The user selects MSN from this list.  
+Some users love T9, and some don?t. 
+The input, 676, can be thought of as short hand 
+for the regular expression:  
+/^[6MNOmno][7PRSprs][6MNOmno]$/ 
+using standard Unix notation.  Regular expressions 
+become much more interesting when we consider 
+wildcards.  So-called ?word wheeling? can be 
+thought of as the special case where we add a 
+wildcard to the end of whatever the user types.  
+Thus, if the user types 676 (for MSN), we would 
+find the k-best matches for:  
+/^[6MNOmno][7PRSprs][6MNOmno].*/ 
+93
+See Google Suggests1 for a nice example of 
+word wheeling.  Google Suggests makes it easy to 
+find popular web queries (in the standard non-
+mobile desktop context).  The user types a prefix.  
+After each character, the system produces a list of 
+the k most popular web queries that start with the 
+specified prefix. 
+Word wheeling not only helps when you know 
+what you want to say, but it also helps when you 
+don?t.  Users can?t spell.  And things get stuck on 
+the tip of their tongue.  Some users are just brows-
+ing.  They aren?t looking for anything in particular, 
+but they?d like to know what others are looking at. 
+The popular query application is relatively easy 
+in terms of entropy.  About 19 bits are needed to 
+specify one of the 7 million most popular web que-
+ries.  That is, if we assign each web query a prob-
+ability based on query logs collected at msn.com, 
+then we can estimate entropy, H, and discover that 
+H?19.  (About 23 bits would be needed if these 
+pages were equally likely, but they aren?t.)  It is 
+often said that the average query is between two 
+and three words long, but H is more meaningful 
+than query length. 
+General purpose trigram language models are 
+effective for the general case (unrestricted text), 
+but there are important special cases like popular 
+web queries, where more restricted language mod-
+els are even more effective than trigram models.  
+Our language model for web queries is simply a 
+list of queries and their probabilities.  We consider 
+queries to be a finite language, unlike unrestricted 
+text where the trigram language model allows sen-
+tences to be arbitrarily long. 
+Let?s consider another example.  The MSN 
+query was too easy.  Suppose we want to find 
+Condoleezza Rice, but we can?t spell her name.  
+And even if we could, we wouldn?t want to.  Typ-
+ing on a phone isn?t fun. 
+We suggest spelling Condoleezza as 2*, where 
+2  [ABCabc2] and * is the wildcard.  We then 
+type ?#? for space.  Rice is easy to spell: 7423.   
+Thus, the user types, 2*#7423, and the system 
+searches over the MSN query log to produce a list 
+of k-best (most popular) matches (k defaults to 10): 
+1. Anne Rice 
+2. Book of Shadows 
+3. Chris Rice 
+4. Condoleezza Rice 
+                                                           
+1 http://www.google.com/webhp?complete=1  
+5. Ann Rice 
+? 
+8. Condoleeza Rice 
+The letters matching constants in the regular ex-
+pression are underlined.  The other letters match 
+wildcards.  (An implicit wildcard is appended to 
+the end of the input string.) 
+Wildcards are very powerful.   Strings with 
+wildcards are more expressive than prefix match-
+ing (word wheeling).  As mentioned above, it 
+should take just 19 bits on average to specify one 
+of the 7 million most popular queries.   The query 
+2*#7423 contains 7 characters in an 12-character 
+alphabet (2-9  [A-Za-z2-9] in the obvious way, 
+except that 0  [QZqz0]; #  space; * is wild).  7 
+characters in a 12 character alphabet is 7 log212 = 
+25 bits.  If the input notation were optimal (which 
+it isn?t), it shouldn?t be necessary to type much 
+more than this on average to specify one of the 7 
+million most popular queries. 
+Alphabetic ordering causes bizarre behavior.  
+Yellow Pages are full of company names starting 
+with A, AA, AAA, etc..  If prefix matching tools like 
+Google Suggests take off, then it is just a matter of 
+time before companies start to go after valuable 
+prefixes: mail, maps, etc.  Wildcards can help soci-
+ety avoid that non-sense.  If you want to find a top 
+mail site, you can type, ?*mail? and you?ll find: 
+Gmail, Hotmail, Yahoo mail, etc.. 
+3 Collaboration & Personalization 
+Users quickly learn when they can get away with 
+wildcards.  Typing therefore becomes a collabora-
+tive exercise, much like Palm?s approach to hand-
+writing recognition. Recognition is hard.  Rather 
+than trying to solve the general case, Palm encour-
+ages users to work with the system to write in a 
+way that is easier to recognize (Graffiti).  The sys-
+tem isn?t trying to solve the AI problem by itself, 
+but rather there is a man-machine collaboration 
+where both parties work together as a team. 
+Collaboration is even more powerful in the 
+web context.  Users issue lots of queries, making it 
+clear what?s hot (and what?s not).  The system con-
+structs a language model based on these queries to 
+direct users toward good stuff.   More and more 
+users will then go there, causing the hot query to 
+move up in the language model.  In this way, col-
+laboration can be viewed as a positive feedback 
+94
+loop.  There is a strong herd instinct; all parties 
+benefit from the follow-the-pack collaboration. 
+In addition, users want personalization.  When 
+typing names of our friends and family, technical 
+terms, etc., we should be able to get away with 
+more wildcards than other users would.  There are 
+obvious opportunities for personalizing the lan-
+guage model by integrating the language model 
+with a desktop search index (Dumais et al 2003). 
+4 Modes, Language Models and Apps 
+The Wild Thing demo has a switch for turning on 
+and off phone mode to determine whether input 
+comes from a phone keypad or a standard key-
+board.  Both with and without phone mode, the 
+system uses a language model to find the k-best 
+expansions of the wildcards. 
+The demo contains a number of different lan-
+guage models, including a number of standard tri-
+gram language models.  Some of the language 
+models were trained on large quantities (6 Billion 
+words) of English.  Others were trained on large 
+samples of Spanish and German.  Still others were 
+trained on small sub-domains (such as ATIS, 
+available from www.ldc.upenn.edu).  The demo 
+also contains two special purpose language models 
+for searching popular web queries, and popular 
+web domains. 
+Different language models are different.  With 
+a trigram language model trained on general Eng-
+lish (containing large amounts of newswire col-
+lected over the last decade), 
+pres* rea* *d y* t* it is v* 
+imp*  President Reagan said 
+yesterday that it is very impor-
+tant 
+With a Spanish Language Model, 
+pres* rea*  presidente Reagan 
+In the ATIS domain,  
+pres* rea*  <UNK> <UNK> 
+The tool can also be used to debug language 
+models.  It turns out that some French slipped into 
+the English training corpus.  Consequently, the 
+English language model expanded the * in en * de 
+to some common French words that happen to be 
+English words as well: raison, circulation, oeuvre, 
+place, as well as <OOV>.  After discovering this, 
+we discovered quite a few more anomalies in the 
+training corpus such as headers from the AP news. 
+There may also be ESL (English as a Second 
+Language) applications for the tool.  Many users 
+have a stronger active vocabulary than passive vo-
+cabulary.  If the user has a word stuck on the tip of 
+their tongue,  they can type a suggestive context 
+with appropriate wildcards and there is a good 
+chance the system will propose the word the user is 
+looking for. 
+Similar tricks are useful in monolingual con-
+texts.  Suppose you aren?t sure how to spell a ce-
+lebrity?s name.  If you provide a suggestive 
+context, the language model is likely to get it right:  
+ron* r*g*n  Ronald Reagan 
+don* r*g*n  Donald Regan 
+c* rice  Condoleezza Rice 
+To summarize, wildcards are helpful in quite a 
+few apps: 
+? No keyboard: cell phone, PDA, Tablet PC. 
+? Speed matters: instant messaging, email. 
+? Spelling/ESL/tip of the tongue. 
+? Browsing: direct users toward hot stuff. 
+5 Indexing and Compression 
+The k-best string matching problem raises a num-
+ber of interesting technical challenges.   We have 
+two types of language models: trigram language 
+models and long lists (for finite languages such as 
+the 7 million most popular web queries).  
+The long lists are indexed with a suffix array.  
+Suffix arrays2 generalize very nicely to phone 
+mode, as described below.  We treat the list of web 
+queries as a text of N bytes.  (Newlines are re-
+placed with end-of-string delimiters.)  The suffix 
+array, S, is a sequence of N ints.  The array is ini-
+tialized with the ints from 0 to N?1.  Thus, S[i]=i, 
+for 0?i<N.  Each of these ints represents a string, 
+starting at position i in the text and extending to the 
+end of the string.  S is then sorted alphabetically. 
+Suffix arrays make it easy to find the frequency 
+and location of any substring.  For example, given 
+the substring ?mail,? we find the first and last suf-
+fix in S that starts with ?mail.?  The gap between 
+these two is the frequency.  Each suffix in the gap 
+points to a super-string of ?mail.? 
+To generalize suffix arrays for phone mode we 
+replace alphabetical order (strcmp) with phone or-
+der (phone-strcmp).  Both strcmp and phone-
+strcmp consider each character one at a time.  In 
+standard alphabetic ordering, ?a?<?b?<?c?, but in 
+                                                           
+2 An excellent discussion of suffix arrays including source 
+code can be found at www.cs.dartmouth.edu/~doug.   
+95
+phone-strcmp, the characters that map to the same 
+key on the phone keypad are treated as equivalent. 
+We generalize suffix arrays to take advantage 
+of popularity weights.  We don?t want to find all 
+queries that contain the substring ?mail,? but 
+rather, just the k-best (most popular).  The standard 
+suffix array method will work, if we add a filter on 
+the output that searches over the results for the k-
+best.  However, that filter could take O(N) time if 
+there are lots of matches, as there typically are for 
+short queries. 
+An improvement is to sort the suffix array by 
+both popularity and alphabetic ordering, alternating 
+on even and odd depths in the tree.  At the first 
+level, we sort by the first order and then we sort by 
+the second order and so on, using a construction, 
+vaguely analogous to KD-Trees (Bentley, 1975).  
+When searching a node ordered by alphabetical 
+order, we do what we would do for standard suffix 
+arrays.  But when searching a node ordered by 
+popularity, we search the more popular half before 
+the second half.  If there are lots of matches, as 
+there are for short strings, the index makes it very 
+easy to find the top-k quickly, and we won?t have 
+to search the second half very often.  If the prefix 
+is rare, then we might have to search both halves, 
+and therefore, half the splits (those split by popu-
+larity) are useless for the worst case, where the 
+input substring doesn?t match anything in the table.  
+Lookup is O(sqrt N).3 
+Wildcard matching is, of course, a different 
+task from substring matching.  Finite State Ma-
+chines (Mohri et al 2002) are the right way to 
+think about the k-best string matching problem 
+with wildcards.  In practice, the input strings often 
+contain long anchors of constants (wildcard free 
+substrings).  Suffix arrays can use these anchors to 
+generate a list of candidates that are then filtered 
+by a regex package. 
+                                                           
+3 Let F(N) be the work to process N items on the 
+frequency splits and let A(N) be the work to proc-
+ess N items on the alphabetical splits.  In the worst 
+case, F(N) = 2A(N/2) + C1 and A(N) = F(N/2) + C2, 
+where C1  and C2 are two constants.  In other 
+words, F(N) = 2F(N/4) + C, where C = C1 + 2C2.  
+We guess that F(N) = ? sqrt(N) + ?, where ? and ? 
+are constant.  Substituting this guess into the recur-
+rence, the dependencies on N cancel.  Thus, we 
+conclude, F(N) = O(sqrt N).  
+Memory is limited in many practical applica-
+tions, especially in the mobile context.  Much has 
+been written about lossless compression of lan-
+guage models.  For trigram models, we use a lossy 
+method inspired by the Unix Spell program (McIl-
+roy, 1982).   We map each trigram <x, y, z> into a 
+hash code h = (V2 x + V y + z) % P, where V is the 
+size of the vocabulary and P is an appropriate 
+prime.  P trades off memory for loss.  The cost to 
+store N trigrams is: N [1/loge2 + log2(P/N)] bits.   
+The loss, the probability of a false hit, is 1/P. 
+The N trigrams are hashed into h hash codes.  
+The codes are sorted.  The differences, x, are en-
+coded with a Golomb code4 (Witten et al 1999), 
+which is an optimal Huffman code, assuming that 
+the differences are exponentially distributed, which 
+they will be, if the hash is Poisson. 
+6 Conclusions 
+The Wild Thing encourages users to make use of 
+wildcards, speeding up typing, especially on cell 
+phones.  Wildcards are useful when you want to 
+find something you can?t spell, or something stuck 
+on the tip of your tongue.   Wildcards are more 
+expressive than standard prefix matching, great for 
+users, and technically challenging (and fun) for us. 
+References  
+J. L. Bentley (1975), Multidimensional binary search 
+trees used for associative searching, Commun. ACM, 
+18:9, pp 509-517. 
+S. T. Dumais, E. Cutrell, et al(2003). Stuff I've Seen: A 
+system for personal information retrieval and re-use, 
+SIGIR. 
+M. D. McIlroy (1982), Development of a spelling list, 
+IEEE Trans. on Communications 30, 91-99. 
+M. Mohri, F. C. N. Pereira, and M. Riley. Weighted 
+Finite-State Transducers in Speech Recognition. 
+Computer Speech and Language, 16(1):69-88, 2002. 
+I. H. Witten, A. Moffat and T. C. Bell, (1999),  Manag-
+ing Gigabytes: Compressing and Indexing Docu-
+ments and Images, by Morgan Kaufmann Publishing, 
+San Francisco, ISBN 1-55860-570-3. 
+                                                           
+4 In Golomb, x = xq m + xr, where xq = floor(x/m) 
+and xr = x mod m.  Choose m to be a power of two 
+near ceil(? E[x])=ceil(? P/N).  Store quotients xq 
+in unary and remainders xr in binary.  z in unary is 
+a sequence of z?1 zeros followed by a 1.  Unary is 
+an optimal Huffman code when Pr(z)=(?)z+1.  Stor-
+age costs are: xq bits for xq + log2m bits for xr. 
+96

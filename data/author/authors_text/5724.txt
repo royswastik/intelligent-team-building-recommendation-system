@@ -1,0 +1,2110 @@
+Improving Machine Translation Performance
+by Exploiting Non-Parallel Corpora
+Dragos Stefan Munteanu?
+Information Sciences Institute
+University of Southern California
+Daniel Marcu?
+Information Sciences Institute
+University of Southern California
+We present a novel method for discovering parallel sentences in comparable, non-parallel corpora.
+We train a maximum entropy classifier that, given a pair of sentences, can reliably determine
+whether or not they are translations of each other. Using this approach, we extract parallel data
+from large Chinese, Arabic, and English non-parallel newspaper corpora. We evaluate the quality
+of the extracted data by showing that it improves the performance of a state-of-the-art statistical
+machine translation system. We also show that a good-quality MT system can be built from
+scratch by starting with a very small parallel corpus (100,000 words) and exploiting a large
+non-parallel corpus. Thus, our method can be applied with great benefit to language pairs for
+which only scarce resources are available.
+1. Introduction
+Parallel texts?texts that are translations of each other?are an important resource in
+many NLP applications. They provide indispensable training data for statistical ma-
+chine translation (Brown et al 1990; Och and Ney 2002) and have been found useful in
+research on automatic lexical acquisition (Gale and Church 1991; Melamed 1997), cross-
+language information retrieval (Davis and Dunning 1995; Oard 1997), and annotation
+projection (Diab and Resnik 2002; Yarowsky and Ngai 2001; Yarowsky, Ngai, and Wi-
+centowski 2001).
+Unfortunately, parallel texts are also scarce resources: limited in size, language
+coverage, and language register. There are relatively few language pairs for which
+parallel corpora of reasonable sizes are available; and even for those pairs, the corpora
+come mostly from one domain, that of political discourse (proceedings of the Canadian
+or European Parliament, or of the United Nations). This is especially problematic for
+the field of statistical machine translation (SMT), because translation systems trained
+on data from a particular domain (e.g., parliamentary proceedings) will perform poorly
+when translating texts from a different domain (e.g., news articles).
+One way to alleviate this lack of parallel data is to exploit a much more available
+and diverse resource: comparable non-parallel corpora. Comparable corpora are texts
+that, while not parallel in the strict sense, are somewhat related and convey overlap-
+ping information. Good examples are the multilingual news feeds produced by news
+agencies such as Agence France Presse, Xinhua News, Reuters, CNN, BBC, etc. Such
+texts are widely available on the Web for many language pairs and domains. They often
+? 4676 Admiralty Way, Suite 1001, Marina del Rey, CA 90292. E-mail: {dragos,marcu}@isi.edu.
+Submission received: 5 November 2004; Accepted for publication: 3 March 2005.
+? 2006 Association for Computational Linguistics
+Computational Linguistics Volume 31, Number 4
+contain many sentence pairs that are fairly good translations of each other. The ability
+to reliably identify these pairs would enable the automatic creation of large and diverse
+parallel corpora.
+However, identifying good translations in comparable corpora is hard. Even texts
+that convey the same information will exhibit great differences at the sentence level.
+Consider the two newspaper articles in Figure 1. They have been published by the
+English and French editors of Agence France Presse, and report on the same event, an
+epidemic of cholera in Pyongyang. The lines in the figure connect sentence pairs
+that are approximate translations of each other. Discovering these links automatically
+is clearly non-trivial. Traditional sentence alignment algorithms (Gale and Church
+1991; Wu 1994; Fung and Church 1994; Melamed 1999; Moore 2002) are designed to
+align sentences in parallel corpora and operate on the assumption that there are no
+reorderings and only limited insertions and deletions between the two renderings of
+a parallel document. Thus, they perform poorly on comparable, non-parallel texts.
+What we need are methods able to judge sentence pairs in isolation, independent of the
+(potentially misleading) context.
+This article describes a method for identifying parallel sentences in comparable
+corpora and builds on our earlier work on parallel sentence extraction (Munteanu,
+Fraser, and Marcu 2004). We describe how to build a maximum entropy-based classifier
+that can reliably judge whether two sentences are translations of each other, without
+making use of any context. Using this classifier, we extract parallel sentences from very
+large comparable corpora of newspaper articles. We demonstrate the quality of our
+Figure 1
+A pair of comparable texts.
+478
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+extracted sentences by showing that adding them to the training data of an SMT system
+improves the system?s performance. We also show that language pairs for which very
+little parallel data is available are likely to benefit the most from our method; by running
+our extraction system on a large comparable corpus in a bootstrapping manner, we can
+obtain performance improvements of more than 50% over a baseline MT system trained
+only on existing parallel data.
+Our main experimental framework is designed to address the commonly en-
+countered situation that exists when the MT training and test data come from dif-
+ferent domains. In such a situation, the test data is in-domain, and the training data
+is out-of-domain. The problem is that in such conditions, translation performance
+is quite poor; the out-of-domain data doesn?t really help the system to produce
+good translations. What is needed is additional in-domain training data. Our goal
+is to get such data from a large in-domain comparable corpus and use it to im-
+prove the performance of an out-of-domain MT system. We work in the context
+of Arabic-English and Chinese-English statistical machine translation systems. Our
+out-of-domain data comes from translated United Nations proceedings, and our in-
+domain data consists of news articles. In this experimental framework we have ac-
+cess to a variety of resources, all of which are available from the Linguistic Data
+Consortium:1
+ large amounts of out-of-domain parallel data;
+ smaller amounts of in-domain parallel data;
+ in-domain MT test corpora with four reference translations; and
+ in-domain comparable corpora: large collections of Arabic, Chinese, and
+English news articles from various news agencies.
+In summary, we call in-domain the domain of the test data that we wish to trans-
+late; in this article, that in-domain data consists of news articles. Out-of-domain data
+is data that belongs to any other domain; in this article, the out-of-domain data is
+drawn from United Nations (UN) parliamentary proceedings. We are interested in
+the situation that exists when we need to translate news data but only have UN
+data available for training. The solution we propose is to get comparable news data,
+automatically extract parallel sentences from it, and use these sentences as additional
+training data; we will show that doing this improves translation performance on
+a news test set. The Arabic-English and Chinese-English resources described in the
+previous paragraph enable us to simulate our conditions of interest and perform de-
+tailed measurements of the impact of our proposed solution. We can train baseline
+systems on UN parallel data (using the data from the first bullet in the previous
+paragraph), extract additional news data from the large comparable corpora (the fourth
+bullet), accurately measure translation performance on news data against four ref-
+erence translations (the third bullet), and compare the impact of the automatically
+extracted news data with that of similar amounts of human-translated news data
+(the second bullet).
+In the next section, we give a high-level overview of our parallel sentence extrac-
+tion system. In Section 3, we describe in detail the core of the system, the parallel sen-
+1 http://www.ldc.upenn.edu.
+479
+Computational Linguistics Volume 31, Number 4
+Figure 2
+A Parallel Sentence Extraction System.
+tence classifier. In Section 4, we discuss several data extraction experiments. In Section 5,
+we evaluate the extracted data by showing that adding it to out-of-domain parallel data
+improves the in-domain performance of an out-of-domain MT system, and in Section 6,
+we show that in certain cases, even larger improvements can be obtained by using boot-
+strapping. In Section 7, we present examples of sentence pairs extracted by our method
+and discuss some of its weaknesses. Before concluding, we discuss related work.
+2. A System for Extracting Parallel Sentences from Comparable Corpora
+The general architecture of our extraction system is presented in Figure 2. Starting with
+two large monolingual corpora (a non-parallel corpus) divided into documents, we
+begin by selecting pairs of similar documents (Section 2.1). From each such pair, we
+generate all possible sentence pairs and pass them through a simple word-overlap-
+based filter (Section 2.2), thus obtaining candidate sentence pairs. The candidates are
+presented to a maximum entropy (ME) classifier (Section 2.3) that decides whether the
+sentences in each pair are mutual translations of each other.
+The resources required by the system are minimal: a bilingual dictionary and a small
+amount of parallel data (used for training the ME classifier). The dictionaries used in
+our experiments are learned automatically from (out-of-domain) parallel corpora;2
+thus, the only resource used by our system consists of parallel sentences.
+2 If such a resource is unavailable, other dictionaries can be used.
+480
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+2.1 Article Selection
+Our comparable corpus consists of two large, non-parallel, news corpora, one in English
+and the other in the foreign language of interest (in our case, Chinese or Arabic). The
+parallel sentence extraction process begins by selecting, for each foreign article, English
+articles that are likely to contain sentences that are parallel to those in the foreign one.
+This step of the process emphasizes recall rather than precision. For each foreign
+document, we do not attempt to find the best-matching English document, but rather a
+set of similar English documents. The subsequent components of the system are robust
+enough to filter out the extra noise introduced by the selection of additional (possibly
+bad) English documents.
+We perform document selection using the Lemur IR toolkit3 (Ogilvie and Callan
+2001). We first index all the English documents into a database. For each foreign docu-
+ment, we take the top five translations of each of its words (according to our probabilis-
+tic dictionary) and create an English language query. The translation probabilities are
+only used to choose the word translations; they do not appear in the query. We use the
+query to run TF-IDF retrieval against the database, take the top 20 English documents
+returned by Lemur, and pair each of them with the foreign query document.
+This document matching procedure is both slow (it looks at all possible document
+pairs, so it is quadratic in the number of documents) and imprecise (due to noise in
+the dictionary, the query will contain many wrong words). We attempt to fix these
+problems by using the following heuristic: we consider it likely that articles with simi-
+lar content have publication dates that are close to each other. Thus, each query is
+actually run only against English documents published within a window of five days
+around the publication date of the foreign query document; we retrieve the best 20
+of these documents. Each query is thus run against fewer documents, so it becomes
+faster and has a better chance of getting the right documents at the top.
+Our experiments have shown that the final performance of the system does not
+depend too much on the size of the window (for example, doubling the size to 10 days
+made no difference). However, having no window at all leads to a decrease in the over-
+all performance of the system.
+2.2 Candidate Sentence Pair Selection
+From each foreign document and set of associated English documents, we take all
+possible sentence pairs and pass them through a word-overlap filter.
+The filter verifies that the ratio of the lengths of the two sentences is no greater than
+two. It then checks that at least half the words in each sentence have a translation in the
+other sentence, according to the dictionary. Pairs that do not fulfill these two conditions
+are discarded. The others are passed on to the parallel sentence selection stage.
+This step removes most of the noise (i.e., pairs of non-parallel sentences) introduced
+by our recall-oriented document selection procedure. It also removes good pairs that
+fail to pass the filter because the dictionary does not contain the necessary entries; but
+those pairs could not have been handled reliably anyway, so the overall effect of the
+filter is to improve the precision and robustness of the system. However, the filter also
+accepts many wrong pairs, because the word-overlap condition is weak; for instance,
+stopwords almost always have a translation on the other side, so if a few of the content
+3 http://www-2.cs.cmu.edu/?lemur.
+481
+Computational Linguistics Volume 31, Number 4
+words happen to match, the overlap threshold is fulfilled and an erroneous candidate
+sentence pair is selected.
+2.3 Parallel Sentence Selection
+For each candidate sentence pair, we need a reliable way of deciding whether the two
+sentences in the pair are mutual translations. This is achieved by a Maximum Entropy
+(ME) classifier (described at length in Section 3), which is the core component of our
+system. Those pairs that are classified as being translations of each other constitute the
+output of the system.
+3. A Maximum Entropy Classifier for Parallel Sentence Identification
+In the Maximum Entropy (ME) statistical modeling framework, we impose constraints
+on the model of our data by defining a set of feature functions. These feature functions
+emphasize properties of the data that we believe to be useful for the modeling task. For
+example, for a sentence pair sp, the word overlap (the percentage of words in either
+sentence that have a translation in the other) might be a useful indicator of whether the
+sentences are parallel. We therefore define a feature function f (sp), whose value is the
+word overlap of the sentences in sp.
+According to the ME principle, the optimal parametric form of the model of our
+data, taking into account the constraints imposed by the feature functions, is a log linear
+combination of these functions. Thus, for our classification problem, we have:
+P(ci|sp) = 1Z(sp)
+k
+?
+j=1
+?
+fij(c,sp)
+j
+where ci is the class (c0=?parallel?, c1=?not parallel?), Z(sp) is a normalization factor, and
+fij are the feature functions (indexed both by class and by feature). The resulting model
+has free parameters ?j, the feature weights. The parameter values that maximize the
+likelihood of a given training corpus can be computed using various optimization
+algorithms (see [Malouf 2002] for a comparison of such algorithms).
+3.1 Features for Parallel Sentence Identification
+For our particular classification problem, we need to find feature functions that dis-
+tinguish between parallel and non-parallel sentence pairs. For this purpose, we com-
+pute and exploit word-level alignments between the sentences in each pair. A word
+alignment between two sentences in different languages specifies which words in one
+sentence are translations of which words in the other. Word alignments were first intro-
+duced in the context of statistical MT, where they are used to estimate the parameters
+of a translation model (Brown et al 1990). Since then, they were found useful in many
+other NLP applications (e.g., word sense tagging [Diab and Resnik 2002] and question
+answering [Echihabi and Marcu 2003]).
+Figures 3 and 4 give examples of word alignments between two English-Arabic
+sentence pairs from our comparable corpus. Each figure contains two alignments. The
+one on the left is a correct alignment, produced by a human, while the one on the right
+482
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Figure 3
+Alignments between two parallel sentences.
+was computed automatically. As can be seen from the gloss next to the Arabic words,
+the sentences in Figure 3 are parallel while the sentences in Figure 4 are not.
+In a correct alignment between two non-parallel sentences, most words would
+have no translation equivalents; in contrast, in an alignment between parallel sentences,
+most words would be aligned. Automatically computed alignments, however, may
+have incorrect connections; for example, on the right side of Figure 3, the Arabic word
+issue is connected to the comma; and in Figure 4, the Arabic word at is connected to
+the English phrase its case to the. Such errors are due to noisy dictionary entries and to
+Figure 4
+Alignments between two non-parallel sentences.
+483
+Computational Linguistics Volume 31, Number 4
+shortcomings of the model used to generate the alignments. Thus, merely looking at
+the number of unconnected words, while helpful, is not discriminative enough. Still,
+automatically produced alignments have certain additional characteristics that can be
+exploited.
+We follow Brown et al (1993) in defining the fertility of a word in an alignment
+as the number of words it is connected to. The presence, in an automatically computed
+alignment between a pair of sentences, of words of high fertility (such as the Arabic
+word at in Figure 4) is indicative of non-parallelism. Most likely, these connections
+were produced because of a lack of better alternatives.
+Another aspect of interest is the presence of long contiguous connected spans,
+which we define as pairs of bilingual substrings in which the words in one substring are
+connected only to words in the other substring. Such a span may contain a few words
+without any connection (a small percentage of the length of the span), but no word
+with a connection outside the span. Examples of such spans can be seen in Figure 3:
+the English strings after saudi mediation failed or to the international court of justice together
+with their Arabic counterparts. Long contiguous connected spans are indicative of
+parallelism, since they suggest that the two sentences have long phrases in common.
+And, in contrast, long substrings whose words are all unconnected are indicative of
+non-parallelism.
+To summarize, our classifier uses the following features, defined over two sen-
+tences and an automatically computed alignment between them.
+General features (independent of the word alignment):
+ lengths of the sentences, as well as the length difference and length ratio;
+ percentage of words on each side that have a translation on the other side
+(according to the dictionary).
+Alignment features:
+ percentage and number of words that have no connection;
+ the top three largest fertilities;
+ length of the longest contiguous connected span; and
+ length of the longest unconnected substring.
+3.2 Word Alignment Model
+In order to compute word alignments we need a simple and efficient model. We want to
+align a large number of sentences, with many out-of-vocabulary words, in reasonable
+time. We also want a model with as few parameters as possible?preferably only word-
+for-word translation probabilities.
+One such model is the IBM Model 1 (Brown et al 1993). According to this model,
+given foreign sentence ( fj1<=j<=m), English sentence (ei1<=i<=l), and translation prob-
+abilities t( fj|ei), the best alignment f ? e is obtained by linking each foreign word fj to
+its most likely English translation argmaxei t( fj|ei). Thus, each foreign word is aligned to
+exactly one English word (or to a special NULL token).
+Due to its simplicity, this model has several shortcomings, some more structural
+than others (see Moore [2004] for a discussion). Thus, we use a version that is aug-
+mented with two simple heuristics that attempt to alleviate some of these shortcomings.
+484
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+One possible improvement concerns English words that appear more than once
+in a sentence. According to the model, a foreign word that prefers to be aligned with
+such an English word could be equally well aligned with any instance of that word. In
+such situations, instead of arbitrarily choosing the first instance or a random instance,
+we attempt to make a ?smarter? decision. First, we create links only for those English
+words that appear exactly once; next, for words that appear more than once, we choose
+which instance to link with so that we minimize the number of crossings with already
+existing links.
+The second heuristic attempts to improve the choice of the most likely English
+translation of a foreign word. Our translation probabilities are automatically learned
+from parallel data, and we learn values for both t( fj|ei) and t(ei| fj). We can therefore
+decide that the most likely English translation of fj is argmaxei{t( fj|ei), t(ei| fj)}. Using
+both sets of probabilities is likely to help us make a better-informed decision.
+Using this alignment strategy, we follow (Och and Ney 2003) and compute one
+alignment for each translation direction ( f ? e and e ? f ), and then combine them. Och
+and Ney present three combination methods: intersection, union, and refined (a form of
+intersection expanded with certain additional neighboring links).
+Thus, for each sentence pair, we compute five alignments (two modified-IBM-
+Model-1 plus three combinations) and then extract one set of general features and five
+sets of alignment features (as described in the previous section).
+3.3 Training and Testing
+We create training instances for our classifier from a small parallel corpus. The sim-
+plest way to obtain classifier training data from a parallel corpus is to generate all
+possible sentence pairs from the corpus (the Cartesian product). This generates 5,0002
+training instances, out of which 5,000 are positive (i.e., belong to class ?parallel?) and
+the rest are negative.
+One drawback of this approach is that the resulting training set is very imbalanced,
+i.e., it has many more negative examples than positive ones. Classifiers trained on such
+data do not achieve good performance; they generally tend to predict the majority
+class, i.e., classify most sentences as non-parallel (which has indeed been the case in
+our experiments). Our solution to this is to downsample, i.e., eliminate a number of
+(randomly selected) negative instances.
+Another problem is that the large majority of sentence pairs in the Cartesian prod-
+uct have low word overlap (i.e., few words that are translations of each other). As
+explained in Section 2 (and shown in Figure 2), when extracting data from a compara-
+ble corpus, we only apply the classifier on the output of the word-overlap filter. Thus,
+low-overlap sentence pairs, which would be discarded by the filter, are unlikely to be
+useful as training examples. We therefore use for training only those pairs from the
+Cartesian product that are accepted by the word-overlap filter. This has the additional
+advantage that, since all these pairs have many words in common, the classifier learns
+to make distinctions that cannot be made based on word overlap alone.
+To summarize, we prepare our classifier training set in the following manner: start-
+ing from a parallel corpus of about 5,000 sentence pairs, we generate all the sentence
+pairs in the Cartesian product; we discard the pairs that do not fulfill the conditions of
+the word-overlap filter; if the resulting set is imbalanced, i.e., the ratio of non-parallel
+to parallel pairs is greater than five, we balance it by removing randomly chosen non-
+parallel pairs. We then compute word alignments and extract feature values.
+485
+Computational Linguistics Volume 31, Number 4
+Using the training set, we compute values for the classifier feature weights using
+the YASMET4 implementation of the GIS algorithm (Darroch and Ratcliff 1974). Since
+we are dealing with few parameters and have sufficiently many training instances,
+using more advanced training algorithms is unlikely to bring significant improvements.
+We test the performance of the classifier by generating test instances from a differ-
+ent parallel corpus (also around 5,000 sentence pairs) and checking how many of these
+instances are correctly classified. We prepare the test set by creating the Cartesian
+product of the sentences in the test parallel corpus and applying the word-overlap
+filter (we do not perform any balancing). Although we apply the filter, we still concep-
+tually classify all pairs from the Cartesian product in a two-stage classification process:
+all pairs discarded by the filter are classified as ?non-parallel,? and for the rest, we obtain
+predictions from the classifier. Since this is how we apply the system on truly unseen
+data, this is the process in whose performance we are interested.
+We measure the performance of the classification process by computing precision
+and recall. Precision is the ratio of sentence pairs correctly judged as parallel to the
+total number of pairs judged as parallel by the classifier. Recall is the ratio of sentence
+pairs correctly identified as parallel by the classifier to the total number of truly parallel
+pairs?i.e., the number of pairs in the parallel corpus used to generate the test instances.
+Both numbers are expressed as percentages. More formally: let classified parallel be the
+total number of sentence pairs from our test set that the classifier judged as parallel,
+classified well be the number of pairs that the classifier correctly judged as parallel, and
+true parallel be the total number of parallel pairs in the test set. Then:
+precision = 100 ? classified well
+classified parallel
+recall = 100 ? classified well
+true parallel
+3.4 Performance Evaluation
+There are two factors that influence a classifier?s performance: dictionary coverage
+and similarity between the domains of the training and test instances. We performed
+evaluation experiments to account for both these factors.
+All our dictionaries are automatically learned from parallel data; thus, we can cre-
+ate dictionaries of various coverage by learning them from parallel corpora of different
+sizes. We use five dictionaries, learned from five initial out-of-domain parallel corpora,
+whose sizes are 100k, 1M, 10M, 50M, and 95M tokens, as measured on the English
+side.
+Since we want to use the classifier to extract sentence pairs from our in-domain
+comparable corpus, we test it on instances generated from an in-domain parallel cor-
+pus. In order to measure the effect of the domain difference, we use two training sets:
+one generated from an in-domain parallel corpus and another one from an out-of-
+domain parallel corpus.
+In summary, for each language pair, we use the following corpora:
+ five initial out-of-domain corpora of various sizes, used for learning
+dictionaries;
+ one out-of-domain classifier training corpus;
+4 http://www.fjoch.com/YASMET.html.
+486
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Figure 5
+Precision and recall of the Arabic-English classifiers.
+ one in-domain classifier training corpus; and
+ one in-domain classifier test corpus.
+From each initial, out-of-domain corpus, we learn a dictionary. We then take the
+classifier training and test corpora and, using the method described in the previous
+section, create two sets of training instances and one set of test instances. We train two
+classifiers (one on each training set) and evaluate both of them on the test set.
+The parallel corpora used for generating training and test instances have around
+5k sentence pairs each (approximately 150k English tokens), and generate around 10k
+training instances (for each training set) and 8k test instances.
+Figure 6
+Precision and recall of the Chinese-English classifiers.
+487
+Computational Linguistics Volume 31, Number 4
+Figures 5 and 6 show the recall and precision of our classifiers, for both Arabic-
+English and Chinese-English. The results show that the precision of our classification
+process is robust with respect to dictionary coverage and training domain. Even when
+starting from a very small initial parallel corpus, we can build a high-precision classifier.
+Having a good dictionary and training data from the right domain does help though,
+mainly with respect to recall.
+The classifiers achieve high precision because their positive training examples are
+clean parallel sentence pairs, with high word overlap (since the pairs with low overlap
+are filtered out); thus, the classification decision frontier is pushed towards ?good-
+looking? alignments. The low recall results are partly due to the word-overlap filter
+(the first stage of the classification process), which discards many parallel pairs. If we
+don?t apply the filter before the classifier, the recall results increase by about 20% (with
+no loss in precision). However, the filter plays a very important role in keeping the
+extraction pipeline robust and efficient (as shown in Figure 7, the filter discards 99% of
+the candidate pairs), so this loss of recall is a price worth paying.
+Classifier evaluations using different subsets of features show that most of the
+classifier performance comes from the general features together with the alignment
+features concerning the percentage and number of words that have no connection.
+However, we expect that in real data, the differences between parallel and non-parallel
+pairs are less clear than in our test data (see the discussion in Section 7) and can no
+Figure 7
+The amounts of data processed by our system during extraction from the Chinese-English
+comparable corpus.
+488
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Table 1
+The Gigaword comparable corpora.
+Foreign English
+Language pair News agency and period # articles # tokens # articles # tokens
+Arabic-English AFP, 1994?1997, 2002 224k 40M 650k 195M
+Xinhua News, 2001
+Chinese-English Xinhua News, 1995?2001 457k 162M 580k 128M
+longer be accounted for only by counting the linked words; thus, the other features
+should become more important.
+4. Data Extraction Experiments
+4.1 Controlled Experiments
+The comparable corpora that we use for parallel sentence extraction are collections of
+news stories published by the Agence France Presse and Xinhua News agencies. They
+are parts of the Arabic, English, and Chinese Gigaword corpora which are available
+from the Linguistic Data Consortium. From these collections, for each language pair,
+we create an in-domain comparable corpus by putting together articles coming from
+the same agency and the same time period. Table 1 presents in detail the sources and
+sizes of the resulting comparable corpora. The remainder of the section presents the
+various data sets that we extracted automatically from these corpora, under various
+experimental conditions.
+In the experiments described in Section 3.4, we started out with five out-of-domain
+initial parallel corpora of various sizes and obtained five dictionaries and five out-of-
+domain trained classifiers (per language pair). We now plug in each of these classifiers
+(and their associated dictionaries) in our extraction system (Section 2) and apply it to
+our comparable corpora. We thus obtain five Arabic-English and five Chinese-English
+extracted corpora.
+Note that in each of these experiments the only resource used by our system
+is the initial, out-of-domain parallel corpus. Thus, the experiments fit in the frame-
+work of interest described in Section 1, which assumes the availability of (limited
+amounts of) out-of-domain training data and (large amounts of) in-domain comparable
+data.
+Table 2 shows the sizes of the extracted corpora for each initial corpus size, for
+both Chinese-English and Arabic-English. As can be seen, when the initial parallel
+corpus is very small, the amount of extracted data is also quite small. This is due to the
+low coverage of the dictionary learned from that corpus. Our candidate pair selection
+step (Section 2.2) discards pairs with too many unknown (or unrelated) words, accord-
+ing to the dictionary; thus, only few sentences fulfill the word-overlap condition of
+our filter.
+As mentioned in Section 1, our goal is to use the extracted data as additional
+MT training data and obtain better translation performance on a given in-domain MT
+test set. A simple way of estimating the usefulness of the data for this purpose is to
+measure its coverage of the test set, i.e., the percentage of running n-grams from the
+test corpus that are also in our corpus. Tables 3 and 4 present the coverage of our
+489
+Computational Linguistics Volume 31, Number 4
+Table 2
+Size of the datasets extracted from the comparable corpora, in millions of English words.
+Size of automatically extracted corpora
+Size of initial parallel corpus Arabic-English Chinese-English
+100k 0.09M 0.9M
+1M 0.6M 5M
+10M 1.9M 8.3M
+50M 2.2M 10.5M
+95M 2.1M 10.5M
+Table 3
+Coverage of the extracted corpora for Arabic-English.
+Out-of-domain In-domain
+Initial corpus size Initial Initial plus extracted
+100k 68/16/3/0.5 82/31/8/2
+1M 86/33/7/1 94/54/20/7
+10M 95/51/16/3 98/67/30/12
+50M 98/64/24/6 99/74/36/14
+95M 98/68/28/8 99/76/38/15
+Table 4
+Coverage of the extracted corpora for Chinese-English.
+Out-of-domain In-domain
+Initial corpus size Initial Initial plus extracted
+100k 75/19/2/0.2 91/41/11/3
+1M 90/38/8/1 97/61/22/7
+10M 97/57/18/4 99/70/29/10
+50M 98/69/27/7 99/76/36/12
+95M 99/73/32/9 99/78/39/14
+extracted corpora. For each initial corpus size, the first column shows the coverage
+of that initial corpus, and the second column shows the coverage of the initial corpus
+plus the extracted corpus. Each cell contains four numbers that represent the coverage
+with respect to unigrams, bigrams, trigrams, and 4-grams. The numbers show that
+unigram coverage depends only on the size of the corpus (and not on the domain), but
+for longer n-grams, our in-domain extracted data brings significant improvements in
+coverage.
+4.2 Non-Controlled Experiments Using Web-Based Non-Parallel Corpora
+The extraction experiments from the previous section are controlled experiments in
+which we only use limited amounts of parallel data for our extraction system. In this
+490
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+section, we describe experiments in which the goal is to assess the applicability of our
+method to data that we mined from the Web.
+We obtained comparable corpora from the Web by going to bilingual news web-
+sites (such as Al-Jazeera) and downloading news articles in each language indepen-
+dently. In order to get as many articles as possible, we used the web site?s search engine
+to get lists of articles and their URLs, and then crawled those lists. We used the Agent-
+Builder tool (Ticrea and Minton 2003; Minton, Ticrea, and Beach 2003) for crawling. The
+tool can be programmed to automatically initiate searches with different parameters
+and to identify and extract the desired article URLs (as well as other information such
+as dates and titles) from the result pages. Table 5 shows the sources, time periods, and
+size of the datasets that we downloaded.
+For the extraction experiments, we used dictionaries of high coverage, learned from
+all our available parallel training data. The sizes of these training corpora, measured in
+number of English tokens, are as follows:
+ Arabic-English: 100M tokens out-of-domain data and 4.5M tokens
+in-domain data
+ Chinese-English: 150M tokens out-of-domain data and 40M tokens
+in-domain data
+We applied our extraction method on both the LDC-released Gigaword corpora
+and the Web-downloaded comparable corpora. For each language pair, we used the
+highest precision classifier from those presented in Section 3.4. In order to obtain data
+of higher quality, we didn?t use all the sentences classified as parallel, but only those for
+which the probability computed by our classifier was higher than 0.70. Table 6 shows
+the amounts of extracted data, measured in number of English tokens. For Arabic-
+English, we were able to extract from the Gigaword corpora much more data than in
+our previous experiments (see Table 2), clearly due to the better dictionary. For Chinese-
+English, there was no increase in the size of extracted data (although the amount from
+Table 6 is smaller than that from Table 2, it counts only sentence pairs extracted with
+confidence higher than 0.70).
+In the previous section, we measured, for our training corpora, their coverage of
+the test set (Tables 3 and 4). We repeated the measurements for the training data from
+Table 6 and obtained very similar results: using the additional extracted data improves
+coverage, especially for longer n-grams.
+To give the reader an idea of the amount of data that is funneled through our
+system, we show in Figure 7 the sizes of the data processed by each of the system?s
+Table 5
+Comparable corpora downloaded from the Web.
+Foreign English
+Language pair News agency and period # articles # tokens # articles # tokens
+Arabic-English People?s Daily, 2001?2003 70k 38M 50k 20M
+Al-Jazeera, 2003
+Al-Hayat, 2003
+Chinese-English Voice of America, 2001?2003 25k 13M 36k 19M
+491
+Computational Linguistics Volume 31, Number 4
+Table 6
+Size of the datasets extracted for the NIST 2004 MT evaluation.
+Source Arabic-English Chinese-English
+Gigaword 5.3M 7.2M
+Web 1.4M 2.1M
+Total 6.8M 9.3M
+components during extraction from the Gigaword and Web-based Chinese-English
+comparable corpora. We use a dictionary learned from a parallel corpus on 190M
+English tokens and a classifier trained on instances generated from a parallel corpus
+of 220k English tokens. We start with a comparable corpus consisting of 500k Chinese
+articles and 600k English articles. The article selection step (Section 2.1) outputs 7.5M
+similar article pairs; from each article pair we generate all possible sentence pairs and
+obtain 2,400M pairs. Of these, less than 1% (17M) pass the candidate selection stage
+(Section 2.2) and are presented to the ME classifier. The system outputs 430k sen-
+tence pairs (9.5M English tokens) that have been classified as parallel (with probability
+greater than 0.7).
+The figure also presents, in the lower part, the parameters that control the filtering
+at each stage.
+ best K results: in the article selection stage (Section 2.1), for each foreign
+article we only consider the top K most similar English ones. In our
+experiments, K is set to 20.
+ date window: when looking for possible article pairs, we only consider
+English articles whose publication dates fall within a window of 5 days
+around the publication date of the foreign one.
+ word overlap: the word-overlap filter (Section 2.2) will discard sentence
+pairs that have less than a certain proportion of words in common
+(according to the bilingual dictionary). The value we use (expressed
+as a percentage of sentence length) is 50.
+ length ratio: similarly, the word-overlap filter will discard pairs whose
+length ratio is greater than this value, which we set to 2.
+ decision threshold: The ME classifier associates a probability with each
+of its predictions. Values above 0.5 indicate that the classifier considers
+the particular sentence pair to be parallel; the higher the value, the
+higher the classifier?s confidence. Thus, in order to obtain higher
+precision, we can choose to define as parallel only those pairs for
+which the classifier probability is above a certain threshold. In the
+experiments from Section 4.1, we use the (default) threshold of 0.5,
+while in Section 4.2 we use 0.7.
+5. Machine Translation Improvements
+Our main goal is to extract, from an in-domain comparable corpus, parallel training
+data that improves the performance of an out-of-domain-trained SMT system. Thus,
+492
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+we evaluate our extracted corpora by showing that adding them to the out-of-domain
+training data of a baseline MT system improves its performance.
+5.1 Controlled Experiments
+We first evaluate the extracted corpora presented in Section 4.1. The extraction system
+used to obtain each of those corpora made use of a certain initial out-of-domain parallel
+corpus. We train a Baseline MT system on that initial corpus. We then train another MT
+system (which we call PlusExtracted) on the initial corpus plus the extracted corpus. In
+order to compare the quality of our extracted data with that of human-translated data
+from the same domain, we also train an UpperBound MT system, using the initial corpus
+plus a corpus of in-domain, human-translated data. For each initial corpus, we use the
+same amount of human-translated data as there is extracted data (see Table 2). Thus, for
+each language pair and each initial parallel corpus, we compare 3 MT systems: Baseline,
+PlusExtracted, and UpperBound.
+All our MT systems were trained using a variant of the alignment template model
+described in (Och 2003). Each system used two language models: a very large one,
+trained on 800 million English tokens, which is the same for all the systems; and a
+smaller one, trained only on the English side of the parallel training data for that
+particular system. This ensured that any differences in performance are caused only
+by differences in the training data.
+The systems were tested on the news test corpus used for the NIST 2003 MT eval-
+uation.5 Translation performance was measured using the automatic BLEU evaluation
+metric (Papineni et al 2002) on four reference translations.
+Figures 8 and 9 show the BLEU scores obtained by our MT systems. The 95%
+confidence intervals of the scores computed by bootstrap resampling (Koehn 2004)
+are marked on the graphs; the delta value is around 1.2 for Arabic-English and 1 for
+Chinese-English.
+As the results show, the automatically extracted additional training data yields
+significant improvements in performance over most initial training corpora for both
+language pairs. At least for Chinese-English, the improvements are quite comparable
+to those produced by the human-translated data. And, as can be expected, the impact
+of the extracted data decreases as the size of the initial corpus increases.
+In order to check that the classifier really does something important, we per-
+formed a few experiments without it. After the article selection step, we simply paired
+each foreign document with the best-matching English one, assumed they are parallel,
+sentence-aligned them with a generic sentence alignment method, and added the re-
+sulting data to the training corpus. The resulting BLEU scores were practically the same
+as the baseline; thus, our classifier does indeed help to discover higher-quality parallel
+data.
+5.2 Non-Controlled Experiments
+We also measured the MT performance impact of the extracted corpora described
+in Section 4.2. We trained a Baseline MT system on all our available (in-domain and
+5 http://www.nist.gov/speech/tests/mt.
+493
+Computational Linguistics Volume 31, Number 4
+Figure 8
+MT performance improvements for Arabic-English.
+out-of-domain) parallel data, and a PlusExtracted system on the parallel data plus the
+extracted in-domain data. Clearly, we have access to no UpperBound system in this
+case.
+The results are presented in the first two rows of Table 7. Adding the extracted
+corpus lowers the score for the Arabic-English system and improves the score for
+the Chinese-English one; however, none of the differences are statistically significant.
+Since the baseline systems are trained on such large amounts of data (see Section 4.2),
+it is not surprising that our extracted corpora have no significant impact.
+In an attempt to give a better indication of the value of these corpora, we used
+them alone as MT training data. The BLEU scores obtained by the systems we trained
+on them are presented in the third row of Table 7. For comparison purposes, the last
+line of the table shows the scores of systems trained on 10M English tokens of out-
+of-domain data. As can be seen, our automatically extracted corpora obtain better MT
+performance than out-of-domain parallel corpora of similar size. It?s true that this is
+not a fair comparison, since the extracted corpora were obtained using all our available
+parallel data. The numbers do show, however, that the extracted data, although it was
+obtained automatically, is of good value for machine translation.
+6. Bootstrapping
+As can be seen from Table 2, the amount of data we can extract from our comparable
+corpora is adversely affected by poor dictionary coverage. Thus, if we start with very
+little parallel data, we do not make good use of the comparable corpora. One simple
+way to alleviate this problem is to bootstrap: after we?ve extracted some in-domain data,
+we can use it to learn a new dictionary and go back and extract again. Bootstrapping
+was also successfully applied to this problem by Fung and Cheung (2004).
+We performed bootstrapping iterations starting from two very small corpora: 100k
+English tokens and 1M English tokens, respectively. After each iteration, we trained
+494
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Figure 9
+MT performance improvements for Chinese-English.
+(and evaluated) an MT system on the initial data plus the data extracted in that iteration.
+We did not use any of the data extracted in previous iterations since it is mostly a
+subset of that extracted in the current iteration. We iterated until there were no further
+improvements in MT performance on our development data.
+Figures 10 and 11 show the sizes of the data extracted at each iteration, for both
+initial corpus sizes. Iteration 0 is the one that uses the dictionary learned from the
+initial corpus. Starting with 100k words of parallel data, we eventually collect 20M
+words of in-domain Arabic-English data and 90M words of in-domain Chinese-English
+data.
+Figures 12 and 13 show the BLEU scores of these MT systems. For comparison
+purposes, we also plotted on each graph the performance of our best MT system for
+that language pair, trained on all our available parallel data (Table 7).
+As we can see, bootstrapping allows us to extract significantly larger amounts of
+data, which leads to significantly higher BLEU scores. Starting with as little as 100k
+English tokens of parallel data, we obtain MT systems that come within 7?10 BLEU
+points of systems trained on parallel corpora of more than 100M English tokens. This
+Table 7
+BLEU scores of the systems obtained using all available parallel data.
+System Arabic-English Chinese-English
+Baseline 49.22 33.77
+Baseline plus extracted 48.54 34.38
+Extracted only 41.2 28.04
+Out-of-domain data 36.81 25.11
+495
+Computational Linguistics Volume 31, Number 4
+Figure 10
+Sizes of the Arabic-English corpora extracted using bootstrapping, in millions of English tokens.
+shows that using our method, a good-quality MT system can be built from very little
+parallel data and a large amount of comparable, non-parallel data.
+7. Examples
+We conclude the description of our method by presenting a few sentence pairs ex-
+tracted by our system. We chose the examples by looking for cases when a given
+foreign sentence was judged parallel to several different English sentences. Figures 14
+and 15 show the foreign sentence in Arabic and Chinese, respectively, followed by a
+human-produced translation in bold italic font, followed by the automatically extracted
+matching English sentences in normal font. The sentences are picked from the data
+sets presented in Section 4.2.
+The examples reveal the two main types of errors that our system makes. The
+first type concerns cases when the system classifies as parallel sentence pairs that,
+although they share many content words, express slightly different meanings, as in
+Figure 15, example 7. The second concerns pairs in which the two sentences convey
+different amounts of information. In such pairs, one of the sentences contains a trans-
+Figure 11
+Sizes of the Chinese-English corpora extracted using bootstrapping, in millions of English
+tokens.
+496
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Figure 12
+BLEU scores of the Arabic-English MT systems using bootstrapping.
+lation of the other, plus additional (often quite long) phrases (Figure 15, examples 1
+and 5).
+These errors are caused by the noise present in the automatically learned dictio-
+naries and by the use of a weak word alignment model for extracting the classifier
+Figure 13
+BLEU scores of the Chinese-English MT systems using bootstrapping.
+497
+Computational Linguistics Volume 31, Number 4
+Figure 14
+Automatically extracted Arabic-English sentence pairs.
+features. In an automatically learned dictionary, many words (especially the frequent,
+non-content ones) will have a lot of spurious translations. The IBM-1 alignment model
+takes no account of word order and allows a source word to be connected to arbitrarily
+many target words. Alignments computed using this model and a noisy, automatically
+learned, dictionary will contain many incorrect links. Thus, if two sentences share
+several content words, these incorrect links together with the correct links between the
+498
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Figure 15
+Automatically extracted Chinese-English sentence pairs.
+common content words will yield an alignment good enough to make the classifier
+judge the sentence pair as parallel.
+The effect of the noise in the dictionary is even more clear for sentence pairs with
+few words, such as Figure 14, example 6. The sentences in that example are tables
+of soccer team statistics. They are judged parallel because corresponding digits align
+499
+Computational Linguistics Volume 31, Number 4
+to each other, and according to our dictionary, the Arabic word for ?Mexico? can be
+translated as any of the country names listed in the example.
+These examples also show that the problem of finding only true translation pairs
+is hard. Two sentences may share many content words and yet express different mean-
+ings (see Figure 14, example 1). However, our task of getting useful MT training data
+does not require a perfect solution; as we have seen, even such noisy training pairs can
+help improve a translation system?s performance.
+8. Related Work
+While there is a large body of work on bilingual comparable corpora, most of it is
+focused on learning word translations (Fung and Yee 1998; Rapp 1999; Diab and Finch
+2000; Koehn and Knight 2000; Gaussier et al 2004). We are aware of only three previ-
+ous efforts aimed at discovering parallel sentences. Zhao and Vogel (2002) describe a
+generative model for discovering parallel sentences in the Xinhua News Chinese-
+English corpus. Utiyama et. al (2003) use cross-language information retrieval tech-
+niques and dynamic programming to extract sentences from an English-Japanese
+comparable corpus. Fung and Cheung (2004) present an extraction method similar to
+ours but focus on ?very-non-parallel corpora,? aggregations of Chinese and English
+news stories from different sources and time periods.
+The first two systems extend algorithms designed to perform sentence alignment
+of parallel texts. They start by attempting to identify similar article pairs from the two
+corpora. Then they treat each of those pairs as parallel texts and align their sentences
+by defining a sentence pair similarity score and use dynamic programming to find the
+least-cost alignment over the whole document pair.
+In the article pair selection stage, the researchers try to identify, for an article in
+one language, the best matching article in the other language. Zhao and Vogel (2002)
+measure article similarity by defining a generative model in which an English story
+generates a Chinese story with a given probability. Utiyama et al (2003) use the
+BM25 (Robertson and Walker 1994) similarity measure.
+The two works also differ in the way they define the sentence similarity score.
+Zhao and Vogel (2002) combine a sentence length model with an IBM Model 1-type
+translation model. Utiyama et al (2003) define a score based on word overlap (i.e.,
+number of word pairs from the two sentences that are translations of each other),
+which also includes the similarity score of the article pair from which the sentence pair
+originates.
+The performance of these approaches depends heavily on the ability to reliably
+find similar document pairs. Moreover, comparable article pairs, even those similar
+in content, may exhibit great differences at the sentence level (reorderings, additions,
+etc). Therefore, they pose hard problems for the dynamic programming alignment
+approach.
+In contrast, our method is more robust. The document pair selection part plays
+a minor role; it only acts as a filter. We do not attempt to find the best-matching
+English document for each foreign one, but rather a set of similar documents. And, most
+importantly, we are able to reliably judge each sentence pair in isolation, without need
+for context. On the other hand, the dynamic programming approach enables discovery
+of many-to-one sentence alignments, whereas our method is limited to finding one-to-
+one alignments.
+The approach of Fung and Cheung (2004) is a simpler version of ours. They match
+each foreign document with a set of English documents, using a threshold on their
+500
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+cosine similarity. Then, from each document pair, they generate all possible sentence
+pairs, compute their cosine similarity, and apply another threshold in order to select the
+ones that are parallel. Using the set of extracted sentences, they learn a new dictionary,
+try to extend their set of matching document pairs (by looking for other documents that
+contain these sentences), and iterate.
+The evaluation methodologies of these previous approaches are less direct than
+ours. Utiyama et al (2003) evaluate their sentence pairs manually; they estimate that
+about 90% of the sentence pairs in their final corpus are parallel. Fung and Cheung
+(2004) also perform a manual evaluation of the extracted sentences and estimate their
+precision to be 65.7% after bootstrapping. In addition, they also estimate the quality of
+a lexicon automatically learned from those sentences. Zhao and Vogel (2002) go one
+step further and show that the sentences extracted with their method improve the
+accuracy of automatically computed word alignments, to an F-score of 52.56% over a
+baseline of 46.46%. In a subsequent publication, Vogel (2003) evaluates these sentences
+in the context of an MT system and shows that they bring improvement under special
+circumstances (i.e., a language model constructed from reference translations) designed
+to reduce the noise introduced by the automatically extracted corpus. We go even
+further and demonstrate that our method can extract data that improves end-to-end
+MT performance without any special processing. Moreover, we show that our approach
+works even when only a limited amount of initial parallel data (i.e., a low-coverage
+dictionary) is available.
+The problem of aligning sentences in comparable corpora was also addressed for
+monolingual texts. Barzilay and Elhadad (2003) present a method of aligning sentences
+in two comparable English corpora for the purpose of building a training set of text-to-
+text rewriting examples. Monolingual parallel sentence detection presents a particular
+challenge: there are many sentence pairs that have low lexical overlap but are never-
+theless parallel. Therefore pairs cannot be judged in isolation, and context becomes
+an important factor. Barzilay and Elhadad (2003) make use of contextual information
+by detecting the topical structure of the articles in the two corpora and aligning them
+at paragraph level based on the topic assigned to each paragraph. Afterwards, they
+proceed and align sentences within paragraph pairs using dynamic programming.
+Their results show that both the induced topical structure and the paragraph align-
+ment improve the precision of their extraction method.
+A line of research that is both complementary and related to ours is that of Resnik
+and Smith (2003). Their STRAND Web-mining system has a purpose that is similar
+to ours: to identify translational pairs. However, STRAND focuses on extracting pairs
+of parallel Web pages rather than sentences. Resnik and Smith (2003) show that their
+approach is able to find large numbers of similar document pairs. Their system is
+potentially a good way of acquiring comparable corpora from the Web that could then
+be mined for parallel sentences using our method.
+9. Discussion
+The most important feature of our parallel sentence selection approach is its robust-
+ness. Comparable corpora are inherently noisy environments, where even similar
+content may be expressed in very different ways. Moreover, out-of-domain corpora
+introduce additional difficulties related to limited dictionary coverage. Therefore, the
+ability to reliably judge sentence pairs in isolation is crucial.
+Comparable corpora of interest are usually of large size; thus, processing them
+requires efficient algorithms. The computational processes involved in our system are
+501
+Computational Linguistics Volume 31, Number 4
+quite modest. All the operations necessary for the classification of a sentence pair (fil-
+ter, word alignment computation, and feature extraction) can be implemented efficiently
+and scaled up to very large amounts of data. The task can be easily parallelized for
+increased speed. For example, extracting data from 600k English documents and 500k
+Chinese documents (Section 4.2) required only about 7 days of processing time on
+10 processors.
+The data that we extract is useful. Its impact on MT performance is comparable
+to that of human-translated data of similar size and domain. Thus, although we have
+focused our experiments on the particular scenario where there is little in-domain
+training data available, we believe that our method can be useful for increasing the
+amount of training data, regardless of the domain of interest.
+As we have shown, this could be particularly effective for language pairs for which
+only very small amounts of parallel data are available. By acquiring a large compara-
+ble corpus and performing a few bootstrapping iterations, we can obtain a training
+corpus that yields a competitive MT system.
+We suspect our approach can be used on comparable corpora coming from any do-
+main. The only domain-dependent element of the system is the date window parameter
+of the article selection stage (Figure 7); for other domains, this can be replaced with
+a more appropriate indication of where the parallel sentences are likely to be found.
+For example, if the domain were that of technical manuals, one would cluster printer
+manuals and aircraft manuals separately. It is important to note that our work assumes
+that the comparable corpus does contain parallel sentences (which is the case for our
+data). Whether this is true for comparable corpora from other domains is an empirical
+question outside the scope of this article; however, both our results and those of Resnik
+and Smith (2003) strongly indicate that good data is available on the Web.
+Lack of parallel corpora is a major bottleneck in the development of SMT systems
+for most language pairs. The method presented in this paper is a step towards the
+important goal of automatic acquisition of such corpora. Comparable texts are avail-
+able on the Web in large quantities for many language pairs and domains. In this
+article, we have shown how they can be efficiently mined for parallel sentences.
+Acknowledgments
+This work was supported by DARPA-ITO
+grant NN66001-00-1-9814 and NSF grant
+IIS-0326276. The experiments were run on
+University of Southern California?s
+high-performance computer cluster HPC
+(http://www.usc.edu/hpcc). We would like
+to thank Hal Daume? III, Alexander Fraser,
+Radu Soricut, as well as the anonymous
+reviewers, for their helpful comments. Any
+remaining errors are of course our own.
+References
+Barzilay, Regina and Noemie Elhadad. 2003.
+Sentence alignment for monolingual
+comparable corpora. In Proceedings of the
+Conference on Empirical Methods in Natural
+Language Processing (EMNLP 2003),
+pages 25?32, Sapporo, Japan.
+Brown, Peter F., John Cocke, Stephen A.
+Della Pietra, Vincent J. Della Pietra,
+Fredrick Jelinek, John D. Lafferty, Robert L.
+Mercer, and Paul S. Roossin. 1990. A
+statistical approach to machine
+translation. Computational Linguistics,
+16(2):79?85.
+Brown, Peter F., Stephen A. Della Pietra,
+Vincent J. Della Pietra, and Robert L.
+Mercer. 1993. The mathematics of
+machine translation: Parameter
+estimation. Computational Linguistics,
+19(2):263?311.
+Darroch, J. N. and D. Ratcliff. 1974.
+Generalized iterative scaling for log-linear
+models. Annals of Mathematical Statistics,
+43:95?144.
+Davis, Mark W. and Ted E. Dunning. 1995. A
+TREC evaluation of query translation
+methods for multi-lingual text retrieval. In
+Fourth Text Retrieval Conference,
+pages 483?498, Gaithersburg, MD.
+502
+Munteanu and Marcu Exploiting Non-Parallel Corpora
+Diab, Mona and Steve Finch. 2000. A
+statistical word-level translation model for
+comparable corpora. In Proceedings of the
+Conference on Content-Based Multimedia
+Information Access, Paris, France.
+Diab, Mona and Philip Resnik. 2002. An
+unsupervised method for word sense
+tagging using parallel corpora. In
+Proceedings of the 40th Anniversary Meeting
+of the Association for Computational
+Linguistics, pages 255?262, Philadelphia.
+Echihabi, Abdessamad and Daniel Marcu.
+2003. A noisy-channel approach to
+question answering. In Proceedings of the
+41st Annual Meeting of the Association for
+Computational Linguistics, pages 16?23,
+Sapporo, Japan.
+Fung, Pascale and Percy Cheung. 2004.
+Mining very non-parallel corpora: Parallel
+sentence and lexicon extraction vie
+bootstrapping and EM. In Proceedings of the
+Conference on Empirical Methods in Natural
+Language Processing (EMNLP 2004),
+pages 57?63, Barcelona, Spain.
+Fung, Pascale and Kenneth Ward Church.
+1994. Kvec: A new approach for aligning
+parallel texts. In Proceedings of the 15th
+International Conference on Computational
+Linguistics (COLING), pages 1096?1102,
+Kyoto.
+Fung, Pascale and Lo Yuen Yee. 1998. An IR
+approach for translating new words from
+nonparallel, comparable texts. In
+Proceedings of the 36th Annual Meeting of the
+Association for Computational Linguistics,
+pages 414?420, Montreal.
+Gale, William A. and Kenneth Ward Church.
+1991. A program for aligning sentences in
+bilingual corpora. In Proceedings of the 29th
+Annual Meeting of the Association for
+Computational Linguistics, pages 177?184,
+Berkeley, CA.
+Gaussier, Eric, Jean-Michel Renders, Irina
+Matveeva, Cyril Goutte, and Herve
+Dejean. 2004. A geometric view on
+bilingual lexicon extraction from
+comparable corpora. In Proceedings of the
+42nd Annual Meeting of the Association for
+Computational Linguistics, pages 527?534,
+Barcelona, Spain.
+Koehn, Philipp. 2004. Statistical significance
+tests for machine translation evaluation. In
+Proceedings of the Conference on Empirical
+Methods in Natural Language Processing,
+pages 388?395, Barcelona, Spain.
+Koehn, Philipp and Kevin Knight. 2000.
+Estimating word translation probabilities
+from unrelated monolingual corpora using
+the EM algorithm. In Proceedings of the
+National Conference on Artificial Intelligence,
+pages 711?715, Austin, TX.
+Malouf, Robert. 2002. A comparison of
+algorithms for maximum entropy
+parameter estimation. In Sixth Conference
+on Natural Language Learning, Taipei,
+Taiwan.
+Melamed, Dan I. 1997. A portable algorithm
+for mapping bitext correspondence. In
+Proceedings of the 35th Annual Meeting of the
+Association for Computational Linguistics,
+pages 305?312, Madrid, Spain.
+Melamed, Dan I. 1999. Bitext maps and
+alignment via pattern recognition.
+Computational Linguistics, 25(1):107?130.
+Minton, Steven N., Sorinel I. Ticrea, and
+Jennifer Beach. 2003. Trainability:
+Developing a responsive learning system.
+In IJCAI Workshop on Information Integration
+on the Web, pages 27?32, Acapulco,
+Mexico.
+Moore, Robert C. 2002. Fast and accurate
+sentence alignment of bilingual corpora.
+In Proceedings of the 5th Conference of the
+Association for Machine Translation in the
+Americas, pages 135?144, Tiburon, CA.
+Moore, Robert C. 2004. Improving IBM
+word-alignment model 1. In 42nd Annual
+Meeting of the Association for Computational
+Linguistics, pages 519?526, Barcelona,
+Spain.
+Munteanu, Dragos Stefan, Alexander Fraser,
+and Daniel Marcu. 2004. Improved
+machine translation performance via
+parallel sentence extraction from
+comparable corpora. In Proceedings of the
+Human Language Technology Conference of
+the North American Chapter of the Association
+For Computational Linguistics,
+pages 265?272, Boston, MA.
+Oard, Douglas W. 1997. Cross-language text
+retrieval research in the USA. In Third
+DELOS Workshop on Cross-Language
+Information Retrieval, pages 1?10, Zurich,
+Switzerland.
+Och, Franz Josef. 2003. Minimum error rate
+training for statistical machine translation.
+In Proceedings of the 41st Annual Meeting of
+the Association for Computational Linguistics,
+pages 160?167, Sapporo, Japan.
+Och, Franz Josef and Hermann Ney. 2002.
+Discriminative training and maximum
+entropy models for statistical machine
+translation. In Proceedings of the 40th
+Annual Meeting of the Association for
+Computational Linguistics, pages 295?302,
+Philadelphia.
+Och, Franz Joseph and Hermann Ney. 2003.
+A systematic comparison of various
+503
+Computational Linguistics Volume 31, Number 4
+statistical alignment models. Computational
+Linguistics, 29(1):19?51.
+Ogilvie, Paul and Jamie Callan. 2001.
+Experiments using the Lemur toolkit. In
+Proceedings of the Tenth Text Retrieval
+Conference, pages 103?108, Gaithersburg,
+MD.
+Papineni, Kishore, Salim Roukos, Todd
+Ward, and Wei-Jing Zhu. 2002. BLEU:
+A method for automatic evaluation of
+machine translation. In Proceedings
+of the 40th Anniversary Meeting
+of the Association for Computational
+Linguistics, pages 311?318,
+Philadelphia.
+Rapp, Reinhard. 1999. Automatic
+identification of word translations from
+unrelated English and German corpora.
+In Proceedings of the 27th Annual Meeting
+of the Association for Computational
+Linguistics, pages 519?526, College
+Park, MD.
+Resnik, Philip and Noah A. Smith. 2003.
+The web as a parallel corpus.
+Computational Linguistics, 29(3):349?380,
+September.
+Robertson, E. and S. Walker. 1994. Some
+simple effective approximations to the
+2-Poisson model for probabilistic weighted
+retrieval. In Proceedings of the 17th Annual
+ACM SIGIR, pages 232?241, Dublin,
+Ireland.
+Ticrea, Sorinel I. and Steven Minton. 2003.
+Inducing web agents: Sample page
+management. In Proceedings of the
+International Conference on Information and
+Knowledge Engineering, pages 399?403, Las
+Vegas, NV, June.
+Utiyama, Masao and Hitoshi Isahara. 2003.
+Reliable measures for aligning
+Japanese-English news articles and
+sentences. In Proceedings of the 41st Annual
+Meeting of the Association for Computational
+Linguistics, pages 72?79, Sapporo, Japan.
+Vogel, Stephan. 2003. Using noisy bilingual
+data for statistical machine translation. In
+Proceedings of the 10th Conference of the
+European Chapter of the Association for
+Computational Linguistics, pages 175?178,
+Budapest, Hungary.
+Wu, Dekai. 1994. Aligning a parallel
+English-Chinese corpus statistically with
+lexical criteria. In Proceedings of the 32nd
+Annual Meeting of the Association for
+Computational Linguistics, pages 80?87, Las
+Cruces, NM.
+Yarowsky, David and Grace Ngai. 2001.
+Inducing multilingual POS taggers and NP
+bracketers via robust projection across
+aligned corpora. In Proceedings of the 2nd
+Meeting of the North American Association for
+Computational Linguistics, pages 200?207,
+Pittsburgh, PA.
+Yarowsky, David, Grace Ngai, and Richard
+Wicentowski. 2001. Inducing multilingual
+text analysis tools via robust projection
+across aligned corpora. In Proceedings
+of the First International Conference on
+Human Language Technology Research,
+pages 161?168, San Diego, CA.
+Zhao, Bing and Stephan Vogel. 2002.
+Adaptive parallel sentences mining from
+web bilingual news collection. In 2002
+IEEE International Conference on Data
+Mining, pages 745?748, Maebashi City,
+Japan.
+504
+ 
+	 ffProceedings of the Human Language Technology Conference of the North American Chapter of the ACL, pages 447?454,
+New York, June 2006. c?2006 Association for Computational Linguistics
+ParaEval: Using Paraphrases to Evaluate Summaries Automatically
+Liang Zhou, Chin-Yew Lin, Dragos Stefan Munteanu, and Eduard Hovy
+University of Southern California
+Information Sciences Institute
+4676 Admiralty Way
+Marina del Rey, CA 90292-6695
+{liangz, cyl, dragos, hovy} @isi.edu
+Abstract
+ParaEval is an automated evaluation
+method for comparing reference and peer
+summaries. It facilitates a tiered-
+comparison strategy where recall-oriented
+global optimal and local greedy searches
+for paraphrase matching are enabled in
+the top tiers. We utilize a domain-
+independent paraphrase table extracted
+from a large bilingual parallel corpus us-
+ing methods from Machine Translation
+(MT). We show that the quality of ParaE-
+val?s evaluations, measured by correlating
+with human judgments, closely resembles
+that of ROUGE?s.
+1 Introduction
+Content coverage is commonly measured in sum-
+mary comparison to assess how much information
+from the reference summary is included in a peer
+summary. Both manual and automatic methodolo-
+gies have been used. Naturally, there is a great
+amount of confidence in manual evaluation since
+humans can infer, paraphrase, and use world
+knowledge to relate text units with similar mean-
+ings, but which are worded differently. Human
+efforts are preferred if the evaluation task is easily
+conducted and managed, and does not need to be
+performed repeatedly. However, when resources
+are limited, automated evaluation methods become
+more desirable.
+For years, the summarization community has
+been actively seeking an automatic evaluation
+methodology that can be readily applied to various
+summarization tasks. ROUGE (Lin and Hovy,
+2003) has gained popularity due to its simplicity
+and high correlation with human judgments. Even
+though validated by high correlations with human
+judgments gathered from previous Document Un-
+derstanding Conference (DUC) experiments, cur-
+rent automatic procedures (Lin and Hovy, 2003;
+Hovy et al, 2005) only employ lexical n-gram
+matching. The lack of support for word or phrase
+matching that stretches beyond strict lexical
+matches has limited the expressiveness and utility
+of these methods. We need a mechanism that sup-
+plements literal matching?i.e. paraphrase and
+synonym?and approximates semantic closeness.
+In this paper we present ParaEval, an automatic
+summarization evaluation method, which facili-
+tates paraphrase matching in an overall three-level
+comparison strategy. At the top level, favoring
+higher coverage in reference, we perform an opti-
+mal search via dynamic programming to find
+multi-word to multi-word paraphrase matches be-
+tween phrases in the reference summary (usually
+human-written) and those in the peer summary
+(system-generated). The non-matching fragments
+from the previous level are then searched by a
+greedy algorithm to find single-word para-
+phrase/synonym matches. At the third and the low-
+est level, we perform literal lexical unigram
+matching on the remaining texts. This tiered design
+for summary comparison guarantees at least a
+ROUGE-1 level of summary content matching if
+no paraphrases are found.
+The first two levels employ a paraphrase table.
+Since manually created multi-word paraphrases-
+?phrases determined by humans to be paraphrases
+of one another?are not available in sufficient
+quantities, we automatically build a paraphrase
+447
+table using methods from the Machine Translation
+(MT) field. The assumption made in creating this
+table is that if two English phrases are translated
+into the same foreign phrase with high probability
+(shown in the alignment results from a statistically
+trained alignment algorithm), then the two English
+phrases are paraphrases of each other.
+This paper is organized in the following way:
+Section 2 introduces previous work in summariza-
+tion evaluation; Section 3 describes the motivation
+behind this work; paraphrase acquisition is dis-
+cussed in Section 4; Section 5 explains in detail
+our summary comparison mechanism; Section 6
+validates ParaEval with human summary judg-
+ments; and we conclude and discuss future work in
+Section 7.
+2 Previous Work
+There has been considerable work in both manual
+and automatic summarization evaluations. Three
+most noticeable efforts in manual evaluation are
+SEE (Lin and Hovy, 2001), Factoid (Van Halteren
+and Teufel, 2003), and the Pyramid method
+(Nenkova and Passonneau, 2004).
+SEE provides a user-friendly environment in
+which human assessors evaluate the quality of
+system-produced peer summary by comparing it to
+a reference summary. Summaries are represented
+by a list of summary units (sentences, clauses,
+etc.). Assessors can assign full or partial content
+coverage score to peer summary units in compari-
+son to the corresponding reference summary units.
+Grammaticality can also be graded unit-wise.
+The goal of the Factoid work is to compare the
+information content of different summaries of the
+same text and determine the minimum number of
+summaries, which was shown through experimen-
+tation to be 20-30, needed to achieve stable con-
+sensus among 50 human-written summaries.
+The Pyramid method uses identified consen-
+sus?a pyramid of phrases created by annota-
+tors?from multiple reference summaries as the
+gold-standard reference summary. Summary com-
+parisons are performed on Summarization Content
+Units (SCUs) that are approximately of clause
+length.
+To facilitate fast summarization system design-
+evaluation cycles, ROUGE was created (Lin and
+Hovy, 2003). It is an automatic evaluation package
+that measures a number of n-gram co-occurrence
+statistics between peer and reference summary
+pairs. ROUGE was inspired by BLEU (Papineni et
+al., 2001) which was adopted by the machine
+translation (MT) community for automatic MT
+evaluation. A problem with ROUGE is that the
+summary units used in automatic comparison are
+of fixed length. A more desirable design is to have
+summary units of variable size. This idea was im-
+plemented in the Basic Elements (BE) framework
+(Hovy et al, 2005) which has not been completed
+due to its lack of support for paraphrase matching.
+Both ROUGE and BE have been shown to corre-
+late well with past DUC human summary judg-
+ments, despite incorporating only lexical matching
+on summary units (Lin and Hovy, 2003; Hovy et
+al., 2005).
+3 Motivation
+3.1 Paraphrase Matching
+An important difference that separates current
+manual evaluation methods from their automatic
+counterparts is that semantic matching of content
+units is performed by human summary assessors.
+An essential part of the semantic matching in-
+volves paraphrase matching?determining whether
+phrases worded differently carry the same semantic
+information. This paraphrase matching process is
+observed in the Pyramid annotation procedure
+shown in (Nenkova and Passonneau, 2004) over
+three summary sets (10 summaries each). In the
+example shown in Figure 1 (reproduced from
+Pyramid results), each of the 10 phrases (numbered
+1 to 10) extracted from summary sentences carries
+the same semantic content as the overall summary
+content unit labeled SCU1 does. Each extracted
+phrase is identified as a summary content unit
+(SCU). In our work in building an automatic
+evaluation procedure that enables paraphrase
+SCU1: the crime in question was the Lockerbie {Scotland} bombing
+1 [for the Lockerbie bombing]
+2 [for blowing up] [over Lockerbie, Scotland]
+3 [of bombing] [over Lockerbie, Scotland]
+4 [was blown up over Lockerbie, Scotland, ]
+5 [the bombing of Pan Am Flight 103]
+6 [bombing over Lockerbie, Scotland, ]
+7 [for Lockerbie bombing]
+8 [bombing of Pan Am flight 103 over Lockerbie. ]
+9 [linked to the Lockerbie bombing]
+10 [in the Lockerbie bombing case. ]
+Figure 1. Paraphrases created by Pyramid annotation.
+448
+matching, we aim to automatically identify these
+10 phrases as paraphrases of one another.
+3.2 Synonymy Relations
+Synonym matching and paraphrase matching are
+often mentioned in the same context in discussions
+of extending current automated summarization
+evaluation methods to incorporate the matching of
+semantic units. While evaluating automatically
+extracted paraphrases via WordNet (Miller et al,
+1990), Barzilay and McKeown (2001) quantita-
+tively validated that synonymy is not the only
+source of paraphrasing. We envisage that this
+claim is also valid for summary comparisons.
+From an in-depth analysis on the manually cre-
+ated SCUs of the DUC2003 summary set D30042
+(Nenkova and Passonneau, 2004), we find that
+54.48% of 1746 cases where a non-stop word from
+one SCU did not match with its supposedly hu-
+man-aligned pairing SCUs are in need of some
+level of paraphrase matching support. For example,
+in the first two extracted SCUs (labeled as 1 and 2)
+in Figure 1??for the Lockerbie bombing? and ?for
+blowing up ? over Lockerbie, Scotland??no
+non-stop word other than the word ?Lockerbie?
+occurs in both phrases. But these two phrases were
+judged to carry the same semantic meaning be-
+cause human annotators think the word ?bombing?
+and the phrase ?blowing up? refer to the same ac-
+tion, namely the one associated with ?explosion.?
+However, ?bombing? and ?blowing up? cannot be
+matched through synonymy relations by using
+WordNet, since one is a noun and the other is a
+verb phrase (if tagged within context). Even when
+the search is extended to finding synonyms and
+hypernyms for their categorical variants and/or
+using other parts of speech (verb for ?bombing?
+and noun phrase for ?blowing up?), a match still
+cannot be found.
+To include paraphrase matching in summary
+evaluation, a collection of less-strict paraphrases
+must be created and a matching strategy needs to
+be investigated.
+4 Paraphrase Acquisition
+Paraphrases are alternative verbalizations for con-
+veying the same information and are required by
+many Natural Language Processing (NLP) appli-
+cations. In particular, summary creation and
+evaluation methods need to recognize paraphrases
+and their semantic equivalence. Unfortunately, we
+have yet to incorporate into the evaluation frame-
+work previous findings in paraphrase identification
+and extraction (Barzilay and McKeown, 2001;
+Pang et al, 2003; Bannard and Callison-Burch,
+2005).
+4.1 Related Work on Paraphrasing
+Three major approaches in paraphrase collection
+are manual collection (domain-specific), collection
+utilizing existing lexical resources (i.e. WordNet),
+and derivation from corpora. Hermjakob et al
+(2002) view paraphrase recognition as
+reformulation by pattern recognition. Pang et al
+(2003) use word lattices as paraphrase representa-
+tions from semantically equivalent translations
+sets. Using parallel corpora, Barzilay and McKe-
+own (2001) identify paraphrases from multiple
+translations of classical novels, where as Bannard
+and Callison-Burch (2005) develop a probabilistic
+representation for paraphrases extracted from large
+Machine Translation (MT) data sets.
+4.2 Extracting Paraphrases
+Our method to automatically construct a large do-
+main-independent paraphrase collection is based
+on the assumption that two different English
+phrases of the same meaning may have the same
+translation in a foreign language.
+Phrase-based Statistical Machine Translation
+(SMT) systems analyze large quantities of bilin-
+gual parallel texts in order to learn translational
+alignments between pairs of words and phrases in
+two languages (Och and Ney, 2004). The sentence-
+based translation model makes word/phrase align-
+ment decisions probabilistically by computing the
+optimal model parameters with application of the
+statistical estimation theory. This alignment proc-
+ess results in a corpus of word/phrase-aligned par-
+allel sentences from which we can extract phrase
+pairs that are translations of each other. We ran the
+alignment algorithm from (Och and Ney, 2003) on
+a Chinese-English parallel corpus of 218 million
+English words. Phrase pairs are extracted by fol-
+lowing the method described in (Och and Ney,
+2004) where all contiguous phrase pairs having
+consistent alignments are extraction candidates.
+The resulting phrase table is of high quality; both
+the alignment models and phrase extraction meth-
+449
+ods have been shown to produce very good results
+for SMT. Using these pairs we build paraphrase
+sets by joining together all English phrases with
+the same Chinese translation. Figure 2 shows an
+example word/phrase alignment for two parallel
+sentence pairs from our corpus where the phrases
+?blowing up? and ?bombing? have the same Chi-
+nese translation. On the right side of the figure we
+show the paraphrase set which contains these two
+phrases, which is typical in our collection of ex-
+tracted paraphrases.
+5 Summary Comparison in ParaEval
+This section describes the process of comparing a
+peer summary against a reference summary and the
+summary grading mechanism.
+5.1 Description
+We adopt a three-tier matching strategy for sum-
+mary comparison. The score received by a peer
+summary is the ratio of the number of reference
+words matched to the total number of words in the
+reference summary. The total number of matched
+reference words is the sum of matched words in
+reference throughout all three tiers. At the top
+level, favoring high recall coverage, we perform an
+optimal search to find multi-word paraphrase
+matches between phrases in the reference summary
+and those in the peer. Then a greedy search is per-
+formed to find single-word paraphrase/synonym
+matches among the remaining text. Operations
+conducted in these two top levels are marked as
+linked rounded rectangles in Figure 3. At the bot-
+tom level, we find lexical identity matches, as
+marked in rectangles in the example. If no para-
+phrases are found, this last level provides a guar-
+antee of lexical comparison that is equivalent to
+what other automated systems give. In our system,
+the bottom level currently performs unigram
+matching. Thus, we are ensured with at least a
+ROUGE-1 type of summary comparison. Alterna-
+tively, equivalence of other ROUGE configura-
+tions can replace the ROUGE-1 implementation.
+There is no theoretical reason why the first two
+levels should not merge. But due to high computa-
+tional cost in modeling an optimal search, the sepa-
+ration is needed. We explain this in detail below.
+5.2 Multi-Word Paraphrase Matching
+In this section we describe the algorithm that per-
+forms the multi-word paraphrase matching be-
+tween phrases from reference and peer summaries.
+Using the example in Figure 3, this algorithm cre-
+ates the phrases shown in the rounded rectangles
+and establishes the appropriate links indicating
+corresponding paraphrase matches.
+Problem Description
+Measuring content coverage of a peer summary
+using a single reference summary requires com-
+puting the recall score of how much information
+from the reference summary is included in the
+peer. A summary unit, either from reference or
+peer, cannot be matched for more than once. For
+Figure 2. An example of paraphrase extraction.
+Figure 3. Comparison of summaries.
+450
+example, the phrase ?imposed sanctions on Libya?
+(r1) in Figure 3?s reference summary was matched
+with the peer summary?s ?voted sanctions against
+Libya? (p1). If later in the peer summary there is
+another phrase p2 that is also a paraphrase of r1, the
+match of r1 cannot be counted twice. Conversely,
+double counting is not permissible for
+phrase/words in the peer summary, either.
+We conceptualize the comparison of peer
+against reference as a task that is to complete over
+several time intervals. If the reference summary
+contains n sentences, there will be n time intervals,
+where at time ti, phrases from a particular sentence
+i of the reference summary are being considered
+with all possible phrases from the peer summary
+for paraphrase matches. A decision needs to be
+made at each time interval:
+? Do we employ a local greedy match algo-
+rithm that is recall generous (preferring more
+matched words from reference) towards only the
+reference sentence currently being analyzed,
+? Or do we need to explore globally, in-
+specting all reference sentences and find the best
+overall matching combinations?
+Consider the scenario in Figure 4:
+1) at t0: L(p1 = r2) > L(p2 = r1) and r2 contains r1.
+A local search algorithm leads to match(p1, r2). L() indi-
+cates the number of words in reference matched by the
+peer phrase through paraphrase matching and match()
+indicates a paraphrase match has occurred (more in the
+figure).
+2) at t1: L(p1 = r3) > L(p1 = r2). A global algo-
+rithm reverses the decision match(p1, r2) made at t0 and
+concludes match(p1, r3) and match(p2, r1) . A local
+search algorithm would have returned no match.
+Clearly, the global search algorithm achieves
+higher overall recall (in words). The matching of
+paraphrases between a reference and its peer be-
+comes a global optimization problem, maximizing
+the content coverage of the peer compared in refer-
+ence.
+Solution Model
+We use dynamic programming to derive the solu-
+tion of finding the best paraphrase-matching com-
+binations. The optimization problem is as follows:
+Sentences from a reference summary and a peer
+summary can be broken into phrases of various
+lengths. A paraphrase lookup table is used to find
+whether a reference phrase and a peer phrase are
+paraphrases of each other. What is the optimal
+paraphrase matching combination of phrases from
+reference and peer that gives the highest recall
+score (in number of matched reference words) for
+this given peer? The solution should be recall ori-
+ented (favoring a peer phrase that matches more
+reference words than those match less).
+Following (Trick, 1997), the solution can be
+characterized as:
+1) This problem can be divided into n stages
+corresponding to the n sentences of the reference
+summary. At each stage, a decision is required to
+determine the best combination of matched para-
+phrases between the reference sentence and the
+entire peer summary that results in no double
+counting of phrases on the peer side. There is no
+double counting of reference phrases across stages
+since we are processing one reference sentence at a
+time and are finding the best paraphrase matches
+using the entire peer summary. As long as there is
+no double counting in peers, we are guaranteed to
+have none in reference, either.
+2) At each stage, we define a number of pos-
+sible states as follows.  If, out of all possible
+phrases of any length extracted from the reference
+sentence, m phrases were found to have matching
+paraphrases in the peer summary, then a state is
+any subset of the m phrases.
+3) Since no double counting in matched
+phrases/words is allowed in either the reference
+summary or the peer summary, the decision of
+which phrases (leftover text segments in reference
+Pj and ri represent phrases chosen for   paraphrase
+matching from peer and reference respectively.
+Pj = ri indicates that the phrase Pj from peer is
+found to be a paraphrase to the phrase ri from
+reference.
+L(Pj = ri) indicates the number of words matched
+by Pj in ri when they are found to be paraphrases of
+each other.
+L(Pj = ri) and L(Pj = ri+1) may not be equal if the
+number of words in ri, indicated by L(ri), does not
+equal to the number of words in ri+1, indicated by
+L(ri+1).
+Figure 4. Local vs. global paraphrase matching.
+451
+and in peer) are allowed to match for the next stage
+is made in the current stage.
+4) Principle of optimality: at a given state, it
+is not necessary to know what matches occurred at
+previous stages, only on the accumulated recall
+score (matched reference words) from previous
+stages and what text segments (phrases) in peer
+have not been taken/matched in previous stages.
+5) There exists a recursive relationship that
+identifies the optimal decision for stage s (out of n
+total stages), given that stage s+1 has already been
+solved.
+6) The final stage, n (last sentence in refer-
+ence), is solved by choosing the state that has the
+highest accumulated recall score and yet resulted
+no double counting in any phrase/word in peer the
+summary.
+Figure 5 demonstrates the optimal solution (12
+reference words matched) for the example shown
+in Figure 4. We can express the calculations in the
+following formulas:
+where fy(xb) denotes the optimal recall coverage
+(number of words in the reference summary
+matched by the phrases from the peer summary) at
+state xb in stage y. r(xb) is the recall coverage given
+state xb. And c(xb) records the phrases matched in
+peer with no double counting, given state xb.
+5.3 Synonym Matching
+All paraphrases whose pairings do not involve
+multi-word to multi-word matching are called
+synonyms in our experiment. Since these phrases
+have either a n-to-1 or 1-to-n matching ratio (such
+as the phrases ?blowing up? and ?bombing?), a
+greedy algorithm favoring higher recall coverage
+reduces the state creation and stage comparison
+costs associated with the optimal procedure
+(O(m6): O(m3) for state creation, and for 2 stages at
+any time)). The paraphrase table described in Sec-
+tion 4 is used.
+ Synonym matching is performed only on parts
+of the reference and peer summaries that were not
+matched from the multi-word paraphrase-matching
+phase.
+5.4 Lexical Matching
+This matching phase performs straightforward
+lexical matching, as exemplified by the text frag-
+ments marked in rectangles in Figure 3. Unigrams
+are used as the units for counting matches in ac-
+cordance with the previous two matching phases.
+ During all three matching phases, we employed
+a ROUGE-1 style of counting. Other alternatives,
+such as ROUGE-2, ROUGE-SU4, etc., can easily
+be adapted to each phase.
+6  Evaluation of ParaEval
+To evaluate and validate the effectiveness of an
+automatic evaluation metric, it is necessary to
+show that automatic evaluations correlate with
+human assessments highly, positively, and consis-
+tently (Lin and Hovy, 2003). In other words, an
+automatic evaluation procedure should be able to
+distinguish good and bad summarization systems
+by assigning scores with close resemblance to hu-
+mans? assessments.
+6.1 Document Understanding Conference
+The Document Understanding Conference has
+provided large-scale evaluations on both human-
+created and system-generated summaries annually.
+Research teams are invited to participate in solving
+summarization problems with their systems. Sys-
+tem-generated summaries are then assessed by
+humans and/or automatic evaluation procedures.
+The collection of human judgments on systems and
+their summaries has provided a test-bed for devel-
+oping and validating automated summary grading
+methods (Lin and Hovy, 2003; Hovy et al, 2005).
+The correlations reported by ROUGE and BE
+show that the evaluation correlations between these
+two systems and DUC human evaluations are
+much higher on single-document summarization
+tasks. One possible explanation is that when sum-
+Figure 5. Solution for the example in Figure 4.
+452
+marizing from only one source (text), both human-
+and system-generated summaries are mostly ex-
+tractive. The reason for humans to take phrases (or
+maybe even sentences) verbatim is that there is less
+motivation to abstract when the input is not highly
+redundant, in contrast to input for multi-document
+summarization tasks, which we speculate allows
+more abstracting. ROUGE and BE both facilitate
+lexical n-gram matching, hence, achieving amaz-
+ing correlations. Since our baseline matching strat-
+egy is lexically based when paraphrase matching is
+not activated, validation on single-doc summariza-
+tion results is not repeated in our experiment.
+6.2 Validation and Discussion
+We use summary judgments from DUC2003?s
+multi-document summarization (MDS) task to
+evaluate ParaEval. During DUC2003, participating
+systems created short summaries (~100 words) for
+30 document sets. For each set, one assessor-
+written summary was used as the reference to
+compare peer summaries created by 18 automatic
+systems (including baselines) and 3 other human-
+written summaries. A system ranking was pro-
+duced by taking the averaged performance on all
+summaries created by systems. This evaluation
+process is replicated in our validation setup for
+ParaEval. In all, 630 summary pairs were com-
+pared. Pearson?s correlation coefficient is com-
+puted for the validation tests, using DUC2003
+assessors? results as the gold standard.
+Table 1 illustrates the correlation figures from
+the DUC2003 test set. ParaEval-para_only shows
+the correlation result when using only paraphrase
+and synonym matching, without the baseline uni-
+gram matching. ParaEval-2 uses multi-word para-
+phrase matching and unigram matching, omitting
+the greedy synonym-matching phrase. ParaEval-3
+incorporates matching at all three granularity lev-
+els.
+We see that the current implementation of
+ParaEval closely resembles the way ROUGE-1
+differentiates system-generated summaries. We
+believe this is due to the identical calculations of
+recall scores. The score that a peer summary re-
+ceives from ParaEval depends on the number of
+words matched in the reference summary from its
+paraphrase, synonym, and unigram matches. The
+counting of individual words in reference indicates
+a ROUGE-1 design in grading. However, a de-
+tailed examination on individual reference-peer
+comparisons shows that paraphrase and synonym
+comparisons and matches, in addition to lexical n-
+gram matching, do measure a higher level of con-
+tent coverage. This is demonstrated in Figure 6a
+and b. Strict unigram matching reflects the content
+retained by a peer summary mostly in the 0.2-0.4
+ranges in recall, shown as dark-colored dots in the
+graphs. Allowing paraphrase and synonym match-
+ing increases the detection of peer coverage to the
+range of 0.3-0.5, shown as light-colored dots.
+We conducted a manual evaluation to further
+examine the paraphrases being matched. Using 10
+summaries from the Pyramid data, we asked three
+human subjects to judge the validity of 128 (ran-
+domly selected) paraphrase pairs extracted and
+identified by ParaEval. Each pair of paraphrases
+was coupled with its respective sentences as con-
+texts. All paraphrases judged were multi-word.
+ParaEval received an average precision of 68.0%.
+The complete agreement between judges is 0.582
+according to the Kappa coefficient (Cohen, 1960).
+In Figure 7, we show two examples that the human
+judges consider to be good paraphrases produced
+and matched by ParaEval. Judges voiced difficul-
+DUC-2003 Pearson
+ROUGE-1 0.622
+ParaEval-para_only 0.41
+ParaEval-2 0.651
+ParaEval-3 0.657
+Table 1. Correlation with DUC 2003 MDS results.
+Human Summaries: ParaEval vs. ROUGE-1
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+DUC2003 Summary Writers
+Re
+ca
+ll 
+(%
+ w
+or
+d 
+m
+at
+ch
+)
+ROUGE-1 Scores
+ParaEval-3 Scores
+System Summaries: ParaEval vs. ROUGE-1
+0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+DUC2003 Systems
+Re
+ca
+ll 
+(%
+ w
+or
+d 
+m
+at
+ch
+)
+ROUGE-1 Scores
+ParaEval-3 Scores
+a).
+Human-
+written
+summaries.
+b).
+System-
+generated
+summaries.
+Figure 6. A detailed look at the scores assigned by
+lexical and paraphrase/synonym comparisons.
+453
+Figure 7. Paraphrases matched by ParaEval.
+ties in determining ?semantic equivalence.? There
+were cases where paraphrases would be generally
+interchangeable but could not be matched because
+of non-semantic equivalence in their contexts. And
+there were paraphrases that were determined as
+matches, but if taken out of context, would not be
+direct replacements of each other. These two situa-
+tions are where the judges mostly disagreed.
+7 Conclusion and Future Work
+In this paper, we have described an automatic
+summarization evaluation method, ParaEval, that
+facilitates paraphrase matching using a large do-
+main-independent paraphrase table extracted from
+a bilingual parallel corpus. The three-layer match-
+ing strategy guarantees a ROUGE-like baseline
+comparison if paraphrase matching fails.
+The paraphrase extraction module from the cur-
+rent implementation of ParaEval does not dis-
+criminate among the phrases that are found to be
+paraphrases of one another. We wish to incorporate
+the probabilistic paraphrase extraction model from
+(Bannard and Callison-Burch, 2005) to better ap-
+proximate the relations between paraphrases. This
+adaptation will also lead to a stochastic model for
+the low-level lexical matching and scoring.
+We chose English-Chinese MT parallel data be-
+cause they are news-oriented which coincides with
+the task genre from DUC. However, it is unknown
+how large a parallel corpus is sufficient in provid-
+ing a paraphrase collection good enough to help
+the evaluation process. The quality of the para-
+phrase table is also affected by changes in the do-
+main and language pair of the MT parallel data.
+We plan to use ParaEval to investigate the impact
+of these changes on paraphrase quality under the
+assumption that better paraphrase collections lead
+to better summary evaluation results.
+The immediate impact and continuation of the
+described work would be to incorporate paraphrase
+matching and extraction into the summary creation
+process. And with ParaEval, it is possible for us to
+evaluate systems that do incorporate some level of
+abstraction, especially paraphrasing.
+References
+Bannard, C. and C. Callison-Burch. 2005. Paraphrasing with bilingual
+parallel corpora. Proceedings of ACL-2005.
+Barzilay, R. and K. McKeown. 2001. Extracting paraphrases from a
+parallel corpus. Proceedings of ACL/EACL-2001.
+Brown, P. F., S. A. Della Pietra, V. J. Della Pietra, R. L. Mercer.
+1993. The mathematics of machine translation: Parameter estima-
+tion. Computational Linguistics, 19(2): 263?311, 1993.
+Cohen, J. 1960. A coefficient of agreement for nominal scales. Edu-
+cation and Psychological Measurement, 43(6):37?46.
+Diab, M. and P. Resnik. 2002. An unsupervised method for word
+sense tagging using parallel corpora. Proceedings of ACL-2002.
+DUC. 2001?2005. Document Understanding Conferences.
+Hermjakob, U., A. Echihabi, and D. Marcu. 2002. Natural language
+based reformulation resource and web exploitation for question
+answering. Proceedings of TREC-2002.
+Hovy, E, C.Y. Lin, and L. Zhou. 2005. Evaluating DUC 2005 using
+basic elements. Proceedings of DUC-2005.
+Hovy, E., C.Y. Lin, L. Zhou, and J. Fukumoto. 2005a. Basic Ele-
+ments. http://www.isi.edu/~cyl/BE.
+Lin, C.Y.  2001. http://www.isi.edu/~cyl/SEE.
+Lin, C.Y. and E. Hovy. 2003. Automatic evaluation of summaries
+using n-gram co-occurrence statistics. Proceedings of the HLT-
+2003.
+Miller, G.A., R. Beckwith, C. Fellbaum, D. Gross, and K. J. Miller.
+1990. Introduction to WordNet: An on-line lexical database. Inter-
+national Journal of Lexicography, 3(4): 235?245.
+Nenkova, A. and R. Passonneau. 2004. Evaluating content selection in
+summarization: the pyramid method. Proceedings of the HLT-
+NAACL 2004.
+Och, F. J. and H. Ney. 2003. A systematic comparison of various
+statistical alignment models. Computational Linguistics, 29(1): 19-
+?51, 2003.
+Och, F. J. and H. Ney. 2004. The alignment template approach to
+statistical machine translation. Computational Linguistics, 30(4),
+2004.
+Pang, B. , K. Knight and D. Marcu. 2003. Syntax-based alignment of
+multiple translations: extracting paraphrases and generating new
+sentences. Proceedings of HLT/NAACL-2003.
+Papineni, K., S. Roukos, T. Ward, and W. J. Zhu. IBM research report
+Bleu: a method for automatic evaluation of machine translation
+IBM Research Division Technical Report, RC22176, 2001.
+Trick, M. A. 1997. A tutorial on dynamic program-
+ming.http://mat.gsia.cmu.edu/classes/dynamic/dynamic.html.
+Van Halteren, H. and S. Teufel. 2003. Examining the consensus be-
+tween human summaries: initial experiments with factoid analysis.
+Proceedings of HLT-2003.
+454
+Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of the ACL, pages 81?88,
+Sydney, July 2006. c?2006 Association for Computational Linguistics
+Extracting Parallel Sub-Sentential Fragments from Non-Parallel Corpora
+Dragos Stefan Munteanu
+University of Southern California
+Information Sciences Institute
+4676 Admiralty Way, Suite 1001
+Marina del Rey, CA, 90292
+dragos@isi.edu
+Daniel Marcu
+University of Southern California
+Information Sciences Institute
+4676 Admiralty Way, Suite 1001
+Marina del Rey, CA, 90292
+marcu@isi.edu
+Abstract
+We present a novel method for extract-
+ing parallel sub-sentential fragments from
+comparable, non-parallel bilingual cor-
+pora. By analyzing potentially similar
+sentence pairs using a signal processing-
+inspired approach, we detect which seg-
+ments of the source sentence are translated
+into segments in the target sentence, and
+which are not. This method enables us
+to extract useful machine translation train-
+ing data even from very non-parallel cor-
+pora, which contain no parallel sentence
+pairs. We evaluate the quality of the ex-
+tracted data by showing that it improves
+the performance of a state-of-the-art sta-
+tistical machine translation system.
+1 Introduction
+Recently, there has been a surge of interest in
+the automatic creation of parallel corpora. Sev-
+eral researchers (Zhao and Vogel, 2002; Vogel,
+2003; Resnik and Smith, 2003; Fung and Cheung,
+2004a; Wu and Fung, 2005; Munteanu and Marcu,
+2005) have shown how fairly good-quality parallel
+sentence pairs can be automatically extracted from
+comparable corpora, and used to improve the per-
+formance of machine translation (MT) systems.
+This work addresses a major bottleneck in the de-
+velopment of Statistical MT (SMT) systems: the
+lack of sufficiently large parallel corpora for most
+language pairs. Since comparable corpora exist in
+large quantities and for many languages ? tens of
+thousands of words of news describing the same
+events are produced daily ? the ability to exploit
+them for parallel data acquisition is highly benefi-
+cial for the SMT field.
+Comparable corpora exhibit various degrees of
+parallelism. Fung and Cheung (2004a) describe
+corpora ranging from noisy parallel, to compara-
+ble, and finally to very non-parallel. Corpora from
+the last category contain ?... disparate, very non-
+parallel bilingual documents that could either be
+on the same topic (on-topic) or not?. This is the
+kind of corpora that we are interested to exploit in
+the context of this paper.
+Existing methods for exploiting comparable
+corpora look for parallel data at the sentence level.
+However, we believe that very non-parallel cor-
+pora have none or few good sentence pairs; most
+of their parallel data exists at the sub-sentential
+level. As an example, consider Figure 1, which
+presents two news articles from the English and
+Romanian editions of the BBC. The articles re-
+port on the same event (the one-year anniversary
+of Ukraine?s Orange Revolution), have been pub-
+lished within 25 minutes of each other, and express
+overlapping content.
+Although they are ?on-topic?, these two docu-
+ments are non-parallel. In particular, they contain
+no parallel sentence pairs; methods designed to ex-
+tract full parallel sentences will not find any use-
+ful data in them. Still, as the lines and boxes from
+the figure show, some parallel fragments of data
+do exist; but they are present at the sub-sentential
+level.
+In this paper, we present a method for extracting
+such parallel fragments from comparable corpora.
+Figure 2 illustrates our goals. It shows two sen-
+tences belonging to the articles in Figure 1, and
+highlights and connects their parallel fragments.
+Although the sentences share some common
+meaning, each of them has content which is not
+translated on the other side. The English phrase
+reports the BBC?s Helen Fawkes in Kiev, as well
+81
+Figure 1: A pair of comparable, non-parallel documents
+Figure 2: A pair of comparable sentences.
+as the Romanian one De altfel, vorbind inaintea
+aniversarii have no translation correspondent, ei-
+ther in the other sentence or anywhere in the whole
+document. Since the sentence pair contains so
+much untranslated text, it is unlikely that any par-
+allel sentence detection method would consider it
+useful. And, even if the sentences would be used
+for MT training, considering the amount of noise
+they contain, they might do more harm than good
+for the system?s performance. The best way to
+make use of this sentence pair is to extract and use
+for training just the translated (highlighted) frag-
+ments. This is the aim of our work.
+Identifying parallel subsentential fragments is
+a difficult task. It requires the ability to recog-
+nize translational equivalence in very noisy en-
+vironments, namely sentence pairs that express
+different (although overlapping) content. How-
+ever, a good solution to this problem would have a
+strong impact on parallel data acquisition efforts.
+Enabling the exploitation of corpora that do not
+share parallel sentences would greatly increase the
+amount of comparable data that can be used for
+SMT.
+2 Finding Parallel Sub-Sentential
+Fragments in Comparable Corpora
+2.1 Introduction
+The high-level architecture of our parallel frag-
+ment extraction system is presented in Figure 3.
+The first step of the pipeline identifies docu-
+ment pairs that are similar (and therefore more
+likely to contain parallel data), using the Lemur
+information retrieval toolkit1 (Ogilvie and Callan,
+2001); each document in the source language is
+translated word-for-word and turned into a query,
+which is run against the collection of target lan-
+guage documents. The top 20 results are retrieved
+and paired with the query document. We then take
+all sentence pairs from these document pairs and
+run them through the second step in the pipeline,
+the candidate selection filter. This step discards
+pairs which have very few words that are trans-
+lations of each other. To all remaining sentence
+pairs we apply the fragment detection method (de-
+scribed in Section 2.3), which produces the output
+of the system.
+We use two probabilistic lexicons, learned au-
+1http://www-2.cs.cmu.edu/$\sim$lemur
+82
+Figure 3: A Parallel Fragment Extraction System
+tomatically from the same initial parallel corpus.
+The first one, GIZA-Lex, is obtained by running
+the GIZA++2 implementation of the IBM word
+alignment models (Brown et al, 1993) on the ini-
+tial parallel corpus. One of the characteristics of
+this lexicon is that each source word is associated
+with many possible translations. Although most of
+its high-probability entries are good translations,
+there are a lot of entries (of non-negligible proba-
+bility) where the two words are at most related. As
+an example, in our GIZA-Lex lexicon, each source
+word has an average of 12 possible translations.
+This characteristic is useful for the first two stages
+of the extraction pipeline, which are not intended
+to be very precise. Their purpose is to accept most
+of the existing parallel data, and not too much of
+the non-parallel data; using such a lexicon helps
+achieve this purpose.
+For the last stage, however, precision is
+paramount. We found empirically that when us-
+ing GIZA-Lex, the incorrect correspondences that
+it contains seriously impact the quality of our re-
+sults; we therefore need a cleaner lexicon. In addi-
+tion, since we want to distinguish between source
+words that have a translation on the target side and
+words that do not, we also need a measure of the
+probability that two words are not translations of
+each other. All these are part of our second lexi-
+con, LLR-Lex, which we present in detail in Sec-
+tion 2.2. Subsequently, in Section 2.3, we present
+our algorithm for detecting parallel sub-sentential
+fragments.
+2.2 Using Log-Likelihood-Ratios to Estimate
+Word Translation Probabilities
+Our method for computing the probabilistic trans-
+lation lexicon LLR-Lex is based on the the Log-
+2http://www.fjoch.com/GIZA++.html
+Likelihood-Ratio (LLR) statistic (Dunning, 1993),
+which has also been used by Moore (2004a;
+2004b) and Melamed (2000) as a measure of
+word association. Generally speaking, this statis-
+tic gives a measure of the likelihood that two sam-
+ples are not independent (i.e. generated by the
+same probability distribution). We use it to es-
+timate the independence of pairs of words which
+cooccur in our parallel corpus.
+If source word
+ 
+and target word  are indepen-
+dent (i.e. they are not translations of each other),
+we would expect that 
+ 	
+
+
+ 	
+
+
+
+,
+i.e. the distribution of  given that
+ 
+is present
+is the same as the distribution of  when
+ 
+is not
+present. The LLR statistic gives a measure of the
+likelihood of this hypothesis. The LLR score of a
+word pair is low when these two distributions are
+very similar (i.e. the words are independent), and
+high otherwise (i.e. the words are strongly associ-
+ated). However, high LLR scores can indicate ei-
+ther a positive association (i.e.   	   	 )
+or a negative one; and we can distinguish between
+them by checking whether 
+ 	
+
+
+
+ 	
+.
+Thus, we can split the set of cooccurring word
+pairs into positively and negatively associated
+pairs, and obtain a measure for each of the two as-
+sociation types. The first type of association will
+provide us with our (cleaner) lexicon, while the
+second will allow us to estimate probabilities of
+words not being translations of each other.
+Before describing our new method more for-
+mally, we address the notion of word cooc-
+currence. In the work of Moore (2004a) and
+Melamed (2000), two words cooccur if they are
+present in a pair of aligned sentences in the parallel
+training corpus. However, most of the words from
+aligned sentences are actually unrelated; therefore,
+this is a rather weak notion of cooccurrence. We
+follow Resnik et. al (2001) and adopt a stronger
+definition, based not on sentence alignment but
+on word alignment: two words cooccur if they
+are linked together in the word-aligned parallel
+training corpus. We thus make use of the signifi-
+cant amount of knowledge brought in by the word
+alignment procedure.
+We compute  
+		

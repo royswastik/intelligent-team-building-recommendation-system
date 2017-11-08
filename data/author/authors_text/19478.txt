@@ -1,0 +1,2719 @@
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 402?411, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Locally Training the Log-Linear Model for SMT
+Lemao Liu1, Hailong Cao1, Taro Watanabe2, Tiejun Zhao1, Mo Yu1, CongHui Zhu1
+1School of Computer Science and Technology
+Harbin Institute of Technology, Harbin, China
+2National Institute of Information and Communication Technology
+3-5 Hikari-dai, Seika-cho, Soraku-gun, Kyoto, Japan
+{lmliu,hailong,tjzhao,yumo,chzhu}@mtlab.hit.edu.cn
+taro.watanabe@nict.go.jp
+Abstract
+In statistical machine translation, minimum
+error rate training (MERT) is a standard
+method for tuning a single weight with regard
+to a given development data. However, due to
+the diversity and uneven distribution of source
+sentences, there are two problems suffered by
+this method. First, its performance is highly
+dependent on the choice of a development set,
+which may lead to an unstable performance
+for testing. Second, translations become in-
+consistent at the sentence level since tuning is
+performed globally on a document level. In
+this paper, we propose a novel local training
+method to address these two problems. Un-
+like a global training method, such as MERT,
+in which a single weight is learned and used
+for all the input sentences, we perform training
+and testing in one step by learning a sentence-
+wise weight for each input sentence. We pro-
+pose efficient incremental training methods to
+put the local training into practice. In NIST
+Chinese-to-English translation tasks, our lo-
+cal training method significantly outperforms
+MERT with the maximal improvements up to
+2.0 BLEU points, meanwhile its efficiency is
+comparable to that of the global method.
+1 Introduction
+Och and Ney (2002) introduced the log-linear model
+for statistical machine translation (SMT), in which
+translation is considered as the following optimiza-
+tion problem:
+e?(f ;W ) = arg max
+e
+P(e|f ;W )
+= arg max
+e
+exp
+{
+W ? h(f, e)
+}
+?
+e? exp
+{
+W ? h(f, e?)
+}
+= arg max
+e
+{
+W ? h(f, e)
+}
+, (1)
+where f and e (e?) are source and target sentences,
+respectively. h is a feature vector which is scaled
+by a weight W . Parameter estimation is one of
+the most important components in SMT, and var-
+ious training methods have been proposed to tune
+W . Some methods are based on likelihood (Och and
+Ney, 2002; Blunsom et al2008), error rate (Och,
+2003; Zhao and Chen, 2009; Pauls et al2009; Gal-
+ley and Quirk, 2011), margin (Watanabe et al2007;
+Chiang et al2008) and ranking (Hopkins and May,
+2011), and among which minimum error rate train-
+ing (MERT) (Och, 2003) is the most popular one.
+All these training methods follow the same
+pipeline: they train only a single weight on a given
+development set, and then use it to translate all the
+sentences in a test set. We call them a global train-
+ing method. One of its advantages is that it allows us
+to train a single weight offline and thereby it is effi-
+cient. However, due to the diversity and uneven dis-
+tribution of source sentences(Li et al2010), there
+are some shortcomings in this pipeline.
+Firstly, on the document level, the performance of
+these methods is dependent on the choice of a devel-
+opment set, which may potentially lead to an unsta-
+ble translation performance for testing. As referred
+in our experiment, the BLEU points on NIST08 are
+402
+ Source  Candidate Translation   
+i  
+i
+f  j  
+ij
+e  h  score  
+1 ? ? ?? ? 1 I am students . <2, 1> 0.5 
+  2 I was students . <1,1> 0.2 
+2 ?? ?? ? ? 1 week several today ? <1,2> 0.3 
+  2 today several weeks . <3,2> 0.1 
+ 
+(a) (b)
+2 21 2 222,0 ( , ) ( , )h f e h f e? ? ?? ?
+2 22 2 212,0 ( , ) ( , )h f e h f e? ?? ?1 11 1 11, 0 ( , ) ( , )h f e h f e? ?? ?
+1 12 1 111,0 ( , ) ( , )h f e h f e? ? ?? ?
+2 22 2 21( , ) ( , )h f e h f e?
+1 11 1 12( , ) ( , )h f e h f e?
+<-2,0>
+<-1,0>
+<1,0>
+<2,0>
+0h1h
+. .* *
+2 21 2 22( , ) ( , )h f e h f e?
+1 12 1 11( , ) ( , )h f e h f e?
+Figure 1: (a). An Example candidate space of dimensionality two. score is a evaluation metric of e. (b). The non-
+linearly separable classification problem transformed from (a) via tuning as ranking (Hopkins and May, 2011). Since
+score of e11 is greater than that of e12, ?1, 0? corresponds to a possitive example denoted as ???, and ??1, 0? corre-
+sponds to a negative example denoted as ?*?. Since the transformed classification problem is not linearly separable,
+there does not exist a single weight which can obtain e11 and e21 as translation results meanwhile. However, one can
+obtain e11 and e21 with weights: ?1, 1? and ??1, 1?, respectively.
+19.04 when the Moses system is tuned on NIST02
+by MERT. However, its performance is improved to
+21.28 points when tuned on NIST06. The automatic
+selection of a development set may partially address
+the problem. However it is inefficient since tuning
+requires iteratively decoding an entire development
+set, which is impractical for an online service.
+Secondly, translation becomes inconsistent on the
+sentence level (Ma et al2011). Global training
+method such as MERT tries to optimize the weight
+towards the best performance for the whole set, and
+it can not necessarily always obtain good translation
+for every sentence in the development set. The rea-
+son is that different sentences may need different
+optimal weights, and MERT can not find a single
+weight to satisfy all of the sentences. Figure 1(a)
+shows such an example, in which a development set
+contains two sentences f1 and f2 with translations e
+and feature vectors h. When we tune examples in
+Figure 1(a) by MERT, it can be regarded as a non-
+linearly separable classification problem illustrated
+in Figure 1(b). Therefore, there exists no single
+weightW which simultaneously obtains e11 and e21
+as translation for f1 and f2 via Equation (1). How-
+ever, we can achieve this with two weights: ?1, 1?
+for f1 and ??1, 1? for f2.
+In this paper, inspired by KNN-SVM (Zhang et
+al., 2006), we propose a local training method,
+which trains sentence-wise weights instead of a sin-
+gle weight, to address the above two problems.
+Compared with global training methods, such as
+MERT, in which training and testing are separated,
+our method works in an online fashion, in which
+training is performed during testing. This online
+fashion has an advantage in that it can adapt the
+weights for each of the test sentences, by dynam-
+ically tuning the weights on translation examples
+which are similar to these test sentences. Similar
+to the method of development set automatical selec-
+tion, the local training method may also suffer the
+problem of efficiency. To put it into practice, we
+propose incremental training methods which avoid
+retraining and iterative decoding on a development
+set.
+Our local training method has two advantages:
+firstly, it significantly outperforms MERT, especially
+when test set is different from the development set;
+secondly, it improves the translation consistency.
+Experiments on NIST Chinese-to-English transla-
+tion tasks show that our local training method sig-
+nificantly gains over MERT, with the maximum im-
+provements up to 2.0 BLEU, and its efficiency is
+comparable to that of the global training method.
+2 Local Training and Testing
+The local training method (Bottou and Vapnik,
+1992) is widely employed in computer vision
+(Zhang et al2006; Cheng et al2010). Compared
+with the global training method which tries to fit
+a single weight on the training data, the local one
+learns weights based on the local neighborhood in-
+formation for each test example. It is superior to
+403
+the global one when the data sets are not evenly
+distributed (Bottou and Vapnik, 1992; Zhang et al
+2006).
+Algorithm 1 Naive Local Training Method
+Input: T = {ti}Ni=1(test set), K (retrieval size),
+Dev(development set), D(retrieval data)
+Output: Translation results of T
+1: for all sentence ti such that 1 ? i ? N do
+2: Retrieve the training examples Di with size
+K for ti from D according to a similarity;
+3: Train a local weight W i based on Dev and
+Di;
+4: Decode ti with W i;
+5: end for
+Suppose T be a test set, Dev a development set,
+and D a retrieval data. The local training in SMT
+is described in the Algorithm 1. For each sentence
+ti in test set, training examples Di is retrieved from
+D using a similarity measure (line 2), a weight W i
+is optimized on Dev and Di (line 3)1, and, finally,
+ti is decoded with W i for testing (line 4). At the
+end of this algorithm, it returns the translation re-
+sults for T . Note that weights are adapted for each
+test sentence ti in line 3 by utilizing the translation
+examples Di which are similar to ti. Thus, our local
+training method can be considered as an adaptation
+of translation weights.
+Algorithm 1 suffers a problem of training effi-
+ciency in line 3. It is impractical to train a weight
+W i on Dev and Di from scratch for every sen-
+tence, since iteratively decodingDev andDi is time
+consuming when we apply MERT. To address this
+problem, we propose a novel incremental approach
+which is based on a two-phase training.
+On the first phase, we use a global training
+method, like MERT, to tune a baseline weight on
+the development set Dev in an offline manner. On
+the second phase, we utilize the retrieved examples
+to incrementally tune sentence-wise local weights
+based on the baseline weight. This method can
+not only consider the common characteristics learnt
+from the Dev, but also take into account the knowl-
+1Usually, the quality of development set Dev is high, since
+it is manually produced with multiple references. This is the
+main reason why Dev is used as a part of new development set
+to train W i.
+edge for each individual sentence learnt from sim-
+ilar examples during testing. On the phase of in-
+cremental training, we perform decoding only once
+for retrieved examples Di, though several rounds of
+decoding are possible and potentially better if one
+does not seriously care about training speed. Fur-
+thermore, instead of on-the-fly decoding, we decode
+the retrieval data D offline using the parameter from
+our baseline weight and its nbest translation candi-
+dates are saved with training examples to increase
+the training efficiency.
+Algorithm 2 Local Training Method Based on In-
+cremental Training
+Input: T = {ti}Ni=1 (test set), K (retrieval size),
+Dev (development set),
+D = {?fs, rs?}s=Ss=1 (retrieval data),
+Output: Translation results of T
+1: Run global Training (such as MERT) on Dev to
+get a baseline weight Wb; // Phase 1
+2: Decode each sentence in D to get
+D = {?fs, cs, rs?}s=Ss=1 ;
+3: for all sentence ti such that 1 ? i ? N do
+4: Retrieve K training examples Di =
+{?f ij , c
+i
+j , r
+i
+j?}
+j=K
+j=1 for ti from D according to
+a similarity;
+5: Incrementally train a local weight W i based
+on Wb and Di; // Phase 2
+6: Decode ti with W i;
+7: end for
+The two-phase local training algorithm is de-
+scribed in Algorithm 2, where cs and rs denote the
+translation candidate set and reference set for each
+sentence fs in retrieval data, respectively, and K is
+the retrieval size. It globally trains a baseline weight
+Wb (line 1), and decodes each sentence in retrieval
+data D with the weight Wb (line 2). For each sen-
+tence ti in test set T , it first retrieves training exam-
+ples Di from D (line 4), and then it runs local train-
+ing to tune a local weight W i (line 5) and performs
+testing with W i for ti (line 6). Please note that the
+two-phase training contains global training in line 1
+and local training in line 5.
+From Algorithm 2, one can see that our method is
+effective even if the test set is unknow, for example,
+in the scenario of online translation services, since
+the global training on development set and decoding
+404
+on retrieval data can be performed offline.
+In the next two sections, we will discuss the de-
+tails about the similarity metric in line 4 and the in-
+cremental training in line 5 of Algorithm 2.
+3 Acquiring Training Examples
+In line 4 of Algorithm 2, to retrieve training exam-
+ples for the sentence ti , we first need a metric to
+retrieve similar translation examples. We assume
+that the metric satisfy the property: more similar the
+test sentence and translation examples are, the better
+translation result one obtains when decoding the test
+sentence with the weight trained on the translation
+examples.
+The metric we consider here is derived from
+an example-based machine translation. To retrieve
+translation examples for a test sentence, (Watanabe
+and Sumita, 2003) defined a metric based on the
+combination of edit distance and TF-IDF (Manning
+and Schu?tze, 1999) as follows:
+dist(f1, f2) = ? ? edit-dist(f1, f2)+
+(1? ?)? tf-idf(f1, f2), (2)
+where ?(0 ? ? ? 1) is an interpolation weight,
+fi(i = 1, 2) is a word sequence and can be also
+considered as a document. In this paper, we extract
+similar examples from training data. Like example-
+based translation in which similar source sentences
+have similar translations, we assume that the optimal
+translation weights of the similar source sentences
+are closer.
+4 Incremental Training Based on
+Ultraconservative Update
+Compared with retraining mode, incremental train-
+ing can improve the training efficiency. In the field
+of machine learning research, incremental training
+has been employed in the work (Cauwenberghs and
+Poggio, 2001; Shilton et al2005), but there is lit-
+tle work for tuning parameters of statistical machine
+translation. The biggest difficulty lies in that the fea-
+ture vector of a given training example, i.e. transla-
+tion example, is unavailable until actually decoding
+the example, since the derivation is a latent variable.
+In this section, we will investigate the incremental
+training methods in SMT scenario.
+Following the notations in Algorithm 2, Wb is
+the baseline weight, Di = {?f ij , c
+i
+j , r
+i
+j?}
+K
+j=1 denotes
+training examples for ti. For the sake of brevity, we
+will drop the index i, Di = {?fj , cj , rj?}Kj=1, in the
+rest of this paper. Our goal is to find an optimal
+weight, denoted by W i, which is a local weight and
+used for decoding the sentence ti. Unlike the global
+method which performs tuning on the whole devel-
+opment set Dev +Di as in Algorithm 1, W i can be
+incrementally learned by optimizing onDi based on
+Wb. We employ the idea of ultraconservative update
+(Crammer and Singer, 2003; Crammer et al2006)
+to propose two incremental methods for local train-
+ing in Algorithm 2 as follows.
+Ultraconservative update is an efficient way to
+consider the trade-off between the progress made on
+development set Dev and the progress made on Di.
+It desires that the optimal weight W i is not only
+close to the baseline weight Wb, but also achieves
+the low loss over the retrieved examples Di. The
+idea of ultraconservative update can be formalized
+as follows:
+min
+W
+{
+d(W,Wb) + ? ? Loss(D
+i,W )
+}
+, (3)
+where d(W,Wb) is a distance metric over a pair
+of weights W and Wb. It penalizes the weights
+far away from Wb and it is L2 norm in this paper.
+Loss(Di,W ) is a loss function of W defined on Di
+and it evaluates the performance of W over Di. ?
+is a positive hyperparameter. If Di is more similar
+to the test sentence ti, the better performance will be
+achieved for the larger ?. In particular, ifDi consists
+of only a single sentence ti, the best performance
+will be obtained when ? goes to infinity.
+4.1 Margin Based Ultraconservative Update
+MIRA(Crammer and Singer, 2003; Crammer et al
+2006) is a form of ultraconservative update in (3)
+whoseLoss is defined as hinge loss based on margin
+over the pairwise translation candiates in Di. It tries
+to minimize the following quadratic program:
+1
+2
+||W ?Wb||
+2+
+?
+K
+K?
+j=1
+max
+1?n?|cj |
+(
+`jn?W ??h(fj , ejn)
+)
+with
+?h(fj , ejn) = h(fj , ej?)? h(fj , ejn), (4)
+405
+where h(fj , e) is the feature vector of candidate e,
+ejn is a translation member of fj in cj , ej? is the
+oracle one in cj , `jn is a loss between ej? and ejn
+and it is the same as referred in (Chiang et al2008),
+and |cj | denotes the number of members in cj .
+Different from (Watanabe et al2007; Chiang
+et al2008) employing the MIRA to globally train
+SMT, in this paper, we apply MIRA as one of local
+training method for SMT and we call it as margin
+based ultraconservative update (MBUU for shortly)
+to highlight its advantage of incremental training in
+line 5 of Algorithm 2.
+Further, there is another difference between
+MBUU and MIRA in (Watanabe et al2007; Chi-
+ang et al2008). MBUU is a batch update mode
+which updates the weight with all training examples,
+but MIRA is an online one which updates with each
+example (Watanabe et al2007) or part of examples
+(Chiang et al2008). Therefore, MBUU is more ul-
+traconservative.
+4.2 Error Rate Based Ultraconservative
+Update
+Instead of taking into account the margin-based
+hinge loss between a pair of translations as the Loss
+in (3), we directly optimize the error rate of trans-
+lation candidates with respect to their references in
+Di. Formally, the objective function of error rate
+based ultraconservative update (EBUU) is as fol-
+lows:
+1
+2
+?W ?Wb?
+2 +
+?
+K
+K?
+j=1
+Error(rj ; e?(fj ;W )), (5)
+where e?(fj ;W ) is defined in Equation (1), and
+Error(rj , e) is the sentence-wise minus BLEU (Pa-
+pineni et al2002) of a candidate e with respect to
+rj .
+Due to the existence of L2 norm in objective
+function (5), the optimization algorithm MERT can
+not be applied for this question since the exact line
+search routine does not hold here. Motivated by
+(Och, 2003; Smith and Eisner, 2006), we approxi-
+mate the Error in (5) by the expected loss, and then
+derive the following function:
+1
+2
+?W?Wb?
+2+
+?
+K
+K?
+j=1
+?
+e
+Error(rj ; e)P?(e|fj ;W ),
+(6)
+Systems NIST02 NIST05 NIST06 NIST08
+Moses 30.39 26.31 25.34 19.07
+Moses hier 33.68 26.94 26.28 18.65
+In-Hiero 31.24 27.07 26.32 19.03
+Table 1: The performance comparison of the baseline In-
+Hiero VS Moses and Moses hier.
+with
+P?(e|fj ;W ) =
+exp[?W ? h(fj , e)]
+?
+e??cj exp[?W ? h(fj , e
+?)]
+, (7)
+where ? > 0 is a real number valued smoother. One
+can see that, in the extreme case, for ? ? ?, (6)
+converges to (5).
+We apply the gradient decent method to minimize
+the function (6), as it is smooth with respect to ?.
+Since the function (6) is non-convex, the solution
+obtained by gradient descent method may depend on
+the initial point. In this paper, we set the initial point
+as Wb in order to achieve a desirable solution.
+5 Experiments and Results
+5.1 Setting
+We conduct our experiments on the Chinese-to-
+English translation task. The training data is FBIS
+corpus consisting of about 240k sentence pairs. The
+development set is NIST02 evaluation data, and the
+test datasets are NIST05, NIST06,and NIST08.
+We run GIZA++ (Och and Ney, 2000) on the
+training corpus in both directions (Koehn et al
+2003) to obtain the word alignment for each sen-
+tence pair. We train a 4-gram language model on
+the Xinhua portion of the English Gigaword cor-
+pus using the SRILM Toolkits (Stolcke, 2002) with
+modified Kneser-Ney smoothing (Chen and Good-
+man, 1998). In our experiments the translation per-
+formances are measured by case-insensitive BLEU4
+metric (Papineni et al2002) and we use mteval-
+v13a.pl as the evaluation tool. The significance test-
+ing is performed by paired bootstrap re-sampling
+(Koehn, 2004).
+We use an in-house developed hierarchical
+phrase-based translation (Chiang, 2005) as our base-
+line system, and we denote it as In-Hiero. To ob-
+tain satisfactory baseline performance, we tune In-
+Hiero system for 5 times using MERT, and then se-
+406
+Methods Steps Seconds
+Global method Decoding 2.0
+Local method Retrieval +0.6
+Local training +0.3
+Table 2: The efficiency of the local training and testing
+measured by sentence averaged runtime.
+Methods NIST05 NIST06 NIST08
+Global MERT 27.07 26.32 19.03
+Local MBUU 27.75+ 27.88+ 20.84+
+EBUU 27.85+ 27.99+ 21.08+
+Table 3: The performance comparison of local train-
+ing methods (MBUU and EBUU) and a global method
+(MERT). NIST05 is the set used to tune ? for MBUU and
+EBUU, and NIST06 and NIST08 are test sets. + means
+the local method is significantly better than MERT with
+p < 0.05.
+lect the best-performing one as our baseline for the
+following experiments. As Table 1 indicates, our
+baseline In-Hiero is comparable to the phrase-based
+MT (Moses) and the hierarchical phrase-based MT
+(Moses hier) implemented in Moses, an open source
+MT toolkit2 (Koehn et al2007). Both of these sys-
+tems are with default setting. All three systems are
+trained by MERT with 100 best candidates.
+To compare the local training method in Algo-
+rithm 2, we use a standard global training method,
+MERT, as the baseline training method. We do not
+compare with Algorithm 1, in which retraining is
+performed for each input sentence, since retraining
+for the whole test set is impractical given that each
+sentence-wise retraining may take some hours or
+even days. Therefore, we just compare Algorithm
+2 with MERT.
+5.2 Runtime Results
+To run the Algorithm 2, we tune the baseline weight
+Wb on NIST02 by MERT3. The retrieval data is set
+as the training data, i.e. FBIS corpus, and the re-
+trieval size is 100. We translate retrieval data with
+Wb to obtain their 100 best translation candidates.
+We use the simple linear interpolated TF-IDF met-
+ric with ? = 0.1 in Section 3 as the retrieval metric.
+2See web: http://www.statmt.org
+3Wb is exactly the weight of In-Hiero in Table 1.
+NIST05 NIST06 NIST08
+NIST02 0.665 0.571 0.506
+Table 4: The similarity of development and three test
+datasets.
+For an efficient tuning, the retrieval process is par-
+allelized as follows: the examples are assigned to 4
+CPUs so that each CPU accepts a query and returns
+its top-100 results, then all these top-100 results are
+merged into the final top-100 retrieved examples to-
+gether with their translation candidates. In our ex-
+periments, we employ the two incremental training
+methods, i.e. MBUU and EBUU. Both of the hyper-
+parameters ? are tuned on NIST05 and set as 0.018
+and 0.06 for MBUU and EBUU, respectively. In
+the incremental training step, only one CPU is em-
+ployed.
+Table 2 depicts that testing each sentence with lo-
+cal training method takes 2.9 seconds, which is com-
+parable to the testing time 2.0 seconds with global
+training method4. This shows that the local method
+is efficient. Further, compared to the retrieval, the
+local training is not the bottleneck. Actually, if we
+use LSH technique (Andoni and Indyk, 2008) in re-
+trieval process, the local method can be easily scaled
+to a larger training data.
+5.3 Results and Analysis
+Table 3 shows the main results of our local train-
+ing methods. The EBUU training method signifi-
+cantly outperforms the MERT baseline, and the im-
+provement even achieves up to 2.0 BLEU points on
+NIST08. We can also see that EBUU and MBUU are
+comparable on these three test sets. Both of these
+two local training methods achieve significant im-
+provements over the MERT baseline, which proves
+the effectiveness of our local training method over
+global training method.
+Although both local methods MBUU and EBUU
+achieved improvements on all the datasets, their
+gains on NIST06 and NIST08 are significantly
+higher than those achieved on NIST05 test dataset.
+We conjecture that, the more different a test set and
+a development set are, the more potential improvem-
+4The runtime excludes the time of tuning and decoding on D
+in Algorithm 2, since both of them can be performanced offline.
+407
+0 . 0 0 0 . 0 2 0 . 0 4 0 . 0 6 0 . 0 8 0 . 1 01 82 02 2
+2 42 62 8  
+ 
+ N I S T 0 5 N I S T 0 6 N I S T 0 8BLEU l
+Figure 2: The peformance of EBUU for different ? over
+all the test datasets. The horizontal axis denotes the val-
+ues of ? in function (6), and the vertical one denotes the
+BLEU points.
+Metthods Dev NIST08
+NIST02 19.03
+MERT NIST05 20.06
+NIST06 21.28
+EBUU NIST02 21.08
+Table 5: The comparison of MERT with different de-
+velopment datasets and local training method based on
+EBUU.
+nts local training has for the sentences in this test set.
+To test our hypothesis, we measured the similarity
+between the development set and a test set by the
+average value5 of accumulated TF-IDF scores of de-
+velopment dataset and each sentence in test datasets.
+Table 4 shows that NIST06 and NIST08 are more
+different from NIS02 than NIST05, thus, this is po-
+tentially the reason why local training is more effec-
+tive on NIST06 and NIST08.
+As mentioned in Section 1, the global training
+methods such as MERT are highly dependent on de-
+velopment sets, which can be seen in Table 5. There-
+fore, the translation performance will be degraded if
+one chooses a development data which is not close
+5Instead of using the similarity between two documents de-
+velopment and test datasets, we define the similarity as the av-
+erage similarity of the development set and the sentences in test
+set. The reason is that it reduces its dependency on the number
+of sentences in test dataset, which may cause a bias.
+Methods Number Percents
+MERT 1735 42.3%
+EBUU 1606 39.1%
+Table 6: The statistics of sentences with 0.0 sentence-
+level BLEU points over three test datasets.
+to the test data. We can see that, with the help of the
+local training, we still gain much even if we selected
+an unsatisfactory development data.
+As also mentioned in Section 1, the global meth-
+ods do not care about the sentence level perfor-
+mance. Table 6 depicts that there are 1735 sentences
+with zero BLEU points in all the three test datasets
+for MERT. Besides obtaining improvements on doc-
+ument level as referred in Table 3, the local training
+methods can also achieve consistent improvements
+on sentence level and thus can improve the users?
+experiences.
+The hyperparameters ? in both MBUU (4) and
+EBUU (6) has an important influence on transla-
+tion performance. Figure 2 shows such influence
+for EBUU on the test datasets. We can see that, the
+performances on all these datasets improve as ? be-
+comes closer to 0.06 from 0, and the performance
+continues improving when ? passes over 0.06 on
+NIST08 test set, where the performance constantly
+improves up to 2.6 BLEU points over baseline. As
+mentioned in Section 4, if the retrieved examples are
+very similar to the test sentence, the better perfor-
+mance will be achieved with the larger ?. There-
+fore, it is reasonable that the performances improved
+when ? increased from 0 to 0.06. Further, the turn-
+ing point appearing at 0.06 proves that the ultra-
+conservative update is necessary. We can also see
+that the performance on NIST08 consistently im-
+proves and achieves the maximum gain when ? ar-
+rives at 0.1, but those on both NIST05 and NIST06
+achieves the best when it arrives at 0.06. This
+phenomenon can also be interpreted in Table 4 as
+the lowest similarity between the development and
+NIST08 datasets.
+Generally, the better performance may be
+achieved when more examples are retrieved. Actu-
+ally, in Table 7 there seems to be little dependency
+between the numbers of examples retrieved and the
+translation qualities, although they are positively re-
+408
+Retrieval Size NIST05 NIST06 NIST08
+40 27.66 27.81 20.87
+70 27.77 27.93 21.08
+100 27.85 27.99 21.08
+Table 7: The performance comparison by varying re-
+trieval size in Algorithm 2 based on EBUU.
+Methods NIST05 NIST06 NIST08
+MERT 27.07 26.32 19.03
+EBUU 27.85 27.99 21.08
+Oracle 29.46 29.35 22.09
+Table 8: The performance of Oracle of 2-best results
+which consist of 1-best resluts of MERT and 1-best
+resluts of EBUU.
+lated approximately.
+Table 8 presents the performance of the oracle
+translations selected from the 1-best translation re-
+sults of MERT and EBUU. Clearly, there exists more
+potential improvement for local training method.
+6 Related Work
+Several works have proposed discriminative tech-
+niques to train log-linear model for SMT. (Och and
+Ney, 2002; Blunsom et al2008) used maximum
+likelihood estimation to learn weights for MT. (Och,
+2003; Moore and Quirk, 2008; Zhao and Chen,
+2009; Galley and Quirk, 2011) employed an eval-
+uation metric as a loss function and directly opti-
+mized it. (Watanabe et al2007; Chiang et al2008;
+Hopkins and May, 2011) proposed other optimiza-
+tion objectives by introducing a margin-based and
+ranking-based indirect loss functions.
+All the methods mentioned above train a single
+weight for the whole development set, whereas our
+local training method learns a weight for each sen-
+tence. Further, our translation framework integrates
+the training and testing into one unit, instead of treat-
+ing them separately. One of the advantages is that it
+can adapt the weights for each of the test sentences.
+Our method resorts to some translation exam-
+ples, which is similar as example-based translation
+or translation memory (Watanabe and Sumita, 2003;
+He et al2010; Ma et al2011). Instead of using
+translation examples to construct translation rules
+for enlarging the decoding space, we employed them
+to discriminatively learn local weights.
+Similar to (Hildebrand et al2005; Lu? et al
+2007), our method also employes IR methods to re-
+trieve examples for a given test set. Their methods
+utilize the retrieved examples to acquire translation
+model and can be seen as the adaptation of trans-
+lation model. However, ours uses the retrieved ex-
+amples to tune the weights and thus can be consid-
+ered as the adaptation of tuning. Furthermore, since
+ours does not change the translation model which
+needs to run GIZA++ and it incrementally trains lo-
+cal weights, our method can be applied for online
+translation service.
+7 Conclusion and Future Work
+This paper proposes a novel local training frame-
+work for SMT. It has two characteristics, which
+are different from global training methods such as
+MERT. First, instead of training only one weight for
+document level, it trains a single weight for sentence
+level. Second, instead of considering the training
+and testing as two separate units, we unify the train-
+ing and testing into one unit, which can employ the
+information of test sentences and perform sentence-
+wise local adaptation of weights.
+Local training can not only alleviate the prob-
+lem of the development data selection, but also re-
+duce the risk of sentence-wise bad translation re-
+sults, thus consistently improve the translation per-
+formance. Experiments show gains up to 2.0 BLEU
+points compared with a MERT baseline. With the
+help of incremental training methods, the time in-
+curred by local training was negligible and the local
+training and testing totally took 2.9 seconds for each
+sentence.
+In the future work, we will further investigate the
+local training method, since there are more room for
+improvements as observed in our experiments. We
+will test our method on other translation models and
+larger training data6.
+Acknowledgments
+We would like to thank Hongfei Jiang and Shujie
+Liu for many valuable discussions and thank three
+6Intuitionally, when the corpus of translation examples is
+larger, the retrieval results in Algorithm 2 are much similar as
+the test sentence. Therefore our method may favor this.
+409
+anonymous reviewers for many valuable comments
+and helpful suggestions. This work was supported
+by National Natural Science Foundation of China
+(61173073,61100093), and the Key Project of the
+National High Technology Research and Develop-
+ment Program of China (2011AA01A207), and the
+Fundamental Research Funds for Central Univer-
+sites (HIT.NSRIF.2013065).
+References
+Alexandr Andoni and Piotr Indyk. 2008. Near-optimal
+hashing algorithms for approximate nearest neighbor
+in high dimensions. Commun. ACM, 51(1):117?122,
+January.
+Phil Blunsom, Trevor Cohn, and Miles Osborne. 2008.
+A discriminative latent variable model for statisti-
+cal machine translation. In Proceedings of ACL,
+pages 200?208, Columbus, Ohio, June. Association
+for Computational Linguistics.
+Le?on Bottou and Vladimir Vapnik. 1992. Local learning
+algorithms. Neural Comput., 4:888?900, November.
+G. Cauwenberghs and T. Poggio. 2001. Incremental
+and decremental support vector machine learning. In
+Advances in Neural Information Processing Systems
+(NIPS*2000), volume 13.
+Stanley F Chen and Joshua Goodman. 1998. An empir-
+ical study of smoothing techniques for language mod-
+eling. In Technical Report TR-10-98. Harvard Univer-
+sity.
+Haibin Cheng, Pang-Ning Tan, and Rong Jin. 2010. Ef-
+ficient algorithm for localized support vector machine.
+IEEE Trans. on Knowl. and Data Eng., 22:537?549,
+April.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of the Con-
+ference on Empirical Methods in Natural Language
+Processing, EMNLP ?08, pages 224?233, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+David Chiang. 2005. A hierarchical phrase-based model
+for statistical machine translation. In Proceedings of
+the 43rd Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?05, pages 263?270, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Koby Crammer and Yoram Singer. 2003. Ultraconser-
+vative online algorithms for multiclass problems. J.
+Mach. Learn. Res., 3:951?991, March.
+Koby Crammer, Ofer Dekel, Joseph Keshet, Shai Shalev-
+Shwartz, and Yoram Singer. 2006. Online passive-
+aggressive algorithms. J. Mach. Learn. Res., 7:551?
+585, December.
+Michel Galley and Chris Quirk. 2011. Optimal search
+for minimum error rate training. In Proceedings of
+the 2011 Conference on Empirical Methods in Natural
+Language Processing, pages 38?49, Edinburgh, Scot-
+land, UK., July. Association for Computational Lin-
+guistics.
+Yifan He, Yanjun Ma, Josef van Genabith, and Andy
+Way. 2010. Bridging smt and tm with translation
+recommendation. In Proceedings of the 48th Annual
+Meeting of the Association for Computational Linguis-
+tics, pages 622?630, Uppsala, Sweden, July. Associa-
+tion for Computational Linguistics.
+S. Hildebrand, M. Eck, S. Vogel, and Alex Waibel. 2005.
+Adaptation of the translation model for statistical ma-
+chine translation based on information retrieval. In
+Proceedings of EAMT. Association for Computational
+Linguistics.
+Mark Hopkins and Jonathan May. 2011. Tuning as rank-
+ing. In Proceedings of the 2011 Conference on Empir-
+ical Methods in Natural Language Processing, pages
+1352?1362, Edinburgh, Scotland, UK., July. Associa-
+tion for Computational Linguistics.
+Philipp Koehn, Franz Josef Och, and Daniel Marcu.
+2003. Statistical phrase-based translation. In Proc.
+of HLT-NAACL. ACL.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran, Richard
+Zens, Chris Dyer, Ondr?ej Bojar, Alexandra Con-
+stantin, and Evan Herbst. 2007. Moses: open source
+toolkit for statistical machine translation. In Proceed-
+ings of the 45th Annual Meeting of the ACL on Inter-
+active Poster and Demonstration Sessions, ACL ?07,
+pages 177?180, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+Philipp Koehn. 2004. Statistical significance tests for
+machine translation evaluation. In Proc. of EMNLP.
+ACL.
+Mu Li, Yinggong Zhao, Dongdong Zhang, and Ming
+Zhou. 2010. Adaptive development data selection for
+log-linear model in statistical machine translation. In
+Proceedings of the 23rd International Conference on
+Computational Linguistics, COLING ?10, pages 662?
+670, Stroudsburg, PA, USA. Association for Compu-
+tational Linguistics.
+Yajuan Lu?, Jin Huang, and Qun Liu. 2007. Improving
+statistical machine translation performance by train-
+ing data selection and optimization. In Proceedings
+of the 2007 Joint Conference on Empirical Methods
+in Natural Language Processing and Computational
+Natural Language Learning (EMNLP-CoNLL), pages
+410
+343?350, Prague, Czech Republic, June. Association
+for Computational Linguistics.
+Yanjun Ma, Yifan He, Andy Way, and Josef van Gen-
+abith. 2011. Consistent translation using discrim-
+inative learning - a translation memory-inspired ap-
+proach. In Proceedings of the 49th Annual Meeting
+of the Association for Computational Linguistics: Hu-
+man Language Technologies, pages 1239?1248, Port-
+land, Oregon, USA, June. Association for Computa-
+tional Linguistics.
+Christopher D. Manning and Hinrich Schu?tze. 1999.
+Foundations of statistical natural language process-
+ing. MIT Press, Cambridge, MA, USA.
+Robert C. Moore and Chris Quirk. 2008. Random
+restarts in minimum error rate training for statistical
+machine translation. In Proceedings of the 22nd Inter-
+national Conference on Computational Linguistics -
+Volume 1, COLING ?08, pages 585?592, Stroudsburg,
+PA, USA. Association for Computational Linguistics.
+Franz Josef Och and Hermann Ney. 2000. Improved
+statistical alignment models. In Proceedings of the
+38th Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?00, pages 440?447, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Franz Josef Och and Hermann Ney. 2002. Discrimi-
+native training and maximum entropy models for sta-
+tistical machine translation. In Proceedings of the
+40th Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?02, pages 295?302, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Franz Josef Och. 2003. Minimum error rate training in
+statistical machine translation. In Proceedings of the
+41st Annual Meeting of the Association for Compu-
+tational Linguistics, pages 160?167, Sapporo, Japan,
+July. Association for Computational Linguistics.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. In Proceedings of 40th
+Annual Meeting of the Association for Computational
+Linguistics, pages 311?318, Philadelphia, Pennsylva-
+nia, USA, July. Association for Computational Lin-
+guistics.
+Adam Pauls, John Denero, and Dan Klein. 2009. Con-
+sensus training for consensus decoding in machine
+translation. In Proceedings of the 2009 Conference on
+Empirical Methods in Natural Language Processing,
+pages 1418?1427, Singapore, August. Association for
+Computational Linguistics.
+Alistair Shilton, Marimuthu Palaniswami, Daniel Ralph,
+and Ah Chung Tsoi. 2005. Incremental training of
+support vector machines. IEEE Transactions on Neu-
+ral Networks, 16(1):114?131.
+Andreas Stolcke. 2002. Srilm - an extensible language
+modeling toolkit. In Proc. of ICSLP.
+Taro Watanabe and Eiichiro Sumita. 2003. Example-
+based decoding for statistical machine translation. In
+Proc. of MT Summit IX, pages 410?417.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2007. Online large-margin training for sta-
+tistical machine translation. In Proceedings of the
+2007 Joint Conference on Empirical Methods in Nat-
+ural Language Processing and Computational Natu-
+ral Language Learning (EMNLP-CoNLL), pages 764?
+773, Prague, Czech Republic, June. Association for
+Computational Linguistics.
+Hao Zhang, Alexander C. Berg, Michael Maire, and Ji-
+tendra Malik. 2006. Svm-knn: Discriminative near-
+est neighbor classification for visual category recog-
+nition. In Proceedings of the 2006 IEEE Computer
+Society Conference on Computer Vision and Pattern
+Recognition - Volume 2, CVPR ?06, pages 2126?2136,
+Washington, DC, USA. IEEE Computer Society.
+Bing Zhao and Shengyuan Chen. 2009. A simplex
+armijo downhill algorithm for optimizing statistical
+machine translation decoding parameters. In Proceed-
+ings of Human Language Technologies: The 2009 An-
+nual Conference of the North American Chapter of the
+Association for Computational Linguistics, Compan-
+ion Volume: Short Papers, NAACL-Short ?09, pages
+21?24, Stroudsburg, PA, USA. Association for Com-
+putational Linguistics.
+411
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 1942?1952,
+October 25-29, 2014, Doha, Qatar.
+c?2014 Association for Computational Linguistics
+Search-Aware Tuning for Machine Translation
+Lemao Liu
+Queens College
+City University of New York
+lemaoliu@gmail.com
+Liang Huang
+Queens College and Graduate Center
+City University of New York
+liang.huang.sh@gmail.com
+Abstract
+Parameter tuning is an important problem in
+statistical machine translation, but surpris-
+ingly, most existing methods such as MERT,
+MIRA and PRO are agnostic about search,
+while search errors could severely degrade
+translation quality. We propose a search-
+aware framework to promote promising par-
+tial translations, preventing them from be-
+ing pruned. To do so we develop two met-
+rics to evaluate partial derivations. Our tech-
+nique can be applied to all of the three
+above-mentioned tuning methods, and ex-
+tensive experiments on Chinese-to-English
+and English-to-Chinese translation show up
+to +2.6 BLEU gains over search-agnostic
+baselines.
+1 Introduction
+Parameter tuning has been a key problem for ma-
+chine translation since the statistical revolution.
+However, most existing tuning algorithms treat the
+decoder as a black box (Och, 2003; Hopkins and
+May, 2011; Chiang, 2012), ignoring the fact that
+many potentially promising partial translations are
+pruned by the decoder due to the prohibitively
+large search space. For example, the popular
+beam-search decoding algorithm for phrase-based
+MT (Koehn, 2004) only explores O(nb) items for
+a sentence of n words (with a beam width of b),
+while the full search space is O(2
+n
+n
+2
+) or worse
+(Knight, 1999).
+As one of the very few exceptions to the
+?search-agnostic? majority, Yu et al. (2013) and
+Zhao et al. (2014) propose a variant of the per-
+ceptron algorithm that learns to keep the refer-
+ence translations in the beam or chart. How-
+ever, there are several obstacles that prevent their
+method from becoming popular: First of all, they
+rely on ?forced decoding? to track gold derivations
+that lead to the reference translation, but in practice
+only a small portion of (mostly very short) sen-
+(a)
+0 1 2 3 4
+(b)
+Figure 1: (a) Some potentially promising partial trans-
+lations (in red) fall out of the beam (bin 2); (b) We
+identify such partial translations and assign them higher
+model scores so that they are more likely to survive the
+search.
+tence pairs have at least one such derivation. Sec-
+ondly, they learn the model on the training set, and
+while this does enable a sparse feature set, it is or-
+ders of magnitude slower compared to MERT and
+PRO.
+We instead propose a very simple framework,
+search-aware tuning, which does not depend on
+forced decoding, and thus can be trained on all sen-
+tence pairs of any dataset. The key idea is that,
+besides caring about the rankings of the complete
+translations, we also promote potentially promis-
+ing partial translations so that they are more likely
+to survive throughout the search, see Figure 1 for
+illustration. We make the following contributions:
+? Our idea of search-aware tuning can be ap-
+plied (as a patch) to all of the three most
+popular tuning methods (MERT, PRO, and
+MIRA) by defining a modified objective func-
+tion (Section 4).
+? To measure the ?promise? or ?potential? of a
+partial translation, we define a new concept
+?potential BLEU? inspired by future cost in
+MT decoding (Koehn, 2004) and heuristics in
+A* search (Hart et al., 1968) (Section 3.2).
+This work is the first study of evaluating met-
+rics for partial translations.
+? Our method obtains substantial and consistent
+1942
+improvements on both the large-scale NIST
+Chinese-to-English and English-to-Chinese
+translation tasks on top of MERT, MIRA, and
+PRO baselines. This is the first time that con-
+sistent improvements can be achieved with a
+new learning algorithm under dense feature
+settings (Section 5).
+For simplicity reasons, in this paper we use
+phrase-based translation, but our work has the po-
+tential to be applied to other translation paradigms.
+2 Review: Beam Search for PBMT
+Decoding
+We review beam search for phrase-based decoding
+in our notations which will facilitate the discussion
+of search-aware tuning in Section 4. Following Yu
+et al. (2013), let ?x, y? be a Chinese-English sen-
+tence pair in the tuning set D, and
+d = r
+1
+? r
+2
+? . . . ? r
+|d|
+be a (partial) derivation, where each r
+i
+=
+?c(r
+i
+), e(r
+i
+)? is a rule, i.e., a phrase-pair. Let |c(r)|
+be the number of Chinese words in rule r, and
+e(d)
+?
+= e(r
+1
+) ? e(r
+2
+) . . . ? e(r
+|d|
+) be the English
+prefix (i.e., partial translation) generated so far.
+In beam search, each binB
+i
+(x) contains the best
+k derivations covering exactly i Chinese words,
+based on items in previous bins (see Figures 1
+and 2):
+B
+0
+(x) = {}
+B
+i
+(x) = top
+k
+w
+0
+(
+?
+j=1..i
+{d ? r | d?B
+i?j
+(x), |c(r)|=j})
+where r is a rule covering j Chinese words, and
+top
+k
+w
+0
+(?) returns the top k derivations according
+to the current model w
+0
+. As a special case, note
+that top
+1
+w
+0
+(S) = argmax
+d?S
+w
+0
+? ?(d), so
+top
+1
+w
+0
+(B
+|x|
+(x)) is the final 1-best result.
+1
+See Fig-
+ure 2 for an illustration.
+3 Challenge: Evaluating Partial
+Derivations
+As mentioned in Section 1, the current mainstream
+tuning methods such as MERT, MIRA, and PRO are
+1
+Actually B
+|x|
+(x) is an approximation to the k-best list
+since some derivations are merged by dynamic programming;
+to recover those we can use Alg. 3 of Huang and Chiang
+(2005).
+0 1 2 3 4
+B
+0
+(x) B
+1
+(x) B
+2
+(x) B
+3
+(x) B
+4
+(x)
+Figure 2: Beam search for phrase-based decoding. The
+item in red is top
+1
+w
+0
+(B
+4
+(x)), i.e., the 1-best result.
+Traditional tuning only uses the final bin B
+4
+(x) while
+search-aware tuning considers all binsB
+i
+(x) (i = 1..4).
+all search-agnostic: they only care about the com-
+plete translations from the last bin, B
+|x|
+(x), ignor-
+ing all partial ones, i.e., B
+i
+(x) for all i < |x|. As
+a result, many potentially promising partial deriva-
+tions never reach the final bin (See Figure 1).
+To address this problem, our new ?search-aware
+tuning? aims to promote not only the accurate
+translations in the final bin, but more importantly
+those potentially promising partial derivations in
+non-final bins. The key challenge, however, is
+how to evaluate the ?promise? or ?potential? of
+a partial derivation. In this Section, we develop
+two such measures, a simple ?partial BLEU? (Sec-
+tion 3.1) and a more principled ?potential BLEU?
+(Section 3.2). In Section 4, we will then adapt tra-
+ditional tuning methods to their search-aware ver-
+sions using these partial evaluation metrics.
+3.1 Solution 1: Simple and Naive Partial BLEU
+Inspired by a trick in (Li and Khudanpur, 2009)
+and (Chiang, 2012) for oracle or hope extraction,
+we use a very simple metric to evaluate partial
+translations for tuning. For a given derivation d,
+the basic idea is to evaluate the (short) partial trans-
+lation e(d) against the (full) reference y, but using
+a ?prorated? reference length proportional to c(d)
+which is the number of Chinese words covered so
+far in d:
+|y| ? |c(d)|/|x|
+For example, if d has covered 2 words on a 8-
+word Chinese sentence with a 12-word English
+reference, then the ?effective reference length? is
+12?2/8 = 3. We call this method ?partial BLEU?
+since it does not complete the translation, and de-
+note it by
+?
+?
+|x|
+y
+(d) = ??
+(
+y, e(d); reflen = |y| ? |c(d)|/|x|
+)
+.
+(1)
+1943
+?(y, y
+?
+) = ?Bleu
++1
+(y, y
+?
+) string distance metric
+?
+y
+(d) = ?(y, e(d)) full derivations eval
+?
+x
+y
+(d) =
+{
+?
+?
+|x|
+y
+(d) partial bleu (Sec. 3.1)
+?(y, e?
+x
+(d)) potential bleu (Sec. 3.2)
+Table 1: Notations for evaluating full and partial deriva-
+tions. Functions
+?
+?
+|x|
+y
+(?) and e?
+x
+(?) are defined by Equa-
+tions 1 and 3, respectively.
+where reflen is the effective length of reference
+translations, see (Papineni et al., 2002) for details.
+3.1.1 Problem with Partial BLEU
+Simple as it is, this method does not work well in
+practice because comparison of partial derivations
+might be unfair for different derivations covering
+different set of Chinese words, as it will naturally
+favor those covering ?easier? portions of the in-
+put sentence (which we do observe empirically).
+For instance, consider the following Chinese-to-
+English example which involves a reordering of
+the Chinese PP:
+(2) w?o
+I
+c?ong
+from
+Sh`angh?ai
+Shanghai
+f?ei
+fly
+d`ao
+to
+B?eij??ng
+Beijing
+?I flew from Shanghai to Beijing?
+Partial BLEU will prefer subtranslation ?I from? to
+?I fly? in bin 2 (covering 2 Chinese words) because
+the former has 2 unigram mathces while the latter
+only 1, even though the latter is almost identical
+to the reference and will eventually lead to a com-
+plete translation with substantially higher Bleu
++1
+score (matching a 4-gram ?from Shanghai to Bei-
+jing?). Similarly, it will prefer ?I from Shanghai?
+to ?I fly from? in bin 3, without knowing that the
+former will eventually pay the price of word-order
+difference. This example suggests that we need a
+more ?global? or less greedy metric (see below).
+3.2 Solution 2: Potential BLEU via Extension
+Inspired by future cost computation in MT decod-
+ing (Koehn, 2004), we define a very simple fu-
+ture string by simply concatenating the best model-
+score translation (with no reorderings) in each un-
+covered span. Let best
+w
+(x
+[i:j]
+) denote the best
+monotonic derivation for span [i : j], then
+future(d, x) = ?
+[i:j]?uncov(d,x)
+e(best
+w
+(x
+[i:j]
+))
+where ? is the concatenation operator and
+uncov(d, x) returns an ordered list of uncovered
+e(d) future(d, x)
+x =
+e?
+x
+(d) =
+monotonicreordering
+ 
+Figure 3: Example of the extension function e?
+x
+(?) (and
+future string) on an incomplete derivation d.
+spans of x. See Figure 3 for an example. This fu-
+ture string resembles (inadmissible) heuristic func-
+tion (Hart et al., 1968). Now the ?extended trans-
+lation? is simply a concatenation of the exist-
+ing partial translation e(d) and the future string
+future(d, x):
+e?
+x
+(d) = e(d) ? future(d, x). (3)
+Instead of calculating best
+w
+(x
+[i:j]
+) on-the-fly
+for each derivation d, we can precompute it for
+each span [i : j] during future-cost computa-
+tion, since the score of best
+w
+(x
+[i:j]
+) is context-
+free (Koehn, 2004). Algorithm 1 shows the
+pseudo-code of computing best
+w
+(x
+[i:j]
+). In prac-
+tice, since future-cost precomputation already
+solves the best (monotonic) model-score for each
+span, is the only extra work for potential BLEU
+is to record (for each span) the subtranslation that
+achieves that best score. Therefore, the extra time
+for potential BLEU is negligible (the time com-
+plexity is O(n
+2
+), but just as in future cost, the con-
+stant is much smaller than real decoding). The im-
+plementation should require minimal hacking on a
+phrase-based decoder (such as Moses).
+To summarize the notation, we use ?
+x
+y
+(d) to
+denote a generic evaluation function for par-
+tial derivation d, which could be instantiated in
+two ways, partial bleu (
+?
+?
+|x|
+y
+(d)) or potential bleu
+(?(y, e?
+x
+(d))). See Table 1 for details. The next
+Section will only use the generic notation ?
+x
+y
+(d).
+Finally, it is important to note that although
+both partial and potential metrics are not BLEU-
+specific, the latter is much easier to adapt to other
+metrics such as TER since it does not change the
+original Bleu
++1
+definition. By contrast, it is not
+clear to us at all how to generalize partial BLEU to
+partial TER.
+4 Search-Aware MERT, MIRA, and PRO
+Parameter tuning aims to optimize the weight vec-
+tor w so that the rankings based on model score de-
+fined by w is positively correlated with those based
+1944
+Algorithm 1 Computation of best Translations for Potential BLEU.
+Input: Source sentence x, a rule set < for x, and w.
+Output: Best translations e(best
+w
+(x[i : j])) for all spans [i : j].
+1: for l in (0..|x|) do
+2: for i in (0..|x| ? l) do
+3: j = i+ l + 1
+4: best score = ??
+5: if <[i : j] 6= ? then . <[i : j] is a subset of rules < for span [i : j].
+6: best
+w
+(x[i : j]) = argmax
+r?<[i:j]
+w ??({r}) . {r} is a derivation consisting of one rule r.
+7: best score = w ??(best
+w
+(x[i : j]))
+8: for k in (i+ 1 .. i+ p) do . p is the phrase length limit
+9: if best score < w ??
+(
+best
+w
+(x[i : k]) ? best
+w
+(x[k : j])
+)
+then
+10: best
+w
+(x[i : j]) = best
+w
+(x[i : k]) ? best
+w
+(x[k : j])
+11: best score = w ??(best
+w
+(x[i : j]))
+on some translation metric (such as BLEU (Pap-
+ineni et al., 2002)). In other words, for a train-
+ing sentence pair ?x, y?, if a pair of its trans-
+lations y
+1
+= e(d
+1
+) and y
+2
+= e(d
+2
+) satisfies
+BLEU(y, y
+1
+) > BLEU(y, y
+2
+), then we expect w ?
+?(d
+1
+) > w ??(d
+2
+) to hold after tuning.
+4.1 From MERT to Search-Aware MERT
+Suppose D is a tuning set of ?x, y? pairs. Tra-
+ditional MERT learns the weight by iteratively
+reranking the complete translations towards those
+with higher BLEU in the final bin B
+|x|
+(x) for
+each x in D. Formally, it tries to minimize the
+document-level error of 1-best translations:
+`
+MERT
+(D,w) =
+?
+?x,y??D
+?
+y
+(
+top
+1
+w
+(B
+|x|
+(x))
+)
+,
+(4)
+where top
+1
+w
+(S) is the best derivation in S under
+model w, and ?
+?
+(?) is the full derivation metric as
+defined in Table 1; in this paper we use ?
+y
+(y
+?
+) =
+?BLEU(y, y
+?
+). Here we follow Och (2003) and
+Lopez (2008) to simplify the notations, where the
+? operator (similar to
+?
+) is an over-simplification
+for BLEU which, as a document-level metric, is ac-
+tually not factorizable across sentences.
+Besides reranking the complete translations as
+traditional MERT, our search-aware MERT (SA-
+MERT) also reranks the partial translations such
+that potential translations may survive in the mid-
+dle bins during search. Formally, its objective
+function is defined as follows:
+`
+SA-MERT
+(D,w)=
+?
+?x,y??D
+?
+i=1..|x|
+?
+x
+y
+(
+top
+1
+w
+(B
+i
+(x))
+)
+(5)
+where top
+1
+w
+(?) is defined in Eq. (4), and ?
+x
+y
+(d),
+defined in Table 1, is the generic metric for eval-
+uating a partial derivation d which has two imple-
+mentations (partial bleu or potential bleu). In or-
+der words we can obtain two implementations of
+search-aware MERT methods, SA-MERT
+par
+and
+SA-MERT
+pot
+.
+Notice that the traditional MERT is a special
+case of SA-MERT where i is fixed to |x|.
+4.2 From MIRA to Search-Aware MIRA
+MIRA is another popular tuning method for SMT.
+It firstly introduced in (Watanabe et al., 2007), and
+then was improved in (Chiang et al., 2008; Chiang,
+2012; Cherry and Foster, 2012). Its main idea is to
+optimize a weight such that the model score dif-
+ference of a pair of derivations is greater than their
+loss difference.
+In this paper, we follow the objective function
+in (Chiang, 2012; Cherry and Foster, 2012), where
+only the violation between hope and fear deriva-
+tions is concerned. Formally, we define d
++
+(x, y)
+and d
+?
+(x, y) as the hope and fear derivations in
+the final bin (i.e., complete derivations):
+d
++
+(x, y) = argmax
+d?B
+|x|
+(x)
+w
+0
+??(d)? ?
+y
+(d) (10)
+d
+?
+(x, y) = argmax
+d?B
+|x|
+(x)
+w
+0
+??(d) + ?
+y
+(d) (11)
+where w
+0
+is the current model. The loss function
+of MIRA is in Figure 4. The update will be be-
+tween d
++
+(x, y) and d
+?
+(x, y).
+To adapt MIRA to search-aware MIRA (SA-
+MIRA), we need to extend the definitions of hope
+1945
+`MIRA
+(D,w) =
+1
+2C
+?w?w
+0
+?
+2
++
+?
+?x,y??D
+[
+??
+y
+(
+d
++
+(x, y), d
+?
+(x, y)
+)
+?w???
+(
+d
++
+(x, y), d
+?
+(x, y)
+)]
++
+(6)
+`
+SA-MIRA
+(D,w)=
+1
+2C
+?w?w
+0
+?
+2
++
+?
+?x,y??D
+|x|
+?
+i=1
+[
+??
+x
+y
+(
+d
++
+i
+(x, y), d
+?
+i
+(x, y)
+)
+?w???
+(
+d
++
+i
+(x, y), d
+?
+i
+(x, y)
+)]
++
+(7)
+`
+PRO
+(D,w) =
+?
+?x,y??D
+?
+d
+1
+,d
+2
+?B
+|x|
+(x), ??
+y
+(d
+1
+,d
+2
+)>0
+log
+(
+1 + exp(?w???(d
+1
+, d
+2
+))
+)
+(8)
+`
+SA-PRO
+(D,w) =
+?
+?x,y??D
+|x|
+?
+i=1
+?
+d
+1
+,d
+2
+?B
+i
+(x), ??
+x
+y
+(d
+1
+,d
+2
+)>0
+log
+(
+1 + exp(?w???(d
+1
+, d
+2
+))
+)
+(9)
+Figure 4: Loss functions of MIRA, SA-MIRA, PRO, and SA-PRO. The differences between traditional and search-
+aware versions are highlighted in gray. The hope and fear derivations are defined in Equations 10?13, and we
+define ??
+y
+(d
+1
+, d
+2
+) = ?
+y
+(d
+1
+)? ?
+y
+(d
+2
+), and ??
+x
+y
+(d
+1
+, d
+2
+) = ?
+x
+y
+(d
+1
+)? ?
+x
+y
+(d
+2
+). In addition, [?]
++
+= max{?, 0}.
+and fear derivations from the final bin to all bins:
+d
++
+i
+(x, y) = argmax
+d?B
+i
+(x)
+w
+0
+??(d)? ?
+y
+(d) (12)
+d
+?
+i
+(x, y) = argmax
+d?B
+i
+(x)
+w
+0
+??(d) + ?
+y
+(d) (13)
+The new loss function for SA-MIRA is Eq. 7 in
+Figure 4. Now instead of one update per sentence,
+we will perform |x| updates, each based on a pair
+d
++
+i
+(x, y) and d
+?
+i
+(x, y).
+4.3 From PRO to Search-Aware PRO
+Finally, the PRO algorithm (Hopkins and May,
+2011; Green et al., 2013) aims to correlate the
+ranking under model score and the ranking un-
+der BLEU score, among all complete derivations
+in the final bin. For each preference-pair d
+1
+, d
+2
+?
+B
+|x|
+(x) such that d
+1
+has a higher BLEU score than
+d
+2
+(i.e., ?
+y
+(d
+1
+) < ?
+y
+(d
+2
+)), we add one positive ex-
+ample ?(d
+1
+) ? ?(d
+2
+) and one negative example
+?(d
+2
+)??(d
+1
+).
+Now to adapt it to search-aware PRO (SA-
+PRO), we will have many more examples to con-
+sider: besides the final bin, we will include all
+preference-pairs in the non-final bins as well. For
+each bin B
+i
+(x), for each preference-pairs d
+1
+, d
+2
+?
+B
+i
+(x) such that d
+1
+has a higher partial or potential
+BLEU score than d
+2
+(i.e., ?
+x
+y
+(d
+1
+) < ?
+x
+y
+(d
+2
+)), we
+add one positive example ?(d
+1
+)??(d
+2
+) and one
+negative example ?(d
+2
+)??(d
+1
+). In sum, search-
+aware PRO has |x| times more examples than tradi-
+tional PRO. The loss functions of PRO and search-
+aware PRO are defined in Figure 4.
+5 Experiments
+We evaluate our new tuning methods on two large
+scale NIST translation tasks: Chinese-to-English
+(CH-EN) and English-to-Chinese (EN-CH) tasks.
+5.1 System Preparation and Data
+We base our experiments on Cubit
+2
+(Huang and
+Chiang, 2007), a state-of-art phrase-based system
+in Python. We set phrase-limit to 7, beam size to
+30 and distortion limit 6. We use the 11 dense
+features from Moses (Koehn et al., 2007), which
+can lead to good performance and are widely used
+in almost all SMT systems. The baseline tuning
+methods MERT (Och, 2003), MIRA (Cherry and
+Foster, 2012), and PRO (Hopkins and May, 2011)
+are from the Moses toolkit, which are batch tuning
+methods based on k-best translations. The search-
+aware tuning methods are called SA-MERT, SA-
+MIRA, and SA-PRO, respectively. Their partial
+BLEU versions are marked with superscript
+1
+and
+their potential BLEU versions are marked with su-
+perscript
+2
+, as explained in Section 3. All these
+search-aware tuning methods are implemented on
+the basis of Moses toolkit. They employ the de-
+2
+http://www.cis.upenn.edu/
+?
+lhuang3/cubit/
+1946
+Methods nist03 nist04 nist05 nist06 nist08 avg
+MERT 33.6 35.1 33.4 31.6 27.9 ?
+SA-MERT
+par
+-0.2 +0.0 +0.1 -0.1 -0.1 ?
+SA-MERT
+pot
++0.8 +1.1 +0.9 +1.7 +1.5 +1.2
+MIRA 33.5 35.2 33.5 31.6 27.6 ?
+SA-MIRA
+par
++0.3 +0.3 +0.4 +0.4 +0.6 ?
+SA-MIRA
+pot
++1.3 +1.6 +1.4 +2.2 +2.6 +1.8
+PRO 33.3 35.1 33.3 31.1 27.5 ?
+?
+SA-PRO
+par
+-2.0 -2.7 -2.2 -1.0 -1.7 ?
+?
+SA-PRO
+pot
++0.8 +0.5 +1.0 +1.6 +1.6 +1.1
+Table 2: CH-EN task: BLEU scores on test sets (nist03, nist04, nist05, nist06, and nist08).
+par
+: partial BLEU;
+pot
+:
+potential BLEU.
+?
+: SA-PRO tunes on only 109 short sentences (with less than 10 words) from nist02.
+Final bin All bins
+MERT 35.5 28.2
+SA-MERT -0.1 +3.1
+Table 3: Evaluation on nist02 tuning set using two
+methods: BLEU is used to evaluate 1-best complete
+translations in the final bin; while potential BLEU is
+used to evaluate 1-best partial translations in all bins.
+The search-aware objective cares about (the potential
+of) all bins, not just the final bin, which can explain this
+result.
+fault settings following Moses toolkit: for MERT
+and SA-MERT, the stop condition is defined by the
+weight difference threshold; for MIRA, SA-MIRA,
+PRO and SA-PRO, their stop condition is defined
+by max iteration set to 25; for all tuning methods,
+we use the final weight for testing.
+The training data for both CH-EN and EN-CH
+tasks is the same, and it is collected from the
+NIST2008 Open Machine Translation Campaign.
+It consists of about 1.8M sentence pairs, including
+about 40M/48M words in Chinese/English sides.
+For CH-EN task, the tuning set is nist02 (878
+sents), and test sets are nist03 (919 sents), nist04
+(1788 sents), nist05 (1082 sents), nist06 (616 sents
+from news portion) and nist08 (691 from news por-
+tion). For EN-CH task, the tuning set is ssmt07
+(995 sents)
+3
+, and the test set is nist08 (1859 sents).
+For both tasks, all the tuning and test sets contain
+4 references.
+We use GIZA++ (Och and Ney, 2003) for word
+alignment, and SRILM (Stolcke, 2002) for 4-gram
+language models with the Kneser-Ney smoothing
+3
+On EN-CH task, there is only one test set available for us,
+and thus we use ssmt07 as the tuning set, which is provided
+at the Third Symposium on Statistical Machine Translation
+(http://mitlab.hit.edu.cn/ssmt2007.html).
+option. The LM for EN-CH is trained on its target
+side; and that for CH-EN is trained on the Xin-
+hua portion of Gigaword. We use BLEU-4 (Pap-
+ineni et al., 2002) with ?average ref-len? to evalu-
+ate the translation performance for all experiments.
+In particular, the character-based BLEU-4 is em-
+ployed for EN-CH task. Since all tuning meth-
+ods involve randomness, all scores reported are av-
+erage of three runs, as suggested by Clark et al.
+(2011) for fairer comparisons.
+5.2 Main Results on CH-EN Task
+Table 2 depicts the main results of our methods on
+CH-EN translation task. On all five test sets, our
+methods consistently achieve substantial improve-
+ments with two pruning options: SA-MERT
+pot
+gains +1.2 BLEU points over MERT on average;
+and SA-MIRA
+pot
+gains +1.8 BLEU points over
+MIRA on average as well. SA-PRO
+pot
+, however,
+does not work out of the box when we use the en-
+tire nist02 as the tuning set, which might be at-
+tributed to the ?Monster? behavior (Nakov et al.,
+2013). To alleviate this problem, we only use the
+109 short sentences with less than 10 words from
+nist02 as our new tuning data. To our supurise,
+this trick works really well (despite using much
+less data), and also made SA-PRO
+pot
+an order of
+magnitude faster. This further confirms that our
+search-aware tuning is consistent across all tuning
+methods and datasets.
+As discussed in Section 3, evaluation metrics
+of partial derivations are crucial for search-aware
+tuning. Besides the principled ?potential BLEU?
+version of search-aware tuning (i.e. SA-MERT
+pot
+,
+SA-MIRA
+pot
+, and SA-PRO
+pot
+), we also run the
+simple ?partial BLEU? version of search-aware
+tuning (i.e. SA-MERT
+par
+, SA-MIRA
+par
+, and SA-
+1947
+30
+31
+32
+33
+34
+35
+ 1  2  4  8  16  32  64
+B
+LE
+U
+Beam Size
+Traditional MERT Tuning
+Search-aware MERT Tuning
+Figure 5: BLEU scores against beam size on nist05.
+Our search-aware tuning can achieve (almost) the same
+BLEU scores with much smaller beam size (beam of 4
+vs. 16).
+methods nist02 nist05
+1-best
+MERT 35.5 33.4
+SA-MERT -0.1 +0.9
+Oracle
+MERT 44.3 41.1
+SA-MERT +0.5 +1.6
+Table 4: The k-best oracle BLEU comparison between
+MERT and SA-MERT.
+PRO
+par
+). In Table 2, we can see that they may
+achieve slight improvements over tradition tuning
+on some datasets, but SA-MERT
+pot
+, SA-MIRA
+pot
+,
+and SA-PRO
+pot
+using potential BLEU consistently
+outperform them on all the datasets.
+Even though our search-aware tuning gains sub-
+stantially on all test sets, it does not gain signif-
+icantly on nist02 tuning set. The main reason is
+that, search-aware tuning optimizes an objective
+(i.e. BLEU for all bins) which is different from
+the objective for evaluation (i.e. BLEU for the final
+bin), and thus it is not quite fair to evaluate the
+complete translations for search-aware tuning as
+the same done for traditional tuning on the tuning
+set. Actally, if we evaluate the potential BLEU for
+all partial translations, we find that search-aware
+tuning gains about 3.0 BLEU on nist02 tuning set,
+as shown in Table 3.
+5.3 Analysis on CH-EN Task
+Different beam size. Since our search-aware tun-
+ing considers the rankings of partial derivations
+in the middle bins besides complete ones in the
+last bin, ideally, if the weight learned by search-
+aware tuning can exactly evaluate partial deriva-
+Diversity nist02 nist05
+MERT 0.216 0.204
+SA-MERT 0.227 0.213
+Table 5: The diversity comparison based on the k-best
+list in the final bin on both tuning and nist05 test sets
+by tuning methods. The higher the metric is, the more
+diverse the k-best list is.
+tions, then accurate partial derivations will rank
+higher according to model score. In this way, even
+with small beam size, these accurate partial deriva-
+tions may still survive in the bins. Therefore, it
+is expected that search-aware tuning can achieve
+good performance with smaller beam size. To
+justify our conjecture, we run SA-MERT
+pot
+with
+different beam size (2,4,8,16,30,100), its testing
+results on nist05 are depicted in Figure 5. our
+mehtods achieve better trade-off between perfor-
+mance and efficiey. Figure 5 shows that search-
+aware tuning is consistent with all beam sizes, and
+as a by-product, search-aware MERT with a beam
+of 4 can achieve almost identical BLEU scores to
+MERT with beam of 16.
+Oracle BLEU. In addition, we examine the BLEU
+ponits of oracle for MERT and SA-MERT. We
+use the weight tuned by MERT and SA-MERT for
+k-best decoding on nist05 test set, and calculate
+the oracle over these two k-best lists. The oracle
+BLEU comparison is shown in Table 4. On nist05
+test set, for MERT the oracle BLEU is 41.1; while
+for SA-MERT its oracle BLEU is 42.7, i.e. with 1.6
+BLEU improvements. Although search-aware tun-
+ing employs the objective different from the objec-
+tive of evaluation on nist02 tuning set, it still gains
+0.5 BLEU improvements.
+Diversity. A k-best list with higher diversity can
+better represent the entire decoding space, and thus
+tuning on such a k-best list may lead to better
+tesing performance (Gimpel et al., 2013). Intu-
+itively, tuning with all bins will encourage the di-
+versity in prefix, infix and suffix of complete trans-
+lations in the final bin. To testify this, we need a
+diversity metric.
+Indeed, Gimpel et al. (2013) define a diversity
+metric based on the n-gram matches between two
+sentences y and y
+?
+as follows:
+d(y, y
+?
+) = ?
+|y|?q
+?
+i=1
+|y
+?
+|?q
+?
+j=1
+[[y
+i:i+q
+= y
+?
+j:j+q
+]]
+1948
+Methods
+tuning set test sets (4-refs)
+set # refs # sents # words nist03 nist04 nist05 nist06 nist08
+MERT nist02 4 878 23181 33.6 35.1 33.4 31.6 27.9
+SA-MERT
+pot
+nist02 4 878 23181 34.4 36.2 34.3 33.3 29.4
+MAXFORCE nist02-px 1 434 6227 29.0 30.3 28.7 26.8 24.1
+MAXFORCE train-r-part 1 1225 22684 31.7 33.5 31.5 30.3 26.7
+MERT nist02-r 1 92 1173 31.6 32.7 31.3 29.3 25.9
+SA-MERT
+pot
+nist02-r 1 92 1173 33.5 35.0 33.4 31.5 28.0
+Table 6: Comparisons with MAXFORCE in terms of BLEU. nist02-px is the non-trivial reachable prefix-data from
+nist02 via forced decoding; nist02-r is a subset of nist02-px consisting of the fully reachable data; train-r is a
+subset of fully reachable data from training data that is comparable in size to nist02. All experiments use only
+dense features.
+where q = n? 1, and [[x]] equals to 1 if x is true, 0
+otherwise. This metric, however, has the following
+critical problems:
+? it is not length-normalized: longer strings will
+look as if they are more different.
+? it suffers from duplicates in n-grams. Af-
+ter normalization, d(y, y) will exceed -1 for
+any y. In the extreme case, consider y
+1
+=
+?the the the the? and y
+2
+= ?the ... the? with
+10 the?s then will be considered identical af-
+ter normalization by length.
+So we define a balanced metric based on their met-
+ric
+d
+?
+(y, y
+?
+) = 1?
+2? d(y, y
+?
+)
+d(y, y) + d(y
+?
+, y
+?
+)
+which satisfies the following nice properties:
+? d
+?
+(y, y) = 0 for all y;
+? 0 ? d
+?
+(y, y
+?
+) ? 1 for all y, y
+?
+;
+? d
+?
+(y, y
+?
+) = 1 if y and y
+?
+is completely dis-
+joint.
+? it does not suffer from duplicates, and can dif-
+ferentiate y
+1
+and y
+2
+defined above.
+With this new metric, we evaluate the diversity
+of k-best lists for both MERT and SA-MERT. As
+shown in Table 5, on both tuning and test sets the
+k-best list generated by SA-MERT is more diverse.
+5.4 Comparison with Max-Violation
+Perceptron
+Our method considers the rankings of partial
+derivations, which is simlar to MAXFORCE
+B`ush?? y?u Sh?al?ong j?ux??ng hu`?t?an
+Bush and Sharon held a meeting
+Bush held talks with Sharon
+qi?angsh?ou b`ei j??ngf?ang j??b`?
+police killed the gunman
+the gunman was shot dead
+?
+B`ush?? y?u Sh?al?ong j?ux??ng hu`?t?an Bush and Sharon held a meeting
+B`ush?? y?u Sh?al?ong j?ux??ng hu`?t?an Bush held talks with Sharon
+qi?angsh?ou b`ei j??ngf?ang j??b`? police killed the gunman
+qi?angsh?ou b`ei j??ngf?ang j??b`? the gunman was shot dead
+Figure 6: Transformation of a tuning set in forced de-
+coding for MAXFORCE: the original tuning set (on the
+top) contains 2 source sentences with 2 references for
+each; while the transformed set (on the bottom) con-
+tains 4 source sentences with one reference for each.
+method (Yu et al., 2013), and thus we re-
+implement MAXFORCE method. Since the nist02
+tuning set contains 4 references and forced decod-
+ing is performed for only one reference, we enlarge
+the nist02 set to a variant set following the trans-
+formation in Figure 6, and obtain a variant tun-
+ing set denoted as nist02-px, which consists of 4-
+times sentence-pairs. On nist02-px, the non-trivial
+reachable prefix-data only accounts for 12% sen-
+tences and 7% words. Both these sentence-level
+and the word-level percentages are much lower
+than those on the training data as shown in Ta-
+ble 3 from (Yu et al., 2013). This is because there
+are many OOV words on a tuning set. We run the
+MAXFORCE with dense feature setting on nist02-
+px and its testing results are shown in Table 6. We
+can see that on all the test sets, its testing perfor-
+mance is lower than that of SA-MERT
+pot
+tuning on
+nist02 with about 5 BLEU points.
+For more direct comparisons, we run MERT and
+SA-MERT
+pot
+on a data set similar to nist02-px. We
+pick up the fully reachable sentences from nist02-
+px, remove the sentence pairs with the same source
+side, and get a new tuning set denoted as nist02-r.
+When tuning on nist02-r, we find that MERT is bet-
+1949
+Methods tuning-set nist08
+MERT ssmt07 31.3
+MAXFORCE train-r-part 29.9
+SA-MERT
+par
+ssmt07 31.3
+SA-MERT
+pot
+ssmt07 31.7
+Table 7: EN-CH task: BLEU scores on nist08 test set for
+MERT, SA-MERT, and MAXFORCE on different tun-
+ing sets. train-r-part is a part of fully reachable data
+from training data via forced decoding. All the tuning
+methods run with dense feature set.
+ter than MAXFORCE,
+4
+and SA-MERT
+pot
+are much
+better than MERT on all the test sets. In addition,
+we select about 1.2k fully reachable sentence pairs
+from training data, and run the forced decoding
+on this new tuning data (denoted as train-r-part),
+which is with similar size to nist02.
+5
+With more
+tuning data, the performance of max-violation is
+improved largely, but it is still underperformed by
+SA-MERT
+pot
+.
+5.5 Results on EN-CH Translation Task
+We also run our search-aware tuning method on
+EN-CH task. We use SA-MERT as the representa-
+tive of search-aware tuning methods, and compare
+its two versions with other tuning methods MERT,
+MAXFORCE. For MAXFORCE, we first run forced
+decoding on the training data and then select about
+1.2k fully reachable sentence pairs as its tuning
+set (denoted as train-r-part). For MERT, SA-
+MERT
+pot
+, and SA-MERT
+par
+, their tuning set is
+ssmt07. Table 7 shows that SA-MERT
+pot
+is much
+better than MAXFORCE, i.e. it achieves 0.4 BLEU
+improvements over MERT. Finally, comparison
+between SA-MERT
+pot
+and SA-MERT
+par
+shows
+that the potential BLEU is better for evaluation of
+partial derivations.
+5.6 Discussions on Tuning Efficiency
+As shown in Figure 2, search-aware tuning consid-
+ers all partial translations in the middle bins beside
+all complete translations in the last bin, and thus its
+total number of training examples is much greater
+than that of the traditional tuning. In details, sup-
+4
+Under the dense feature setting, MAXFORCE is worse
+than standard MERT. This result is consistent with that in
+Figure 12 of (Yu et al., 2013).
+5
+We run MAXFORCE on train-r-part, i.e. a part of reach-
+able data instead of the entire reachable data, as we found
+that more tuning data does not necessarily lead to better test-
+ing performance under dense feature setting in our internal
+experiments.
+Optimization time MERT MIRA PRO
+basline 3 2 2
+search-aware 50 7 6
+Table 8: Search-aware tuning slows down MERT sig-
+nificantly, and MIRA and PRO moderately. The time (in
+minutes) is for optimization only (excluding decoding)
+and measured at the last iteration during the entire tun-
+ing (search aware tuning does not increase the number
+of iterations in our experiments). The decoding time is
+20 min. on a single CPU but can be parallelized.
+pose the tuning data consists of two sentences with
+length 10 and 30, respectively. Then, for tradi-
+tional tuning its number of training examples is 2;
+but for search-aware tuning, the total number is 40.
+More training examples makes our search-aware
+tuning slower than the traditional tuning.
+Table 8 shows the training time comparisons
+between search-aware tuning and the traditional
+tuning. From this Table, one can see that both
+SA-MIRA and SA-PRO are with the same order
+of magtitude as MIRA and PRO; but SA-MERT
+is much slower than MERT. The main reason is
+that, as the training examples increase dramati-
+cally, the envelope calculation for exact line search
+(see (Och, 2003)) in MERT is less efficient than the
+update based on (sub-)gradient with inexact line
+search in MIRA and PRO.
+One possible solution to speed up SA-MERT is
+the parallelization but we leave it for future work.
+6 Related Work
+Many tuning methods have been proposed for
+SMT so far. These methods differ by the ob-
+jective function or training mode: their objective
+functions are based on either evaluation-directed
+loss (Och, 2003; Galley and Quirk, 2011; Gal-
+ley et al., 2013) or surrogate loss (Hopkins and
+May, 2011; Gimpel and Smith, 2012; Eidelman
+et al., 2013); they are either batch (Och, 2003;
+Hopkins and May, 2011; Cherry and Foster, 2012)
+or online mode (Watanabe, 2012; Simianer et al.,
+2012; Flanigan et al., 2013; Green et al., 2013).
+These methods share a common characteristic:
+they learn a weight by iteratively reranking a set of
+complete translations represented by k-best (Och,
+2003; Watanabe et al., 2007; Chiang et al., 2008)
+or lattice (hypergraph) (Tromble et al., 2008; Ku-
+mar et al., 2009), and they do not care about search
+errors that potential partial translations may be
+pruned during decoding, even if they agree with
+1950
+that their decoders are built on the beam pruning
+based search.
+On the other hand, it is well-known that search
+errors can undermine the standard training for
+many beam search based NLP systems (Huang et
+al., 2012). As a result, Collins and Roark (2004)
+and Huang et al. (2012) propose the early-update
+and max-violation update to deal with the search
+errors. Their idea is to update on prefix or par-
+tial hypotheses when the correct solution falls out
+of the beam. This idea has been successfully
+used in many NLP tasks and improves the perfor-
+mance over the state-of-art NLP systems (Huang
+and Sagae, 2010; Huang et al., 2012; Zhang et al.,
+2013).
+Goldberg and Nivre (2012) propose the concept
+of ?dynamic oracle? which is the absolute best po-
+tential of a partial derivation, and is more akin to
+a strictly admissible heuristic. This idea inspired
+and is closely related to our potential BLEU, except
+that in our case, computing an admissible heuristic
+is too costly, so our potential BLEU is more like an
+average potential.
+Gesmundo and Henderson (2014) also consider
+the rankings between partial translation pairs as
+well. However, they evaluate a partial translation
+through extending it to a complete translation by
+re-decoding, and thus they need many passes of
+decoding for many partial translations, while ours
+only need one pass of decoding for all partial trans-
+lations and thus is much more efficient. In sum-
+mary, our tuning framework is more general and
+has potential to be employed over all the state-of-
+art tuning methods mentioned above, even though
+ours is only tested on three popular methods.
+7 Conclusions and Future Work
+We have presented a simple yet powerful approach
+of ?search-aware tuning? by promoting promising
+partial derivations, and this idea can be applied to
+all three popular tuning methods. To solve the key
+challenge of evaluating partial derivations, we de-
+velop a concept of ?potential BLEU? inspired by
+future cost in MT decoding. Extensive experi-
+ments confirmed substantial BLEU gains with only
+dense features. We believe our framework can be
+applied to sparse feature settings and other transla-
+tion paradigms, and potentially to other structured
+prediction problems (such as incremental parsing)
+as well.
+Acknowledgements
+We thank the three anonymous reviewers for sug-
+gestions, and Kai Zhao and Feifei Zhai for dis-
+cussions. In particular, we thank reviewer #3 and
+Chin-Yew Lin for pushing us to think about di-
+versity. This project was supported by DARPA
+FA8750-13-2-0041 (DEFT), NSF IIS-1449278, a
+Google Faculty Research Award, and a PSC-
+CUNY Award.
+References
+Colin Cherry and George Foster. 2012. Batch tuning
+strategies for statistical machine translation. In Pro-
+ceedings of NAACL-HLT, pages 427?436, Montr?eal,
+Canada, June.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of EMNLP
+2008.
+David Chiang. 2012. Hope and fear for discriminative
+training of statistical translation models. J. Machine
+Learning Research (JMLR), 13:1159?1187.
+Jonathan H. Clark, Chris Dyer, Alon Lavie, and
+Noah A. Smith. 2011. Better hypothesis testing for
+statistical machine translation: Controlling for opti-
+mizer instability. In Proc. of ACL 2011.
+Michael Collins and Brian Roark. 2004. Incremental
+parsing with the perceptron algorithm. In Proceed-
+ings of ACL.
+Vladimir Eidelman, Yuval Marton, and Philip Resnik.
+2013. Online relative margin maximization for sta-
+tistical machine translation. In Proceedings of ACL,
+pages 1116?1126, Sofia, Bulgaria, August.
+Jeffrey Flanigan, Chris Dyer, and Jaime Carbonell.
+2013. Large-scale discriminative training for statis-
+tical machine translation using held-out line search.
+In Proceedings of NAACL-HLT, pages 248?258, At-
+lanta, Georgia, June.
+Michel Galley and Chris Quirk. 2011. Optimal search
+for minimum error rate training. In Proceedings of
+EMNLP, pages 38?49, Edinburgh, Scotland, UK.,
+July.
+Michel Galley, Chris Quirk, Colin Cherry, and Kristina
+Toutanova. 2013. Regularized minimum error rate
+training. In Proceedings of EMNLP, pages 1948?
+1959, Seattle, Washington, USA, October.
+Andrea Gesmundo and James Henderson. 2014. Undi-
+rected machine translation with discriminative rein-
+forcement learning. In Proceedings of the 14th Con-
+ference of the European Chapter of the Association
+for Computational Linguistics, April.
+1951
+Kevin Gimpel and Noah A. Smith. 2012. Struc-
+tured ramp loss minimization for machine transla-
+tion. In Proceedings of NAACL-HLT, pages 221?
+231, Montr?eal, Canada, June.
+Kevin Gimpel, Dhruv Batra, Chris Dyer, and Gregory
+Shakhnarovich. 2013. A systematic exploration of
+diversity in machine translation. In Proceedings of
+the 2013 Conference on Empirical Methods in Natu-
+ral Language Processing, October.
+Yoav Goldberg and Joakim Nivre. 2012. Training
+deterministic parsers with non-deterministic oracles.
+In Proceedings of COLING 2012.
+Spence Green, Sida Wang, Daniel Cer, and Christopher
+Manning. 2013. Fast and adaptive online training
+of feature-rich translation models. In Proc. of ACL
+2013.
+P. E. Hart, N. J. Nilsson, and B. Raphael. 1968. A for-
+mal basis for the heuristic determination of minimum
+cost paths. IEEE Transactions on Systems Science
+and Cybernetics, 4(2):100?107.
+Mark Hopkins and Jonathan May. 2011. Tuning as
+ranking. In Proceedings of EMNLP.
+Liang Huang and David Chiang. 2005. Better k-best
+Parsing. In Proceedings of the Ninth International
+Workshop on Parsing Technologies (IWPT-2005).
+Liang Huang and David Chiang. 2007. Forest rescor-
+ing: Fast decoding with integrated language models.
+In Proceedings of ACL, Prague, Czech Rep., June.
+Liang Huang and Kenji Sagae. 2010. Dynamic pro-
+gramming for linear-time incremental parsing. In
+Proceedings of ACL 2010.
+Liang Huang, Suphan Fayong, and Yang Guo. 2012.
+Structured perceptron with inexact search. In Pro-
+ceedings of NAACL.
+Kevin Knight. 1999. Decoding complexity in word-
+replacement translation models. Computational Lin-
+guistics, 25(4):607?615.
+P. Koehn, H. Hoang, A. Birch, C. Callison-Burch,
+M. Federico, N. Bertoldi, B. Cowan, W. Shen,
+C. Moran, R. Zens, C. Dyer, O. Bojar, A. Constantin,
+and E. Herbst. 2007. Moses: open source toolkit
+for statistical machine translation. In Proceedings of
+ACL: Demonstrations.
+Philipp Koehn. 2004. Pharaoh: a beam search decoder
+for phrase-based statistical machine translation mod-
+els. In Proceedings of AMTA, pages 115?124.
+Shankar Kumar, Wolfgang Macherey, Chris Dyer, and
+Franz Och. 2009. Efficient minimum error rate
+training and minimum bayes-risk decoding for trans-
+lation hypergraphs and lattices. In Proceedings of
+ACL-IJCNLP, Suntec, Singapore, August.
+Zhifei Li and Sanjeev Khudanpur. 2009. Efficient
+extraction of oracle-best translations from hyper-
+graphs. In Proceedings of HLT-NAACL Short Pa-
+pers.
+Adam Lopez. 2008. Statistical machine translation.
+ACM Comput. Surv., 40(3).
+Preslav Nakov, Francisco Guzmn, and Stephan Voge.
+2013. A tale about pro and monsters. In Proceedings
+of ACL Short Papers.
+Franz Josef Och and Hermann Ney. 2003. A system-
+atic comparison of various statistical alignment mod-
+els. Comput. Linguist., 29(1):19?51, March.
+Franz Joseph Och. 2003. Minimum error rate training
+in statistical machine translation. In Proceedings of
+ACL, pages 160?167.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic evalu-
+ation of machine translation. In Proceedings of ACL,
+pages 311?318, Philadephia, USA, July.
+Patrick Simianer, Stefan Riezler, and Chris Dyer. 2012.
+Joint feature selection in distributed stochastic learn-
+ing for large-scale discriminative training in smt. In
+Proceedings of ACL, pages 11?21, Jeju Island, Ko-
+rea, July.
+Andreas Stolcke. 2002. Srilm - an extensible lan-
+guage modeling toolkit. In Proceedings of ICSLP,
+volume 30, pages 901?904.
+Roy Tromble, Shankar Kumar, Franz Och, and Wolf-
+gang Macherey. 2008. Lattice Minimum Bayes-
+Risk decoding for statistical machine translation. In
+Proceedings of EMNLP, pages 620?629, Honolulu,
+Hawaii, October.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and
+Hideki Isozaki. 2007. Online large-margin training
+for statistical machine translation. In Proceedings of
+EMNLP-CoNLL.
+Taro Watanabe. 2012. Optimized online rank learning
+for machine translation. In Proceedings of NAACL-
+HLT, pages 253?262, Montr?eal, Canada, June.
+Heng Yu, Liang Huang, Haitao Mi, and Kai Zhao.
+2013. Max-violation perceptron and forced decod-
+ing for scalable mt training. In Proceedings of
+EMNLP 2013.
+Hao Zhang, Liang Huang, Kai Zhao, and Ryan McDon-
+ald. 2013. Online learning with inexact hypergraph
+search. In Proceedings of EMNLP 2013.
+Kai Zhao, Liang Huang, Haitao Mi, and Abe Itty-
+cheriah. 2014. Hierarchical mt training using max-
+violation perceptron. In Proceedings of ACL, Balti-
+more, Maryland, June.
+1952
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics: Tutorials, pages 4?5,
+Baltimore, Maryland, USA, 22 June 2014.
+c?2014 Association for Computational Linguistics
+Scalable Large-Margin Structured Learning:
+Theory and Algorithms
+Liang Huang Kai Zhao Lemao Liu
+Graduate Center and Queens College, City University of New York
+{liang.huang.sh, kzhao.hf, lemaoliu}@gmail.com
+1 Motivations
+Much of NLP tries to map structured input (sen-
+tences) to some form of structured output (tag se-
+quences, parse trees, semantic graphs, or trans-
+lated/paraphrased/compressed sentences). Thus
+structured prediction and its learning algorithm
+are of central importance to us NLP researchers.
+However, when applying machine learning to
+structured domains, we often face scalability is-
+sues for two reasons:
+1. Even the fastest exact search algorithms for
+most NLP problems (such as parsing and
+translation) is too slow for repeated use on the
+training data, but approximate search (such
+as beam search) unfortunately breaks down
+the nice theoretical properties (such as con-
+vergence) of existing machine learning algo-
+rithms.
+2. Even with inexact search, the scale of the
+training data in NLP still makes pure online
+learning (such as perceptron and MIRA) too
+slow on a single CPU.
+This tutorial reviews recent advances that ad-
+dress these two challenges. In particular, we will
+cover principled machine learning methods that
+are designed to work under vastly inexact search,
+and parallelization algorithms that speed up learn-
+ing on multiple CPUs. We will also extend struc-
+tured learning to the latent variable setting, where
+in many NLP applications such as translation and
+semantic parsing the gold-standard derivation is
+hidden.
+2 Contents
+1. Overview of Structured Learning
+(a) key challenge 1: search efficiency
+(b) key challenge 2: interactions between
+search and learning
+2. Structured Perceptron
+(a) the basic algorithm
+(b) the geometry of convergence proof
+(c) voted and averaged perceptrons, and ef-
+ficient implementation tricks
+(d) applications in tagging, parsing, etc.
+3. Structured Perceptron under Inexact Search
+(a) convergence theory breaks under inex-
+act search
+(b) early update
+(c) violation-fixing perceptron
+(d) applications in tagging, parsing, etc.
+?coffee break?
+4. From Perceptron to MIRA
+(a) 1-best MIRA; geometric solution
+(b) k-best MIRA; hildreth algorithm
+(c) MIRA with all constraints; loss-
+augmented decoding
+(d) MIRA under inexact search
+5. Large-Margin Structured Learning with La-
+tent Variables
+(a) examples: machine translation, seman-
+tic parsing, transliteration
+(b) separability condition and convergence
+proof
+(c) latent-variable perceptron under inexact
+search
+(d) applications in machine translation
+6. Parallelizing Large-Margin Structured
+Learning
+(a) iterative parameter mixing (IPM)
+(b) minibatch perceptron and MIRA
+4
+3 Instructor Biographies
+Liang Huang is an Assistant Professor at the City
+University of New York (CUNY). He received
+his Ph.D. in 2008 from Penn and has worked
+as a Research Scientist at Google and a Re-
+search Assistant Professor at USC/ISI. His work
+is mainly on the theoretical aspects (algorithms
+and formalisms) of computational linguistics, as
+well as theory and algorithms of structured learn-
+ing. He has received a Best Paper Award at ACL
+2008, several best paper nominations (ACL 2007,
+EMNLP 2008, and ACL 2010), two Google Fac-
+ulty Research Awards (2010 and 2013), and a Uni-
+versity Graduate Teaching Prize at Penn (2005).
+He has given two tutorials at COLING 2008 and
+NAACL 2009, being the most popular tutorial at
+both venues.
+Kai Zhao is a Ph.D. candidate at the City Univer-
+sity of New York (CUNY), working with Liang
+Huang. He received his B.S. from the Univer-
+sity of Science and Technology in China (USTC).
+He has published on structured prediction, online
+learning, machine translation, and parsing algo-
+rithms. He was a summer intern with IBM TJWat-
+son Research Center in 2013.
+Lemao Liu is a postdoctoral research associate at
+the City University of New York (CUNY), work-
+ing with Liang Huang. He received his Ph.D. from
+the Harbin Institute of Technology in 2013. Much
+of his Ph.D. work was done while visiting NICT,
+Japan, under Taro Watanabe. His research area is
+machine translation and machine learning.
+5

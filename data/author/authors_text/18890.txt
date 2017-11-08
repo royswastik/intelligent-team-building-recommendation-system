@@ -1,0 +1,2854 @@
+Proceedings of the 50th Annual Meeting of the Association for Computational Linguistics, pages 11?21,
+Jeju, Republic of Korea, 8-14 July 2012. c?2012 Association for Computational Linguistics
+Joint Feature Selection in Distributed Stochastic Learning
+for Large-Scale Discriminative Training in SMT
+Patrick Simianer and Stefan Riezler
+Department of Computational Linguistics
+Heidelberg University
+69120 Heidelberg, Germany
+{simianer,riezler}@cl.uni-heidelberg.de
+Chris Dyer
+Language Technologies Institute
+Carnegie Mellon University
+Pittsburgh, PA, 15213, USA
+cdyer@cs.cmu.edu
+Abstract
+With a few exceptions, discriminative train-
+ing in statistical machine translation (SMT)
+has been content with tuning weights for large
+feature sets on small development data. Ev-
+idence from machine learning indicates that
+increasing the training sample size results in
+better prediction. The goal of this paper is to
+show that this common wisdom can also be
+brought to bear upon SMT. We deploy local
+features for SCFG-based SMT that can be read
+off from rules at runtime, and present a learn-
+ing algorithm that applies `1/`2 regulariza-
+tion for joint feature selection over distributed
+stochastic learning processes. We present ex-
+periments on learning on 1.5 million training
+sentences, and show significant improvements
+over tuning discriminative models on small
+development sets.
+1 Introduction
+The standard SMT training pipeline combines
+scores from large count-based translation models
+and language models with a few other features and
+tunes these using the well-understood line-search
+technique for error minimization of Och (2003). If
+only a handful of dense features need to be tuned,
+minimum error rate training can be done on small
+tuning sets and is hard to beat in terms of accuracy
+and efficiency. In contrast, the promise of large-
+scale discriminative training for SMT is to scale to
+arbitrary types and numbers of features and to pro-
+vide sufficient statistical support by parameter esti-
+mation on large sample sizes. Features may be lex-
+icalized and sparse, non-local and overlapping, or
+be designed to generalize beyond surface statistics
+by incorporating part-of-speech or syntactic labels.
+The modeler?s goals might be to identify complex
+properties of translations, or to counter errors of pre-
+trained translation models and language models by
+explicitly down-weighting translations that exhibit
+certain undesired properties. Various approaches to
+feature engineering for discriminative models have
+been presented (see Section 2), however, with a few
+exceptions, discriminative learning in SMT has been
+confined to training on small tuning sets of a few
+thousand examples. This contradicts theoretical and
+practical evidence from machine learning that sug-
+gests that larger training samples should be benefi-
+cial to improve prediction also in SMT. Why is this?
+One possible reason why discriminative SMT has
+mostly been content with small tuning sets lies in
+the particular design of the features themselves. For
+example, the features introduced by Chiang et al
+(2008) and Chiang et al (2009) for an SCFG model
+for Chinese/English translation are of two types:
+The first type explicitly counters overestimates of
+rule counts, or rules with bad overlap points, bad
+rewrites, or with undesired insertions of target-side
+terminals. These features are specified in hand-
+crafted lists based on a thorough analysis of a tuning
+set. Such finely hand-crafted features will find suf-
+ficient statistical support on a few thousand exam-
+ples and thus do not benefit from larger training sets.
+The second type of features deploys external infor-
+mation such as syntactic parses or word alignments
+to penalize bad reorderings or undesired translations
+of phrases that cross syntactic constraints. At large
+scale, extraction of such features quickly becomes
+11
+(1) X ? X1 hat X2 versprochen, X1 promised X2
+(2) X ? X1 hat mir X2 versprochen,
+X1 promised me X2
+(3) X ? X1 versprach X2, X1 promised X2
+Figure 1: SCFG rules for translation.
+infeasible because of costly generation and storage
+of linguistic annotations. Another possible reason
+why large training data did not yet show the ex-
+pected improvements in discriminative SMT is a
+special overfitting problem of current popular online
+learning techniques. This is due to stochastic learn-
+ing on a per-example basis where a weight update on
+a misclassified example may apply only to a small
+fraction of data that have been seen before. Thus
+many features will not generalize well beyond the
+training examples on which they were introduced.
+The goal of this paper is to investigate if and
+how it is possible to benefit from scaling discrimi-
+native training for SMT to large training sets. We
+deploy generic features for SCFG-based SMT that
+can efficiently be read off from rules at runtime.
+Such features include rule ids, rule-local n-grams,
+or types of rule shapes. Another crucial ingredi-
+ent of our approach is a combination of parallelized
+stochastic learning with feature selection inspired
+by multi-task learning. The simple but effective
+idea is to randomly divide training data into evenly
+sized shards, use stochastic learning on each shard
+in parallel, while performing `1/`2 regularization
+for joint feature selection on the shards after each
+epoch, before starting a new epoch with a reduced
+feature vector averaged across shards. Iterative fea-
+ture selection procedure is the key to both efficiency
+and improved prediction: Without interleaving par-
+allelized stochastic learning with feature selection
+our largest experiments would not be feasible. Se-
+lecting features jointly across shards and averaging
+does counter the overfitting effect that is inherent
+to stochastic updating. Our resulting models are
+learned on large data sets, but they are small and
+outperform models that tune feature sets of various
+sizes on small development sets. Our software is
+freely available as a part of the cdec1 framework.
+1https://github.com/redpony/cdec
+2 Related Work
+The great promise of discriminative training for
+SMT is the possibility to design arbitrarily expres-
+sive, complex, or overlapping features in great num-
+bers. The focus of many approaches thus has been
+on feature engineering and on adaptations of ma-
+chine learning algorithms to the special case of SMT
+(where gold standard rankings have to be created
+automatically). Examples for adapted algorithms
+include Maximum-Entropy Models (Och and Ney,
+2002; Blunsom et al, 2008), Pairwise Ranking Per-
+ceptrons (Shen et al, 2004; Watanabe et al, 2006;
+Hopkins and May, 2011), Structured Perceptrons
+(Liang et al, 2006a), Boosting (Duh and Kirchhoff,
+2008; Wellington et al, 2009), Structured SVMs
+(Tillmann and Zhang, 2006; Hayashi et al, 2009),
+MIRA (Watanabe et al, 2007; Chiang et al, 2008;
+Chiang et al, 2009), and others. Adaptations of the
+loss functions underlying such algorithms to SMT
+have recently been described as particular forms
+of ramp loss optimization (McAllester and Keshet,
+2011; Gimpel and Smith, 2012).
+All approaches have been shown to scale to large
+feature sets and all include some kind of regulariza-
+tion method. However, most approaches have been
+confined to training on small tuning sets. Exceptions
+where discriminative SMT has been used on large
+training data are Liang et al (2006a) who trained 1.5
+million features on 67,000 sentences, Blunsom et
+al. (2008) who trained 7.8 million rules on 100,000
+sentences, or Tillmann and Zhang (2006) who used
+230,000 sentences for training.
+Our approach is inspired by Duh et al (2010)
+who applied multi-task learning for improved gen-
+eralization in n-best reranking. In contrast to our
+work, Duh et al (2010) did not incorporate multi-
+task learning into distributed learning, but defined
+tasks as n-best lists, nor did they develop new algo-
+rithms, but used off-the-shelf multi-task tools.
+3 Local Features for Synchronous CFGs
+The work described in this paper is based on the
+SMT framework of hierarchical phrase-based trans-
+lation (Chiang, 2005; Chiang, 2007). Transla-
+tion rules are extracted from word-aligned paral-
+lel sentences and can be seen as productions of a
+synchronous CFG. Examples are rules like (1)-(3)
+12
+shown in Figure 1. Local features are designed to be
+readable directly off the rule at decoding time. We
+use three rule templates in our work:
+Rule identifiers: These features identify each rule
+by a unique identifier. Such features corre-
+spond to the relative frequencies of rewrites
+rules used in standard models.
+Rule n-grams: These features identify n-grams of
+consecutive items in a rule. We use bigrams
+on source-sides of rules. Such features identify
+possible source side phrases and thus can give
+preference to rules including them.2
+Rule shape: These features are indicators that ab-
+stract away from lexical items to templates that
+identify the location of sequences of terminal
+symbols in relation to non-terminal symbols,
+on both the source- and target-sides of each
+rule used. For example, both rules (1) and (2)
+map to the same indicator, namely that a rule
+is being used that consists of a (NT, term*, NT,
+term*) pattern on its source side, and an (NT,
+term*, NT) pattern on its target side. Rule (3)
+maps to a different template, that of (NT, term*,
+NT) on source and target sides.
+4 Joint Feature Selection in Distributed
+Stochastic Learning
+The following discussion of learning methods is
+based on pairwise ranking in a Stochastic Gradi-
+ent Descent (SGD) framework. The resulting al-
+gorithms can be seen as variants of the perceptron
+algorithm. Let each translation candidate be repre-
+sented by a feature vector x ? IRD where preference
+pairs for training are prepared by sorting translations
+according to smoothed sentence-wise BLEU score
+(Liang et al, 2006a) against the reference. For a
+preference pair xj = (x(1)j ,x
+(2)
+j ) where x
+(1)
+j is pre-
+ferred over x(2)j , and x?j = x
+(1)
+j ? x
+(2)
+j , we consider
+the following hinge loss-type objective function:
+lj(w) = (??w, x?j ?)+
+where (a)+ = max(0, a) , w ? IRD is a weight vec-
+tor, and ??, ?? denotes the standard vector dot prod-
+uct. Instantiating SGD to the following stochastic
+2Similar ?monolingual parse features? have been used in
+Dyer et al (2011).
+subgradient leads to the perceptron algorithm for
+pairwise ranking3 (Shen and Joshi, 2005):
+?lj(w) =
+{
+?x?j if ?w, x?j? ? 0,
+0 else.
+Our baseline algorithm 1 (SDG) scales pairwise
+ranking to large scale scenarios. The algorithm takes
+an average over the final weight updates of each
+epoch instead of keeping a record of all weight up-
+dates for final averaging (Collins, 2002) or for voting
+(Freund and Schapire, 1999).
+Algorithm 1 SGD: int I, T , float ?
+Initialize w0,0,0 ? 0.
+for epochs t? 0 . . . T ? 1: do
+for all i ? {0 . . . I ? 1}: do
+Decode ith input with wt,i,0.
+for all pairs xj , j ? {0 . . . P ? 1}: do
+wt,i,j+1 ? wt,i,j ? ??lj(wt,i,j)
+end for
+wt,i+1,0 ? wt,i,P
+end for
+wt+1,0,0 ? wt,I,0
+end for
+return 1T
+T?
+t=1
+wt,0,0
+While stochastic learning exhibits a runtime be-
+havior that is linear in sample size (Bottou, 2004),
+very large datasets can make sequential process-
+ing infeasible. Algorithm 2 (MixSGD) addresses
+this problem by parallelization in the framework of
+MapReduce (Dean and Ghemawat, 2004).
+Algorithm 2 MixSGD: int I, T, Z, float ?
+Partition data into Z shards, each of size S ? I/Z;
+distribute to machines.
+for all shards z ? {1 . . . Z}: parallel do
+Initialize wz,0,0,0 ? 0.
+for epochs t? 0 . . . T ? 1: do
+for all i ? {0 . . . S ? 1}: do
+Decode ith input with wz,t,i,0.
+for all pairs xj , j ? {0 . . . P ? 1}: do
+wz,t,i,j+1 ? wz,t,i,j ? ??lj(wz,t,i,j)
+end for
+wz,t,i+1,0 ? wz,t,i,P
+end for
+wz,t+1,0,0 ? wz,t,S,0
+end for
+end for
+Collect final weights from each machine,
+return 1Z
+Z?
+z=1
+(
+1
+T
+T?
+t=1
+wz,t,0,0
+)
+.
+3Other loss functions lead to stochastic versions of SVMs
+(Collobert and Bengio, 2004; Shalev-Shwartz et al, 2007;
+Chapelle and Keerthi, 2010).
+13
+Algorithm 2 is a variant of the SimuParallelSGD
+algorithm of Zinkevich et al (2010) or equivalently
+of the parameter mixing algorithm of McDonald et
+al. (2010). The key idea of algorithm 2 is to parti-
+tion the data into disjoint shards, then train SGD on
+each shard in parallel, and after training mix the final
+parameters from each shard by averaging. The algo-
+rithm requires no communication between machines
+until the end.
+McDonald et al (2010) also present an iterative
+mixing algorithm where weights are mixed from
+each shard after training a single epoch of the per-
+ceptron in parallel on each shard. The mixed weight
+vector is re-sent to each shard to start another epoch
+of training in parallel on each shard. This algorithm
+corresponds to our algorithm 3 (IterMixSGD).
+Algorithm 3 IterMixSGD: int I, T, Z, float ?
+Partition data into Z shards, each of size S ? I/Z;
+distribute to machines.
+Initialize v? 0.
+for epochs t? 0 . . . T ? 1: do
+for all shards z ? {1 . . . Z}: parallel do
+wz,t,0,0 ? v
+for all i ? {0 . . . S ? 1}: do
+Decode ith input with wz,t,i,0.
+for all pairs xj , j ? {0 . . . P ? 1}: do
+wz,t,i,j+1 ? wz,t,i,j ? ??lj(wz,t,i,j)
+end for
+wz,t,i+1,0 ? wz,t,i,P
+end for
+end for
+Collect weights v? 1Z
+Z?
+z=1
+wz,t,S,0.
+end for
+return v
+Parameter mixing by averaging will help to ease
+the feature sparsity problem, however, keeping fea-
+ture vectors on the scale of several million features
+in memory can be prohibitive. If network latency
+is a bottleneck, the increased amount of information
+sent across the network after each epoch may be a
+further problem.
+Our algorithm 4 (IterSelSGD) introduces feature
+selection into distributed learning for increased effi-
+ciency and as a more radical measure against over-
+fitting. The key idea is to view shards as tasks, and
+to apply methods for joint feature selection from
+multi-task learning to achieve small sets of features
+that are useful across all tasks or shards. Our algo-
+rithm represents weights in a Z-by-D matrix W =
+[wz1 | . . . |wzZ ]T of stacked D-dimensional weight
+vectors across Z shards. We compute the `2 norm of
+the weights in each feature column, sort features by
+this value, and keep K features in the model. This
+feature selection procedure is done after each epoch.
+Reduced weight vectors are mixed and the result is
+re-sent to each shard to start another epoch of paral-
+lel training on each shard.
+Algorithm 4 IterSelSGD: int I, T, Z,K, float ?
+Partition data into Z shards, each of size S = I/Z;
+distribute to machines.
+Initialize v? 0.
+for epochs t? 0 . . . T ? 1: do
+for all shards z ? {1 . . . Z}: parallel do
+wz,t,0,0 ? v
+for all i ? {0 . . . S ? 1}: do
+Decode ith input with wz,t,i,0.
+for all pairs xj , j ? {0 . . . P ? 1}: do
+wz,t,i,j+1 ? wz,t,i,j ? ??lj(wz,t,i,j)
+end for
+wz,t,i+1,0 ? wz,t,i,P
+end for
+end for
+Collect/stack weights W? [w1,t,S,0| . . . |wZ,t,S,0]T
+Select top K feature columns of W by `2 norm and
+for k ? 1 . . .K do
+v[k] = 1Z
+Z?
+z=1
+W[z][k].
+end for
+end for
+return v
+This algorithm can be seen as an instance of `1/`2
+regularization as follows: Let wd be the dth column
+vector of W, representing the weights for the dth
+feature across tasks/shards. `1/`2 regularization pe-
+nalizes weights W by the weighted `1/`2 norm
+?||W||1,2 = ?
+D?
+d=1
+||wd||2.
+Each `2 norm of a weight column represents
+the relevance of the corresponding feature across
+tasks/shards. The `1 sum of the `2 norms en-
+forces a selection among features based on these
+norms. Consider for example the two 5-feature, 3-
+task weight matrices in Figure 2. Assuming the
+same loss for both matrices, the right-hand side ma-
+trix is preferred because of a smaller `1/`2 norm
+(12 instead of 18). This matrix shares features
+across tasks which leads to larger `2 norms for some
+columns (here ||w1||2 and ||w2||2) and forces other
+columns to zero. This results in shrinking the ma-
+trix to those features that are useful across all tasks.
+14
+w1 w2 w3 w4 w5 w1 w2 w3 w4 w5
+wz1 [ 6 4 0 0 0 ] [ 6 4 0 0 0 ]
+wz2 [ 0 0 3 0 0 ] [ 3 0 0 0 0 ]
+wz3 [ 0 0 0 2 3 ] [ 2 3 0 0 0 ]
+column `2 norm: 6 4 3 2 3 7 5 0 0 0
+`1 sum: ? 18 ? 12
+Figure 2: `1/`2 regularization enforcing feature selection.
+Our algorithm is related to Obozinski et al
+(2010)?s approach to `1/`2 regularization where fea-
+ture columns are incrementally selected based on the
+`2 norms of the gradient vectors corresponding to
+feature columns. Their algorithm is itself an exten-
+sion of gradient-based feature selection based on the
+`1 norm, e.g., Perkins et al (2003).4 In contrast to
+these approaches we approximate the gradient by us-
+ing the weights given by the ranking algorithm itself.
+This relates our work to weight-based recursive fea-
+ture elimination (RFE) (Lal et al, 2006). Further-
+more, algorithm 4 performs feature selection based
+on a choice of meta-parameter of K features instead
+of by thresholding a regularization meta-parameter
+?, however, these techniques are equivalent and can
+be transformed into each other.
+5 Experiments
+5.1 Data, Systems, Experiment Settings
+The datasets used in our experiments are versions
+of the News Commentary (nc), News Crawl (crawl)
+and Europarl (ep) corpora described in Table 1. The
+translation direction is German-to-English.
+The SMT framework used in our experiments
+is hierarchical phrase-based translation (Chiang,
+2007). We use the cdec decoder5 (Dyer et al,
+2010) and induce SCFG grammars from two sets of
+symmetrized alignments using the method described
+by Chiang (2007). All data was tokenized and
+lowercased; German compounds were split (Dyer,
+2009). For word alignment of the news-commentary
+data, we used GIZA++ (Och and Ney, 2000); for
+aligning the Europarl data, we used the Berke-
+ley aligner (Liang et al, 2006b). Before train-
+ing, we collect all the grammar rules necessary to
+4Note that by definition of ||W||1,2, standard `1 regulariza-
+tion is a special case of `1/`2 regularization for a single task.
+5cdec metaparameters were set to a non-terminal span limit
+of 15 and standard cube pruning with a pop limit of 200.
+translate each individual sentence into separate files
+(so-called per-sentence grammars) (Lopez, 2007).
+When decoding, cdec loads the appropriate file im-
+mediately prior to translation of the sentence. The
+computational overhead is minimal compared to the
+expense of decoding. Also, deploying disk space
+instead of memory fits perfectly into the MapRe-
+duce framework we are working in. Furthermore,
+the extraction of grammars for training is done in
+a leave-one-out fashion (Zollmann and Sima?an,
+2005) where rules are extracted for a parallel sen-
+tence pair only if the same rules are found in other
+sentences of the corpus as well.
+3-gram (news-commentary) and 5-gram (Eu-
+roparl) language models are trained on the data de-
+scribed in Table 1, using the SRILM toolkit (Stol-
+cke, 2002) and binarized for efficient querying using
+kenlm (Heafield, 2011). For the 5-gram language
+models, we replaced every word in the lm training
+data with <unk> that did not appear in the English
+part of the parallel training data to build an open vo-
+cabulary language model.
+HI
+MID
+LOW
+Figure 3: Multipartite pairwise ranking.
+Training data for discriminative learning are pre-
+pared by comparing a 100-best list of transla-
+tions against a single reference using smoothed per-
+sentence BLEU (Liang et al, 2006a). From the
+BLEU-reordered n-best list, translations were put
+into sets for the top 10% level (HI), the middle
+80% level (MID), and the bottom 10% level (LOW).
+These level sets are used for multipartite ranking
+15
+News Commentary(nc)
+train-nc lm-train-nc dev-nc devtest-nc test-nc
+Sentences 132,753 180,657 1057 1064 2007
+Tokens de 3,530,907 ? 27,782 28,415 53,989
+Tokens en 3,293,363 4,394,428 26,098 26,219 50,443
+Rule Count 14,350,552 (1G) ? 2,322,912 2,320,264 3,274,771
+Europarl(ep)
+train-ep lm-train-ep dev-ep devtest-ep test-ep
+Sentences 1,655,238 2,015,440 2000 2000 2000
+Tokens de 45,293,925 ? 57,723 56,783 59,297
+Tokens en 45,374,649 54,728,786 58,825 58,100 60,240
+Rule Count 203,552,525 (31.5G) ? 17,738,763 17,682,176 18,273,078
+News Crawl(crawl)
+dev-crawl test-crawl10 test-crawl11
+Sentences 2051 2489 3003
+Tokens de 49,848 64,301 76,193
+Tokens en 49,767 61,925 74,753
+Rule Count 9,404,339 11,307,304 12,561,636
+Table 1: Overview of data used for train/dev/test. News Commentary (nc) and Europarl (ep) training data and
+also News Crawl (crawl) dev/test data were taken from the WMT11 translation task (http://statmt.org/
+wmt11/translation-task.html). The dev/test data of nc are the sets provided with the WMT07 shared
+task (http://statmt.org/wmt07/shared-task.html). Ep dev/test data is from WMT08 shared task
+(http://statmt.org/wmt08/shared-task.html). The numbers in brackets for the rule counts of ep/nc
+training data are total counts of rules in the per-sentence grammars.
+where translation pairs are built between the ele-
+ments in HI-MID, HI-LOW, and MID-LOW, but not
+between translations inside sets on the same level.
+This idea is depicted graphically in Figure 3. The
+intuition is to ensure that good translations are pre-
+ferred over bad translations without teasing apart
+small differences.
+For evaluation, we used the mteval-v11b.pl
+script to compute lowercased BLEU-4 scores (Pa-
+pineni et al, 2001). Statistical significance was
+measured using an Approximate Randomization test
+(Noreen, 1989; Riezler and Maxwell, 2005).
+All experiments for training on dev sets were car-
+ried out on a single computer. For grammar extrac-
+tion and training of the full data set we used a 30
+node hadoop Map/Reduce cluster that can handle
+300 jobs at once. We split the data into 2290 shards
+for the ep runs and 141 shards for the nc runs, each
+shard holding about 1,000 sentences, which corre-
+sponds to the dev set size of the nc data set.
+5.2 Experimental Results
+The baseline learner in our experiments is a pairwise
+ranking perceptron that is used on various features
+and training data and plugged into various meta-
+M
+x?
+BLEU[%] 23.0 25.0 27.0 29.0
+Figure 4: Boxplot of BLEU-4 results for 100 runs of
+MIRA on news commentary data, depicting median (M),
+mean (x?), interquartile range (box), standard deviation
+(whiskers), outliers (end points).
+algorithms for distributed processing. The percep-
+tron algorithm itself compares favorably to related
+learning techniques such as the MIRA adaptation of
+Chiang et al (2008). Figure 4 gives a boxplot depict-
+ing BLEU-4 results for 100 runs of the MIRA imple-
+mentation of the cdec package, tuned on dev-nc,
+and evaluated on the respective test set test-nc.6 We
+see a high variance (whiskers denote standard devi-
+ations) around a median of 27.2 BLEU and a mean
+of 27.1 BLEU. The fluctuation of results is due to
+sampling training examples from the translation hy-
+6MIRA was used with default meta parameters: 250 hypoth-
+esis list to search for oracles, regularization strength C = 0.01
+and using 15 passes over the input. It optimized IBM BLEU-4.
+The initial weight vector was 0.
+16
+Algorithm Tuning set Features #Features devtest-nc test-nc
+MIRA dev-nc default 12 ? 27.10
+1
+dev-nc default 12 25.88 28.0
+dev-nc +id 137k 25.53 27.6?23
+dev-nc +ng 29k 25.82 27.42?234
+dev-nc +shape 51 25.91 28.1
+dev-nc +id,ng,shape 180k 25.71 28.1534
+2
+train-nc default 12 25.73 27.86
+train-nc +id 4.1M 25.13 27.19?134
+train-nc +ng 354k 26.09 28.03134
+train-nc +shape 51 26.07 27.913
+train-nc +id,ng,shape 4.7M 26.08 27.8634
+3
+train-nc default 12 26.09 @2 27.94?
+train-nc +id 3.4M 26.1 @4 27.97?12
+train-nc +ng 330k 26.33 @4 28.3412
+train-nc +shape 51 26.39 @9 28.312
+train-nc +id,ng,shape 4.7M 26.42 @9 28.55124
+4
+train-nc +id 100k 25.91 @7 27.82?2
+train-nc +ng 100k 26.42 @4 28.37?12
+train-nc +id,ng,shape 100k 26.8 @8 28.81123
+Table 2: BLEU-4 results for algorithms 1 (SGD), 2 (MixSGD), 3 (IterMixSDG), and 4 (IterSelSGD) on news-
+commentary (nc) data. Feature groups are 12 dense features (default), rule identifiers (id), rule n-gram (ng), and
+rule shape (shape). Statistical significance at p-level < 0.05 of a result difference on the test set to a different algo-
+rithm applied to the same feature group is indicated by raised algorithm number. ? indicates statistically significant
+differences to best result across features groups for same algorithm, indicated in bold face. @ indicates the optimal
+number of epochs chosen on the devtest set.
+pergraph as is done in the cdec implementation of
+MIRA. We found similar fluctuations for the cdec
+implementations of PRO (Hopkins and May, 2011)
+or hypergraph-MERT (Kumar et al, 2009) both of
+which depend on hypergraph sampling. In contrast,
+the perceptron is deterministic when started from a
+zero-vector of weights and achieves favorable 28.0
+BLEU on the news-commentary test set. Since we
+are interested in relative improvements over a stable
+baseline, we restrict our attention in all following ex-
+periments to the perceptron.7
+Table 2 shows the results of the experimental
+comparison of the 4 algorithms of Section 4. The
+7Absolute improvements would be possible, e.g., by using
+larger language models or by adding news data to the ep train-
+ing set when evaluating on crawl test sets (see, e.g., Dyer et al
+(2011)), however, this is not the focus of this paper.
+default features include 12 dense models defined on
+SCFG rules;8 The sparse features are the 3 templates
+described in Section 3. All feature weights were
+tuned together using algorithms 1-4. If not indicated
+otherwise, the perceptron was run for 10 epochs with
+learning rate ? = 0.0001, started at zero weight vec-
+tor, using deduplicated 100-best lists.
+The results on the news-commentary (nc) data
+show that training on the development set does not
+benefit from adding large feature sets ? BLEU re-
+sult differences between tuning 12 default features
+8negative log relative frequency p(e|f); log count(f ); log
+count(e, f ); lexical translation probability p(f |e) and p(e|f)
+(Koehn et al, 2003); indicator variable on singleton phrase e;
+indicator variable on singleton phrase pair f, e; word penalty;
+language model weight; OOV count of language model; num-
+ber of untranslated words; Hiero glue rules (Chiang, 2007).
+17
+Alg. Tuning set Features #Feats devtest-ep test-ep Tuning set test-crawl10 test-crawl11
+1
+dev-ep default 12 25.62 26.42? dev-crawl 15.39? 14.43?
+dev-ep +id,ng,shape 300k 27.84 28.37 dev-crawl 17.84 16.834
+4 train-ep +id,ng,shape 100k 28.0 @9 28.62 train-ep 19.121 17.331
+Table 3: BLEU-4 results for algorithms 1 (SGD) and 4 (IterSelSGD) on Europarl (ep) and news crawl (crawl) test
+data. Feature groups are 12 dense features (default), rule identifiers (id), rule n-gram (ng), and rule shape (shape).
+Statistical significance at p-level < 0.05 of a result difference on the test set to a different algorithm applied to the
+same feature group is indicated by raised algorithm number. ? indicates statistically significant differences to best
+result across features groups for same algorithm, indicated in bold face. @ indicates the optimal number of epochs
+chosen on the devtest set.
+and tuning the full set of 180,000 features are not
+significant. However, scaling all features to the full
+training set shows significant improvements for al-
+gorithm 3, and especially for algorithm 4, which
+gains 0.8 BLEU points over tuning 12 features on
+the development set. The number of features rises
+to 4.7 million without feature selection, which iter-
+atively selects 100,000 features with best `2 norm
+values across shards. Feature templates such as rule
+n-grams and rule shapes only work if iterative mix-
+ing (algorithm 3) or feature selection (algorithm 4)
+are used. Adding rule id features works in combina-
+tion with other sparse features.
+Table 3 shows results for algorithms 1 and 4 on
+the Europarl data (ep) for different devtest and test
+sets. Europarl data were used in all runs for train-
+ing and for setting the meta-parameter of number
+of epochs. Testing was done on the Europarl test
+set and news crawl test data from the years 2010
+and 2011. Here tuning large feature sets on the
+respective dev sets yields significant improvements
+of around 2 BLEU points over tuning the 12 de-
+fault features on the dev sets. Another 0.5 BLEU
+points (test-crawl11) or even 1.3 BLEU points (test-
+crawl10) are gained when scaling to the full training
+set using iterative features selection. Result differ-
+ences on the Europarl test set were not significant
+for moving from dev to full train set. Algorithms 2
+and 3 were infeasible to run on Europarl data beyond
+one epoch because features vectors grew too large to
+be kept in memory.
+6 Discussion
+We presented an approach to scaling discrimina-
+tive learning for SMT not only to large feature
+sets but also to large sets of parallel training data.
+Since inference for SMT (unlike many other learn-
+ing problems) is very expensive, especially on large
+training sets, good parallelization is key. Our ap-
+proach is made feasible and effective by applying
+joint feature selection across distributed stochastic
+learning processes. Furthermore, our local features
+are efficiently computable at runtime. Our algo-
+rithms and features are generic and can easily be re-
+implemented and make our results relevant across
+datasets and language pairs.
+In future work, we would like to investigate more
+sophisticated features, better learners, and in gen-
+eral improve the components of our system that have
+been neglected in the current investigation of rela-
+tive improvements by scaling the size of data and
+feature sets. Ultimately, since our algorithms are in-
+spired by multi-task learning, we would like to apply
+them to scenarios where a natural definition of tasks
+is given. For example, patent data can be charac-
+terized along the dimensions of patent classes and
+patent text fields (Wa?schle and Riezler, 2012) and
+thus are well suited for multi-task translation.
+Acknowledgments
+Stefan Riezler and Patrick Simianer were supported
+in part by DFG grant ?Cross-language Learning-to-
+Rank for Patent Retrieval?. Chris Dyer was sup-
+ported in part by a MURI grant ?The linguistic-
+core approach to structured translation and analysis
+of low-resource languages? from the US Army Re-
+search Office and a grant ?Unsupervised Induction
+of Multi-Nonterminal Grammars for SMT? from
+Google, Inc.
+18
+References
+Phil Blunsom, Trevor Cohn, and Miles Osborne. 2008.
+A discriminative latent variable models for statistical
+machine translation. In Proceedings of the 46th An-
+nual Meeting of the Association for Computational
+Linguistics: Human Language Technologies (ACL-
+HLT?08), Columbus, OH.
+Le?on Bottou. 2004. Stochastic learning. In Olivier
+Bousquet, Ulrike von Luxburg, and Gunnar Ra?tsch,
+editors, Advanced Lectures on Machine Learning,
+pages 146?168. Springer, Berlin.
+Olivier Chapelle and S. Sathiya Keerthi. 2010. Efficient
+algorithms for ranking with SVMs. Information Re-
+trieval Journal.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of the 2008
+Conference on Empirical Methods in Natural Lan-
+guage Processing (EMNLP?08), Waikiki, Honolulu,
+Hawaii.
+David Chiang, Kevin Knight, and Wei Wang. 2009.
+11,001 new features for statistical machine transla-
+tion. In Proceedings of the 2009 Annual Confer-
+ence of the North American Chapter of the Associa-
+tion for Computational Linguistics (NAACL-HLT?09),
+Boulder, CO.
+David Chiang. 2005. A hierarchical phrase-based model
+for statistical machine translation. In Proceedings of
+the 43rd Annual Meeting of the Association for Com-
+putational Linguistics (ACL?05), Ann Arbor, MI.
+David Chiang. 2007. Hierarchical phrase-based transla-
+tion. Computational Linguistics, 33(2).
+Michael Collins. 2002. Discriminative training methods
+for hidden markov models: theory and experiments
+with perceptron algorithms. In Proceedings of the con-
+ference on Empirical Methods in Natural Language
+Processing (EMNLP?02), Philadelphia, PA.
+Ronan Collobert and Samy Bengio. 2004. Links be-
+tween perceptrons, MLPs, and SVMs. In Proceed-
+ings of the 21st International Conference on Machine
+Learning (ICML?04), Banff, Canada.
+Jeffrey Dean and Sanjay Ghemawat. 2004. Mapre-
+duce: Simplified data processing on large clusters. In
+Proceedings of the 6th Symposium on Operating Sys-
+tem Design and Implementation (OSDI?04), San Fran-
+cisco, CA.
+Kevin Duh and Katrin Kirchhoff. 2008. Beyond log-
+linear models: Boosted minimum error rate training
+for n-best ranking. In Proceedings of the 46th Annual
+Meeting of the Association for Computational Linguis-
+tics (ACL?08), Short Paper Track, Columbus, OH.
+Kevin Duh, Katsuhito Sudoh, Hajime Tsukada, Hideki
+Isozaki, and Masaaki Nagata. 2010. N-best reranking
+by multitask learning. In Proceedings of the 5th Joint
+Workshop on Statistical Machine Translation and Met-
+ricsMATR, Uppsala, Sweden.
+Chris Dyer, Adam Lopez, Juri Ganitkevitch, Jonathan
+Weese, Ferhan Ture, Phil Blunsom, Hendra Setiawan,
+Vladimir Eidelman, and Philip Resnik. 2010. cdec: A
+decoder, alignment, and learning framework for finite-
+state and context-free translation models. In Proceed-
+ings of the ACL 2010 System Demonstrations, Upp-
+sala, Sweden.
+Chris Dyer, Kevin Gimpel, Jonathan H. Clark, and
+Noah A. Smith. 2011. The CMU-ARK german-
+english translation system. In Proceedings of the 6th
+Workshop on Machine Translation (WMT11), Edin-
+burgh, UK.
+Chris Dyer. 2009. Using a maximum entropy model to
+build segmentation lattices for MT. In Proceedings
+of the Conference of the North American Chapter of
+the Association for Computational Linguistics - Hu-
+man Language Technologies (NAACL-HLT?09), Boul-
+der, CO.
+Yoav Freund and Robert E. Schapire. 1999. Large
+margin classification using the perceptron algorithm.
+Journal of Machine Learning Research, 37:277?296.
+Kevin Gimpel and Noah A. Smith. 2012. Structured
+ramp loss minimization for machine translation. In
+Proceedings of 2012 Conference of the North Amer-
+ican Chapter of the Association for Computational
+Linguistics: Human Language Technologies (NAACL-
+HLT 2012), Montreal, Canada.
+Katsuhiko Hayashi, Taro Watanabe, Hajime Tsukada,
+and Hideki Isozaki. 2009. Structural support vector
+machines for log-linear approach in statistical machine
+translation. In Proceedings of IWSLT, Tokyo, Japan.
+Kenneth Heafield. 2011. KenLM: faster and smaller lan-
+guage model queries. In Proceedings of the EMNLP
+2011 Sixth Workshop on Statistical Machine Transla-
+tion (WMT?11), Edinburgh, UK.
+Mark Hopkins and Jonathan May. 2011. Tuning as
+ranking. In Proceedings of 2011 Conference on
+Empirical Methods in Natural Language Processing
+(EMNLP?11), Edinburgh, Scotland.
+Philipp Koehn, Franz Josef Och, and Daniel Marcu.
+2003. Statistical phrase-based translation. In Proceed-
+ings of the Human Language Technology Conference
+and the 3rd Meeting of the North American Chapter of
+the Association for Computational Linguistics (HLT-
+NAACL?03), Edmonton, Cananda.
+Shankar Kumar, Wolfgang Macherey, Chris Dyer, and
+Franz Och. 2009. Efficient minimum error rate train-
+ing and minimum Bayes-risk decoding for translation
+hypergraphs and lattices. In Proceedings of the 47th
+Annual Meeting of the Association for Computational
+19
+Linguistics and the 4th IJCNLP of the AFNLP (ACL-
+IJCNLP?09, Suntec, Singapore.
+Thomas Navin Lal, Olivier Chapelle, Jason Weston, and
+Andre? Elisseeff. 2006. Embedded methods. In I.M.
+Guyon, S.R. Gunn, M. Nikravesh, and L. Zadeh, ed-
+itors, Feature Extraction: Foundations and Applica-
+tions. Springer.
+Percy Liang, Alexandre Bouchard-Co?te?, Dan Klein, and
+Ben Taskar. 2006a. An end-to-end discriminative
+approach to machine translation. In Proceedings of
+the joint conference of the International Committee
+on Computational Linguistics and the Association for
+Computational Linguistics (COLING-ACL?06), Syd-
+ney, Australia.
+Percy Liang, Ben Taskar, and Dan Klein. 2006b. Align-
+ment by agreement. In Proceedings of the Human
+Language Technology Conference - North American
+Chapter of the Association for Computational Linguis-
+tics annual meeting (HLT-NAACL?06), New York, NY.
+Adam Lopez. 2007. Hierarchical phrase-based transla-
+tion with suffix arrays. In Proceedings of EMNLP-
+CoNLL, Prague, Czech Republic.
+David McAllester and Joseph Keshet. 2011. Generaliza-
+tion bounds and consistency for latent structural pro-
+bit and ramp loss. In Proceedings of the 25th Annual
+Conference on Neural Information Processing Sytems
+(NIPS 2011), Granada, Spain.
+Ryan McDonald, Keith Hall, and Gideon Mann. 2010.
+Distributed training strategies for the structured per-
+ceptron. In Proceedings of Human Language Tech-
+nologies: The 11th Annual Conference of the North
+American Chapter of the Association for Compu-
+tational Linguistics (NAACL-HLT?10), Los Angeles,
+CA.
+Eric W. Noreen. 1989. Computer Intensive Methods
+for Testing Hypotheses. An Introduction. Wiley, New
+York.
+Guillaume Obozinski, Ben Taskar, and Michael I. Jordan.
+2010. Joint covariate selection and joint subspace se-
+lection for multiple classification problems. Statistics
+and Computing, 20:231?252.
+Franz Josef Och and Hermann Ney. 2000. Improved sta-
+tistical alignment models. In Proceedings of the 38th
+Annual Meeting of the Association for Computational
+Linguistics (ACL?00), Hongkong, China.
+Franz Josef Och and Hermann Ney. 2002. Discrimina-
+tive training and maximum entropy models for statis-
+tical machine translation. In Proceedings of the 40th
+Annual Meeting of the Association for Computational
+Linguistics (ACL?02), Philadelphia, PA.
+Franz Josef Och. 2003. Minimum error rate train-
+ing in statistical machine translation. In Proceedings
+of the Human Language Technology Conference and
+the 3rd Meeting of the North American Chapter of
+the Association for Computational Linguistics (HLT-
+NAACL?03), Edmonton, Cananda.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2001. Bleu: a method for automatic
+evaluation of machine translation. Technical Report
+IBM Research Division Technical Report, RC22176
+(W0190-022), Yorktown Heights, N.Y.
+Simon Perkins, Kevin Lacker, and James Theiler. 2003.
+Grafting: Fast, incremental feature selection by gra-
+dient descent in function space. Journal of Machine
+Learning Research, 3:1333?1356.
+Stefan Riezler and John Maxwell. 2005. On some pit-
+falls in automatic evaluation and significance testing
+for MT. In Proceedings of the ACL-05 Workshop on
+Intrinsic and Extrinsic Evaluation Measures for MT
+and/or Summarization, Ann Arbor, MI.
+Shai Shalev-Shwartz, Yoram Singer, and Nathan Sre-
+bro. 2007. Pegasos: Primal Estimated sub-GrAdient
+SOlver for SVM. In Proceedings of the 24th Inter-
+national Conference on Machine Learning (ICML?07),
+Corvallis, OR.
+Libin Shen and Aravind K. Joshi. 2005. Ranking and
+reranking with perceptron. Journal of Machine Learn-
+ing Research, 60(1-3):73?96.
+Libin Shen, Anoop Sarkar, and Franz Josef Och. 2004.
+Discriminative reranking for machine translation. In
+Proceedings of the Human Language Technology con-
+ference / North American chapter of the Associa-
+tion for Computational Linguistics annual meeting
+(HLT/NAACL?04), Boston, MA.
+Andreas Stolcke. 2002. SRILM - an extensible language
+modeling toolkit. In Proceedings of the International
+Conference on Spoken Language Processing, Denver,
+CO.
+Christoph Tillmann and Tong Zhang. 2006. A dis-
+criminatie global training algorithm for statistical MT.
+In Proceedings of the joint conference of the In-
+ternational Committee on Computational Linguistics
+and the Association for Computational Linguistics
+(COLING-ACL?06), Sydney, Australia.
+Katharina Wa?schle and Stefan Riezler. 2012. Structural
+and topical dimensions in multi-task patent translation.
+In Proceedings of the 13th Conference of the European
+Chapter of the Association for Computational Linguis-
+tics, Avignon, France.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2006. NTT statistical machine translation
+for IWSLT 2006. In Proceedings of the International
+Workshop on Spoken Language Translation (IWSLT),
+Kyoto, Japan.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2007. Online large-margin training for statis-
+tical machine translation. In Proceedings of the 2007
+20
+Joint Conference on Empirical Mehtods in Natural
+Language Processing and Computational Language
+Learning (EMNLP?07), Prague, Czech Republic.
+Benjamin Wellington, Joseph Turian, and Dan Melamed.
+2009. Toward purely discriminative training for tree-
+structured translation models. In Cyril Goutte, Nicola
+Cancedda, and Marc Dymetman, editors, Learning
+Machine Translation, pages 132?149, Cambridge,
+MA. The MIT Press.
+Martin A. Zinkevich, Markus Weimer, Alex Smola, and
+Lihong Li. 2010. Parallelized stochastic gradient de-
+scent. In Proceedings of the 24th Annual Conference
+on Neural Information Processing Sytems (NIPS?10),
+Vancouver, Canada.
+Andreas Zollmann and Khalil Sima?an. 2005. A consis-
+tent and efficient estimator for data-oriented parsing.
+Journal of Automata, Languages and Combinatorics,
+10(2/3):367?388.
+21
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics, pages 881?891,
+Baltimore, Maryland, USA, June 23-25 2014.
+c?2014 Association for Computational Linguistics
+Response-based Learning for Grounded Machine Translation
+Stefan Riezler and Patrick Simianer and Carolin Haas
+Department of Computational Linguistics
+Heidelberg University, 69120 Heidelberg, Germany
+{riezler,simianer,haas1}@cl.uni-heidelberg.de
+Abstract
+We propose a novel learning approach for
+statistical machine translation (SMT) that
+allows to extract supervision signals for
+structured learning from an extrinsic re-
+sponse to a translation input. We show
+how to generate responses by grounding
+SMT in the task of executing a seman-
+tic parse of a translated query against
+a database. Experiments on the GEO-
+QUERY database show an improvement of
+about 6 points in F1-score for response-
+based learning over learning from refer-
+ences only on returning the correct an-
+swer from a semantic parse of a translated
+query. In general, our approach alleviates
+the dependency on human reference trans-
+lations and solves the reachability problem
+in structured learning for SMT.
+1 Introduction
+In this paper, we propose a novel approach
+for learning and evaluation in statistical ma-
+chine translation (SMT) that borrows ideas from
+response-based learning for grounded semantic
+parsing. In this framework, the meaning of a sen-
+tence is defined in the context of an extrinsic task.
+Successful communication of meaning is mea-
+sured by a successful interaction in this task, and
+feedback from this interaction is used for learning.
+We suggest that in a similar way the preser-
+vation of meaning in machine translation should
+be defined in the context of an interaction in an
+extrinsic task. For example, in the context of a
+game, a description of a game rule is translated
+successfully if correct game moves can be per-
+formed based only on the translation. In the con-
+text of a question-answering scenario, a question
+is translated successfully if the correct answer is
+returned based only on the translation of the query.
+We propose a framework of response-based
+learning that allows to extract supervision signals
+for structured learning from the response of an
+extrinsic task to a translation input. Here, learn-
+ing proceeds by ?trying out? translation hypothe-
+ses, receiving a response from interacting in the
+task, and converting this response into a supervi-
+sion signal for updating model parameters. In case
+of positive feedback, the predicted translation can
+be treated as reference translation for a structured
+learning update. In case of negative feedback, a
+structural update can be performed against transla-
+tions that have been approved previously by pos-
+itive task feedback. This framework has several
+advantages:
+? The supervision signal in response-based
+learning has a different quality than super-
+vision by human-generated reference transla-
+tions. While a human reference translation
+is generated independently of the SMT task,
+conversion of predicted translations into ref-
+erences is always done with respect to a spe-
+cific task. In this sense we speak of ground-
+ing meaning transfer in an extrinsic task.
+? Response-based learning can repeatedly try
+out system predictions by interacting in the
+extrinsic task. Instead of and in addition
+to learning from human reference transla-
+tions, response-based learning allows to con-
+vert multiple system translations into refer-
+ences. This alleviates the supervision prob-
+lem in cases where parallel data are scarce.
+? Task-specific response acts upon system
+translations. This avoids the problem of un-
+reachability of independently generated ref-
+erence translations by the SMT system.
+The proposed approach of response-based
+learning opens the doors for various extrinsic tasks
+881
+in which SMT systems can be trained and evalu-
+ated. In this paper, we present a proof-of-concept
+experiment that uses feedback from a simulated
+world environment. Building on prior work in
+grounded semantic parsing, we generate transla-
+tions of queries, and receive feedback by execut-
+ing semantic parses of translated queries against
+the database. Successful response is defined as re-
+ceiving the same answer from the semantic parses
+for the translation and the original query. Our ex-
+perimental results show an improvement of about
+6 points in F1-score for response-based learning
+over standard structured learning from reference
+translations. We show in an error analysis that
+this improvement can be attributed to using struc-
+tural and lexical variants of reference translations
+as positive examples in response-based learning.
+Furthermore, translations produced by response-
+based learning are found to be grammatical. This
+is due to the possibility to boost similarity to hu-
+man reference translations by the additional use of
+a cost function in our approach.
+2 Related Work
+The key idea of grounded language learning
+is to study natural language in the context of
+a non-linguistic environment, in which meaning
+is grounded in perception and/or action. This
+presents an analogy to human learning, where a
+learner tests her understanding in an actionable
+setting. Such a setting can be a simulated world
+environment in which the linguistic representa-
+tion can be directly executed by a computer sys-
+tem. For example, in semantic parsing, the learn-
+ing goal is to produce and successfully execute
+a meaning representation. Executable system ac-
+tions include access to databases such as the GEO-
+QUERY database on U.S. geography (Wong and
+Mooney (2006), inter alia), the ATIS travel plan-
+ning database (Zettlemoyer and Collins (2009),
+inter alia), robotic control in simulated naviga-
+tion tasks (Chen and Mooney (2011), inter alia),
+databases of simulated card games (Goldwasser
+and Roth (2013), inter alia), or the user-generated
+contents of FREEBASE (Cai and Yates (2013), in-
+ter alia). Since there are many possible correct
+parses, matching against a single gold standard
+falls short of grounding in a non-linguistic envi-
+ronment. Rather, the semantic context for inter-
+pretation, as well as the success criterion in evalua-
+tion is defined by successful execution of an action
+in the extrinsic environment, e.g., by receiving the
+correct answer from the database or by successful
+navigation to the destination. Recent attempts to
+learn semantic parsing from question-answer pairs
+without recurring to annotated logical forms have
+been presented by Kwiatowski et al (2013), Be-
+rant et al (2013), or Goldwasser and Roth (2013).
+The algorithms presented in these works are vari-
+ants of structured prediction that take executability
+of semantic parses into account. Our work builds
+upon these ideas, however, to our knowledge the
+presented work is the first to embed translations
+into grounded scenarios in order to use feedback
+from interactions in these scenarios for structured
+learning in SMT.
+A recent important research direction in SMT
+has focused on employing automated translation
+as an aid to human translators. Computer as-
+sisted translation (CAT) subsumes several modes
+of interaction, ranging from binary feedback on
+the quality of the system prediction (Saluja et
+al., 2012), to human post-editing operations on a
+system prediction resulting in a reference transla-
+tion (Cesa-Bianchi et al, 2008), to human accep-
+tance or overriding of sentence completion pre-
+dictions (Langlais et al, 2000; Barrachina et al,
+2008; Koehn and Haddow, 2009). In all inter-
+action scenarios, it is important that the system
+learns dynamically from its errors in order to of-
+fer the user the experience of a system that adapts
+to the provided feedback. Since retraining the
+SMT model after each interaction is too costly,
+online adaptation after each interaction has be-
+come the learning protocol of choice for CAT. On-
+line learning has been applied in generative SMT,
+e.g., using incremental versions of the EM algo-
+rithm (Ortiz-Mart??nez et al, 2010; Hardt and Elm-
+ing, 2010), or in discriminative SMT, e.g., using
+perceptron-type algorithms (Cesa-Bianchi et al,
+2008; Mart??nez-G?omez et al, 2012; W?aschle et
+al., 2013; Denkowski et al, 2014). In a simi-
+lar way to deploying human feedback, extrinsic
+loss functions have been used to provide learn-
+ing signals for SMT. For example, Nikoulina et
+al. (2012) propose a setup where an SMT system
+feeds into cross-language information retrieval,
+and receives feedback from the performance of
+translated queries with respect to cross-language
+retrieval performance. This feedback is used to
+train a reranker on an n-best list of translations or-
+der with respect to retrieval performance. In con-
+882
+Figure 1: Response-based learning cycle for grounding SMT in virtual trivia gameplay.
+trast to our work, all mentioned approaches to in-
+teractive or adaptive learning in SMT rely on hu-
+man post-edits or human reference translations.
+Our work differs from these approaches in that
+exactly this dependency is alleviated by learning
+from responses in an extrinsic task.
+Interactive scenarios have been used for eval-
+uation purposes of translation systems for nearly
+50 years, especially using human reading compre-
+hension testing (Pfafflin, 1965; Fuji, 1999; Jones
+et al, 2005), and more recently, using face-to-
+face conversation mediated via machine transla-
+tion (Sakamoto et al, 2013). However, despite of-
+fering direct and reliable prediction of translation
+quality, the cost and lack of reusability has con-
+fined task-based evaluations involving humans to
+testing scenarios, but prevented a use for interac-
+tive training of SMT systems as in our work.
+Lastly, our work is related to cross-lingual nat-
+ural language processing such as cross-lingual
+question answering or cross-lingual information
+retrieval as conducted at recent evaluation cam-
+paigns of the CLEF initiative.
+1
+While these ap-
+proaches focus on improvements of the respective
+natural language processing task, our goal is to im-
+prove SMT by gathering feedback from the task.
+1
+http://www.clef-initiative.eu
+3 Grounding SMT in Semantic Parsing
+In this paper, we present a proof-of-concept of our
+ideas of embedding SMT into simulated world en-
+vironments as used in semantic parsing. We use
+the well-known GEOQUERY database on U.S. ge-
+ography for this purpose. Embedding SMT in a
+semantic parsing scenario means to define transla-
+tion quality by the ability of a semantic parser to
+construct a meaning representation from the trans-
+lated query, which returns the correct answer when
+executed against the database. If viewed as simu-
+lated gameplay, a valid game move in this scenario
+returns the correct answer to a translated query.
+The diagram in Figure 1 gives a sketch of
+response-based learning from semantic parsing in
+the geographical domain. Given a manual Ger-
+man translation of the English query as source sen-
+tence, the SMT system produces an English target
+translation. This sentence is fed into a semantic
+parser that produces an executable parse represen-
+tation p
+h
+. Feedback is generated by executing the
+parse against the database of geographical facts.
+Positive feedback means that the correct answer is
+received, i.e., exec(p
+g
+)
+?
+= exec(p
+h
+) indicates that
+the same answer is received from the gold standard
+parse p
+g
+and the parse for the hypothesis transla-
+tion p
+h
+; negative feedback results in case a differ-
+ent or no answer is received.
+The key advantage of response-based learning
+883
+is the possibility to receive positive feedback even
+from predictions that differ from gold standard
+reference translations, but yet receive the cor-
+rect answer when parsed and matched against the
+database. Such structural and lexical variation
+broadens the learning capabilities in contrast to
+learning from fixed labeled data. For example,
+assume the following English query in the geo-
+graphical domain, and assume positive feedback
+from executing the corresponding semantic parse
+against the geographical database:
+Name prominent elevations in the
+USA
+The manual translation of the English original
+reads
+Nenne prominente Erhebungen in
+den USA
+An automatic translation
+2
+of the German string
+produces the result
+Give prominent surveys in the US
+This translation will trigger negative task-based
+feedback: A comparison with the original allows
+the error to be traced back to the ambiguity of
+the German word Erhebung. Choosing a gen-
+eral domain translation instead of a translation ap-
+propriate for the geographical domain hinders the
+construction of a semantic parse that returns the
+correct answer from the database. An alternative
+translation might look as follows:
+Give prominent heights in the US
+Despite a large difference to the original En-
+glish string, key terms such as elevations and
+heights, or USA and US, can be mapped into the
+same predicate in the semantic parse, thus allow-
+ing to receive positive feedback from parse execu-
+tion against the geographical database.
+4 Response-based Online Learning
+Recent approaches to machine learning for SMT
+formalize the task of discriminating good from
+bad translations as a structured prediction prob-
+lem. Assume a joint feature representation ?(x, y)
+of input sentences x and output translations y ?
+Y (x), and a linear scoring function s(x, y;w) for
+predicting a translation y? (where ??, ?? denotes the
+standard vector dot product) s.t.
+y? = argmax
+y?Y (x)
+s(x, y;w) = argmax
+y?Y (x)
+?w, ?(x, y)? .
+2
+http://translate.google.com
+The structured perceptron algorithm (Collins,
+2002) learns an optimal weight vector w by updat-
+ing w on input x
+(i)
+by the following rule, in case
+the predicted translation y? is different from and
+scored higher than the reference translation y
+(i)
+:
+w = w + ?(x
+(i)
+, y
+(i)
+)? ?(x
+(i)
+, y?).
+This stochastic structural update aims to demote
+weights of features corresponding to incorrect de-
+cisions, and to promote weights of features for cor-
+rect decisions.
+An application of structured prediction to SMT
+involves more than a straightforward replacement
+of labeled output structures by reference transla-
+tions. Firstly, update rules that require to com-
+pute a feature representation for the reference
+translation are suboptimal in SMT, because of-
+ten human-generated reference translations can-
+not be generated by the SMT system. Such ?un-
+reachable? gold-standard translations need to be
+replaced by ?surrogate? gold-standard translations
+that are close to the human-generated translations
+and still lie within the reach of the SMT sys-
+tem. Computation of distance to the reference
+translation usually involves cost functions based
+on sentence-level BLEU (Nakov et al (2012), in-
+ter alia) and incorporates the current model score,
+leading to various ramp loss objectives described
+in Gimpel and Smith (2012).
+An alternative approach to alleviate the depen-
+dency on labeled training data is response-based
+learning. Clarke et al (2010) or Goldwasser and
+Roth (2013) describe a response-driven learning
+framework for the area of semantic parsing: Here
+a meaning representation is ?tried out? by itera-
+tively generating system outputs, receiving feed-
+back from world interaction, and updating the
+model parameters. Applied to SMT, this means
+that we predict translations and use positive re-
+sponse from acting in the world to create ?surro-
+gate? gold-standard translations. This decreases
+the dependency on a few (mostly only one) refer-
+ence translations and guides the learner to promote
+translations that perform well with respect to the
+extrinsic task.
+In the following, we will present a framework
+that combines standard structured learning from
+given reference translations with response-based
+learning from task-approved references. We need
+to ensure that gold-standard translations lead to
+positive task-based feedback, that means they can
+884
+be parsed and executed successfully against the
+database. In addition, we can use translation-
+specific cost functions based on sentence-level
+BLEU in order to boost similarity of translations
+to human reference translations.
+We denote feedback by a binary execution func-
+tion e(y) ? {1, 0} that tests whether executing
+the semantic parse for the prediction against the
+database receives the same answer as the parse
+for the gold standard reference. Our cost function
+c(y
+(i)
+, y) = (1?BLEU(y
+(i)
+, y)) is based on a ver-
+sion of sentence-level BLEU Nakov et al (2012).
+Define y
++
+as a surrogate gold-standard translation
+that receives positive feedback, has a high model
+score, and a low cost of predicting y instead of
+y
+(i)
+:
+y
++
+= argmax
+y?Y (x
+(i)
+):e(y)=1
+(
+s(x
+(i)
+, y;w)? c(y
+(i)
+, y)
+)
+.
+The opposite of y
++
+is the translation y
+?
+that leads
+to negative feedback, has a high model score, and
+a high cost. It is defined as follows:
+y
+?
+= argmax
+y?Y (x
+(i)
+):e(y)=0
+(
+s(x
+(i)
+, y;w) + c(y
+(i)
+, y)
+)
+.
+Update rules can be derived by minimization of
+the following ramp loss objective:
+min
+w
+(
+? max
+y?Y (x
+(i)
+):e(y)=1
+(
+s(x
+(i)
+, y;w)? c(y
+(i)
+, y)
+)
++ max
+y?Y (x
+(i)
+):e(y)=0
+(
+s(x
+(i)
+, y;w) + c(y
+(i)
+, y)
+)
+)
+.
+Minimization of this objective using stochastic
+(sub)gradient descent (McAllester and Keshet,
+2011) yields the following update rule:
+w = w + ?(x
+(i)
+, y
++
+)? ?(x
+(i)
+, y
+?
+).
+The intuition behind this update rule is to discrim-
+inate the translation y
++
+that leads to positive feed-
+back and best approximates (or is identical to) the
+reference within the means of the model from a
+translation y
+?
+which is favored by the model but
+does not execute and has high cost. This is done
+by putting all the weight on the former.
+Algorithm 1 presents pseudo-code for our
+response-driven learning scenario. Upon predict-
+ing translation y?, in case of positive feedback from
+the task, we treat the prediction as surrogate refer-
+ence by setting y
++
+? y?, and by adding it to the
+set of reference translations for future use. Then
+we need to compute y
+?
+, and update by the differ-
+ence in feature representations of y
++
+and y
+?
+, at
+a learning rate ?. If the feedback is negative, we
+want to move the weights away from the predic-
+tion, thus we treat it as y
+?
+. To perform an update,
+we need to compute y
++
+. If either y
++
+or y
+?
+cannot
+be computed, the example is skipped.
+Algorithm 1 Response-based Online Learning
+repeat
+for i = 1, . . . , n do
+Receive input string x
+(i)
+Predict translation y?
+Receive task feedback e(y?) ? {1, 0}
+if e(y?) = 1 then
+y
++
+? y?
+Store y? as reference y
+(i)
+for x
+(i)
+Compute y
+?
+else
+y
+?
+? y?
+Receive reference y
+(i)
+Compute y
++
+end if
+w ? w + ?(?(x
+(i)
+, y
++
+)? ?(x
+(i)
+, y
+?
+))
+end for
+until Convergence
+The sketched algorithm allows several varia-
+tions. In the form depicted above, it allows
+to use human reference translations in addition
+to task-approved surrogate references. The cost
+function can be implemented by different ver-
+sions of sentence-wise BLEU, or it can be omitted
+completely so that learning relies on task-based
+feedback alone, similar to algorithms recently
+suggested for semantic parsing (Goldwasser and
+Roth, 2013; Kwiatowski et al, 2013; Berant et
+al., 2013). Lastly, regularization can be intro-
+duced by using update rules corresponding to pri-
+mal form optimization variants of support vector
+machines (Collobert and Bengio, 2004; Chapelle,
+2007; Shalev-Shwartz et al, 2007).
+5 Experiments
+5.1 Experimental Setup
+In our experiments, we use the GEOQUERY
+database on U.S. geography as provided by Jones
+885
+method precision recall F1 BLEU
+1
+CDEC 63.67 58.21 60.82 46.53
+2
+EXEC 70.36 63.57 66.79
+1
+48.00
+1
+3
+RAMPION 75.58 69.64 72.49
+12
+56.64
+12
+4
+REBOL 81.15 75.36 78.15
+123
+55.66
+12
+Table 1: Experimental results using extended parser for returning answers from GEOQUERY (precision,
+recall, F1) and n-gram match to original English query (BLEU) on 280 re-translated test examples. Best
+results for each column are highlighted in bold face. Superscripts
+1234
+denote a significant improvement
+over the respective method.
+method precision recall F1 BLEU
+1
+CDEC 65.59 57.86 61.48 46.53
+2
+EXEC 66.54 61.79 64.07 46.00
+3
+RAMPION 67.68 63.57 65.56 55.67
+12
+4
+REBOL 70.68 67.14 68.86
+12
+55.67
+12
+Table 2: Experimental results using the original parser for returning answers from GEOQUERY (preci-
+sion, recall, F1) and n-gram match to original English query (BLEU) on 280 re-translated test examples.
+et al (2012).
+3
+The dataset includes 880 English
+questions and their logical forms. The English
+strings were manually translated into German by
+the authors of Jones et al (2012)), and corrected
+for typos by the authors of this paper. We follow
+the provided split into 600 training examples and
+280 test examples.
+For response-based learning, we retrained the
+semantic parser of Andreas et al (2013)
+4
+on the
+full 880 GEOQUERY examples in order to reach
+full parse coverage. This parser is itself based on
+SMT, trained on parallel data consisting of English
+queries and linearized logical forms, and on a lan-
+guage model trained on linearized logical forms.
+We used the hierarchical phrase-based variant of
+the parser. Note that we do not use GEOQUERY
+test data in SMT training. Parser training includes
+GEOQUERY test data in order to be less depen-
+dent on parse and execution failures in the eval-
+uation: If a translation system, response-based or
+reference-based, translates the German input into
+the gold standard English query it should be re-
+warded by positive task feedback. To double-
+check whether including the 280 test examples
+in parser training gives an unfair advantage to
+response-based learning, we also present experi-
+mental results using the original parser of Andreas
+3
+http://homepages.inf.ed.ac.uk/
+s1051107/geoquery-2012-08-27.zip
+4
+https://github.com/jacobandreas/
+smt-semparse
+et al (2013) that is trained only on the 600 GEO-
+QUERY training examples.
+The bilingual SMT system used in our experi-
+ments is the state-of-the-art SCFG decoder CDEC
+(Dyer et al, 2010)
+5
+. We built grammars us-
+ing its implementation of the suffix array extrac-
+tion method described in Lopez (2007). For lan-
+guage modeling, we built a modified Kneser-Ney
+smoothed 5-gram language model using the En-
+glish side of the training data. We trained the SMT
+system on the English-German parallel web data
+provided in the COMMON CRAWL
+6
+(Smith et al,
+2013) dataset.
+5.2 Compared Systems
+Method 1 is the baseline system, consisting of
+the CDEC SMT system trained on the COMMON
+CRAWL data as described above. This system does
+not use any GEOQUERY data for training. Meth-
+ods 2-4 use the 600 training examples from GEO-
+QUERY for discriminative training only.
+Variants of the response-based learning algo-
+rithm described above are implemented as a stand-
+alone tool that operates on CDEC n-best lists of
+10,000 translations of the GEOQUERY training
+data. All variants use sparse features of CDEC as
+described in Simianer et al (2012) that extract rule
+5
+https://github.com/redpony/cdec
+6
+http://www.statmt.org/wmt13/
+training-parallel-commoncrawl.tgz
+886
+prediction: how many inhabitants has new york
+reference: how many people live in new york
+prediction: how big is the population of texas
+reference: how many people live in texas
+prediction: which are the cities of the state with the highest elevation
+reference: what are the cities of the state with the highest point
+prediction: how big is the population of states , through which the mississippi runs
+reference: what are the populations of the states through which the mississippi river runs
+prediction: what state borders california
+reference: what is the adjacent state of california
+prediction: what are the capitals of the states which have cities with the name durham
+reference: what is the capital of states that have cities named durham
+prediction: what rivers go through states with the least cities
+reference: which rivers run through states with fewest cities
+Table 3: Predicted translations by response-based learning (REBOL) leading to positive feedback versus
+gold standard references.
+shapes, rule identifiers, and bigrams in rule source
+and target directly from grammar rules. Method
+4, named REBOL, implements REsponse-Based
+Online Learning by instantiating y
++
+and y
+?
+to
+the form described in Section 4: In addition to
+the model score s, it uses a cost function c based
+on sentence-level BLEU (Nakov et al, 2012) and
+tests translation hypotheses for task-based feed-
+back using a binary execution function e. This
+algorithm can convert predicted translations into
+references by task-feedback, and additionally use
+the given original English queries as references.
+Method 2, named EXEC, relies on task-execution
+by function e and searches for executable or non-
+executable translations with highest score s to dis-
+tinguish positive from negative training examples.
+It does not use a cost function and thus cannot
+make use of the original English queries.
+We compare response-based learning with a
+standard structured prediction setup that omits the
+use of the execution function e in the definition
+of y
++
+and y
+?
+. This algorithm can be seen as a
+stochastic (sub)gradient descent variant of RAM-
+PION (Gimpel and Smith, 2012). It does not make
+use of the semantic parser, but defines positive and
+negative examples based on score s and cost cwith
+respect to human reference translations.
+We report BLEU (Papineni et al, 2001) of
+translation system output measured against the
+original English queries. Furthermore, we report
+precision, recall, and F1-score for executing se-
+mantic parses built from translation system out-
+puts against the GEOQUERY database. Precision
+is defined as the percentage of correctly answered
+examples out of those for which a parse could be
+produced; recall is defined as the percentage of to-
+tal examples answered correctly; F1-score is the
+harmonic mean of both. Statistical significance
+is measured using Approximate Randomization
+(Noreen, 1989) where result differences with a p-
+value smaller than 0.05 are considered statistically
+significant.
+Methods 2-4 perform structured learning for
+SMT on the 600 GEOQUERY training examples
+and re-translate the 280 unseen GEOQUERY test
+data, following the data split of Jones et al (2012).
+Training for RAMPION, REBOL and EXEC was re-
+peated for 10 epochs. The learning rate ? is set to
+a constant that is adjusted by cross-validation on
+the 600 training examples.
+5.3 Empirical Results
+We present an experimental comparison of the
+four different systems according to BLEU and
+887
+reference RAMPION REBOL
+how many colorado rivers are
+there
+how many rivers with the name
+colorado gives it
+how many rivers named col-
+orado are there
+what are the populations of
+states which border texas
+how big are the populations of
+the states , which in texas bor-
+ders
+how big are the populations of
+the states which on texas border
+what is the biggest capital city in
+the us
+what is the largest city in the usa what is the largest capital in the
+usa
+what state borders new york what states limits of new york what states border new york
+which states border the state
+with the smallest area
+what states boundaries of the
+state with the smallest surface
+area
+what states border the state with
+the smallest surface area
+Table 4: Predicted translations by response-based learning (REBOL) leading to positive feedback versus
+translations by supervised structured learning (RAMPION) leading to negative feedback.
+F1, using an extended semantic parser (trained
+on 880 GEOQUERY examples) and the original
+parser (trained on 600 GEOQUERY training exam-
+ples). The extended parser reaches and F1-score
+of 99.64% on the 280 GEOQUERY test examples;
+the original parser yields an F1-score of 82.76%.
+Table 1 reports results for the extended seman-
+tic parser. A system ranking according to F1-
+score shows about 6 points difference between the
+respective methods, ranking REBOL over RAM-
+PION, EXEC and CDEC. The exploitation of task-
+feedback allows both EXEC and REBOL to im-
+prove task-performance over the baseline. RE-
+BOL?s combination of task feedback with a cost
+function achieves the best results since positively
+executable hypotheses and reference translations
+can both be exploited to guide the learning pro-
+cess. Since all English reference queries lead to
+positively executable parses in the setup that uses
+the extended semantic parser, RAMPION implic-
+itly also has access to task feedback. This allows
+RAMPION to improve F1 over the baseline. All
+result differences are statistically significant.
+In terms of BLEU score measured against the
+original English GEOQUERY queries, the best
+nominal result is obtained by RAMPION which
+uses them as reference translations. REBOL per-
+forms worse since BLEU performance is opti-
+mized only implicitly in cases where original En-
+glish queries function as positive examples. How-
+ever, the result differences between these two
+systems do not score as statistically significant.
+Despite not optimizing for BLEU performance
+against references, the fact that positively exe-
+cutable translations include the references allows
+even EXEC to improve BLEU over CDEC which
+does not use GEOQUERY data at all in training.
+This result difference is statistically significant.
+Table 2 compares the same systems using the
+original parser trained on 600 training examples.
+The system ranking according to F1-score shows
+the same ordering that is obtained when using an
+extended semantic parser. However, the respec-
+tive methods are separated only by 3 or less points
+in F1 score such that only the result difference of
+REBOL over the baseline CDEC and over EXEC is
+statistically significant. We conjecture that this is
+due to a higher number of empty parses on the test
+set which makes this comparison unstable.
+In terms of BLEU measured against the original
+queries, the result differences between REBOL and
+RAMPION are not statistically significant, and nei-
+ther are the result differences between EXEC and
+CDEC. The result differences between systems of
+the former group and the systems of latter group
+are statistically significant.
+5.4 Error Analysis
+For a better understanding of the differences be-
+tween the results produced by supervised and
+response-based learning, we conducted an er-
+888
+reference RAMPION REBOL
+how many states have a higher
+point than the highest point of
+the state with the largest capital
+city in the us
+how many states have a higher
+nearby point as the highest point
+of the state with the largest capi-
+tal in the usa
+how many states have a high
+point than the highest point of
+the state with the largest capital
+in the usa
+how tall is mount mckinley how high is mount mckinley what is mount mckinley
+what is the longest river that
+flows through a state that borders
+indiana
+how is the longest river , which
+runs through a state , borders the
+of indiana
+what is the longest river which
+runs through a state of indiana
+borders
+what states does the mississippi
+river run through
+through which states runs the
+mississippi
+through which states is the mis-
+sissippi
+which is the highest peak not in
+alaska
+how is the highest peaks of not
+in alaska is
+what is the highest peak in
+alaska is
+Table 5: Predicted translations where supervised structured learning (RAMPION) leads to positive feed-
+back versus translations by response-based learning (REBOL) leading to negative feedback.
+ror analysis on the test examples. Table 3
+shows examples where the translation predicted by
+response-based learning (REBOL) differs from the
+gold standard reference translation, but yet leads
+to positive feedback via a parse that returns the
+correct answer from the database. The examples
+show structural and lexical variation that leads to
+differences on the string level at equivalent posi-
+tive feedback from the extrinsic task. This can ex-
+plain the success of response-based learning: Lex-
+ical and structural variants of reference transla-
+tions can be used to boost model parameters to-
+wards translations with positive feedback, while
+the same translations might be considered as neg-
+ative examples in standard structured learning.
+Table 4 shows examples where translations
+from REBOL and RAMPION differ from the gold
+standard reference, and predictions by REBOL
+lead to positive feedback, while predictions by
+RAMPION lead to negative feedback. Table 5
+shows examples where translations from RAM-
+PION outperform translations from REBOL in
+terms of task feedback. We see that predictions
+from both systems are in general grammatical.
+This can be attributed to the use of sentence-
+level BLEU as cost function in RAMPION and
+REBOL. Translation errors of RAMPION can be
+traced back to mistranslations of key terms (city
+versus capital, limits or boundaries versus
+border). Translation errors of REBOL more fre-
+quently show missing translations of terms.
+6 Conclusion
+We presented a proposal for a new learning and
+evaluation framework for SMT. The central idea
+is to ground meaning transfer in successful in-
+teraction in an extrinsic task, and use task-based
+feedback for structured learning. We presented a
+proof-of-concept experiment that defines the ex-
+trinsic task as executing semantic parses of trans-
+lated queries against the GEOQUERY database.
+Our experiments show an improvement of about
+6 points in F1-score for response-based learning
+over structured learning from reference transla-
+tions. Our error analysis shows that response-
+based learning generates grammatical translations
+which is due to the additional use of a cost func-
+tion that boosts similarity of translations to human
+reference translations.
+In future work, we would like to extend our
+work on embedding SMT in virtual gameplay to
+larger and more diverse datasets, and involve hu-
+man feedback in the response-based learning loop.
+References
+Jacob Andreas, Andreas Vlachos, and Stephen Clark.
+2013. Semantic parsing as machine translation. In
+889
+Proceedings of the 51st Annual Meeting of the As-
+sociation for Computational Linguistics (ACL?13),
+Sofia, Bulgaria.
+Sergio Barrachina, Oliver Bender, Francisco Casacu-
+berta, Jorge Civera, Elsa Cubel, Shahram Khadivi,
+Antonio Lagarda, Hermann Ney, Jes?us Tom?as, En-
+rique Vidal, and Juan-Miguel Vilar. 2008. Sta-
+tistical approaches to computer-assisted translation.
+Computational Linguistics, 35(1):3?28.
+Jonathan Berant, Andrew Chou, Roy Frostig, and Percy
+Liang. 2013. Semantic parsing on freebase from
+question-answer pairs. In Proceedings of the 2013
+Conference on Empirical Methods in Natural Lan-
+guage Processing (EMNLP?13), Seattle, WA.
+Qingqing Cai and Alexander Yates. 2013. Large-scale
+semantic parsing via schema matching and lexicon
+extenstion. In Proceedings of the 51st Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL?13), Sofia, Bulgaria.
+Nicol`o Cesa-Bianchi, Gabriele Reverberi, and San-
+dor Szedmak. 2008. Online learning algorithms
+for computer-assisted translation. Technical report,
+SMART (www.smart-project.eu).
+Olivier Chapelle. 2007. Training a support vec-
+tor machine in the primal. Neural Computation,
+19(5):1155?1178.
+David L. Chen and Raymond J. Mooney. 2011.
+Learning to interpret natural language navigation
+instructions from observations. In Proceedings of
+the 25th AAAI Conference on Artificial Intelligence
+(AAAI?11), pages 859?866, San Francisco, CA.
+James Clarke, Dan Goldwasser, Wing-Wei Chang, and
+Dan Roth. 2010. Driving semantic parsing from the
+world?s response. In Proceedings of the 14th Con-
+ference on Natural Language Learning (CoNLL?10),
+pages 18?27, Uppsala, Sweden.
+Michael Collins. 2002. Discriminative training meth-
+ods for hidden markov models: theory and experi-
+ments with perceptron algorithms. In Proceedings
+of the conference on Empirical Methods in Nat-
+ural Language Processing (EMNLP?02), Philadel-
+phia, PA.
+Ronan Collobert and Samy Bengio. 2004. Links be-
+tween perceptrons, MLPs, and SVMs. In Proceed-
+ings of the 21st International Conference on Ma-
+chine Learning (ICML?04), Banff, Canada.
+Michael Denkowski, Chris Dyer, and Alon Lavie.
+2014. Learning from post-editing: Online model
+adaptation for statistical machine translation. In
+Proceedings of the 14th Conference of the European
+Chapter of the Association for Computational Lin-
+guistics (EACL?14), Gothenburg, Sweden.
+Chris Dyer, Adam Lopez, Juri Ganitkevitch, Jonathan
+Weese, Ferhan Ture, Phil Blunsom, Hendra Seti-
+awan, Vladimir Eidelman, and Philip Resnik. 2010.
+cdec: A decoder, alignment, and learning framework
+for finite-state and context-free translation models.
+In Proceedings of the ACL 2010 System Demonstra-
+tions, Uppsala, Sweden.
+Masaru Fuji. 1999. Evaluation experiment for reading
+comprehension of machine translation outputs. In
+Proceedings of the Machine Translation Summit VII,
+Singapore.
+Kevin Gimpel and Noah A. Smith. 2012. Structured
+ramp loss minimization for machine translation.
+In Proceedings of 2012 Conference of the North
+American Chapter of the Association for Computa-
+tional Linguistics: Human Language Technologies
+(NAACL-HLT 2012), Montreal, Canada.
+Dan Goldwasser and Dan Roth. 2013. Learning from
+natural instructions. Machine Learning, 94(2):205?
+232.
+Daniel Hardt and Jakob Elming. 2010. Incremental
+re-training for post-editing SMT. In Proceedings of
+the 9th Conference of the Association for Machine
+Tranlation in the Americas (AMTA?10), Denver, CO.
+Douglas Jones, Wade Shen, Neil Granoien, Martha
+Herzog, and Clifford Weinstein. 2005. Measuring
+translation quality by testing english speakers with
+a new defense language proficiency test for arabic.
+In Proceedings of 2005 International Conference on
+Intelligence Analysis, McLean, VA.
+Bevan K. Jones, Mark Johnson, and Sharon Goldwater.
+2012. Semantic parsing with bayesion tree trans-
+ducers. In Proceedings of the 50th Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL?12), Jeju Island, Korea.
+Philipp Koehn and Barry Haddow. 2009. Interactive
+assistance to human translators using statistical ma-
+chine translation methods. In Proceedings of MT
+Summit XII, Ottawa, Ontario, Canada.
+Tom Kwiatowski, Eunsol Choi, Yoav Artzi, and Luke
+Zettlemoyer. 2013. Scaling semantic parsers with
+on-the-fly ontology matching. In Proceedings of the
+2013 Conference on Empirical Methods in Natural
+Language Processing (EMNLP?13), Seattle, WA.
+Philippe Langlais, George Foster, and Guy Lapalme.
+2000. Transtype: a computer-aided translation typ-
+ing system. In Proceedings of the ANLP-NAACL
+2000 Workshop on Embedded Machine Translation
+Systems, Seattle, WA.
+Adam Lopez. 2007. Hierarchical phrase-based trans-
+lation with suffix arrays. In Proceedings of the Joint
+Conference on Empirical Methods in Natural Lan-
+guage Processing and Computational Natural Lan-
+guage Learning (EMNLP-CoNLL 2007), Prague,
+Czech Republic.
+Pascual Mart??nez-G?omez, Germ?an Sanchis-Trilles, and
+Francisco Casacuberta. 2012. Online adaptation
+890
+strategies for statistical machine translation in post-
+editing scenarios. Pattern Recognition, 45(9):3193?
+3202.
+David McAllester and Joseph Keshet. 2011. General-
+ization bounds and consistency for latent structural
+probit and ramp loss. In Proceedings of the 25th An-
+nual Conference on Neural Information Processing
+Sytems (NIPS 2011), Granada, Spain.
+Preslav Nakov, Francisco Guzm?an, and Stephan Vogel.
+2012. Optimizing for sentence-level bleu+1 yields
+short translations. In Proceedings of the 24th Inter-
+national Conference on Computational Linguistics
+(COLING 2012), Bombay, India.
+Vassilina Nikoulina, Bogomil Kovachev, Nikolaos La-
+gos, and Christof Monz. 2012. Adaptation of statis-
+tical machine translation model for cross-lingual in-
+formation retrieval in a service context. In Proceed-
+ings of the 13th Conference of the European Chap-
+ter of the Association for Computational Linguistics
+(EACL?12), Avignon, France.
+Eric W. Noreen. 1989. Computer Intensive Meth-
+ods for Testing Hypotheses. An Introduction. Wiley,
+New York.
+Daniel Ortiz-Mart??nez, Ismal Garc??a-Varea, and Fran-
+cisco Casacuberta. 2010. Online learning for in-
+teractive statistical machine translation. In Proceed-
+ings of the Human Language Technologies confer-
+ence and the 2010 Annual Conference of the North
+American Chapter of the Association for Computa-
+tional Linguistics (HLT-NAACL?10), Los Angeles,
+CA.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2001. Bleu: a method for automatic
+evaluation of machine translation. Technical Report
+IBM Research Division Technical Report, RC22176
+(W0190-022), Yorktown Heights, N.Y.
+Sheila M. Pfafflin. 1965. Evaluation of machine trans-
+lations by reading comprehension tests and subjec-
+tive judgements. Mechanical Translation and Com-
+putational Linguistics, 8(2):2?8.
+Akiko Sakamoto, Nayuko Watanabe, Satoshi Ka-
+matani, and Kazuo Sumita. 2013. Development of a
+simultaneous interpretation system for face-to-face
+services and its evaluation experiment in real situ-
+ation. In Proceedings of the Machine Translation
+Summit XIV, Nice, France.
+Avneesh Saluja, Ian Lane, and Ying Zhang. 2012.
+Machine translation with binary feedback: A large-
+margin approach. In Proceedings of the 10th Bi-
+ennial Conference of the Association for Machine
+Translation in the Americas (AMTA?12), San Diego,
+CA.
+Shai Shalev-Shwartz, Yoram Singer, and Nathan Sre-
+bro. 2007. Pegasos: Primal Estimated sub-
+GrAdient SOlver for SVM. In Proceedings of the
+24th International Conference on Machine Learning
+(ICML?07), Corvallis, OR.
+Patrick Simianer, Stefan Riezler, and Chris Dyer.
+2012. Joint feature selection in distributed stochas-
+tic learning for large-scale discriminative training in
+SMT. In Proceedings of the 50th Annual Meeting of
+the Association for Computational Linguistics (ACL
+2012), Jeju, Korea.
+Jason R. Smith, Herve Saint-Amand, Magdalena Pla-
+mada, Philipp Koehn, Chris Callison-Burch, and
+Adam Lopez. 2013. Dirt cheap web-scale paral-
+lel text from the common crawl. In Proceedings of
+the 51st Annual Meeting of the Association for Com-
+putational Linguistics (ACL?13), Sofia, Bulgaria.
+Katharina W?aschle, Patrick Simianer, Nicola Bertoldi,
+Stefan Riezler, and Marcello Federico. 2013. Gen-
+erative and discriminative methods for online adap-
+tation in SMT. In Proceedings of the Machine
+Translation Summit XIV, Nice, France.
+Yuk Wah Wong and Raymond J. Mooney. 2006.
+Learning for semantic parsing with statistical ma-
+chine translation. In Proceedings of the Human Lan-
+guage Technology Conference of the North Ameri-
+can Chapter of the Association for Computational
+Linguistics (HLT/NAACL?06), New York City, NY.
+Luke S. Zettlemoyer and Michael Collins. 2009.
+Learning context-dependent mappings from sen-
+tences to logical form. In Proceedings of the 47th
+Annual Meeting of the Association for Computa-
+tional Linguistics (ACL-IJCNLP?09), Singapore.
+891
+Proceedings of the Eighth Workshop on Statistical Machine Translation, pages 292?300,
+Sofia, Bulgaria, August 8-9, 2013 c?2013 Association for Computational Linguistics
+Multi-Task Learning for Improved Discriminative Training in SMT
+Patrick Simianer and Stefan Riezler
+Department of Computational Linguistics
+Heidelberg University
+69120 Heidelberg, Germany
+{simianer,riezler}@cl.uni-heidelberg.de
+Abstract
+Multi-task learning has been shown to be
+effective in various applications, including
+discriminative SMT. We present an exper-
+imental evaluation of the question whether
+multi-task learning depends on a ?natu-
+ral? division of data into tasks that bal-
+ance shared and individual knowledge, or
+whether its inherent regularization makes
+multi-task learning a broadly applicable
+remedy against overfitting. To investi-
+gate this question, we compare ?natural?
+tasks defined as sections of the Interna-
+tional Patent Classification versus ?ran-
+dom? tasks defined as random shards in
+the context of patent SMT. We find that
+both versions of multi-task learning im-
+prove equally well over independent and
+pooled baselines, and gain nearly 2 BLEU
+points over standard MERT tuning.
+1 Introduction
+Multi-task learning is motivated by situations
+where a number of statistical models need to be es-
+timated from data belonging to different tasks. It is
+assumed that the data are not completely indepen-
+dent of one another as they share some common-
+alities, yet they differ enough to counter a simple
+pooling of data. The goal of multi-task learning is
+to take advantage of commonalities among tasks
+by learning a shared model without neglecting in-
+dividual knowledge. For example, Obozinski et
+al. (2010) present an optical character recognition
+scenario where data consist of samples of hand-
+written characters from several writers. While the
+styles of different writers vary, it is expected that
+there are also commonalities on a pixel- or stroke-
+level that are shared across writers. Chapelle et al
+(2011) present a scenario where data from search
+engine query logs are available for different coun-
+tries. While the rankings for some queries will
+have to be country-specific (they cite ?football?
+as a query requiring different rankings in the US
+and the UK), a large fraction of queries will be
+country-insensitive. Wa?schle and Riezler (2012b)
+present multi-task learning for statistical machine
+translation (SMT) of patents from different classes
+(so-called sections) according to the International
+Patent Classification (IPC)1. While the vocabulary
+may differ between the different IPC sections, spe-
+cific legal jargon and a typical textual structure
+will be shared across IPC sections. As shown in
+the cited works, treating data from different writ-
+ers, countries, or IPC classes as data from differ-
+ent tasks, and applying generic multi-task learning
+to the specific scenario, improves learning results
+over learning independent or pooled models.
+The research question we ask in this paper is
+as follows: Is multi-task learning dependent on a
+?natural? task structure in the data, where shared
+and individual knowledge is properly balanced?
+Or can multi-task learning be seen as a general
+regularization technique that prevents overfitting
+irrespective of the task structure in the data?
+We investigate this research question on the ex-
+ample of discriminative training for patent trans-
+lation, using the algorithm for multi-task learn-
+ing with `1/`2 regularization presented by Simi-
+aner et al (2012). We compare multi-task learning
+on ?natural? tasks given by IPC sections to multi-
+task learning on ?random? tasks given by random
+shards and to baseline models trained on indepen-
+dent tasks and pooled tasks. We find that both
+versions of multi-task learning improve over inde-
+pendent or pooled training. However, differences
+between multi-task learning on IPC tasks and ran-
+dom tasks are small. This points to a more general
+regularization effect of multi-task learning and in-
+dicates a broad applicability of multi-task learning
+techniques. Another advantage of the `1/`2 reg-
+1http://wipo.int/classifications/ipc/
+en/
+292
+ularization technique of Simianer et al (2012) is
+a considerable efficiency gain due to paralleliza-
+tion and iterative feature selection that makes the
+algorithm suitable for big data applications and
+for large-scale training with millions of sparse fea-
+tures. Last but not least, our best result for multi-
+task learning improves by nearly 2 BLEU points
+over the standard MERT baseline.
+2 Related Work
+Multi-task learning is an active area in machine
+learning, dating back at least to Caruana (1997). A
+regularization perspective was introduced by Ev-
+geniou and Pontil (2004), who formalize the cen-
+tral idea of trading off optimality of parameter vec-
+tors for each task-specific model and closeness of
+these model parameters to the average parame-
+ter vector across models in an SVM framework.
+Equivalent formalizations replace parameter reg-
+ularization by Bayesian prior distributions on the
+parameters (Finkel and Manning, 2009) or by aug-
+mentation of the feature space with domain inde-
+pendent features (Daume?, 2007). Besides SVMs,
+several learning algorithms have been extended
+to the multi-task scenario in a parameter regu-
+larization setting, e.g., perceptron-type algorithms
+(Dredze et al, 2010) or boosting (Chapelle et
+al., 2011). Further variants include different for-
+malizations of norms for parameter regularization,
+e.g., `1/`2 regularization (Obozinski et al, 2010)
+or `1/`? regularization (Quattoni et al, 2009),
+where only the features that are most important
+across all tasks are kept in the model.
+Early research on multi-task learning for SMT
+has investigated pooling of IPC sections, with
+larger pools improving results (Utiyama and Isa-
+hara, 2007; Tinsley et al, 2010; Ceaus?u et al,
+2011). Wa?schle and Riezler (2012b) apply multi-
+task learning to tasks defined as IPC sections and
+compare patent translation on independent tasks,
+pooled tasks, and multi-task learning, using same-
+sized training data. They show small but sta-
+tistically significant improvements for multi-task
+learning over independent and pooled training.
+Duh et al (2010) introduce random tasks as n-best
+lists of translations and showed significant im-
+provements by applying various multi-task learn-
+ing techniques to discriminative reranking. Song
+et al (2011) define tasks as bootstrap samples
+from the development set and show significant im-
+provements for a bagging-based system combina-
+tion over individual MERT training.
+In this paper we apply the multi-task learning
+technique of Simianer et al (2012) to tasks de-
+fined as IPC sections and to random tasks. Their
+algorithm can be seen as a weight-based back-
+ward feature elimination variant of Obozinski et
+al. (2010)?s gradient-based forward feature selec-
+tion algorithm for `1/`2 regularization. The lat-
+ter approach is related to the general methodol-
+ogy of using block norms to select entire groups
+of features jointly. For example, such groups can
+be defined as non-overlapping subsets of features
+(Yuan and Lin, 2006), or as hierarchical groups
+of features (Zhao et al, 2009), or they can be
+grouped by the general structure of the prediction
+problem (Martins et al, 2011). However, these
+approaches are concerned with grouping features
+within a single prediction problem whereas multi-
+task learning adds an orthogonal layer of multiple
+task-specific prediction problems. By virtue of av-
+eraging selected weights after each epoch, the al-
+gorithm of Simianer et al (2012) is related to Mc-
+Donald et al (2010)?s iterative mixing procedure.
+This algorithm is itself related to the bagging pro-
+cedure of Breiman (1996), if random shards are
+considered from the perspective of random sam-
+ples. In both cases averaging helps to reduce the
+variance of the per-sample classifiers.
+3 Multi-task Learning for Discriminative
+Training in SMT
+In multi-task learning, we have data points
+{(xiz, yiz), i = 1, . . . , Nz, z = 1, . . . , Z}, sampled
+from a distribution Pz on X ? Y . The subscript
+z indexes tasks and the superscript i indexes i.i.d.
+data for each task. For the application of discrimi-
+native ranking in SMT, the spaceX can be thought
+of as feature representations of n-best translations,
+and the space Y denotes corresponding sentence-
+level BLEU scores.2 We assume that Pz is differ-
+ent for each task but that the Pz?s are related as,
+for example, considered in Evgeniou and Pontil
+(2004). The standard approach is to fit an inde-
+pendent model involving a D-dimensional param-
+eter vector wz for each task z. In multi-task learn-
+ing, we consider a Z-by-D matrix W = (wdz)z,d
+of stacked D-dimensional row vectors wz , and Z-
+dimensional column vectors wd of weights asso-
+ciated with feature d across tasks. The central al-
+2See Duh et al (2010) for a similar formalization for the
+case of n-best reranking via multi-task learning.
+293
+gorithms in most multi-task learning techniques
+can be characterized as a form of regularization
+that enforces closeness of task-specific parameter
+vectors to shared parameter vectors, or promotes
+sparse models that only contain features that are
+shared across tasks. In this paper, we will fol-
+low the approach of Simianer et al (2012), who
+formalize multi-task learning as a distributed fea-
+ture selection algorithm using `1/`2 regulariza-
+tion. `1/`2 regularization can be described as pe-
+nalizing weights W by the weighted `1/`2 norm,
+which is defined following Obozinski et al (2010),
+as
+?||W||1,2 = ?
+D?
+d=1
+||wd||2.
+Each `2 norm of a weight column wd represents
+the relevance of the corresponding feature across
+tasks. The `1 sum of the `2 norms enforces a
+selection of features by encouraging several fea-
+ture columns wd to be 0 and others to have high
+weights across all tasks. This results in shrinking
+the matrix to the features that are useful across all
+tasks.
+Simianer et al (2012) achieve this behavior by
+the following weight-based iterative feature elimi-
+nation algorithm that is wrapped around a stochas-
+tic gradient descent (SGD) algorithm for pairwise
+ranking (Shen and Joshi, 2005):
+Algorithm 1 Multi-task SGD
+Get data for Z tasks, each including S sentences;
+distribute to machines.
+Initialize v? 0.
+for epochs t? 0 . . . T ? 1: do
+for all tasks z ? {1 . . . Z}: parallel do
+wz,t,0,0 ? vfor all sentences i ? {0 . . . S ? 1}: do
+Decode ith input with wz,t,i,0.for all pairs j ? {0 . . . P ? 1}: do
+wz,t,i,j+1 ? wz,t,i,j ? ??lj(wz,t,i,j)end for
+wz,t,i+1,0 ? wz,t,i,Pend for
+end for
+Stack weights W? [w1,t,S,0| . . . |wZ,t,S,0]TSelect topK feature columns of W by `2 normfor k ? 1 . . .K do
+v[k] = 1Z
+Z?
+z=1
+W[z][k].
+end for
+end for
+return v
+The innermost loop of the algorithm computes
+an SGD update based on the subgradient ?lj of a
+pairwise loss function. `1/`2-based feature selec-
+tion is done after each epoch of SGD training for
+each task in parallel. The `2 norm of the weights
+is computed for each feature column across tasks;
+features are sorted by this value; K top features
+are kept in the model; reduced weight vectors are
+mixed and the result is re-sent to each task-specific
+model to start another epoch of parallel training
+for each task.
+We compare two different loss functions for
+pairwise ranking, one corresponding to the orig-
+inal perceptron algorithm (Rosenblatt, 1958), and
+an improved version called the margin perceptron
+(Collobert and Bengio, 2004). To create train-
+ing data for a pairwise ranking setup, we gener-
+ate preference pairs by ordering translations ac-
+cording to smoothed sentence-wise BLEU score
+(Nakov et al, 2012). Let each translation candi-
+date in the n-best list be represented by a feature
+vector x ? IRD: For notational convenience, we
+denote by xj a preference pair xj = (x(1)j ,x(2)j )
+where x(1)j is ordered above x(2)j w.r.t. BLEU. Fur-
+thermore, we use the shorthand x?j = x(1)j ? x(2)j
+to denote aD-dimensional difference vector repre-
+senting an input pattern. For completeness, a label
+y = +1 can be assigned to patterns x?j where x(1)j
+is ordered above x(2)j (y = ?1 otherwise), how-
+ever, since the ordering relation is antisymmetric,
+we can consider an ordering in one direction and
+omit the label entirely.
+The original perceptron algorithm is based on
+the following hinge loss-type objective function:
+lj(w) = (??w, x?j ?)+
+where (a)+ = max(0, a) , w ? IRD is a weight
+vector, and ??, ?? denotes the standard vector dot
+product. Instantiating SGD to the stochastic sub-
+gradient
+?lj(w) =
+{
+?x?j if ?w, x?j? ? 0,
+0 else.
+leads to the perceptron algorithm for pairwise
+ranking (Shen and Joshi, 2005).
+Collobert and Bengio (2004) presented a ver-
+sion of perceptron learning that includes a margin
+term in order to control the capacity and thus the
+generalization performance. Their margin percep-
+tron algorithm follows from applying SGD to the
+loss function
+lj(w) = (1? ?w, x?j ?)+
+294
+with the following stochastic subgradient
+?lj(w) =
+{
+?x?j if ?w, x?j? < 1,
+0 else.
+Collobert and Bengio (2004) argue that the use of
+a margin term justifies not using an explicit regu-
+larization, thus making the margin perceptron an
+efficient and effective learning machine.
+4 Experiments
+4.1 Data & System Setup
+For training, development and testing, we use data
+extracted from the PatTR3 corpus for the experi-
+ments in Wa?schle and Riezler (2012b). Training
+data consists of about 1.2 million German-English
+parallel sentences. We translate from German into
+English. German compound words were split us-
+ing the technique of Koehn and Knight (2003). We
+use the SCFG decoder cdec (Dyer et al, 2010)4
+and build grammars using its implementation of
+the suffix array extraction method described in
+Lopez (2007). Word alignments are built from all
+parallel data using mgiza5 and the Moses scripts6.
+SCFG models use the same settings as described
+in Chiang (2007). We built a modified Kneser-
+Ney smoothed 5-gram language model using the
+English side of the training data and performed
+querying with KenLM (Heafield, 2011)7.
+The International Patent Classification (IPC)
+categorizes patents hierarchically into 8 sections,
+120 classes, 600 subclasses, down to 70,000 sub-
+groups at the leaf level. The eight top classes
+(called sections) are listed in Table 1.
+Typically, a patent belongs to more than one
+section, with one section chosen as main classi-
+fication. Our development and test sets for each
+of the classes, A to H, comprise 2,000 sentences
+each, originating from a patent with the respec-
+tive class. These sets were built so that there is no
+overlap of development sets and test sets, and no
+overlap between sets of different classes. These
+eight test sets are referred to as independent test
+sets. Furthermore, we test on a combined set,
+3http://www.cl.uni-heidelberg.de/
+statnlpgroup/pattr
+4https://github.com/redpony/cdec
+5http://www.kyloo.net/software/doku.
+php/mgiza:overview
+6http://www.statmt.org/moses/?n=Moses.
+SupportTools
+7http://kheafield.com/code/kenlm/
+estimation/
+A Human Necessities
+B Performing Operations, Transporting
+C Chemistry, Metallurgy
+D Textiles, Paper
+E Fixed Constructions
+F Mechanical Engineering, Lighting,
+Heating, Weapons
+G Physics
+H Electricity
+Table 1: IPC top level sections.
+called pooled-cat, that is constructed by concate-
+nating the independent sets. Additionally we use
+two pooled sets for development and testing, each
+containing 2,000 sentences with all classes evenly
+represented.
+Our tuning baseline is an implementation of hy-
+pergraph MERT (Kumar et al, 2009), directly op-
+timizing IBM BLEU4 (Papineni et al, 2002). Fur-
+thermore, we present a regularization baseline by
+applying `1 regularization with clipping (Carpen-
+ter, 2008; Tsuruoka et al, 2009) to the standard
+pairwise ranking perceptron. All pairwise ranking
+methods use a smoothed sentence-wise BLEU+1
+score (Nakov et al, 2012) to create gold standard
+rankings. Our multi-task learning experiments are
+based on pairwise ranking perceptrons that differ
+in their objective, corresponding either to the orig-
+inal perceptron or to the margin-perceptron. Both
+versions of the perceptron are used for single-task
+tuning and multi-task tuning. In the multi-task
+setting, we compare three different methods for
+defining a task: ?natural? tasks given by IPC sec-
+tions where each independent data set is consid-
+ered as task; ?random? tasks, defined by sharding
+where data is shuffled and split once, tasks are kept
+fixed throughout, and by resharding where after an
+epoch data is shuffled and new random tasks are
+constructed. In all cases a task/shard is defined to
+contain 2,000 sentences8, resulting in eight shards
+for each setting. The number of features selected
+after each epoch was set to K = 100, 000.
+For all perceptron runs, the following meta pa-
+rameters were fixed: A cube pruning pop limit of
+200 and non-terminal span limit of 15; 100-best
+lists with unique entries; constant learning rate;
+multipartite pair selection. Single-task perceptron
+runs on independent and pooled tasks were done
+8This number is determined by the size of the original de-
+velopment sets; variations of this size did not change results.
+295
+single-task tuning
+indep. 0 pooled 1 pooled-cat 2
+pooled test ? 51.18 51.22
+A 54.92 0255.27 055.17
+B 51.53 51.48 0151.69
+C 1256.31 255.90 55.74
+D 49.94 050.33 050.26
+E 149.19 48.97 149.13
+F 1251.26 51.02 51.12
+G 149.61 49.44 49.55
+H 49.38 49.50 0149.67
+average test 51.52 51.49 51.54
+Table 2: BLEU4 results of MERT baseline using dense
+features for three different tuning sets: independent (sepa-
+rate tuning sets for each IPC class), pooled and pooled-cat
+(concatenated independent sets). Significant superior per-
+formance over other systems in the same row is denoted by
+prefixed numbers. The first row shows, e.g., that the result
+of pooled 1 is significantly better than independent 0, and
+pooled-cat 2.
+for 15 epochs; multi-task perceptron runs used
+10 epochs. Single-task tuning on pooled-cat data
+increases computation time by a factor of eight
+which makes this setup infeasible in practice. For
+the sake of comparison we performed 10 epochs
+in this setup.
+MERT (with default parameters) is used to op-
+timize the weights of 12 dense default features;
+eight translation model features, a word penalty,
+the passthrough weight, the language model (LM)
+score, and an LM out-of-vocabulary penalty. Per-
+ceptron training allows to add millions of sparse
+features which are directly derived from grammar
+rules: rule shape, rule identifier, bigrams in rule
+source and target. For a further explanation of
+these features see Simianer et al (2012).
+For testing we measured IBM BLEU4 on tok-
+enized and lowercased data. Significance results
+were obtained by approximate randomization tests
+using the approach of Clark et al (2011)9 to ac-
+count for optimizer instability. Tuning methods
+with a random component (MERT, randomized
+experiments) were repeated three times, scores re-
+ported in the tables are averaged over optimizer
+runs.
+4.2 Experimental Results
+In single-task tuning mode, systems are tuned
+on the eight independent data sets separately, the
+pooled data set, and the independent data sets con-
+9https://github.com/jhclark/multeval
+single-task tuning
+indep. 0 pooled 1 pooled-cat 2
+pooled test ? 50.75 1 52.08
+A 1 55.11 54.32 01 55.94
+B 1 52.61 50.84 1 52.57
+C 56.18 56.11 01 56.75
+D 1 50.68 49.48 01 51.22
+E 1 50.27 48.69 1 50.01
+F 1 51.68 50.71 1 51.95
+G 1 49.90 49.06 01 50.51
+H 1 50.48 49.16 1 50.53
+average test 52.11 51.05 52.44
+model size 430,092.5 457,428 1,574,259
+Table 3: BLEU4 results for standard perceptron with `1 reg-
+ularization baseline using sparse rule features, tuned on in-
+dependent, pooled and pooled-cat sets. Prefixed superscripts
+denote a significant improvement over the result in the same
+row indicated by the superscript.
+catenated (pooled-cat). Testing is done on each of
+the eight IPC sections separately, and on a pooled
+test set of 2,000 sentences where all sections are
+equally represented. Furthermore, we report aver-
+age test results over runs for all independent data
+sets.
+Results for the MERT baseline are shown in
+Table 2: Neither pooling nor concatenating inde-
+pendent sets leads to significant performance im-
+provements on all sets with averaged scores being
+nearly identical.
+Evaluation results obtained with the standard
+perceptron algorithm (Table 4) show improve-
+ments over MERT in single-task tuning mode. The
+gain on pooled-cat data shows that in contrast to
+MERT training on 12 dense features, discrimi-
+native training using large feature sets is able to
+benefit from large data sets. However, since the
+pooled-cat scenario increases computation time
+by a factor of 8, it is quite infeasible when used
+with large sets of sparse features. Single-task tun-
+ing on a small set of pooled data seems to show
+overfitting behavior.
+Table 3 shows evaluation results for a regular-
+ization baseline that applies `1 regularization with
+clipping to the the single-task tuned standard per-
+ceptron in Table 4. We see gains in BLEU on in-
+dependent and pooled-cat tuning data, but not on
+the small pooled data set.
+Multi-task tuning for the standard perceptron
+is shown in the right half of Table 4. Because
+of parallelization, this scenario is as efficient as
+296
+single-task tuning multi-task tuning
+indep. 0 pooled 1 pooled-cat 2 IPC 3 sharding 4 resharding 5
+pooled test ? 51.33 1 51.77 12 52.56 12 52.54 12 52.60
+A 54.79 54.76 01 55.31 012 56.35 012 56.22 012 56.21
+B 12 52.45 51.30 1 52.19 012 52.78 0123 52.98 012 52.96
+C 2 56.62 56.65 1 56.12 01245 57.76 012 57.30 012 57.44
+D 1 50.75 49.88 1 50.63 01245 51.54 012 51.33 012 51.20
+E 1 49.70 49.23 01 49.92 012 50.51 012 50.52 012 50.38
+F 1 51.60 51.09 1 51.71 012 52.28 012 52.43 012 52.32
+G 1 49.50 49.06 01 49.97 012 50.84 012 50.88 012 50.74
+H 1 49.77 49.50 01 50.64 012 51.16 012 51.07 012 51.10
+average test 51.90 51.42 52.06 52.90 52.84 52.79
+model size 366,869.4 448,359 1,478,049 100,000 100,000 100,000
+Table 4: BLEU4 results for standard perceptron algorithm using sparse rule features, tuned in single-task mode on independent,
+pooled, and pooled-cat sets, and in multi-task mode on eight tasks taken from IPC sections or by random (re)sharding. Prefixed
+superscripts denote a significant improvement over the result in the same row indicated by the superscript.
+single-task tuning multi-task tuning
+indep. 0 pooled 1 pooled-cat 2 IPC 3 sharding 4 resharding 5
+pooled test ? 51.33 1 52.58 12 52.98 12 52.95 12 52.99
+A 1 56.09 55.33 1 55.92 0124556.78 012 56.62 012 56.53
+B 1 52.45 51.59 1 52.44 01253.31 012 53.35 012 53.21
+C 1 57.20 56.85 01 57.54 0157.46 1 57.42 1 57.43
+D 1 50.51 50.18 01 51.38 0124552.14 0125 51.82 012 51.66
+E 1 50.27 49.36 01 50.72 012451.13 012 50.89 012 51.02
+F 1 52.06 51.20 01 52.61 0124553.07 012 52.80 012 52.87
+G 1 50.00 49.58 01 50.90 0124551.36 012 51.19 012 51.11
+H 1 50.57 49.80 01 51.32 01251.57 012 51.62 01 51.47
+average test 52.39 51.74 52.85 53.35 53.21 53.16
+model size 423,731.5 484,483 1,697,398 100,000 100,000 100,000
+Table 5: BLEU4 results for margin-perceptron algorithm using sparse rule features, tuned in single-task mode on independent
+tasks, and in multi-task mode on eight tasks taken from IPC sections or by random (re)sharding. Prefixed superscripts denote
+a significant improvement over the result in the same row indicated by the superscript.
+single-task tuning on small data. We see improve-
+ments in BLEU over single-task tuning on small
+and large tuning data sets. Concerning our initial
+research questions, we see that the performance
+difference between ?natural? tasks (IPC) and ?ran-
+dom? tasks is not conclusive. However, multi-
+task learning using `1/`2 regularization consis-
+tently outperforms the standard perceptron under
+`1 regularization as shown in Table 3 and MERT
+tuning as shown in Table 2.
+Table 5 shows the evaluation results of the
+margin-perceptron algorithm. Evaluation results
+on single-task tuning show that this algorithm im-
+proves over the standard perceptron (Table 4),
+even in its `1-regularized version (Table 3), on
+all tuning sets. Results for multi-task tuning
+show improvements over the same scenario for the
+standard perceptron (Table 4). This means that
+the improvements due to the orthogonal regular-
+ization techniques in example space and feature
+space, namely large-margin learning and multi-
+task learning, add up. A comparison between
+single-task and multi-task tuning modes of the
+margin-perceptron shows a gain for the latter sce-
+narios. Differences between multi-task learning
+on IPC classes versus random sharding or re-
+sharding are again small, with the best overall re-
+sult obtained by multi-task learning of the margin-
+perceptron on IPC classes.
+Overall, our best multi-task learing result is
+nearly 2 BLEU points better than MERT training.
+The algorithm to achieve this result is efficient due
+297
+to parallelization and due to iterative feature se-
+lection. As shown in the last rows of Tables 3-5 ,
+the average size is around 400K features for inde-
+pendently tuned models and around 1.6M features
+for models tuned on pooled-cat data. In multi-task
+learning, models can be iteratively cut to 100K
+shared features whose weights are tuned in par-
+allel.
+5 Conclusion
+We presented an experimental investigation of the
+question whether the power of multi-task learning
+depends on data structured along tasks that exhibit
+a proper balance of shared and individual knowl-
+edge, or whether its inherent feature selection and
+regularization makes multi-task learning a widely
+applicable remedy against overfitting. We com-
+pared multi-task patent SMT for ?natural? tasks
+of IPC sections and ?random? tasks of shards in
+distributed learning. Both versions of multi-task
+learning yield significant improvements over in-
+dependent and pooled training, however, the dif-
+ference between ?natural? and ?random? tasks is
+marginal. This is an indication for the useful-
+ness of multi-task learning as a generic regulariza-
+tion tool. Considering also the efficiency gained
+by iterative feature selection, the `1/`2 regulariza-
+tion algorithm presented in Simianer et al (2012)
+presents itself as an efficient and effective learning
+algorithm for general big data and sparse feature
+applications. Furthermore, the improvements by
+multi-task feature selection add up with improve-
+ments by large-margin learning, delivering overall
+improvements of nearly 2 BLEU points over the
+standard MERT baseline.
+Our research question regarding the superiority
+of ?natural? or ?random? tasks was shown to be
+undetermined for the application of patent trans-
+lation. The obvious question for future work is if
+and how a task division can be found that improves
+multi-task learning over our current results. Such
+an investigation will have to explore various sim-
+ilarity metrics and clustering techniques for IPC
+sub-classes (Wa?schle and Riezler, 2012a), e.g., for
+the goal of optimizing clustering with respect to
+the ratio of between-cluster to within-cluster sim-
+ilarity for a given metric. However, the final crite-
+rion for the usefulness of a clustering is necessar-
+ily application specific (von Luxburg et al, 2012),
+in our case specific to patent translation perfor-
+mance. Nevertheless, we hope that the presented
+and future work will prove useful and generaliz-
+able for related multi-task learning scenarios.
+Acknowledgments
+The research presented in this paper was supported
+in part by DFG grant ?Cross-language Learning-
+to-Rank for Patent Retrieval?.
+References
+Leo Breiman. 1996. Bagging predictors. Machine
+Learning, 24:123?140.
+Bob Carpenter. 2008. Lazy sparse stochastic gradient
+descent for regularized multinomial logistic regres-
+sion. Technical report, Alias-i.
+Rich Caruana. 1997. Multitask learning. Journal of
+Machine Learning Research, 28.
+Alexandru Ceaus?u, John Tinsley, Jian Zhang, and Andy
+Way. 2011. Experiments on domain adaptation for
+patent machine translation in the PLuTO project. In
+Proceedings of the 15th Conference of the European
+Association for Machine Translation (EAMT 2011),
+Leuven, Belgium.
+Olivier Chapelle, Pannagadatta Shivaswamy, Srinivas
+Vadrevu, Kilian Weinberger, Ya Zhang, and Belle
+Tseng. 2011. Boosted multi-task learning. Machine
+Learning.
+David Chiang. 2007. Hierarchical phrase-based trans-
+lation. Computational Linguistics, 33.
+Jonathan Clark, Chris Dyer, Alon Lavie, and Noah
+Smith. 2011. Better hypothesis testing for statis-
+tical machine translation: Controlling for optimizer
+instability. In Proceedings of the 49th Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL?11), Portland, OR.
+Ronan Collobert and Samy Bengio. 2004. Links be-
+tween perceptrons, MLPs, and SVMs. In Proceed-
+ings of the 21st International Conference on Ma-
+chine Learning (ICML?04), Banff, Canada.
+Hal Daume?. 2007. Frustratingly easy domain adap-
+tation. In Proceedings of the 45th Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL?07), Prague, Czech Republic.
+Mark Dredze, Alex Kulesza, and Koby Crammer.
+2010. Multi-domain learning by confidence-
+weighted parameter combination. Machine Learn-
+ing, 79:123?149.
+Kevin Duh, Katsuhito Sudoh, Hajime Tsukada, Hideki
+Isozaki, and Masaaki Nagata. 2010. N-best rerank-
+ing by multitask learning. In Proceedings of the 5th
+Joint Workshop on Statistical Machine Translation
+and MetricsMATR, Uppsala, Sweden.
+298
+Chris Dyer, Adam Lopez, Juri Ganitkevitch, Johnathan
+Weese, Ferhan Ture, Phil Blunsom, Hendra Seti-
+awan, Vladimir Eidelman, and Philip Resnik. 2010.
+cdec: A decoder, alignment, and learning framework
+for finite-state and context-free translation models.
+In Proceedings of the 48th Annual Meeting of the As-
+sociation for Computational Linguistics (ACL?10).
+Theodoros Evgeniou and Massimiliano Pontil. 2004.
+Regularized multi-task learning. In Proceedings of
+the 10th ACM SIGKDD conference on knowledge
+discovery and data mining (KDD?04), Seattle, WA.
+Jenny Rose Finkel and Christopher D. Manning. 2009.
+Hierarchical Bayesian domain adaptation. In Pro-
+ceedings of the Conference of the North American
+Chapter of the Association for Computational Lin-
+guistics - Human Language Technologies (NAACL-
+HLT?09), Boulder, CO.
+Kenneth Heafield. 2011. KenLM: faster and smaller
+language model queries. In Proceedings of the
+Sixth Workshop on Statistical Machine Translation
+(WMT?11), Edinburgh, UK.
+Philipp Koehn and Kevin Knight. 2003. Empirical
+methods for compound splitting. In Proceedings of
+the 10th conference on European chapter of the As-
+sociation for Computational Linguistics (EACL?03),
+Budapest, Hungary.
+Shankar Kumar, Wolfgang Macherey, Chris Dyer,
+and Franz Och. 2009. Efficient minimum error
+rate training and minimum Bayes-risk decoding for
+translation hypergraphs and lattices. In Proceedings
+of the 47th Annual Meeting of the Association for
+Computational Linguistics and the 4th IJCNLP of
+the AFNLP (ACL-IJCNLP?09, Suntec, Singapore.
+Adam Lopez. 2007. Hierarchical phrase-based trans-
+lation with suffix arrays. In Proceedings of EMNLP-
+CoNLL, Prague, Czech Republic.
+Andre? F. T. Martins, Noah A. Smith, Pedro M. Q.
+Aguiar, and Ma?rio A. T. Figueiredo. 2011. Struc-
+tured sparsity in structured prediction. In Proceed-
+ings of the 2011 Conference on Empirical Methods
+in Natural Language Processing, Edinburgh, Scot-
+land.
+Ryan McDonald, Keith Hall, and Gideon Mann. 2010.
+Distributed training strategies for the structured per-
+ceptron. In Proceedings of Human Language Tech-
+nologies: The 11th Annual Conference of the North
+American Chapter of the Association for Computa-
+tional Linguistics (NAACL-HLT?10), Los Angeles,
+CA.
+Preslav Nakov, Francisco Guzma?n, and Stephan Vogel.
+2012. Optimizing for sentence-level bleu+1 yields
+short translations. In Proceedings of the 24th Inter-
+national Conference on Computational Linguistics
+(COLING 2012), Bombay, India.
+Guillaume Obozinski, Ben Taskar, and Michael I. Jor-
+dan. 2010. Joint covariate selection and joint sub-
+space selection for multiple classification problems.
+Statistics and Computing, 20:231?252.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. In Proceedings of
+the 40th Annual Meeting on Association for Com-
+putational Linguistics, ACL ?02, pages 311?318,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+Ariadna Quattoni, Xavier Carreras, Michael Collins,
+and Trevor Darrell. 2009. An efficient projec-
+tion for `1,? regularization. In Proceedings of the
+26th International Conference on Machine Learning
+(ICML?09), Montreal, Canada.
+Frank Rosenblatt. 1958. The perceptron: A probabilis-
+tic model for information storage and organization in
+the brain. Psychological Review, 65(6).
+Libin Shen and Aravind K. Joshi. 2005. Ranking
+and reranking with perceptron. Journal of Machine
+Learning Research, 60(1-3):73?96.
+Patrick Simianer, Stefan Riezler, and Chris Dyer.
+2012. Joint feature selection in distributed stochas-
+tic learning for large-scale discriminative training in
+SMT. In Proceedings of the 50th Annual Meeting of
+the Association for Computational Linguistics (ACL
+2012), Jeju, Korea.
+Linfeng Song, Haitao Mi, Yajuan Lu?, and Qun Liu.
+2011. Bagging-based system combination for do-
+main adaptation. In Proceedings of MT Summit XIII,
+Xiamen, China.
+John Tinsley, Andy Way, and Paraic Sheridan. 2010.
+PLuTO: MT for online patent translation. In Pro-
+ceedings of the 9th Conference of the Association for
+Machine Translation in the Americas (AMTA 2010),
+Denver, CO.
+Yoshimasa Tsuruoka, Jun?ichi Tsujii, and Sophia Ana-
+niadou. 2009. Stochastic gradient descent training
+for `1-regularized log-linear models with cumulative
+penalty. In Proceedings of the 47th Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL-IJCNLP?09), Singapore.
+Masao Utiyama and Hitoshi Isahara. 2007. A
+Japanese-English patent parallel corpus. In Pro-
+ceedings of MT Summit XI, Copenhagen, Denmark.
+Ulrike von Luxburg, Robert C. Williamson, and Is-
+abelle Guyon. 2012. Clustering: Science or art?
+In Proceedings of the ICML 2011 Workshop on Un-
+supervised and Transfer Learning, Bellevue, WA.
+Katharina Wa?schle and Stefan Riezler. 2012a. An-
+alyzing parallelism and domain similarities in the
+MAREC patent corpus. In Proceedings of the 5th
+Information Retrieval Facility Conference (IRFC
+2012), Vienna, Austria.
+299
+Katharina Wa?schle and Stefan Riezler. 2012b. Struc-
+tural and topical dimensions in multi-task patent
+translation. In Proceedings of the 13th Conference
+of the European Chapter of the Association for Com-
+putational Linguistics, Avignon, France.
+Ming Yuan and Yi Lin. 2006. Model selection
+and estimation in regression with grouped variables.
+J.R.Statist.Soc.B, 68(1):49?67.
+Peng Zhao, Guilherme Rocha, and Bin Yu. 2009. The
+composite absolute penalties family for grouped and
+hierarchical variable selection. The Annals of Statis-
+tics, 37(6A):3468?3497.
+300

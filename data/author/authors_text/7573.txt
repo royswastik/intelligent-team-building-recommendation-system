@@ -1,0 +1,1589 @@
+Feature-Rich Part-of-Speech Tagging with a Cyclic Dependency Network
+Kristina Toutanova Dan Klein
+Computer Science Dept. Computer Science Dept.
+Stanford University Stanford University
+Stanford, CA 94305-9040 Stanford, CA 94305-9040
+kristina@cs.stanford.edu klein@cs.stanford.edu
+Christopher D. Manning Yoram Singer
+Computer Science Dept. School of Computer Science
+Stanford University The Hebrew University
+Stanford, CA 94305-9040 Jerusalem 91904, Israel
+manning@stanford.edu singer@cs.huji.ac.il
+Abstract
+We present a new part-of-speech tagger that
+demonstrates the following ideas: (i) explicit
+use of both preceding and following tag con-
+texts via a dependency network representa-
+tion, (ii) broad use of lexical features, includ-
+ing jointly conditioning on multiple consecu-
+tive words, (iii) effective use of priors in con-
+ditional loglinear models, and (iv) fine-grained
+modeling of unknown word features. Using
+these ideas together, the resulting tagger gives
+a 97.24% accuracy on the Penn Treebank WSJ,
+an error reduction of 4.4% on the best previous
+single automatically learned tagging result.
+1 Introduction
+Almost all approaches to sequence problems such as part-
+of-speech tagging take a unidirectional approach to con-
+ditioning inference along the sequence. Regardless of
+whether one is using HMMs, maximum entropy condi-
+tional sequence models, or other techniques like decision
+trees, most systems work in one direction through the
+sequence (normally left to right, but occasionally right
+to left, e.g., Church (1988)). There are a few excep-
+tions, such as Brill?s transformation-based learning (Brill,
+1995), but most of the best known and most successful
+approaches of recent years have been unidirectional.
+Most sequence models can be seen as chaining to-
+gether the scores or decisions from successive local mod-
+els to form a global model for an entire sequence. Clearly
+the identity of a tag is correlated with both past and future
+tags? identities. However, in the unidirectional (causal)
+case, only one direction of influence is explicitly consid-
+ered at each local point. For example, in a left-to-right
+first-order HMM, the current tag t0 is predicted based on
+the previous tag t?1 (and the current word).1 The back-
+ward interaction between t0 and the next tag t+1 shows
+up implicitly later, when t+1 is generated in turn. While
+unidirectional models are therefore able to capture both
+directions of influence, there are good reasons for sus-
+pecting that it would be advantageous to make informa-
+tion from both directions explicitly available for condi-
+tioning at each local point in the model: (i) because of
+smoothing and interactions with other modeled features,
+terms like P(t0|t+1, . . .) might give a sharp estimate of t0
+even when terms like P(t+1|t0, . . .) do not, and (ii) jointly
+considering the left and right context together might be
+especially revealing. In this paper we exploit this idea,
+using dependency networks, with a series of local con-
+ditional loglinear (aka maximum entropy or multiclass
+logistic regression) models as one way of providing ef-
+ficient bidirectional inference.
+Secondly, while all taggers use lexical information,
+and, indeed, it is well-known that lexical probabilities
+are much more revealing than tag sequence probabilities
+(Charniak et al, 1993), most taggers make quite limited
+use of lexical probabilities (compared with, for example,
+the bilexical probabilities commonly used in current sta-
+tistical parsers). While modern taggers may be more prin-
+cipled than the classic CLAWS tagger (Marshall, 1987),
+they are in some respects inferior in their use of lexical
+information: CLAWS, through its IDIOMTAG module,
+categorically captured many important, correct taggings
+of frequent idiomatic word sequences. In this work, we
+incorporate appropriate multiword feature templates so
+that such facts can be learned and used automatically by
+1Rather than subscripting all variables with a position index,
+we use a hopefully clearer relative notation, where t0 denotes
+the current position and t?n and t+n are left and right context
+tags, and similarly for words.
+                                                               Edmonton, May-June 2003
+                                                             Main Papers , pp. 173-180
+                                                         Proceedings of HLT-NAACL 2003
+w1 w2 w3 . . . . wn
+t1 t2 t3 tn
+(a) Left-to-Right CMM
+w1 w2 w3 . . . . wn
+t1 t2 t3 tn
+(b) Right-to-Left CMM
+w1 w2 w3 . . . . wn
+t1 t2 t3 tn
+(c) Bidirectional Dependency Network
+Figure 1: Dependency networks: (a) the (standard) left-to-right
+first-order CMM, (b) the (reversed) right-to-left CMM, and (c)
+the bidirectional dependency network.
+the model.
+Having expressive templates leads to a large number
+of features, but we show that by suitable use of a prior
+(i.e., regularization) in the conditional loglinear model ?
+something not used by previous maximum entropy tag-
+gers ? many such features can be added with an overall
+positive effect on the model. Indeed, as for the voted per-
+ceptron of Collins (2002), we can get performance gains
+by reducing the support threshold for features to be in-
+cluded in the model. Combining all these ideas, together
+with a few additional handcrafted unknown word fea-
+tures, gives us a part-of-speech tagger with a per-position
+tag accuracy of 97.24%, and a whole-sentence correct
+rate of 56.34% on Penn Treebank WSJ data. This is the
+best automatically learned part-of-speech tagging result
+known to us, representing an error reduction of 4.4% on
+the model presented in Collins (2002), using the same
+data splits, and a larger error reduction of 12.1% from the
+more similar best previous loglinear model in Toutanova
+and Manning (2000).
+2 Bidirectional Dependency Networks
+When building probabilistic models for tag sequences,
+we often decompose the global probability of sequences
+using a directed graphical model (e.g., an HMM (Brants,
+2000) or a conditional Markov model (CMM) (Ratna-
+parkhi, 1996)). In such models, the probability assigned
+to a tagged sequence of words x = ?t, w? is the product
+of a sequence of local portions of the graphical model,
+one from each time slice. For example, in the left-to-right
+CMM shown in figure 1(a),
+P(t, w) =
+?
+i
+P(ti |ti?1, wi )
+That is, the replicated structure is a local model
+P(t0|t?1, w0).2 Of course, if there are too many con-
+ditioned quantities, these local models may have to be
+estimated in some sophisticated way; it is typical in tag-
+ging to populate these models with little maximum en-
+tropy models. For example, we might populate a model
+for P(t0|t?1, w0) with a maxent model of the form:
+P?(t0|t?1, w0) =
+exp(??t0,t?1? + ??t0,w0?)
+?
+t ?0
+exp(??t ?0,t?1? + ??t ?0,w0?)
+In this case, the w0 and t?1 can have joint effects on t0, but
+there are not joint features involving all three variables
+(though there could have been such features). We say that
+this model uses the feature templates ?t0, t?1? (previous
+tag features) and ?t0, w0? (current word features).
+Clearly, both the preceding tag t?1 and following tag
+t+1 carry useful information about a current tag t0. Unidi-
+rectional models do not ignore this influence; in the case
+of a left-to-right CMM, the influence of t?1 on t0 is ex-
+plicit in the P(t0|t?1, w0) local model, while the influ-
+ence of t+1 on t0 is implicit in the local model at the next
+position (via P(t+1|t0, w+1)). The situation is reversed
+for the right-to-left CMM in figure 1(b).
+From a seat-of-the-pants machine learning perspective,
+when building a classifier to label the tag at a certain posi-
+tion, the obvious thing to do is to explicitly include in the
+local model all predictive features, no matter on which
+side of the target position they lie. There are two good
+formal reasons to expect that a model explicitly condi-
+tioning on both sides at each position, like figure 1(c)
+could be advantageous. First, because of smoothing
+effects and interaction with other conditioning features
+(like the words), left-to-right factors like P(t0|t?1, w0)
+do not always suffice when t0 is implicitly needed to de-
+termine t?1. For example, consider a case of observation
+bias (Klein and Manning, 2002) for a first-order left-to-
+right CMM. The word to has only one tag (TO) in the PTB
+tag set. The TO tag is often preceded by nouns, but rarely
+by modals (MD). In a sequence will to fight, that trend
+indicates that will should be a noun rather than a modal
+verb. However, that effect is completely lost in a CMM
+like (a): P(twill |will, ?star t?) prefers the modal tagging,
+and P(TO|to, twill ) is roughly 1 regardless of twill . While
+the model has an arrow between the two tag positions,
+that path of influence is severed.3 The same problem ex-
+ists in the other direction. If we use the symmetric right-
+2Throughout this paper we assume that enough boundary
+symbols always exist that we can ignore the differences which
+would otherwise exist at the initial and final few positions.
+3Despite use of names like ?label bias? (Lafferty et al, 2001)
+or ?observation bias?, these effects are really just unwanted
+explaining-away effects (Cowell et al, 1999, 19), where two
+nodes which are not actually in causal competition have been
+modeled as if they were.
+A B A B A B
+(a) (b) (c)
+Figure 2: Simple dependency nets: (a) the Bayes? net for
+P(A)P(B|A), (b) the Bayes? net for P(A|B)P(B), (c) a bidi-
+rectional net with models of P(A|B) and P(B|A), which is not
+a Bayes? net.
+to-left model, fight will receive its more common noun
+tagging by symmetric reasoning. However, the bidirec-
+tional model (c) discussed in the next section makes both
+directions available for conditioning at all locations, us-
+ing replicated models of P(t0|t?1, t+1, w0), and will be
+able to get this example correct.4
+2.1 Semantics of Dependency Networks
+While the structures in figure 1(a) and (b) are well-
+understood graphical models with well-known semantics,
+figure 1(c) is not a standard Bayes? net, precisely because
+the graph has cycles. Rather, it is a more general de-
+pendency network (Heckerman et al, 2000). Each node
+represents a random variable along with a local condi-
+tional probability model of that variable, conditioned on
+the source variables of all incoming arcs. In this sense,
+the semantics are the same as for standard Bayes? nets.
+However, because the graph is cyclic, the net does not
+correspond to a proper factorization of a large joint prob-
+ability estimate into local conditional factors. Consider
+the two-node cases shown in figure 2. Formally, for the
+net in (a), we can write P(a, b) = P(a)P(b|a). For (b)
+we write P(a, b) = P(b)P(a|b). However, in (c), the
+nodes A and B carry the information P(a|b) and P(b|a)
+respectively. The chain rule doesn?t allow us to recon-
+struct P(a, b) by multiplying these two quantities. Un-
+der appropriate conditions, we could reconstruct P(a, b)
+from these quantities using Gibbs sampling, and, in gen-
+eral, that is the best we can do. However, while recon-
+structing the joint probabilities from these local condi-
+tional probabilities may be difficult, estimating the local
+probabilities themselves is no harder than it is for acyclic
+models: we take observations of the local environments
+and use any maximum likelihood estimation method we
+desire. In our experiments, we used local maxent models,
+but if the event space allowed, (smoothed) relative counts
+would do.
+4The effect of indirect influence being weaker than direct in-
+fluence is more pronounced for conditionally structured models,
+but is potentially an issue even with a simple HMM. The prob-
+abilistic models for basic left-to-right and right-to-left HMMs
+with emissions on their states can be shown to be equivalent us-
+ing Bayes? rule on the transitions, provided start and end sym-
+bols are modeled. However, this equivalence is violated in prac-
+tice by the addition of smoothing.
+function bestScore()
+return bestScoreSub(n + 2, ?end, end, end?);
+function bestScoreSub(i + 1, ?ti?1, ti , ti+1?)
+% memoization
+if (cached(i + 1, ?ti?1, ti , ti+1?))
+return cache(i + 1, ?ti?1, ti , ti+1?);
+% left boundary case
+if (i = ?1)
+if (?ti?1, ti , ti+1? == ?star t, star t, star t?)
+return 1;
+else
+return 0;
+% recursive case
+return maxti?2 bestScoreSub(i, ?ti?2, ti?1, ti ?)?
+P(ti |ti?1, ti+1, wi );
+Figure 3: Pseudocode for polynomial inference for the first-
+order bidirectional CMM (memoized version).
+2.2 Inference for Linear Dependency Networks
+Cyclic or not, we can view the product of local probabil-
+ities from a dependency network as a score:
+score(x) =
+?
+i
+P(xi |Pa(xi ))
+where Pa(xi ) are the nodes with arcs to the node xi . In the
+case of an acyclic model, this score will be the joint prob-
+ability of the event x , P(x). In the general case, it will not
+be. However, we can still ask for the event, in this case the
+tag sequence, with the highest score. For dependency net-
+works like those in figure 1, an adaptation of the Viterbi
+algorithm can be used to find the maximizing sequence
+in polynomial time. Figure 3 gives pseudocode for the
+concrete case of the network in figure 1(d); the general
+case is similar, and is in fact just a max-plus version of
+standard inference algorithms for Bayes? nets (Cowell et
+al., 1999, 97). In essence, there is no difference between
+inference on this network and a second-order left-to-right
+CMM or HMM. The only difference is that, when the
+Markov window is at a position i , rather than receiving
+the score for P(ti |ti?1, ti?2, wi ), one receives the score
+for P(ti?1|ti , ti?2, wi?1).
+There are some foundational issues worth mention-
+ing. As discussed previously, the maximum scoring se-
+quence need not be the sequence with maximum likeli-
+hood according to the model. There is therefore a worry
+with these models about a kind of ?collusion? where the
+model locks onto conditionally consistent but jointly un-
+likely sequences. Consider the two-node network in fig-
+ure 2(c). If we have the following distribution of ob-
+servations (in the form ab) ?11, 11, 11, 12, 21, 33?, then
+clearly the most likely state of the network is 11. How-
+ever, the score of 11 is P(a = 1|b = 1)P(b = 1|a = 1)
+= 3/4 ? 3/4 = 9/16, while the score of 33 is 1. An ad-
+ditional related problem is that the training set loss (sum
+of negative logarithms of the sequence scores) does not
+bound the training set error (0/1 loss on sequences) from
+Data Set Sect?ns Sent. Tokens Unkn
+Training 0?18 38,219 912,344 0
+Develop 19?21 5,527 131,768 4,467
+Test 22?24 5,462 129,654 3,649
+Table 1: Data set splits used.
+above. Consider the following training set, for the same
+network, with each entire data point considered as a label:
+?11, 22?. The relative-frequency model assigns loss 0 to
+both training examples, but cannot do better than 50%
+error in regenerating the training data labels. These is-
+sues are further discussed in Heckerman et al (2000).
+Preliminary work of ours suggests that practical use of
+dependency networks is not in general immune to these
+theoretical concerns: a dependency network can choose a
+sequence model that is bidirectionally very consistent but
+does not match the data very well. However, this problem
+does not appear to have prevented the networks from per-
+forming well on the tagging problem, probably because
+features linking tags and observations are generally much
+sharper discriminators than tag sequence features.
+It is useful to contrast this framework with the con-
+ditional random fields of Lafferty et al (2001). The
+CRF approach uses similar local features, but rather than
+chaining together local models, they construct a sin-
+gle, globally normalized model. The principal advan-
+tage of the dependency network approach is that advan-
+tageous bidirectional effects can be obtained without the
+extremely expensive global training required for CRFs.
+To summarize, we draw a dependency network in
+which each node has as neighbors all the other nodes
+that we would like to have influence it directly. Each
+node?s neighborhood is then considered in isolation and
+a local model is trained to maximize the conditional like-
+lihood over the training data of that node. At test time,
+the sequence with the highest product of local conditional
+scores is calculated and returned. We can always find the
+exact maximizing sequence, but only in the case of an
+acyclic net is it guaranteed to be the maximum likelihood
+sequence.
+3 Experiments
+The part of speech tagged data used in our experiments is
+the Wall Street Journal data from Penn Treebank III (Mar-
+cus et al, 1994). We extracted tagged sentences from the
+parse trees.5 We split the data into training, development,
+and test sets as in (Collins, 2002). Table 1 lists character-
+5Note that these tags (and sentences) are not identical to
+those obtained from the tagged/pos directories of the same disk:
+hundreds of tags in the RB/RP/IN set were changed to be more
+consistent in the parsed/mrg version. Maybe we were the last to
+discover this, but we?ve never seen it in print.
+istics of the three splits.6 Except where indicated for the
+model BEST, all results are on the development set.
+One innovation in our reporting of results is that we
+present whole-sentence accuracy numbers as well as the
+traditional per-tag accuracy measure (over all tokens,
+even unambiguous ones). This is the quantity that most
+sequence models attempt to maximize (and has been mo-
+tivated over doing per-state optimization as being more
+useful for subsequent linguistic processing: one wants to
+find a coherent sentence interpretation). Further, while
+some tag errors matter much more than others, to a first
+cut getting a single tag wrong in many of the more com-
+mon ways (e.g., proper noun vs. common noun; noun vs.
+verb) would lead to errors in a subsequent processor such
+as an information extraction system or a parser that would
+greatly degrade results for the entire sentence. Finally,
+the fact that the measure has much more dynamic range
+has some appeal when reporting tagging results.
+The per-state models in this paper are log-linear mod-
+els, building upon the models in (Ratnaparkhi, 1996) and
+(Toutanova and Manning, 2000), though some models are
+in fact strictly simpler. The features in the models are
+defined using templates; there are different templates for
+rare words aimed at learning the correct tags for unknown
+words.7 We present the results of three classes of experi-
+ments: experiments with directionality, experiments with
+lexicalization, and experiments with smoothing.
+3.1 Experiments with Directionality
+In this section, we report experiments using log-linear
+CMMs to populate nets with various structures, exploring
+the relative value of neighboring words? tags. Table 2 lists
+the discussed networks. All networks have the same ver-
+tical feature templates: ?t0, w0? features for known words
+and various ?t0, ? (w1n)? word signature features for all
+words, known or not, including spelling and capitaliza-
+tion features (see section 3.3).
+Just this vertical conditioning gives an accuracy of
+93.69% (denoted as ?Baseline? in table 2).8 Condition-
+6Tagger results are only comparable when tested not only on
+the same data and tag set, but with the same amount of training
+data. Brants (2000) illustrates very clearly how tagging perfor-
+mance increases as training set size grows, largely because the
+percentage of unknown words decreases while system perfor-
+mance on them increases (they become increasingly restricted
+as to word class).
+7Except where otherwise stated, a count cutoff of 2 was used
+for common word features and 35 for rare word features (tem-
+plates need a support set strictly greater in size than the cutoff
+before they are included in the model).
+8Charniak et al (1993) noted that such a simple model got
+90.25%, but this was with no unknown word model beyond
+a prior distribution over tags. Abney et al (1999) raise this
+baseline to 92.34%, and with our sophisticated unknown word
+model, it gets even higher. The large number of unambiguous
+tokens and ones with very skewed distributions make the base-
+Model Feature Templates? Features Sentence Token Unkn. Word
+Accuracy Accuracy Accuracy
+Baseline ? 56,805 26.74% 93.69% 82.61%
+L ?t0, t?1? 27,474 41.89% 95.79% 85.49%
+R ?t0, t+1? 27,648 36.31% 95.14% 85.65%
+L+L2 ?t0, t?1?, ?t0, t?2? 32,935 44.04% 96.05% 85.92%
+R+R2 ?t0, t+1?, ?t0, t+2? 33,423 37.20% 95.25% 84.49%
+L+R ?t0, t?1?, ?t0, t+1? 32,610 49.50% 96.57% 87.15%
+LL ?t0, t?1, t?2? 45,532 44.60% 96.10% 86.48%
+RR ?t0, t+1, t+2? 45,446 38.41% 95.40% 85.58%
+LR ?t0, t?1, t+1? 45,478 49.30% 96.55% 87.26%
+L+LL+LLL ?t0, t?1?, ?t0, t?1, t?2?, ?t0, t?1, t?2, t?3? 118,752 45.14% 96.20% 86.52%
+R+LR+LLR ?t0, t+1?, ?t0, t?1, t+1?, ?t0, t?1, t?2, t+1? 115,790 51.69% 96.77% 87.91%
+L+LL+LR+RR+R ?t0, t?1?, ?t0, t?1, t?2?, ?t0, t?1, t+1?, ?t0, t+1?, ?t0, t+1, t+2? 81,049 53.23% 96.92% 87.91%
+Table 2: Tagging accuracy on the development set with different sequence feature templates. ?All models include the same vertical
+word-tag features (?t0, w0? and various ?t0, ? (w1n)?), though the baseline uses a lower cutoff for these features.
+Model Feature Templates Support Features Sentence Token Unknown
+Cutoff Accuracy Accuracy Accuracy
+BASELINE ?t0, w0? 2 6,501 1.63% 60.16% 82.98%
+?t0, w0? 0 56,805 26.74% 93.69% 82.61%
+3W ?t0, w0?, ?t0, w?1?, ?t0, w+1? 2 239,767 48.27% 96.57% 86.78%
+3W+TAGS tag sequences, ?t0, w0?, ?t0, w?1?, ?t0, w+1? 2 263,160 53.83% 97.02% 88.05%
+BEST see text 2 460,552 55.31% 97.15% 88.61%
+Table 3: Tagging accuracy with different lexical feature templates on the development set.
+Model Feature Templates Support Features Sentence Token Unknown
+Cutoff Accuracy Accuracy Accuracy
+BEST see text 2 460,552 56.34% 97.24% 89.04%
+Table 4: Final tagging accuracy for the best model on the test set.
+ing on the previous tag as well (model L, ?t0, t?1? fea-
+tures) gives 95.79%. The reverse, model R, using the
+next tag instead, is slightly inferior at 95.14%. Model
+L+R, using both tags simultaneously (but with only the
+individual-direction features) gives a much better accu-
+racy of 96.57%. Since this model has roughly twice as
+many tag-tag features, the fact that it outperforms the uni-
+directional models is not by itself compelling evidence
+for using bidirectional networks. However, it also out-
+performs model L+L2 which adds the ?t0, t?2? second-
+previous word features instead of next word features,
+which gives only 96.05% (and R+R2 gives 95.25%). We
+conclude that, if one wishes to condition on two neigh-
+boring nodes (using two sets of 2-tag features), the sym-
+metric bidirectional model is superior.
+High-performance taggers typically also include joint
+three-tag counts in some way, either as tag trigrams
+(Brants, 2000) or tag-triple features (Ratnaparkhi, 1996,
+Toutanova and Manning, 2000). Models LL, RR, and CR
+use only the vertical features and a single set of tag-triple
+features: the left tags (t?2, t?1 and t0), right tags (t0, t+1,
+t+2), or centered tags (t?1, t0, t+1) respectively. Again,
+with roughly equivalent feature sets, the left context is
+better than the right, and the centered context is better
+than either unidirectional context.
+line for this task high, while substantial annotator noise creates
+an unknown upper bound on the task.
+3.2 Lexicalization
+Lexicalization has been a key factor in the advance of
+statistical parsing models, but has been less exploited
+for tagging. Words surrounding the current word have
+been occasionally used in taggers, such as (Ratnaparkhi,
+1996), Brill?s transformation based tagger (Brill, 1995),
+and the HMM model of Lee et al (2000), but neverthe-
+less, the only lexicalization consistently included in tag-
+ging models is the dependence of the part of speech tag
+of a word on the word itself.
+In maximum entropy models, joint features which look
+at surrounding words and their tags, as well as joint fea-
+tures of the current word and surrounding words are in
+principle straightforward additions, but have not been in-
+corporated into previous models. We have found these
+features to be very useful. We explore here lexicaliza-
+tion both alone and in combination with preceding and
+following tag histories.
+Table 3 shows the development set accuracy of several
+models with various lexical features. All models use the
+same rare word features as the models in Table 2. The
+first two rows show a baseline model using the current
+word only. The count cutoff for this feature was 0 in the
+first model and 2 for the model in the second row. As
+there are no tag sequence features in these models, the ac-
+curacy drops significantly if a higher cutoff is used (from
+a per tag accuracy of about 93.7% to only 60.2%).
+The third row shows a model where a tag is de-
+cided solely by the three words centered at the tag po-
+sition (3W). As far as we are aware, models of this
+sort have not been explored previously, but its accu-
+racy is surprisingly high: despite having no sequence
+model at all, it is more accurate than a model which uses
+standard tag fourgram HMM features (?t0, w0?, ?t0, t?1?,
+?t0, t?1, t?2?, ?t0, t?1, t?2, t?3?, shown in Table 2, model
+L+LL+LLL).
+The fourth and fifth rows show models with bi-
+directional tagging features. The fourth model
+(3W+TAGS) uses the same tag sequence features as
+the last model in Table 2 (?t0, t?1?, ?t0, t?1, t?2?,
+?t0, t?1, t+1?, ?t0, t+1?, ?t0, t+1, t+2?) and current, previ-
+ous, and next word. The last model has in ad-
+dition the feature templates ?t0, w0, t?1?, ?t0, w0, t+1?,
+?t0, w?1, w0?, and ?t0, w0, w+1?, and includes the im-
+provements in unknown word modeling discussed in sec-
+tion 3.3.9 We call this model BEST. BEST has a to-
+ken accuracy on the final test set of 97.24% and a sen-
+tence accuracy of 56.34% (see Table 4). A 95% confi-
+dence interval for the accuracy (using a binomial model)
+is (97.15%, 97.33%).
+In order to understand the gains from using right con-
+text tags and more lexicalization, let us look at an exam-
+ple of an error that the enriched models learn not to make.
+An interesting example of a common tagging error of the
+simpler models which could be corrected by a determinis-
+tic fixup rule of the kind used in the IDIOMTAG module
+of (Marshall, 1987) is the expression as X as (often, as
+far as). This should be tagged as/RB X/{RB,JJ} as/IN in
+the Penn Treebank. A model using only current word and
+two left tags (model L+L2 in Table 2), made 87 errors on
+this expression, tagging it as/IN X as/IN ? since the tag
+sequence probabilities do not give strong reasons to dis-
+prefer the most common tagging of as (it is tagged as IN
+over 80% of the time). However, the model 3W+TAGS,
+which uses two right tags and the two surrounding words
+in addition, made only 8 errors of this kind, and model
+BEST made only 6 errors.
+3.3 Unknown word features
+Most of the models presented here use a set of un-
+known word features basically inherited from (Ratna-
+parkhi, 1996), which include using character n-gram pre-
+fixes and suffixes (for n up to 4), and detectors for a few
+other prominent features of words, such as capitaliza-
+tion, hyphens, and numbers. Doing error analysis on un-
+known words on a simple tagging model (with ?t0, t?1?,
+?t0, t?1, t?2?, and ?w0, t0? features) suggested several ad-
+ditional specialized features that can usefully improve
+9Thede and Harper (1999) use ?t?1, t0, w0? templates in
+their ?full-second order? HMM, achieving an accuracy of
+96.86%. Here we can add the opposite tiling and other features.
+Smoothed Features Sentence Token Unk. W.
+Accuracy Acc. Acc.
+yes 45,532 44.60% 96.10% 86.48%
+no 45,532 42.81% 95.88% 83.08%
+yes 292,649 54.88% 97.10% 88.20%
+no 292,649 48.85% 96.54% 85.20%
+Table 5: Accuracy with and without quadratic regularization.
+performance. By far the most significant is a crude com-
+pany name detector which marks capitalized words fol-
+lowed within 3 words by a company name suffix like Co.
+or Inc. This suggests that further gains could be made by
+incorporating a good named entity recognizer as a prepro-
+cessor to the tagger (reversing the most common order of
+processing in pipelined systems!), and is a good example
+of something that can only be done when using a condi-
+tional model. Minor gains come from a few additional
+features: an allcaps feature, and a conjunction feature of
+words that are capitalized and have a digit and a dash in
+them (such words are normally common nouns, such as
+CFC-12 or F/A-18). We also found it advantageous to
+use prefixes and suffixes of length up to 10. Together
+with the larger templates, these features contribute to our
+unknown word accuracies being higher than those of pre-
+viously reported taggers.
+3.4 Smoothing
+With so many features in the model, overtraining is a dis-
+tinct possibility when using pure maximum likelihood es-
+timation. We avoid this by using a Gaussian prior (aka
+quadratic regularization or quadratic penalization) which
+resists high feature weights unless they produce great
+score gain. The regularized objective F is:
+F(?) =
+?
+i
+log(P?(ti |w, t)) +
+?n
+j=1
+?2j
+2? 2
+Since we use a conjugate-gradient procedure to maximize
+the data likelihood, the addition of a penalty term is eas-
+ily incorporated. Both the total size of the penalty and
+the partial derivatives with repsect to each ? j are triv-
+ial to compute; these are added to the log-likelihood and
+log-likelihood derivatives, and the penalized optimization
+procedes without further modification.
+We have not extensively experimented with the value
+of ? 2 ? which can even be set differently for different pa-
+rameters or parameter classes. All the results in this paper
+use a constant ? 2 = 0.5, so that the denominator disap-
+pears in the above expression. Experiments on a simple
+model with ? made an order of magnitude higher or lower
+both resulted in worse performance than with ? 2 = 0.5.
+Our experiments show that quadratic regularization
+is very effective in improving the generalization perfor-
+mance of tagging models, mostly by increasing the num-
+ber of features which could usefully be incorporated. The
+Tagger Support cutoff Accuracy
+Collins (2002) 0 96.60%
+5 96.72%
+Model 3W+TAGS variant 1 96.97%
+5 96.93%
+Table 6: Effect of changing common word feature cutoffs (fea-
+tures with support ? cutoff are excluded from the model).
+number of features used in our complex models ? in the
+several hundreds of thousands, is extremely high in com-
+parison with the data set size and the number of features
+used in other machine learning domains. We describe two
+sets of experiments aimed at comparing models with and
+without regularization. One is for a simple model with a
+relatively small number of features, and the other is for a
+model with a large number of features.
+The usefulness of priors in maximum entropy models
+is not new to this work: Gaussian prior smoothing is ad-
+vocated in Chen and Rosenfeld (2000), and used in all
+the stochastic LFG work (Johnson et al, 1999). How-
+ever, until recently, its role and importance have not been
+widely understood. For example, Zhang and Oles (2001)
+attribute the perceived limited success of logistic regres-
+sion for text categorization to a lack of use of regular-
+ization. At any rate, regularized conditional loglinear
+models have not previously been applied to the prob-
+lem of producing a high quality part-of-speech tagger:
+Ratnaparkhi (1996), Toutanova and Manning (2000), and
+Collins (2002) all present unregularized models. Indeed,
+the result of Collins (2002) that including low support
+features helps a voted perceptron model but harms a max-
+imum entropy model is undone once the weights of the
+maximum entropy model are regularized.
+Table 5 shows results on the development set from two
+pairs of experiments. The first pair of models use com-
+mon word templates ?t0, w0?, ?t0, t?1, t?2? and the same
+rare word templates as used in the models in table 2. The
+second pair of models use the same features as model
+BEST with a higher frequency cutoff of 5 for common
+word features.
+For the first pair of models, the error reduction from
+smoothing is 5.3% overall and 20.1% on unknown words.
+For the second pair of models, the error reduction is
+even bigger: 16.2% overall after convergence and 5.8% if
+looking at the best accuracy achieved by the unsmoothed
+model (by stopping training after 75 iterations; see be-
+low). The especially large reduction in unknown word er-
+ror reflects the fact that, because penalties are effectively
+stronger for rare features than frequent ones, the presence
+of penalties increases the degree to which more general
+cross-word signature features (which apply to unknown
+words) are used, relative to word-specific sparse features
+(which do not apply to unknown words).
+Secondly, use of regularization allows us to incorporate
+features with low support into the model while improving
+96,3
+96,4
+96,5
+96,6
+96,7
+96,8
+96,9
+97
+97,1
+97,2
+0 100 200 300 400
+Training Iterations
+Ac
+cu
+ra
+cy
+
+No Smoothing
+Smoothing
+Figure 4: Accuracy by training iterations, with and without
+quadratic regularization.
+performance. Whereas Ratnaparkhi (1996) used feature
+support cutoffs and early stopping to stop overfitting of
+the model, and Collins (2002) contends that including
+low support features harms a maximum entropy model,
+our results show that low support features are useful in a
+regularized maximum entropy model. Table 6 contrasts
+our results with those from Collins (2002). Since the
+models are not the same, the exact numbers are incompa-
+rable, but the difference in direction is important: in the
+regularized model, performance improves with the inclu-
+sion of low support features.
+Finally, in addition to being significantly more accu-
+rate, smoothed models train much faster than unsmoothed
+ones, and do not benefit from early stopping. For ex-
+ample, the first smoothed model in Table 5 required 80
+conjugate gradient iterations to converge (somewhat ar-
+bitrarily defined as a maximum difference of 10?4 in fea-
+ture weights between iterations), while its corresponding
+unsmoothed model required 335 iterations, thus training
+was roughly 4 times slower.10 The second pair of models
+required 134 and 370 iterations respectively. As might
+be expected, unsmoothed models reach their highest gen-
+eralization capacity long before convergence and accu-
+racy on an unseen test set drops considerably with fur-
+ther iterations. This is not the case for smoothed mod-
+els, as their test set accuracy increases almost monoton-
+ically with training iterations.11 Figure 4 shows a graph
+of training iterations versus accuracy for the second pair
+of models on the development set.
+4 Conclusion
+We have shown how broad feature use, when combined
+with appropriate model regularization, produces a supe-
+rior level of tagger performance. While experience sug-
+10On a 2GHz PC, this is still an important difference: our
+largest models require about 25 minutes per iteration to train.
+11In practice one notices some wiggling in the curve, but
+the trend remains upward even beyond our chosen convergence
+point.
+gests that the final accuracy number presented here could
+be slightly improved upon by classifier combination, it is
+worth noting that not only is this tagger better than any
+previous single tagger, but it also appears to outperform
+Brill and Wu (1998), the best-known combination tagger
+(they report an accuracy of 97.16% over the same WSJ
+data, but using a larger training set, which should favor
+them).
+While part-of-speech tagging is now a fairly well-worn
+road, and our ability to win performance increases in
+this domain is starting to be limited by the rate of er-
+rors and inconsistencies in the Penn Treebank training
+data, this work also has broader implications. Across
+the many NLP problems which involve sequence mod-
+els over sparse multinomial distributions, it suggests that
+feature-rich models with extensive lexicalization, bidirec-
+tional inference, and effective regularization will be key
+elements in producing state-of-the-art results.
+Acknowledgements
+This work was supported in part by the Advanced Re-
+search and Development Activity (ARDA)?s Advanced
+Question Answering for Intelligence (AQUAINT) Pro-
+gram, by the National Science Foundation under Grant
+No. IIS-0085896, and by an IBM Faculty Partnership
+Award.
+References
+Steven Abney, Robert E. Schapire, and Yoram Singer. 1999.
+Boosting applied to tagging and PP attachment. In
+EMNLP/VLC 1999, pages 38?45.
+Thorsten Brants. 2000. TnT ? a statistical part-of-speech tagger.
+In ANLP 6, pages 224?231.
+Eric Brill and Jun Wu. 1998. Classifier combination for
+improved lexical disambiguation. In ACL 36/COLING 17,
+pages 191?195.
+Eric Brill. 1995. Transformation-based error-driven learning
+and natural language processing: A case study in part-of-
+speech tagging. Computational Linguistics, 21(4):543?565.
+Eugene Charniak, Curtis Hendrickson, Neil Jacobson, and Mike
+Perkowitz. 1993. Equations for part-of-speech tagging. In
+AAAI 11, pages 784?789.
+Stanley F. Chen and Ronald Rosenfeld. 2000. A survey of
+smoothing techniques for maximum entropy models. IEEE
+Transactions on Speech and Audio Processing, 8(1):37?50.
+Kenneth W. Church. 1988. A stochastic parts program and
+noun phrase parser for unrestricted text. In ANLP 2, pages
+136?143.
+Michael Collins. 2002. Discriminative training methods for
+Hidden Markov Models: Theory and experiments with per-
+ceptron algorithms. In EMNLP 2002.
+Robert G. Cowell, A. Philip Dawid, Steffen L. Lauritzen, and
+David J. Spiegelhalter. 1999. Probabilistic Networks and
+Expert Systems. Springer-Verlag, New York.
+David Heckerman, David Maxwell Chickering, Christopher
+Meek, Robert Rounthwaite, and Carl Myers Kadie. 2000.
+Dependency networks for inference, collaborative filtering
+and data visualization. Journal of Machine Learning Re-
+search, 1(1):49?75.
+Mark Johnson, Stuart Geman, Stephen Canon, Zhiyi Chi, and
+Stefan Riezler. 1999. Estimators for stochastic ?unification-
+based? grammars. In ACL 37, pages 535?541.
+Dan Klein and Christopher D. Manning. 2002. Conditional
+structure versus conditional estimation in NLP models. In
+EMNLP 2002, pages 9?16.
+John Lafferty, Andrew McCallum, and Fernando Pereira. 2001.
+Conditional random fields: Probabilistic models for seg-
+menting and labeling sequence data. In ICML-2001, pages
+282?289.
+Sang-Zoo Lee, Jun ichi Tsujii, and Hae-Chang Rim. 2000. Part-
+of-speech tagging based on Hidden Markov Model assuming
+joint independence. In ACL 38, pages 263?169.
+Mitchell P. Marcus, Beatrice Santorini, and Mary A. Marcinkie-
+wicz. 1994. Building a large annotated corpus of English:
+The Penn Treebank. Computational Linguistics, 19:313?
+330.
+Ian Marshall. 1987. Tag selection using probabilistic methods.
+In Roger Garside, Geoffrey Sampson, and Geoffrey Leech,
+editors, The Computational analysis of English: a corpus-
+based approach, pages 42?65. Longman, London.
+Adwait Ratnaparkhi. 1996. A maximum entropy model for
+part-of-speech tagging. In EMNLP 1, pages 133?142.
+Scott M. Thede and Mary P. Harper. 1999. Second-order hidden
+Markov model for part-of-speech tagging. In ACL 37, pages
+175?182.
+Kristina Toutanova and Christopher Manning. 2000. Enriching
+the knowledge sources used in a maximum entropy part-of-
+speech tagger. In EMNLP/VLC 1999, pages 63?71.
+Tong Zhang and Frank J. Oles. 2001. Text categorization based
+on regularized linear classification methods. Information Re-
+trieval, 4:5?31.
+Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing, pages 941?948,
+Edinburgh, Scotland, UK, July 27?31, 2011. c?2011 Association for Computational Linguistics
+Entire Relaxation Path for Maximum Entropy Problems
+Moshe Dubiner
+Google
+moshe@google.com
+Yoram Singer
+Google
+singer@google.com
+Abstract
+We discuss and analyze the problem of find-
+ing a distribution that minimizes the relative
+entropy to a prior distribution while satisfying
+max-norm constraints with respect to an ob-
+served distribution. This setting generalizes
+the classical maximum entropy problems as
+it relaxes the standard constraints on the ob-
+served values. We tackle the problem by in-
+troducing a re-parametrization in which the
+unknown distribution is distilled to a single
+scalar. We then describe a homotopy between
+the relaxation parameter and the distribution
+characterizing parameter. The homotopy also
+reveals an aesthetic symmetry between the
+prior distribution and the observed distribu-
+tion. We then use the reformulated problem to
+describe a space and time efficient algorithm
+for tracking the entire relaxation path. Our
+derivations are based on a compact geomet-
+ric view of the relaxation path as a piecewise
+linear function in a two dimensional space
+of the relaxation-characterization parameters.
+We demonstrate the usability of our approach
+by applying the problem to Zipfian distribu-
+tions over a large alphabet.
+1 Introduction
+Maximum entropy (max-ent) models and its dual
+counterpart, logistic regression, is a popular and ef-
+fective tool in numerous natural language process-
+ing tasks. The principle of maximum entropy was
+spelled out explicitly by E.T. Jaynes (1968). Ap-
+plications of maximum entropy approach to natural
+language processing are numerous. A notable ex-
+ample and probably one of the earliest usages and
+generalizations of the maximum entropy principle
+to language processing is the work of Berger, Della
+Pietra?2, and Lafferty (Berger et al, 1996, Della
+Pietra et al, 1997). The original formulation of
+max-ent cast the problem as the task of finding the
+distribution attaining the highest entropy subject to
+equality constraints. While this formalism is aes-
+thetic and paves the way to a simple dual in the form
+of a unique Gibbs distribution (Della Pietra et al,
+1997), it does not provide sufficient tools to deal
+with input noise and sparse representation of the
+target Gibbs distribution. To mitigate these issues,
+numerous relaxation schemes of the equality con-
+straints have been proposed. A notable recent work
+by Dudik, Phillips, and Schapire (2007) provided a
+general constraint-relaxation framework. See also
+the references therein for an in depth overview of
+other approaches and generalizations of max-ent.
+The constraint relaxation surfaces a natural param-
+eter, namely, a relaxation value. The dual form of
+this free parameter is the regularization value of pe-
+nalized logistic regression problems. Typically this
+parameter is set by experimentation using cross val-
+idation technique. The relaxed maximum-entropy
+problem setting is the starting point of this paper.
+In this paper we describe and analyze a frame-
+work for efficiently tracking the entire relaxation
+path of constrained max-ent problems. We start in
+Sec. 2 with a generalization in which we discuss the
+problem of finding a distribution that minimizes the
+relative entropy to a given prior distribution while
+satisfying max-norm constraints with respect to an
+observed distribution. In Sec. 3 we tackle the prob-
+lem by introducing a re-parametrization in which the
+941
+unknown distribution is distilled to a single scalar.
+We next describe in Sec. 4 a homotopy between the
+relaxation parameter and the distribution character-
+izing parameter. This formulation also reveals an
+aesthetic symmetry between the prior distribution
+and the observed distribution. We use the reformu-
+lated problem to describe in Secs. 5-6 space and time
+efficient algorithms for tracking the entire relaxation
+path. Our derivations are based on a compact ge-
+ometric view of the relaxation path as a piecewise
+linear function in a two dimensional space of the
+relaxation-characterization parameters. In contrast
+to common homotopy methods for the Lasso Os-
+borne et al (2000), our procedure for tracking the
+max-ent homotopy results in an uncharacteristically
+low complexity bounds thus renders the approach
+applicable for large alphabets. We provide prelim-
+inary experimental results with Zipf distributions in
+Sec. 8 that demonstrate the merits of our approach.
+Finally, we conclude in Sec. 9 with a brief discus-
+sion of future directions.
+2 Notations and Problem Setting
+We denote vectors with bold face letters, e.g. v.
+Sums are denoted by calligraphic letters, e.g. M =?
+j mj . We use the shorthand [n] to denote the set
+of integers {1, . . . , n}. The n?th dimensional sim-
+plex, denoted ?, consists of all vectors p such that,?n
+j=1 pj = 1 and for all j ? [n], pj ? 0. We gen-
+eralize this notion to multiplicity weighted vectors.
+Formally, we say that a vector p with multiplicity m
+is in the simplex, (p,m) ? ?, if ?nj=1 mjpj = 1,
+and for all j ? [n], pj ? 0, and mj ? 0.
+The generalized relaxed maximum-entropy prob-
+lem is concerned with obtaining an estimate p, given
+a prior distribution u and an observed distribution q
+such that the relative entropy between p and u is as
+small as possible while p and q are within a given
+max-norm tolerance. Formally, we cast the follow-
+ing constrained optimization problem,
+min
+p
+n?
+j=1
+mjpj log
+(pj
+uj
+)
+, (1)
+such that (p,m) ? ? ; ?p ? q?? ? 1/?. The
+vectors u and q are dimensionally compatible with
+p, namely, (q,m) ? ? and (u,m) ? ?. The scalar
+? is a relaxation parameter. We use 1/? rather than
+? itself for reasons that become clear in the sequel.
+We next describe the dual form of (1). We derive
+the dual by introducing Lagrange-Legendre multi-
+pliers for each of the constraints appearing in (1).
+Let ?+j ? 0 denote the multiplier for the constraint
+qj ? pj ? 1/? and ??j ? 0 the multiplier for the
+constraint qj ? pj ? ?1/?. In addition, we use ? as
+the multiplier for the constraint
+?
+j mjpj = 1. fter
+some routine algebraic manipulations we get that the
+Lagrangian is,
+?n
+j=1 mi
+(
+pj log
+(
+pj
+uj
+)
++ ?j(qj ? pj) + |?j |?
+)
++ ?
+(?n
+j=1 mjpj ? 1
+)
+. (2)
+To find the dual form we take the partial derivative
+of the Lagrangian with respect to each pj , equate to
+zero, and get that log
+(
+pj
+uj
+)
++1??j +? = 0, which
+implies that pj ? uje?j . We now employ the fact
+that (p,m) ? ? to get that the exact form for pj is
+pj =
+uje?j?n
+i=1 miuie?i
+. (3)
+Using (3) in the compact form of the Lagrangian we
+obtain the following dual problem
+max
+?
+?
+?
+?
+?log (Z)?
+n?
+j=1
+mjqj?j +
+n?
+j=1
+mj
+? |?j |
+?
+?
+? ,
+(4)
+where Z = ?nj=1mjuje?j . We make rather little
+use of the dual form of the problem. However, the
+complementary slackness conditions that are neces-
+sary for optimality to hold play an important role in
+the next section in which we present a reformulation
+of the relaxed maximum entropy problem.
+3 Problem Reformulation
+First note that the primal problem is a strictly con-
+vex function over a compact convex domain. Thus,
+its optimum exists and is unique. Let us now charac-
+terize the form of the solution. We partition the set
+of indices in [n] into three disjoint sets depending on
+whether the constraint |pj ? qj| ? 1/? is active and
+its form. Concretely, we define
+I? = {1 ? j ? n | pj = qj ? 1/?}
+I0 = {1 ? j ? n | |pj ? qj| < 1/?} (5)
+I+ = {1 ? j ? n | pj = qj + 1/?} .
+942
+F(1,1)
+(-1,-1)
+Figure 1: The capping function F .
+Recall that Z =
+?n
+j=1 mjuje?j . Thus, from
+(3) we can rewrite pj = uje?j/Z . We next use
+the complementary slackness conditions (see for in-
+stance (Boyd and Vandenberghe, 2004)) to further
+characterize the solution. For any j ? I? we must
+have ??j = 0 and ?+j ? 0 therefore ?j ? 0, which
+immediately implies that pj ? uj/Z . By definition
+we have that pj = qj ? 1/? for j ? I?. Combin-
+ing these two facts we get that uj/Z ? qj ? 1/? for
+j ? I?. Analogous derivation yields that uj/Z ?
+qj + 1/? for j ? I+. Last, if the set I0 is not empty
+then for each j in I0 we must have ?+j = 0 and
+??j = 0 thus ?j = 0. Resorting again to the def-
+inition of p from (3) we get that pj = uj/Z for
+j ? I0. Since |pj ? qj| < 1/? for j ? I0 we
+get that |uj/Z ? qj| < 1/?. To recap, there ex-
+ists Z > 0 such that the optimal solution takes the
+following form,
+pj =
+?
+?
+?
+qj ? 1/? uj/Z ? qj ? 1/?
+uj/Z |uj/Z ? qj| < 1/?
+qj + 1/? uj/Z ? qj + 1/?
+. (6)
+We next introduce an key re-parametrization,
+defining ? = ?/Z . We also denote by F (?) the
+capping function F (x) = max {?1,min {1, x}}. A
+simple illustration of the capping function is given
+in Fig. 1. Equipped with these definition we can
+rewrite (6) as follows,
+pj = qj +
+1
+? F (?uj ? ?qj) . (7)
+Given u, q, and ?, the value of ? can be found by
+using
+?
+j mjpj =
+?
+j mjqj = 1, which implies
+G(?, ?) def=
+n?
+j=1
+mjF (?uj ? ?qj) = 0 . (8)
+We defer the derivation of the actual algorithm for
+computing ? (and in turn p) to the next section. In
+the meanwhile let us continue to explore the rich
+structure of the general solution. Note that ?,u are
+interchangeable with ?,q. We can thus swap the
+roles of the prior distribution with the observed dis-
+tribution and obtain an analogous characterization.
+In the next section we further explore the depen-
+dence of ? on ?. The structure we reveal shortly
+serves as our infrastructure for deriving efficient al-
+gorithms for following the regularization path.
+4 The function ?(?)
+In order to explore the dependency of ? on ? let us
+introduce the following sums
+M =
+?
+j?I+
+mj ?
+?
+j?I?
+mj
+U =
+?
+j?I0
+mj uj
+Q =
+?
+j?I0
+mj qj . (9)
+Fixing ? and using (9), we can rewrite (8) as follows
+?U ? ?Q+M = 0 . (10)
+Clearly, so long as the partition of [n] into the sets
+I+, I?, I0 is intact, there is a simple linear relation
+between ? and ?. The number of possible subsets
+I?, I0, I+ is finite. Thus, the range 0 < ? < ?
+decomposes into a finite number of intervals each
+of which corresponds to a fixed partition of [n] into
+I+, I?, I0. In each interval ? is a linear function of
+?, unless I0 is empty. Let ?? be the smallest ? value
+for which I0 is empty. Let ?? be its corresponding
+? value. If I0 is never empty for any finite value of ?
+we define ?? = ?? =?. Clearly, replacing (?, ?)
+with (??, ??) for any ? ? 1 and ? ? ?? yields
+the same feasible solution as I+(??) = I+(?),
+I?(??) = I?(?). Hence, as far as the original prob-
+lem is concerned there is no reason to go past ??
+during the process of characterizing the solution. We
+recap our derivation so far in the following lemma.
+Lemma 4.1 For 0 ? ? ? ??, the value of ? as
+defined by (7) is a unique. Further, the function ?(?)
+is a piecewise linear continuous function in ?. When
+? ? ?? letting ? = ???/?? keeps (7) valid.
+We established the fact that ?(?) is a piecewise lin-
+ear function. The lingering question is how many
+943
+linear sub-intervals the function can attain. To study
+this property, we take a geometric view of the plane
+defined by (?, ?). Our combinatorial characteriza-
+tion of the number of sub-intervals makes use of the
+following definitions of lines in R2,
+?+j = {(?, ?) | uj?? qj? = +1} (11)
+??j = {(?, ?) | uj?? qj? = ?1} (12)
+?0 = {(?, ?) | ?U ? ?Q+M = 0} , (13)
+where?? < ? <? and j ? [n]. The next theorem
+gives an upper bound on the number of linear seg-
+ments the function ?() may attain. While the bound
+is quadratic in the dimension, for both artificial data
+and real data the bound is way too pessimistic.
+Theorem 4.2 The piecewise linear function ?(?)
+consists of at most n2 linear segments for ? ? R+.
+Proof Since we showed that that ?(?) is a piece-
+wise linear function, it remains to show that it
+has at most n2 linear segments. Consider the
+two dimensional function G(?, ?) from (8). The
+(?, ?) plane is divided by the 2n straight lines
+?1, ?2, . . . , ?n, ??1, ??2, . . . , ??n into at most 2n2+1
+polygons. The latter property is proved by induc-
+tion. It clearly holds for n = 0. Assume that it holds
+for n ? 1. Line ?n intersects the previous 2n ? 2
+lines at no more than 2n ? 2 points, thus splitting
+at most 2n ? 1 polygons into two separate polygo-
+nal parts. Line ??n is parallel to ?n, again adding
+at most 2n ? 1 polygons. Recapping, we obtain at
+most 2(n ? 1)2 + 1 + 2(2n ? 1) = 2n2 + 1 poly-
+gons, as required per induction. Recall that ?(?) is
+linear inside each polygon. The two extreme poly-
+gons where G(?, ?) = ??nj=1 mj clearly disallow
+G(?, ?) = 0, hence ?(?) can have at most 2n2 ? 1
+segments for ?? < ? < ?. Lastly, we use the
+symmetry G(??,??) = ?G(?, ?) which implies
+that for ? ? R+ there are at most n2 segments.
+This result stands in contrast to the Lasso homotopy
+tracking procedure (Osborne et al, 2000), where the
+worst case number of segments seems to be expo-
+nential in n. Moreover, when the prior u is uniform,
+uj = 1/
+?n
+j=1 mj for all j ? [n], the number of
+segments is at most n + 1. We defer the analysis of
+the uniform case to a later section as the proof stems
+from the algorithm we describe in the sequel.
+0 20 40 60 80 1000
+10
+20
+30
+40
+50
+?
+?
+Figure 2: An illustration of the function ?(?) for a syn-
+thetic 3 dimensional example.
+10 20 30 40 50 60
+?1.5
+?1
+?0.5
+0
+0.5
+1
+1.5
+?
+G
+Figure 3: An illustration of the function G(?) for a syn-
+thetic 4 dimensional example and a ? = 17.
+5 Algorithm for a Single Relaxation Value
+Suppose we are given u,q,m and a specific relax-
+ation value ??. How can we find p? The obvious
+approach is to solve the one dimensional monotoni-
+cally nondecreasing equation G(?) def= G(??, ?) = 0
+by bisection. In this section we present a more effi-
+cient and direct procedure that is guaranteed to find
+the optimal solution p in a finite number of steps.
+Clearly G(?) is a piecewise linear function with
+at most 2n easily computable change points of the
+slope. See also Fig. (5) for an illustration of G(?).
+In order to find the slope change points we need to
+calculate the point (?, ?j) for all the lines ??j where
+1 ? j ? n. Concretely, these values are
+?j =
+?q|j| + sign(j)
+u|j|
+. (14)
+We next sort the above values of ?j and denote the
+resulting sorted list as ?pi1 ? ?pi2 ? ? ? ? ? ?pi2n . For
+any 0 ? j ? 2n letMj ,Uj ,Qj be the sums, defined
+944
+in (9), for the line segment ?pij?1 < ? < ?pij (de-
+noting ?pi0 = ??, ?pi2n+1 = ?). We compute
+the sums Mj,Uj ,Qj incrementally, starting from
+M0 = ?
+?n
+i=1 mi, U0 = Q0 = 0. Once the
+values of j?1?th sums are known, we can compute
+the next sums in the sequence as follows,
+Mj = Mj?1 + m|pij|
+Uj = Uj?1 ? sign(?j)m|pij | u|pij |
+Qj = Qj?1 ? sign(?j)m|pij | q|pij| .
+From the above sums we can compute the value of
+the function G(?, ?) at the end point of the line seg-
+ment (?pij?1 , ?pij), which is the same as the start
+point of the line segment (?pij , ?pij+1),
+Gj = Mj?1 + Uj?1 ?j ?Qj?1 ?
+= Mj + Uj ?j ?Qj ? .
+The optimal value of ? resides in the line segment
+for which G(?) attains 0. Such a segment must exist
+since G0 = M0 = ?
+?n
+i=1 mi < 0 and G2n =
+?M0 > 0. Therefore, there exists an index 1 ?
+j < 2n, where Gj ? 0 ? Gj+1. Once we bracketed
+the feasible segment for ?, the optimal value of ? is
+found by solving the linear equation (10),
+? = (Qj ? ? Mj) /Uj . (15)
+From the optimal value of ? it is straightforward to
+construct p using (7). Due to the sorting step, the al-
+gorithm?s run time is O(n log(n)) and it takes linear
+space. The number of operations can be reduced to
+O(n) using a randomized search procedure.
+6 Homotopy Tracking
+We now shift gears and focus on the main thrust
+of this paper, namely, an efficient characterization
+of the entire regularization path for the maximum
+entropy problem. Since we have shown that the
+optimal solution p can be straightforwardly ob-
+tained from the variable ?, it suffices to efficiently
+track the function ?(?) as we traverse the plane
+(?, ?) from ? = 0 through the last change point
+which we denoted as (??, ??). In this section
+we give an algorithm that traverses ?(?) by lo-
+cating the intersections of ?0 with the fixed lines
+??n, ??n+1, . . . , ??1, ?1, . . . , ?n and updating ?0 af-
+ter each intersection.
+More formally, the local homotopy tracking fol-
+lows the piecewise linear function ?(?), segment by
+segment. Each segment corresponds to a subset of
+the line ?0 for a given triplet (M,U ,Q). It is simple
+to show that ?(0) = 0, hence we start with
+? = 0, M = 0, U = Q = 1 . (16)
+We now track the value of ? as ? increases, and the
+relaxation parameter 1/? decreases. The character-
+ization of ?0 remains intact until ?0 hits one of the
+lines ?j for 1 ? |j| ? n. To find the line intersect-
+ing ?0 we need to compute the potential intersection
+points (?j, ?j) = ?0 ? ?j which amounts to calculat-
+ing ??n, ??n+1, . . . , ??1, ?1, ?2, ? ? ? , ?n where
+?j =
+Mu|j| + Usign(j)
+Qu|j| ? Uq|j|
+. (17)
+The lines for which the denominator is zero cor-
+respond to infeasible intersection and can be dis-
+carded. The smallest value ?j which is larger than
+the current traced value of ? corresponds to the next
+line intersecting ?0.
+While the above description is mathematically
+sound, we devised an equivalent intersection in-
+spection scheme which is more numerically stable
+and efficient. We keep track of partition I?, I0, I1
+through the vector,
+sj =
+?
+?
+?
+?1 j ? I?
+0 j ? I0
++1 j ? I+
+.
+Initially s1 = s2 = ? ? ? = sn = 0. What kind of
+intersection does ?0 have with ?j? Recall that QU is
+the slope of ?0 while
+q|j|
+u|j| is the slope of ?j . Thus
+Q
+U >
+q|j|
+u|j| means that the |j|?th constraint is moving
+?up? from I? to I0 or from I0 to I+. When QU <
+q|j|
+u|j|
+the |j|?th constraint is moving ?down? from I+ to I0
+or from I0 to I?. See also Fig. 4 for an illustration
+of the possible transitions between the sets. For in-
+stance, the slope of ?(?) on the bottom left part of
+the figure is larger than the slope the line it inter-
+sects. Since this line defines the boundary between
+I? and I0, we transition from I? to I0. We need
+only consider 1 ? |j| ? n of the following types.
+Moving ?up? from I? to I0 requires
+s|j| = ?1 j < 0 Qu|j| ? Uq|j| > 0 .
+945
+Figure 4: Illustration of the possible intersections be-
+tween ?(?) and ?j and the corresponding transition be-
+tween the sets I?, I0.
+Similarly, moving ?down? from I+ to I0 requires
+s|j| = 1 j > 0 Qu|j| ? Uq|j| < 0 .
+Finally, moving ?up? or ?down? from I0 entails
+s|j| = 0 j(Qu|j| ? Uq|j|) > 0 .
+If there are no eligible ?j?s, we have finished travers-
+ing ?(). Otherwise let index j belong to the the
+smallest eligible ?j . Infinite accuracy guarantees
+that ?j ? ?. In practice we perform the update
+? ? max(?, ?j)
+M ? M+ sign(Qu|j| ? Uq|j|)m|j|
+U ? U +
+(
+2
+??s|j|
+??? 1
+)
+m|j| u|j|
+Q ? Q+
+(
+2
+??s|j|
+??? 1
+)
+m|j| q|j|
+sj ? sj + sign(Qu|j| ? Uq|j|) .
+We are done with the tracking process when I0 is
+empty, i.e. for all j sj 6= 0.
+The local homotopy algorithm takes O(n) mem-
+ory and O(nk) operations where k is the number of
+change points in the function ?(?). This algorithm
+is simple to implement, and when k is relatively
+small it is efficient. An illustration of the tracking
+result, ?(?), along with the lines ??j , that provide a
+geometrical description of the problem, is given in
+Fig. 5.
+7 Uniform Prior
+We chose to denote the prior distribution as u to un-
+derscore the fact that in the case of no prior knowl-
+0 0.2 0.4 0.6 0.8 1 1.2 1.4 1.6 1.8
+?4
+?2
+0
+2
+4
+6
+8
+10
+?
+?
+Figure 5: The result of the homotopy tracking for a 4
+dimensional problem. The lines ?j for j < 0 are drawn in
+blue and for j > 0 in red. The function ?(?) is drawn in
+green and its change points in black. Note that although
+the dimension is 4 the number of change points is rather
+small and does not exceed 4 either in this simple example.
+edge u is the uniform distribution,
+u def= uj =
+( n?
+i=1
+mi
+)?1
+.
+In this case the objective function amounts to the
+negative entropy and by flipping the sign of the ob-
+jective we obtain the classical maximum entropy
+problem. The fact that the prior probability is the
+same for all possible observations infuses the prob-
+lem with further structure which we show how to
+exploit in this section. Needless to say though that
+all the results we obtained thus far are still valid.
+Let us consider a point (?, ?) on the boundary be-
+tween I0 and I+, namely, there exist a line ?+i such
+that,
+?ui ? ?qi = ?u? ?qi = 1 .
+By definition, for any j ? I0 we have
+?uj ? ?qj = ?u? ?qj < 1 = ?u? ?qi .
+Thus, qi < qj for all j ? I0 which implies that
+mj u qj > mj u qi . (18)
+Summing over j ? I0 we get that
+Qu =
+?
+j?I0
+mj qj u >
+?
+j?I0
+mj u qi = Uqi ,
+hence,
+qi
+ui
+= qiu <
+Q
+U
+946
+and we must be moving ?up? from I0 to I+ when the
+line ?0 hits ?i. Similarly we must be moving ?down?
+from when ?0 hits on the boundary between I0 and
+I?. We summarize these properties in the following
+theorem.
+Theorem 7.1 When the prior distribution u is uni-
+form, I?(?) and I+(?) are monotonically nonde-
+creasing and I0(?) is monotonically nonincreasing
+in ? > 0 . Further, the piecewise linear function
+?(?) consists of at most n + 1 line segments.
+The homotopy tracking procedure when the prior
+is uniform is particularly simple and efficient. In-
+tuitively, there is a sole condition which controls
+the order in which indices would enter I? from I0,
+which is simply how ?far? each qi is from u, the sin-
+gle prior value. Therefore, the algorithm starts by
+sorting q. Let qpi1 > qpi2 > ? ? ? > qpin denote the
+sorted vector. Instead of maintaining the vector of
+set indicators s, we merely maintain two indices j?
+and j+ which designate the size of I? and I+ that
+were constructed thus far. Due to the monotonic-
+ity property of the sets I? as ? grows, the two sets
+can be written as, I? = {?j | 1 ? j < j?} and
+I+ = {?j | j+ < j ? n}. The homotopy track-
+ing procedure starts as before with ? = 0,M = 0,
+U = Q = 1. We also set j? = 1 and j+ = n which
+by definition imply that I? are empty and I0 = [n].
+In each tracking iteration we need to compare only
+two values which we compactly denote as,
+?? =
+Mu ? U
+Qu ? Uqpij?
+.
+When ?? ? ?+ we just encountered a transition
+from I0 to I? and as we encroach I? we perform
+the updates, ? ? ??, M ?M ? mpij? , U ?
+U ?mpij?u, Q? Q?mpij?qpij? , j? ? j? + 1.
+Similarly when ?? > ?+ we perform the updates
+? ? ?+, M?M + mpij+ , U ? U ? mpij+u,
+Q? Q ? mpij+ qpij+ , j+ ? j+ ? 1.
+The tracking process stops when j? > j+ as we
+exhausted the transitions out of the set I0 which be-
+comes empty. Homotopy tracking for a uniform
+prior takes O(n) memory and O(n log(n)) opera-
+tions and is very simple to implement.
+We also devised a global homotopy tracking algo-
+rithms that requires a priority queue which facilitates
+insertions, deletions, and finding the largest element
+100
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+Sample Size / Dimensions
+# 
+Ch
+an
+ge
+ P
+oi
+nt
+s 
+/ D
+im
+en
+sio
+ns
+Figure 6: The number of line-segments in the homotopy
+as a function of the number of samples used to build the
+observed distribution q.
+in the queue in O(log(n)) time. The algorithm re-
+quires O(n) memory and O(n2 log(n)) operations.
+Clearly, if the number of line segments constituting
+?(?) is greater than n log(n) (recall that the upper
+bound is O(n2)) then the global homotopy proce-
+dure is faster than the local one. However, as we
+show in Sec. 8, in practice the number of line seg-
+ments is merely linear and it thus suffices to use the
+local homotopy tracking algorithm.
+8 Number of line segments in practice
+The focus of the paper is the design and analysis
+of a novel homotopy method for maximum entropy
+problems. We thus left with relatively little space
+to discuss the empirical aspects of our approach. In
+this section we focus on one particular experimental
+facet that underscores the usability of our apparatus.
+We briefly discuss current natural language applica-
+tions that we currently work on in the next section.
+The practicality of our approach hinges on the
+number of line segments that occur in practice. Our
+bounds indicate that this number can scale quadrat-
+ically with the dimension, which would render the
+homotopy algorithm impractical when the size of the
+alphabet is larger than a few thousands. We there-
+fore extensively tested the actual number of line seg-
+ments in the resulting homotopy when u and q are
+Zipf (1949) distributions. We used an alphabet of
+size 50, 000 in our experiments. The distribution u
+was set to be the Zipf distribution with an offset pa-
+rameter of 2, that is, ui ? 1/(i + 2). We defined
+a ?mother? distribution for q, denoted q?, which is
+947
+a plain Zipf distribution without an offset, namely
+q?i ? 1/i. We then sampled n/2l letters according
+to the distribution q? where l ? ?3, . . . , 3. Thus the
+smallest sample was n/23 = 6, 250 and the largest
+sample was n/3?3 = 40, 000. Based on the sample
+we defined the observed distribution q such that qi
+is proportional to the number of times the i?th let-
+ter appeared in the sample. We repeated the process
+100 times for each sample size and report average
+results. Note that when the sample is substantially
+smaller than the dimension the observed distribution
+q tends to be ?simple? as it consists of many zero
+components. In Fig. 6 we depict the average num-
+ber line segments for each sample size. When the
+sample size is one eighth of the dimension we aver-
+age st most 0.1n line segments. More importantly,
+even when the size of the sample is fairly large, the
+number of lines segments is linear in the dimension
+with a constant close to one. We also performed
+experiments with large sample sizes for which the
+empirical distribution q is very close to the mother
+distribution q?. We seldom found that the number of
+line segments exceeds 4n and the mode is around
+2n. These findings render our approach usable even
+in the very large natural language applications.
+9 Conclusions
+We presented a novel efficient apparatus for tracking
+the entire relaxation path of maximum entropy prob-
+lems. We currently study natural language process-
+ing applications. In particular, we are in the process
+of devising homotopy methods for domain adapta-
+tion Blitzer (2008) and language modeling based
+on context tree weighting (Willems et al, 1995).
+We also examine generalization of our approach in
+which the relative entropy objective is replaced with
+a separable Bregman (Censor and Zenios, 1997)
+function. Such a generalization is likely to distill
+further connections to the other homotopy methods,
+in particular the least angle regression algorithm of
+Efron et al (2004) and homotopy methods for the
+Lasso in general (Osborne et al, 2000). We also plan
+to study separable Bregman functions in order to de-
+rive entire path solutions for less explored objectives
+such as the Itakura-Saito spectral distance (Rabiner
+and Juang, 1993) and distances especially suited for
+natural language processing.
+References
+A.L. Berger, S.A. Della Pietra, and V. J. Della Pietra.
+A maximum entropy approach to natural lan-
+guage processing. Computational Linguistics, 22
+(1):39?71, 1996.
+John Blitzer. Domain Adaptation of Natural Lan-
+guage Processing Systems. PhD thesis, University
+of Pennsylvania, 2008.
+S. Boyd and L. Vandenberghe. Convex Optimiza-
+tion. Cambridge University Press, 2004.
+Y. Censor and S.A. Zenios. Parallel Optimization:
+Theory, Algorithms, and Applications. Oxford
+University Press, New York, NY, USA, 1997.
+S. Della Pietra, V. Della Pietra, and J. Lafferty. In-
+ducing features of random fields. IEEE Trans-
+actions on Pattern Analysis and Machine Intelli-
+gence, 5:179?190, 1997.
+M. Dud??k, S. J. Phillips, and R. E. Schapire. Maxi-
+mum entropy density estimation with generalized
+regularization and an application to species distri-
+bution modeling. Journal of Machine Learning
+Research, 8:1217?1260, June 2007.
+Bradley Efron, Trevor Hastie, Iain Johnstone, and
+Robert Tibshirani. Least angle regression. Annals
+of Statistics, 32(2):407?499, 2004.
+Edwin T. Jaynes. Prior probabilities. IEEE Transac-
+tions on Systems Science and Cybernetics, SSC-4
+(3):227?241, September 1968.
+Michael R. Osborne, Brett Presnell, and Berwin A.
+Turlach. On the lasso and its dual. Journal
+of Computational and Graphical Statistics, 9(2):
+319?337, 2000.
+L. Rabiner and B.H. Juang. Fundamentals of Speech
+Recognition. Prentice Hall, 1993.
+F. M. J. Willems, Y. M. Shtarkov, and T. J. Tjalkens.
+The context tree weighting method: basic proper-
+ties. IEEE Transactions on Information Theory,
+41(3):653?664, 1995.
+George K. Zipf. Human Behavior and the Principle
+of Least Effort. Addison-Wesley, 1949.
+948

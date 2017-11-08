@@ -1,0 +1,2191 @@
+Coling 2010: Poster Volume, pages 1471?1479,
+Beijing, August 2010
+Chart Pruning for Fast Lexicalised-Grammar Parsing
+Yue Zhanga? Byung-Gyu Ahn b? Stephen Clarka? Curt Van Wyk c
+James R. Currand Laura Rimella
+Computer Laboratorya Computer Scienceb Computer Sciencec School of ITd
+Cambridge Johns Hopkins Northwestern College Sydney
+{yue.zhang,stephen.clark}@cl.cam.ac.uka? bahn@jhu.edu b?
+Abstract
+Given the increasing need to process mas-
+sive amounts of textual data, efficiency of
+NLP tools is becoming a pressing concern.
+Parsers based on lexicalised grammar for-
+malisms, such as TAG and CCG, can be
+made more efficient using supertagging,
+which for CCG is so effective that every
+derivation consistent with the supertagger
+output can be stored in a packed chart.
+However, wide-coverage CCG parsers still
+produce a very large number of deriva-
+tions for typical newspaper or Wikipedia
+sentences. In this paper we investigate
+two forms of chart pruning, and develop a
+novel method for pruning complete cells
+in a parse chart. The result is a wide-
+coverage CCG parser that can process al-
+most 100 sentences per second, with lit-
+tle or no loss in accuracy over the baseline
+with no pruning.
+1 Introduction
+Many NLP tasks and applications require the pro-
+cessing of massive amounts of textual data. For
+example, knowledge acquisition efforts can in-
+volve processing billions of words of text (Cur-
+ran, 2004). Also, the increasing need to process
+large amounts of web data places an efficiency
+demand on existing NLP tools. TextRunner, for
+example, is a system that performs open infor-
+mation extraction on the web (Lin et al, 2009).
+However, the text processing that is performed by
+TextRunner, in particular the parsing, is rudimen-
+tary: finite-state shallow parsing technology that
+is now decades old. TextRunner uses this technol-
+ogy largely for efficiency reasons.
+Many of the popular wide-coverage parsers
+available today operate at around one newspa-
+per sentence per second (Collins, 1999; Charniak,
+2000; Petrov and Klein, 2007). There are de-
+pendency parsers that operate orders of magni-
+tude faster, by exploiting the fact that accurate
+dependency parsing can be achieved by using a
+shift-reduce linear-time process which makes a
+single decision at each point in the parsing pro-
+cess (Nivre and Scholz, 2004).
+In this paper we focus on the Combinatory Cat-
+egorial Grammar (CCG) parser of Clark and Cur-
+ran (2007). One advantage of the CCG parser is
+that it is able to assign rich structural descriptions
+to sentences, from a variety of representations,
+e.g. CCG derivations, CCG dependency structures,
+grammatical relations (Carroll et al, 1998), and
+first-order logical forms (Bos et al, 2004). One
+of the properties of the grammar formalism is
+that it is lexicalised, associating CCG lexical cate-
+gories, or CCG supertags, with the words in a sen-
+tence (Steedman, 2000). Clark and Curran (2004)
+adapt the technique of supertagging (Bangalore
+and Joshi, 1999) to CCG, using a standard max-
+imum entropy tagger to assign small sets of su-
+pertags to each word. The reduction in ambiguity
+resulting from the supertagging stage results in a
+surprisingly efficient parser, given the rich struc-
+tural output, operating at tens of newspaper sen-
+tences per second.
+In this paper we demonstrate that the CCG
+parser can be made more than twice as fast, with
+little or no loss in accuracy. A noteworthy feature
+of the CCG parser is that, after the supertagging
+1471
+stage, the parser builds a complete packed chart,
+storing all sentences consistent with the assigned
+supertags and the parser?s CCG combinatory rules,
+with no chart pruning whatsoever. The use of
+chart pruning techniques, typically some form of
+beam search, is essential for practical parsing us-
+ing Penn Treebank parsers (Collins, 1999; Petrov
+and Klein, 2007; Charniak and Johnson, 2005), as
+well as practical parsers based on linguistic for-
+malisms, such as HPSG (Ninomiya et al, 2005)
+and LFG (Kaplan et al, 2004). However, in the
+CCG case, the use of the supertagger means that
+enough ambiguity has already been resolved to al-
+low the complete chart to be represented.
+Despite the effectiveness of the supertagging
+stage, the number of derivations stored in a packed
+chart can still be enormous for typical newspa-
+per sentences. Hence it is an obvious question
+whether chart pruning techniques can be prof-
+itably applied to the CCG parser. Some previous
+work (Djordjevic et al, 2007) has investigated this
+question but with little success.
+In this paper we investigate two types of chart
+pruning: a standard beam search, similar to that
+used in the Collins parser (Collins, 1999), and a
+more aggressive strategy in which complete cells
+are pruned, following Roark and Hollingshead
+(2009). Roark and Hollingshead use a finite-state
+tagger to decide which words in a sentence can
+end or begin constituents, from which whole cells
+in the chart can be removed. We develop a novel
+extension to this approach, in which a tagger is
+trained to infer the maximum length constituent
+that can begin or end at a particular word. These
+lengths can then be used in a more agressive prun-
+ing strategy which we show to be significantly
+more effective than the basic approach.
+Both beam search and cell pruning are highly
+effective, with the resulting CCG parser able to
+process almost 100 sentences per second using
+a single CPU, for both newspaper and Wikipedia
+data, with little or no loss in accuracy.
+2 The CCG Parser
+The parser is described in detail in Clark and Cur-
+ran (2007). It is based on CCGbank, a CCG ver-
+sion of the Penn Treebank developed by Hocken-
+maier and Steedman (2007).
+The stages in the parsing pipeline are as fol-
+lows. First, a POS tagger assigns a single POS tag
+to each word in a sentence. Second, a CCG su-
+pertagger assigns lexical categories to the words
+in the sentence. Third, the parsing stage combines
+the categories, using CCG?s combinatory rules,
+and builds a packed chart representation contain-
+ing all the derivations which can be built from
+the lexical categories. Finally, the Viterbi algo-
+rithm finds the highest scoring derivation from
+the packed chart, using the normal-form log-linear
+model described in Clark and Curran (2007).
+Sometimes the parser is unable to build an anal-
+ysis which spans the whole sentence. When this
+happens the parser and supertagger interact us-
+ing the adaptive supertagging strategy described
+in Clark and Curran (2004): the parser effectively
+asks the supertagger to provide more lexical cate-
+gories for each word. This potentially continues
+for a number of iterations until the parser does
+create a spanning analysis, or else it gives up and
+moves to the next sentence.
+The parser uses the CKY algorithm (Kasami,
+1965; Younger, 1967) described in Steedman
+(2000) to create a packed chart. The CKY al-
+gorithm applies naturally to CCG since the gram-
+mar is binary. It builds the chart bottom-up, start-
+ing with two-word constituents (assuming the su-
+pertagging phase has been completed), incremen-
+tally increasing the span until the whole sentence
+is covered. The chart is packed in the standard
+sense that any two equivalent constituents created
+during the parsing process are placed in the same
+equivalence class, with pointers to the children
+used in the creation. Equivalence is defined in
+terms of the category and head of the constituent,
+to enable the Viterbi algorithm to efficiently find
+the highest scoring derivation.1 A textbook treat-
+ment of CKY applied to statistical parsing is given
+in Jurafsky and Martin (2000).
+3 Data and Evaluation Metrics
+We performed efficiency and accuracy tests on
+newspaper and Wikipedia data. For the newspa-
+per data, we used the standard test sections from
+1Use of the Viterbi algorithm in this way requires the fea-
+tures in the parser model to be local to a single rule applica-
+tion; Clark and Curran (2007) has more discussion.
+1472
+(ncmod num hundred 1 Seven 0)
+(conj and 2 sixty-one 3)
+(conj and 2 hundred 1)
+(dobj in 6 total 7)
+(ncmod made 5 in 6)
+(aux made 5 were 4)
+(ncsubj made 5 and 2 obj)
+(passive made 5)
+Seven hundred and sixty-one were made in
+total.
+Figure 1: Example Wikipedia test sentence anno-
+tated with grammatical relations.
+CCGbank. Following Clark and Curran (2007) we
+used the CCG dependencies for accuracy evalua-
+tion, comparing those output by the parser with
+the gold-standard dependencies in CCGbank. Un-
+like Clark and Curran, we calculated recall scores
+over all sentences, including those for which the
+parser did not find an analysis. For the WSJ data
+the parser fails on a small number of sentences
+(less than 1%), but the chart pruning has the effect
+of reducing this failure rate further, and we felt
+that this should be factored into the calculation of
+recall and hence F-score.
+In order to test the parser on Wikipedia text,
+we created two test sets. The first, Wiki 300, for
+testing accuracy, consists of 300 sentences man-
+ually annotated with grammatical relations (GRs)
+in the style of Briscoe and Carroll (2006). An
+example sentence is given in Figure 1. The data
+was created by manually correcting the output of
+the parser on these sentences, with the annotation
+being performed by Clark and Rimell, including
+checks on a subset of these cases to ensure con-
+sistency across the two annotators. For the ac-
+curacy evaluation, we calculated precision, recall
+and balanced F-measure over the GRs in the stan-
+dard way.
+For testing speed on Wikipedia, we used a cor-
+pus of 2500 randomly chosen sentences, Wiki
+2500. For all speed tests we measured the num-
+ber of sentences per second, using a single CPU
+and standard hardware.
+4 Beam Search
+The beam search approach used in our exper-
+iments prunes all constituents in a cell having
+scores below a multiple (?) of the score of the
+? Speed Gain F-score Gain
+Baseline 43.0 85.55
+0.001 48.6 13% 85.82 0.27
+0.002 54.2 26% 85.88 0.33
+0.005 59.0 37% 85.73 0.18
+0.01 66.7 55% 85.53 -0.02
+Table 1: Accuracy and speed results using differ-
+ent beam values ?.
+? Speed Gain F-score Gain
+Baseline 43.0 85.55
+10 60.1 39% 85.55 0.00
+20 70.6 64% 85.66 0.11
+30 72.3 68% 85.65 0.10
+40 76.4 77% 85.63 0.08
+50 76.7 78% 85.62 0.07
+60 74.5 73% 85.71 0.16
+80 68.4 59% 85.71 0.16
+100 62.0 44% 85.73 0.18
+None 59.0 37% 85.73 0.18
+Table 2: Accuracy and speed results for different
+values of ? where ? = 0.005.
+highest scoring constituent for that cell.2 The
+scores for a constituent are calculated using the
+same model used to find the highest scoring
+derivation. We consider two scores: the Viterbi
+score, which is the score of the highest scoring
+sub-derivation for that constituent; and the inside
+score, which is the sum over all sub-derviations
+for that constituent. We investigated the follow-
+ing: the trade-off between the aggressiveness of
+the beam search and accuracy; the comparison be-
+tween the Viterbi and inside scores; and whether
+applying the beam to only certain cells in the chart
+can improve performance.
+Table 1 shows results on Section 00 of CCG-
+bank, using the Viterbi score to prune. As ex-
+pected, the parsing speed increases as the value
+of ? increases, since more constituents are pruned
+with a higher ? value. The pruning is effective,
+with a ? value of 0.01 giving a 55% speed increase
+with neglible loss in accuracy.3
+2One restriction we apply in practice is that only con-
+stituents resulting from the application of a CCG binary rule,
+rather than a unary rule, are pruned.
+3The small accuracy increase for some ? values could be
+attributable to two factors: one, the parser may select a lower
+1473
+Speed F-score
+Dataset Baseline Beam Gain Baseline Beam Gain
+WSJ 00 43.0 76.4 77% 85.55 85.63 0.08
+WSJ 02-21 53.4 99.4 86% 93.61 93.27 -0.34
+WSJ 23 55.0 107.0 94% 87.12 86.90 -0.22
+Wiki 300 35.5 80.3 126% 84.23 85.06 0.83
+Wiki 2500 47.6 90.3 89%
+Table 4: Beam search results on WSJ 00, 02-21, 23 and Wikipedia texts with ? = 0.005 and ? = 40.
+? ? Speed F-score
+Baseline 24.7 85.55
+inside scores
+0.01 37.7 85.52
+0.001 25.3 85.79
+0.005 10 33.4 85.54
+0.005 20 39.5 85.64
+0.005 50 42.9 85.58
+Viterbi scores
+0.01 38.1 85.53
+0.001 28.2 85.82
+0.005 10 33.6 85.55
+0.005 20 39.4 85.66
+0.005 50 43.1 85.62
+Table 3: Comparison between using Viterbi scores
+and inside scores as beam scores.
+We also studied the effect of the beam search
+at different levels of the chart. We applied a selec-
+tive beam in which pruning is only applied to con-
+stituents of length less than or equal to a threshold
+?. For example, if ? = 20, pruning is applied only
+to constituents spanning 20 words or less. The re-
+sults are shown in Table 2. The selective beam
+is also highly effective, showing speed gains over
+the baseline (which does not use a beam) with no
+loss in F-score. For a ? value of 50 the speed in-
+crease is 78% with no loss in accuracy.
+Note that for ? greater than 50, the speed re-
+duces. We believe that this is due to the cost
+of calculating the beam scores and the reduced
+effectiveness of pruning for cells with longer
+spans (since pruning shorter constituents early in
+the chart-parsing process prevents the creation of
+many larger, low-scoring constituents later).
+Table 3 shows the comparison between the in-
+scoring but more accurate derivation; and two, a possible in-
+crease in recall, discussed in Section 3, can lead to a higher
+F-score.
+side and Viterbi scores. The results are similar,
+with Viterbi marginally outperforming the inside
+score in most cases. The interesting result from
+these experiments is that the summing used in cal-
+culating the inside score does not improve perfor-
+mance over the max operator used by Viterbi.
+Table 4 gives results on Wikipedia text, com-
+pared with a number of sections from CCGbank.
+(Sections 02-21 provide the training data for the
+parser which explains the high accuracy results
+on these sections.) Despite the fact that the prun-
+ing model is derived from CCGbank and based on
+WSJ text, the speed improvements for Wikipedia
+were even greater than for WSJ text, with param-
+eters ? = 0.005 and ? = 40 leading to almost a
+doubling of speed on the Wiki 2500 set, with the
+parser operating at 90 sentences per second.
+5 Cell Pruning
+Whole cells can be pruned from the chart by tag-
+ging words in a sentence. Roark and Hollingshead
+(2009) used a binary tagging approach to prune a
+CFG CKY chart, where tags are assigned to input
+words to indicate whether they can be the start or
+end of multiple-word constituents. We adapt their
+method to CCG chart pruning. We also show the
+limitation of binary tagging, and propose a novel
+tagging method which leads to increased speeds
+and accuracies over the binary taggers.
+5.1 Binary tagging
+Following Roark and Hollingshead (2009), we as-
+sign the binary begin and end tags separately us-
+ing two independent taggers. Given the input
+?We like playing cards together?, the pruning ef-
+fects of each type of tag on the CKY chart are
+shown in Figure 2. In this chart, rows repre-
+1474
+XWe like playing cards together
+1 2 3 4 5
+1
+2
+4
+5
+3
+1 1 1 0 0
+X X
+X
+We like playing cards together
+1 2 3 4 5
+1
+2
+4
+5
+3
+0 0 0 1 1
+Figure 2: The pruning effect of begin (top) and
+end (bottom) tags; X indicates a removed cell.
+sent consituent sizes and columns represent initial
+words of constituents. No cell in the first row of
+the chart is pruned, since these cells correspond
+to single words, and are necessary for finding a
+parse. The begin tag for the input word ?cards? is
+0, which means that it cannot begin a multi-word
+constituent. Therefore, no cell in column 4 can
+contain any constituent. The pruning effect of a
+binary begin tag is to cross out a column of chart
+cells (ignoring the first row) when the tag value
+is zero. Similarly, the end tag of the word ?play-
+ing? is 0, which means that it cannot be the end
+of a multi-word constituent. Consequently cell (2,
+2), which contains constituents for ?like playing?,
+and cell (1, 3), which contains constituents for
+?We like playing?, must be empty. The pruning
+effect of a binary end tag is to cross out a diagonal
+of cells (ignoring the first row) when the tag value
+is zero.
+We use a maximum entropy trigram tagger
+(Ratnaparkhi, 1996; Curran and Clark, 2003) to
+Model Speed F-score
+baseline 25.10 84.89
+begin only 27.49 84.71
+end only 30.33 84.56
+both 33.90 84.60
+oracle 33.60 85.67
+Table 5: Accuracy and speed results for the binary
+taggers on Section 00 of CCGbank.
+assign the begin and end tags. Features based on
+the words and POS in a 5-word window, plus the
+two previously assigned tags, are extracted from
+the trigram ending with the current tag and the
+five-word window with the current word in the
+middle. In our development experiments, both the
+begin and the end taggers gave a per-word accu-
+racy of around 96%, similar to the accuracy re-
+ported in Roark and Hollingshead (2009).
+Table 5 shows accuracy and speed results for
+the binary taggers.4 Using begin or end tags alone,
+the parser achieved speed increases with a small
+loss in accuracy. When both begin and end tags
+are applied, the parser achieved further speed in-
+creases, with no loss in accuracy compared to the
+end tag alone. Row ?oracle? shows what happens
+using the perfect begin and end taggers, by using
+gold-standard constituent information from CCG-
+bank. The F-score is higher, since the parser is
+being guided away from incorrect derivations, al-
+though the speed is no higher than when using au-
+tomatically assigned tags.
+5.2 Level tagging
+A binary tag cannot take effect when there is any
+chart cell in the corresponding column or diagonal
+that contains constituents. For example, the begin
+tag for the word ?card? in Figure 3 cannot be 0 be-
+cause ?card? begins a two-word constituent ?card
+games?. Hence none of the cells in the column can
+be pruned using the binary begin tag, even though
+all the cells from the third row above are empty.
+We propose what we call a level tagging approach
+to address this problem.
+Instead of taking a binary value that indicates
+4The baseline differs slightly to the previous section be-
+cause gold-standard POS tags were used for the beam-search
+experiments.
+1475
+1 2 3 4 5
+1
+2
+4
+5
+3
+Playing card games is fun
+Figure 3: The limitation of binary begin tags.
+whether a whole column or diagonal of cells can
+be pruned, a level tag (begin or end) takes an in-
+teger value which indicates the row from which
+a column or diagonal can be pruned in the up-
+ward direction. For example, a level begin tag
+with value 2 allows the column of chart cells for
+the word ?card? in Figure 3 to be pruned from the
+third row upwards. A level tag (begin or end) with
+value 1 prunes the corresponding row or diago-
+nal from the second row upwards; it has the same
+pruning effect as a binary tag with value 0. For
+convenience, value 0 for a level tag means that the
+corresponding word can be the beginning or end
+of any constituent, which is the same as a binary
+tag value 1.
+A comparison of the pruning effect of binary
+and level tags for the sentence ?Playing card
+games is fun? is shown in Figure 4. With a level
+begin tag, more cells can be pruned from the col-
+umn for ?card?. Therefore, level tags are poten-
+tially more powerful for pruning.
+We now need a method for assigning level tags
+to words in a sentence. However, we cannot
+achieve this with a straighforward classifier since
+level tags are related; for example, a level tag (be-
+gin or end) with value 2 implies level tags with
+values 3 and above. We develop a novel method
+for calculating the probability of a level tag for
+a particular word. Our mechanism for calculat-
+ing these probabilities uses what we call maxspan
+tags, which can be assigned using a maximum en-
+tropy tagger.
+Maxspan tags take the same values as level tags.
+However, the meanings of maxspan tags and level
+X
+XX
+X
+1 2 3 4 5
+1
+2
+4
+5
+3
+Playing card games is fun
+X
+XX
+X
+Playing card games is fun
+1 2 3 4 5
+1
+2
+4
+5
+3
+Figure 4: The pruning effect of binary (top) and
+level (bottom) tags.
+tags are different. While a level tag indicates the
+row from which a column or diagonal of cells is
+pruned, a maxspan tag represents the size of the
+largest constituent a word begins or ends. For ex-
+ample, in Figure 3, the level end tag for the word
+?games? has value 3, since the largest constituent
+this words ends spans ?playing card games?.
+We use the standard maximum entropy trigram
+tagger for maxspan tagging, where features are
+extracted from tag trigrams and surrounding five-
+word windows, as for the binary taggers. Parse
+trees can be turned directly into training data for
+a maxspan tagger. Since the level tag set is fi-
+nite, we a require a maximum value N that a level
+tag can take. We experimented with N = 2 and
+N = 4, which reflects the limited range of the
+features used by the taggers.5
+During decoding, the maxspan tagger uses the
+forward-backward algorithm to compute the prob-
+ability of maxspan tag values for each word in the
+5Higher values of N did not lead to improvements during
+development experiments.
+1476
+Model Speed F-score
+baseline 25.10 84.89
+binary 33.90 84.60
+binary oracle 33.60 85.67
+level N = 2 32.79 84.92
+level N = 4 34.91 84.95
+level N = 4 oracle 47.45 86.49
+Table 6: Accuracy and speed results for the level
+taggers on Section 00 of CCGbank.
+input. Then for each word, the probability of its
+level tag tl having value x is the sum of the prob-
+abilities of its maxspan tm tag having values 1..x:
+P (tl = x) =
+x?
+i=1
+P (tm = i)
+Maxspan tag values i from 1 to x represent dis-
+joint events in which the largest constituent that
+the corresponding word begins or ends has size i.
+Summing the probabilities of these disjoint events
+gives the probability that the largest constituent
+the word begins or ends has a size between 1 and
+x, inclusive. That is also the probability that all
+the constituents the word begins or ends are in the
+range of cells from rows 1 to row x in the corre-
+sponding column or diagonal. And therefore that
+is also the probability that the chart cells above
+row x in the corresponding column or diagonal
+do not contain any constituents, which means that
+the column and diagonal can be pruned from row
+x upward. Therefore, it is also the probability of a
+level tag with value x.
+The probability of a level tag having value x
+increases as x increases from 1 to N . We set a
+probability threshold Q and choose the smallest
+level tag value x with probability P (tl = x) ? Q
+as the level tag for a word. If P (tl = N) < Q, we
+set the level tag to 0 and do not prune the column
+or diagonal. The threshold value determines a bal-
+ance between pruning power and accuracy, with a
+higher value pruning more cells but increasing the
+risk of incorrectly pruning a cell. During devel-
+opment we arrived at a threshold value of 0.8 as
+providing a suitable compromise between pruning
+power and accuracy.
+Table 6 shows accuracy and speed results for
+the level tagger, using a threshold value of 0.8.
+Model Speed F-score
+baseline 36.64 84.23
+binary gold 49.59 84.36
+binary self 40K 48.79 83.64
+binary self 200K 51.51 83.71
+binary self 1M 47.78 83.75
+level gold 58.23 84.12
+level self 40K 54.76 83.83
+level self 200K 48.57 83.39
+level self 1M 52.54 83.71
+Table 7: Accuracy tests on Wiki 300 comparing
+gold training (gold) with self training (self) for
+different sizes of parser output for self-training.
+We compare the effect of the binary tagger and
+level taggers with N = 2 and N = 4. The accu-
+racies with the level taggers are higher than those
+with the binary tagger; they are also higher than
+the baseline parsing accuracy. The parser achieves
+the highest speed and accuracy when pruned with
+the N = 4 level tagger. Comparing the oracle
+scores, the level taggers lead to higher speeds than
+the binary tagger, reflecting the increased pruning
+power of the level taggers compared with the bi-
+nary taggers.
+5.2.1 Final experiments using gold training
+and self training
+In this section we report our final tests using
+Wikipedia data. We used two methods to derive
+training data for the taggers. The first is the stan-
+dard method, which is to transform gold-standard
+parse trees into begin and end tag sequences. This
+method is the method that we used for all previ-
+ous experiments, and we call it ?gold training?.
+In addition to gold training, we also investigate
+an alternative method, which is to obtain training
+data for the taggers from the output of the parser
+itself, in a form of self-training (McClosky et al,
+2006). The intuition is that the tagger will learn
+what constituents a trained parser will eventually
+choose, and as long as the constituents favoured
+by the parsing model are not pruned, no reduction
+in accuracy can occur. There is the potential for
+an increase in speed, however, due to the pruning
+effect.
+For gold training, we used sections 02-21 of
+1477
+Model Speed
+baseline 47.6
+binary gold 80.8
+binary 40K 75.5
+binary 200K 77.4
+binary 1M 78.6
+level gold 93.7
+level 40K 92.8
+level 200K 92.5
+level 1M 96.6
+Table 8: Speed tests with gold and self-training on
+Wiki 2500.
+CCGBank (which consists of about 40K training
+sentences) to derive training data. For self train-
+ing, we trained the parser on sections 02-21 of
+CCGBank, and used the parser to parse 40 thou-
+sand, 200 thousand and 1 million sentences from
+Wikipedia, respectively. Then we derive three sets
+of self training data from the three sets of parser
+outputs. We then used our Wiki 300 set to test the
+accuracy, and the Wiki 2500 set to test the speed
+of the parser.
+The results are shown in Tables 7 and 8, where
+each row represents a training data set. Rows ?bi-
+nary gold? and ?level gold? represent binary and
+level taggers trained using gold training. Rows
+?binary self X? and ?level self X? represent bi-
+nary and level taggers trained using self training,
+with the size of the training data being X sen-
+tences.
+It can be seen from the Tables that the accuracy
+loss with self-trained binary or level taggers was
+not large (in the worst case, the accuracy dropped
+from 84.23% to 83.39%), while the speed was
+significantly improved. Using binary taggers, the
+largest speed improvement was from 47.6 sen-
+tences per second to 80.8 sentences per second
+(a 69.7% relative increase). Using level taggers,
+the largest speed improvement was from 47.6 sen-
+tences per second to 96.6 sentences per second (a
+103% relative increase).
+A potential advantage of self-training is the
+availability of large amounts of training data.
+However, our results are somewhat negative in
+this regard, in that we find training the tagger on
+more than 40,000 parsed sentences (the size of
+CCGbank) did not improve the self-training re-
+sults. We did see the usual speed improvements
+from using the self-trained taggers, however, over
+the baseline parser with no pruning.
+6 Conclusion
+Using our novel method of level tagging for prun-
+ing complete cells in a CKY chart, the CCG parser
+was able to process almost 100 Wikipedia sen-
+tences per second, using both CCGbank and the
+output of the parser to train the taggers, with little
+or no loss in accuracy. This was a 103% increase
+over the baseline with no pruning.
+We also demonstrated that standard beam
+search is highly effective in increasing the speed
+of the CCG parser, despite the fact that the su-
+pertagger has already had a significant pruning
+effect. In future work we plan to investigate the
+gains that can be achieved from combining the
+two pruning methods, as well as other pruning
+methods such as the self-training technique de-
+scribed in Kummerfeld et al (2010) which re-
+duces the number of lexical categories assigned
+by the supertagger (leading to a speed increase).
+Since these methods are largely orthogonal, we
+expect to achieve further gains, leading to a re-
+markably fast wide-coverage parser outputting
+complex linguistic representations.
+Acknowledgements
+This work was largely carried out at the Johns
+Hopkins University Summer Workshop and (par-
+tially) supported by National Science Founda-
+tion Grant Number IIS-0833652. Yue Zhang and
+Stephen Clark are supported by the European
+Union Seventh Framework Programme (FP7-ICT-
+2009-4) under grant agreement no. 247762.
+References
+Bangalore, Srinivas and Aravind Joshi. 1999. Su-
+pertagging: An approach to almost parsing. Com-
+putational Linguistics, 25(2):237?265.
+Bos, Johan, Stephen Clark, Mark Steedman, James R.
+Curran, and Julia Hockenmaier. 2004. Wide-
+coverage semantic representations from a CCG
+parser. In Proceedings of COLING-04, pages 1240?
+1246, Geneva, Switzerland.
+1478
+Briscoe, Ted and John Carroll. 2006. Evaluating
+the accuracy of an unlexicalized statistical parser on
+the PARC DepBank. In Proceedings of the Poster
+Session of COLING/ACL-06, pages 41?48, Sydney,
+Australia.
+Carroll, John, Ted Briscoe, and Antonio Sanfilippo.
+1998. Parser evaluation: a survey and a new pro-
+posal. In Proceedings of the 1st LREC Conference,
+pages 447?454, Granada, Spain.
+Charniak, Eugene and Mark Johnson. 2005. Coarse-
+to-fine N-best parsing and maxent discriminative
+reranking. In Proceedings of the 43rd Meeting of
+the ACL, pages 173?180, Michigan, Ann Arbor.
+Charniak, Eugene. 2000. A maximum-entropy-
+inspired parser. In Proceedings of the 1st Meeting
+of the NAACL, pages 132?139, Seattle, WA.
+Clark, Stephen and James R. Curran. 2004. The im-
+portance of supertagging for wide-coverage CCG
+parsing. In Proceedings of COLING-04, pages 282?
+288, Geneva, Switzerland.
+Clark, Stephen and James R. Curran. 2007. Wide-
+coverage efficient statistical parsing with CCG
+and log-linear models. Computational Linguistics,
+33(4):493?552.
+Collins, Michael. 1999. Head-Driven Statistical Mod-
+els for Natural Language Parsing. Ph.D. thesis,
+University of Pennsylvania.
+Curran, James R. and Stephen Clark. 2003. Inves-
+tigating GIS and smoothing for maximum entropy
+taggers. In Proceedings of the 10th Meeting of the
+EACL, pages 91?98, Budapest, Hungary.
+Curran, James R. 2004. From Distributional to Se-
+mantic Similarity. Ph.D. thesis, University of Edin-
+burgh.
+Djordjevic, Bojan, James R. Curran, and Stephen
+Clark. 2007. Improving the efficiency of a wide-
+coverage CCG parser. In Proceedings of IWPT-07,
+pages 39?47, Prague, Czech Republic.
+Hockenmaier, Julia and Mark Steedman. 2007. CCG-
+bank: a corpus of CCG derivations and dependency
+structures extracted from the Penn Treebank. Com-
+putational Linguistics, 33(3):355?396.
+Jurafsky, Daniel and James H. Martin. 2000. Speech
+and Language Processing: An Introduction to Nat-
+ural Language Processing, Computational Linguis-
+tics and Speech Recognition. Prentice Hall, New
+Jersey.
+Kaplan, Ron, Stefan Riezler, Tracy H. King, John
+T. Maxwell III, Alexander Vasserman, and Richard
+Crouch. 2004. Speed and accuracy in shallow and
+deep stochastic parsing. In Proceedings of HLT-
+NAACL?04, Boston, MA.
+Kummerfeld, Jonathan K., Jessika Roesner, Tim
+Dawborn, James Haggerty, James R. Curran, and
+Stephen Clark. 2010. Faster parsing by supertag-
+ger adaptation. In Proceedings of ACL-10, Uppsala,
+Sweden.
+Lin, Thomas, Oren Etzioni, and James Fogarty. 2009.
+Identifying interesting assertions from the web. In
+Proceedings of the 18th Conference on Information
+and Knowledge Management (CIKM 2009), Hong
+Kong.
+McClosky, David, Eugene Charniak, and Mark John-
+son. 2006. Effective self-training for parsing. In
+Proceedings of NAACL-06, pages 152?159, Brook-
+lyn, NY.
+Ninomiya, Takashi, Yoshimasa Tsuruoka, Yusuke
+Miyao, and Jun?ichi Tsujii. 2005. Efficacy of beam
+thresholding, unification filtering and hybrid pars-
+ing in probabilistic HPSG parsing. In Proceedings
+of IWPT-05, pages 103?114, Vancouver, Canada.
+Nivre, J. and M. Scholz. 2004. Deterministic depen-
+dency parsing of English text. In Proceedings of
+COLING-04, pages 64?70, Geneva, Switzerland.
+Petrov, Slav and Dan Klein. 2007. Improved infer-
+ence for unlexicalized parsing. In Proceedings of
+the HLT/NAACL conference, Rochester, NY.
+Ratnaparkhi, Adwait. 1996. A maximum entropy
+model for part-of-speech tagging. In Proceedings
+of EMNLP-96, pages 133?142, Somerset, New Jer-
+sey.
+Roark, Brian and Kristy Hollingshead. 2009. Lin-
+ear complexity context-free parsing pipelines via
+chart constraints. In Proceedings of HLT/NAACL-
+09, pages 647?655, Boulder, Colorado.
+Steedman, Mark. 2000. The Syntactic Process. The
+MIT Press, Cambridge, MA.
+1479
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 406?411,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+Learning Non-linear Features for Machine Translation Using Gradient
+Boosting Machines
+Kristina Toutanova
+Microsoft Research
+Redmond, WA 98502
+kristout@microsoft.com
+Byung-Gyu Ahn?
+Johns Hopkins University
+Baltimore, MD 21218
+bahn@cs.jhu.edu
+Abstract
+In this paper we show how to auto-
+matically induce non-linear features for
+machine translation. The new features
+are selected to approximately maximize
+a BLEU-related objective and decompose
+on the level of local phrases, which guar-
+antees that the asymptotic complexity of
+machine translation decoding does not in-
+crease. We achieve this by applying gra-
+dient boosting machines (Friedman, 2000)
+to learn newweak learners (features) in the
+form of regression trees, using a differen-
+tiable loss function related to BLEU. Our
+results indicate that small gains in perfor-
+mance can be achieved using this method
+but we do not see the dramatic gains ob-
+served using feature induction for other
+important machine learning tasks.
+1 Introduction
+The linear model for machine translation (Och and
+Ney, 2002) has become the de-facto standard in
+the field. Recently, researchers have proposed a
+large number of additional features (TaroWatan-
+abe et al, 2007; Chiang et al, 2009) and param-
+eter tuning methods (Chiang et al, 2008b; Hop-
+kins and May, 2011; Cherry and Foster, 2012)
+which are better able to scale to the larger pa-
+rameter space. However, a significant feature en-
+gineering effort is still required from practition-
+ers. When a linear model does not fit well, re-
+searchers are careful to manually add important
+feature conjunctions, as for example, (Daume? III
+and Jagarlamudi, 2011; Clark et al, 2012). In the
+related field of web search ranking, automatically
+learned non-linear features have brought dramatic
+improvements in quality (Burges et al, 2005; Wu
+?This research was conducted during the author?s intern-
+ship at Microsoft Research
+et al, 2010). Here we adapt the main insights of
+such work to the machine translation setting and
+share results on two language pairs.
+Some recent works have attempted to relax the
+linearity assumption on MT features (Nguyen et
+al., 2007), by defining non-parametric models on
+complete translation hypotheses, for use in an n-
+best re-ranking setting. In this paper we develop
+a framework for inducing non-linear features in
+the form of regression decision trees, which de-
+compose locally and can be integrated efficiently
+in decoding. The regression trees encode non-
+linear feature combinations of the original fea-
+tures. We build on the work by Friedman (2000)
+which shows how to induce features to minimize
+any differentiable loss function. In our applica-
+tion the features are regression decision trees, and
+the loss function is the pairwise ranking log-loss
+from the PRO method for parameter tuning (Hop-
+kins and May, 2011). Additionally, we show how
+to design the learning process such that the in-
+duced features are local on phrase-pairs and their
+language model and reordering context, and thus
+can be incorporated in decoding efficiently.
+Our results using re-ranking on two language
+pairs show that the feature induction approach can
+bring small gains in performance. Overall, even
+though the method shows some promise, we do
+not see the dramatic gains that have been seen for
+the web search ranking task (Wu et al, 2010). Fur-
+ther improvements in the original feature set and
+the induction algorithm, as well as full integration
+in decoding are needed to potentially result in sub-
+stantial performance improvements.
+2 Feature learning using gradient
+boosting machines
+In the linear model for machine translation, the
+scores of translation hypotheses are weighted
+sums of a set of input features over the hypotheses.
+406
+Figure 1: A Bulgarian source sentence (meaning ?the
+conference in Bulgaria?, together with a candidate transla-
+tion. Local and global features for the translation hypoth-
+esis are shown. f0=smoothed relative frequency estimate
+of log p(s|t); f1=lexical weighting estimate of log p(s|t);
+f2=joint count of the phrase-pair; f3=sum of language model
+log-probabilities of target phrase words given context.
+For a set of features f1(h), . . . , fL(h) and weights
+for these features ?1, . . . , ?L, the hypothesis
+scores are defined as: F (h) = ?l=1...L ?lfl(h).
+In current state-of-the-art models, the features
+fl(h) decompose locally on phrase-pairs (with
+language model and reordering context) inside the
+hypotheses. This enables hypothesis recombina-
+tion during machine translation decoding, leading
+to faster and more accurate search. As an exam-
+ple, Figure 1 shows a Bulgarian source sentence
+(spelled phonetically in Latin script) and a can-
+didate translation. Two phrase-pairs are used to
+compose the translation, and each phrase-pair has
+a set of local feature function values. A mini-
+mal set of four features is shown, for simplicity.
+We can see that the hypothesis-level (global) fea-
+ture values are sums of phrase-level (local) feature
+values. The score of a translation given feature
+weights ? can be computed either by scoring the
+phrase-pairs and adding the scores, or by scoring
+the complete hypothesis by computing its global
+feature values. The local feature values do look at
+some limited context outside of a phrase-pair, to
+compute language model scores and re-ordering
+scores; therefore we say that the features are de-
+fined on phrase-pairs in context.
+We start with such a state-of-the-art linear
+model with decomposable features and show how
+we can automatically induce additional features.
+The new features are also locally decomposable,
+so that the scores of hypotheses can be computed
+as sums of phrase-level scores. The new local
+phrase-level features are non-linear combinations
+of the original phrase-level features.
+Figure 2: Example of two decision tree features. The left
+decision tree has linear nodes and the right decision tree has
+constant nodes.
+2.1 Form of induced features
+We will use the example in Figure 1 to introduce
+the form of the new features we induce and to give
+an intuition of why such features might be useful.
+The new features are expressed by regression de-
+cision trees; Figure 2 shows two examples.
+One intuition we might have is that, if a phrase
+pair has been seen very few times in the training
+corpus (for example, the first phrase pair P1 in the
+Figure has been seen only one time f2 = 1), we
+would like to trust its lexical weighting channel
+model score f1 more than its smoothed relative-
+frequency channel estimate f0. The first regres-
+sion tree feature h1 in Figure 2 captures this in-
+tuition. The feature value for a phrase-pair of
+this feature is computed as follows: if f2 ?
+2, then h1(f0, f1, f2, f3) = 2 ? f1; otherwise,
+h1(f0, f1, f2, f3) = f1. The effect of this new
+feature h1 is to boost the importance of the lexi-
+cal weighting score for phrase-pairs of low joint
+count. More generally, the regression tree fea-
+tures we consider have either linear or constant
+leaf nodes, and have up to 8 leaves. Deeper trees
+can capture more complex conditions on several
+input feature values. Each non-leaf node performs
+a comparison of some input feature value to a
+threshold and each leaf node (for linear nodes) re-
+turns the value of some input feature multiplied
+by some factor. For a given regression tree with
+linear nodes, all leaf nodes are expressions of the
+same input feature but have different coefficients
+for it (for example, both leaf nodes of h1 return
+affine functions of the input feature f1). A deci-
+sion tree feature with constant-valued leaf nodes
+is illustrated by the right-hand-side tree in Figure
+2. For these decision trees, the leaf nodes contain
+a constant, which is specific to each leaf. These
+kinds of trees can effectively perform conjunctions
+of several binary-valued input feature functions; or
+they can achieve binning of real-values features to-
+gether with conjunctions over binned values.
+407
+Having introduced the form of the new features
+we learn, we now turn to the methodology for in-
+ducing them. We apply the framework of gradient
+boosting for decision tree weak learners (Fried-
+man, 2000). To define the framework, we need
+to introduce the original input features, the differ-
+entiable loss function, and the details of the tree
+growing algorithm. We discuss these in turn next.
+2.2 Initial features
+Our baseline MT system uses relative frequency
+and lexical weighting channel model weights, one
+or more language models, distortion penalty, word
+count, phrase count, and multiple lexicalized re-
+ordering weights, one for each distortion type. We
+have around 15 features in this base feature set.
+We further expand the input set of features to in-
+crease the possibility that useful feature combi-
+nations could be found by our feature induction
+method. The large feature set contains around
+190 features, including source and target word
+count features, joint phrase count, lexical weight-
+ing scores according to alternative word-alignment
+model ran over morphemes instead of words, in-
+dicator lexicalized features for insertion and dele-
+tion of the top 15 words in each language, cluster-
+based insertion and deletion indicators using hard
+word clustering, and cluster based signatures of
+phrase-pairs. This is the feature set we use as a
+basis for weak learner induction.
+2.3 Loss function
+We use a pair-wise ranking log-loss as in the
+PRO parameter tuning method (Hopkins and May,
+2011). The loss is defined by comparing the model
+scores of pairs of hypotheses hi and hj where
+the BLEU score of the first hypothesis is greater
+than the BLEU score of the second hypothesis by
+a specified threshold. 1
+We denote the sentences in a corpus as
+s1, s2, . . . , sN . For each sentence sn, we de-
+note the ordered selected pairs of hypotheses as
+[hni1 , hnj1 ], . . . , [hniK , h
+n
+jK ]. The loss-function ? isdefined in terms of the hypothesis model scores
+1In our implementation, for each sentence, we sample
+10, 000 pairs of translations and accept a pair of transla-
+tions for use with probability proportional to the BLEU score
+difference, if that difference is greater than the threshold of
+0.04. The top K = 100 or K = 300 hypothesis pairs with
+the largest BLEU difference are selected for computation of
+the loss. We compute sentence-level BLEUscores by add-?
+smoothing of the match counts for computation of n-gram
+precision. The ? and K parameters are chosen via cross-
+validation.
+1: F0(x) = argmin? ?(F (x, ?))
+2: for m = 1toM do
+3: yr = ?[??(F (x))?F (xr) ]F (x)=Fm?1(x), r =
+1 . . . R
+4: ?m = argmin?,?
+?R
+r=1[yr ? ?h(xi;?)]2
+5: ?m = argmin? ?(Fm?1(x) + ?h(x;?m)
+6: Fm(x) = Fm?1(x) + ?mh(x;?m)
+7: end for
+Figure 3: A gradient boosting algorithm for local
+feature functions.
+F (h) as follows: ?n=1...N
+?
+k=1...K log(1 +
+eF (h
+n
+jk
+)?F (hnik )).
+The idea of the gradient boosting method is to
+induce additional features by computing a func-
+tional gradient of the target loss function and itera-
+tively selecting the next weak learner (feature) that
+is most parallel to the negative gradient. Since we
+want to induce features such that the hypothesis
+scores decompose locally, we need to formulate
+our loss function as a function of local phrase-pair
+in context scores. Having the model scores de-
+compose locally means that the scores of hypothe-
+ses F (h) decompose as F (h) = ?pr?h F (pr)),where by pr ? h we denote the enumeration over
+phrase pairs in context that are parts of h. If xr de-
+notes the input feature vector for a phrase-pair in
+context pr, the score of this phrase-pair can be ex-
+pressed as F (xr). Appendix A expresses the pair-
+wise log-loss as a function of the phrase scores.
+We are now ready to introduce the gradient
+boosting algorithm, summarized in Figure 3. In
+the first step of the algorithm, we start by set-
+ting the phrase-pair in context scoring function
+F0(x) as a linear function of the input feature val-
+ues, by selecting the feature weights ? to min-
+imize the PRO loss ?(F0(x)) as a function of
+?. The initial scores have the form F0(x) =?
+l=1...L ?lfl(x).This is equivalent to using the
+(Hopkins and May, 2011) method of parameter
+tuning for a fixed input feature set and a linear
+model. We used LBFGS for the optimization in
+Line 1. Then we iterate and induce a new de-
+cision tree weak learner h(x;?m) like the exam-
+ples in Figure 2 at each iteration. The parame-
+ter vectors ?m encode the topology and parame-
+ters of the decision trees, including which feature
+value is tested at each node, what the compari-
+son cutoffs are, and the way to compute the val-
+ues at the leaf nodes. After a new decision tree
+408
+Language Train Dev-Train Dev-Select Test
+Chs-En 999K NIST02+03 2K NIST05
+Fin-En 2.2M 12K 2K 4.8K
+Table 1: Data sets for the two language pairs Chinese-
+English and Finnish-English.
+Chs-En Fin-EnFeatures Tune Dev-Train Test Dev-Train Testbase MERT 31.3 30.76 49.8 51.31base PRO 31.1 31.16 49.7 51.56large PRO 31.8 31.44 49.8 51.77boost-global PRO 31.8 31.30 50.0 51.87boost-local PRO 31.8 31.44 50.1 51.95
+Table 2: Results for the two language pairs using different
+weight tuning methods and feature sets.
+h(x;?m) is induced, it is treated as new feature
+and a linear coefficient ?m for that feature is set
+by minimizing the loss as a function of this pa-
+rameter (Line 5). The new model scores are set as
+the old model scores plus a weighted contribution
+from the new feature (Line 6). At the end of learn-
+ing, we have a linear model over the input features
+and additional decision tree features. FM (x) =?
+l=1...L ?lfl(x) +
+?
+m=1...M ?mh(x;?m). The
+most time-intensive step of the algorithm is the se-
+lection of the next decision tree h. This is done
+by first computing the functional gradient of the
+loss with respect to the phrase scores F (xr) at the
+point of the current model scores Fm?1(xr). Ap-
+pendix A shows a derivation of this gradient. We
+then induce a regression tree using mean-square-
+error minimization, setting the direction given by
+the negative gradient as a target to be predicted us-
+ing the features of each phrase-pair in context in-
+stance. This is shown as the setting of the ?m pa-
+rameters by mean-squared-error minimization in
+Line 4 of the algorithm. The minimization is done
+approximately by a standard greedy tree-growing
+algorithm (Breiman et al, 1984). When we tune
+weights to minimize the loss, such as the weights
+? of the initial features, or the weights ?m of in-
+duced learners, we also include an L2 penalty on
+the parameters, to prevent overfitting.
+3 Experiments
+We report experimental results on two language
+pairs: Chinese-English, and Finnish-English. Ta-
+ble 1 summarizes statistics about the data. For
+each language pair, we used a training set (Train)
+for extracting phrase tables and language models,
+a Dev-Train set for tuning feature weights and in-
+ducing features, a Dev-Select set for selecting hy-
+perparameters of PRO tuning and selecting a stop-
+ping point and other hyperparameters of the boost-
+ing method, and a Test set for reporting final re-
+sults. For Chinese-English, the training corpus
+consists of approximately one million sentence
+pairs from the FBIS and HongKong portions of
+the LDC data for the NIST MT evaluation and the
+Dev-Train and Test sets are from NIST competi-
+tions. The MT system is a phrasal system with a 4-
+gram language model, trained on the Xinhua por-
+tion of the English Gigaword corpus. The phrase
+table has maximum phrase length of 7 words on
+either side. For Finnish-English we used a data-
+set from a technical domain of software manuals.
+For this language pair we used two language mod-
+els: one very large model trained on billions of
+words, and another language model trained from
+the target side of the parallel training set. We re-
+port performance using the BLEU-SBP metric pro-
+posed in (Chiang et al, 2008a). This is a vari-
+ant of BLEU (Papineni et al, 2002) with strict
+brevity penalty, where a long translation for one
+sentence can not be used to counteract the brevity
+penalty for another sentence with a short transla-
+tion. Chiang et al (2008a) showed that this metric
+overcomes several undesirable properties of BLEU
+and has better correlation with human judgements.
+In our experiments with different feature sets and
+hyperparameters we observed more stable results
+and better correlation of Dev-Train, Dev-Select,
+and Test results using BLEU-SBP. For our exper-
+iments, we first trained weights for the base fea-
+ture sets described in Section 2.2 using MERT. We
+then decoded the Dev-Train, Dev-Select, and Test
+datasets, generating 500-best lists for each set. All
+results in Table 2 report performance of re-ranking
+on these 500-best lists using different feature sets
+and parameter tuning methods.
+The baseline (base feature set) performance us-
+ing MERT and PRO tuning on the two language
+pairs is shown on the first two lines. In line with
+prior work, PRO tuning achieves a bit lower scores
+on the tuning set but higher scores on the test set,
+compared to MERT. The large feature set addi-
+tionally contains over 170 manually specified fea-
+tures, described in Section 2.2. It was infeasible
+to run MERT training on this feature set. The test
+set results using PRO tuning for the large set are
+about a quarter of a BLEU-SBP point higher than
+the results using the base feature set on both lan-
+guage pairs. Finally, the last two rows show the
+performance of the gradient boosting method. In
+409
+addition to learning locally decomposable features
+boost-local, we also implemented boost-global,
+where we are learning combinations of the global
+feature values and lose decomposability. The fea-
+tures learned by boost-global can not be com-
+puted exactly on partial hypotheses in decoding
+and thus this method has a speed disadvantage, but
+we wanted to compare the performance of boost-
+local and boost-global on n-best list re-ranking
+to see the potential accuracy gain of the two meth-
+ods. We see that boost-local is slightly better in
+performance, in addition to being amenable to ef-
+ficient decoder integration.
+The gradient boosting results are mixed; for
+Finnish-English, we see around .2 gain of the
+boost-local model over the large feature set.
+There is no improvement on Chinese-English, and
+the boost-global method brings slight degrada-
+tion. We did not see a large difference in perfor-
+mance among models using different decision tree
+leaf node types and different maximum numbers
+of leaf nodes. The selected boost-local model
+for FIN-ENU used trees with maximum of 2 leaf
+nodes and linear leaf values; 25 new features were
+induced before performance started to degrade
+on the Dev-Select set. The induced features for
+Finnish included combinations of language model
+and channel model scores, combinations of word
+count and channel model scores, and combina-
+tions of channel and lexicalized reordering scores.
+For example, one feature increases the contribu-
+tion of the relative frequency channel score for
+phrases with many target words, and decreases the
+channel model contribution for shorter phrases.
+The best boost-local model for Chs-Enu used
+trees with a maximum of 2 constant-values leaf
+nodes, and induced 24 new tree features. The fea-
+tures effectively promoted and demoted phrase-
+pairs in context based on whether an input fea-
+ture?s value was smaller than a determined cutoff.
+In conclusion, we proposed a new method to
+induce feature combinations for machine transla-
+tion, which do not increase the decoding complex-
+ity. There were small improvements on one lan-
+guage pair in a re-ranking setting. Further im-
+provements in the original feature set and the in-
+duction algorithm, as well as full integration in de-
+coding are needed to result in substantial perfor-
+mance improvements.
+This work did not consider alternative ways
+of generating non-linear features, such as taking
+products of two or more input features. It would
+be interesting to compare such alternatives to the
+regression tree features we explored.
+References
+Leo Breiman, Jerome Friedman, Charles J. Stone, and
+R.A. Olshen. 1984. Classification and Regression
+Trees. Chapman and Hall.
+Chris Burges, Tal Shaked, Erin Renshaw, Matt Deeds,
+Nicole Hamilton, and Greg Hullender. 2005. Learn-
+ing to rank using gradient descent. In ICML.
+Colin Cherry and George Foster. 2012. Batch tuning
+strategies for statistical machine translation. InHLT-
+NAACL.
+David Chiang, Steve DeNeefe, Yee Seng Chan, and
+Hwee Tou Ng. 2008a. Decomposability of trans-
+lation metrics for improved evaluation and efficient
+algorithms. In EMNLP.
+David Chiang, Yuval Marton, and Philp Resnik. 2008b.
+Online large margin training of syntactic and struc-
+tural translation features. In EMNLP.
+D. Chiang, W. Wang, and K. Knight. 2009. 11,001
+new features for statistical machine translation. In
+NAACL.
+Jonathan Clark, Alon Lavie, and Chris Dyer. 2012.
+One system, many domains: Open-domain statisti-
+cal machine translation via feature augmentation. In
+AMTA.
+Hal Daume? III and Jagadeesh Jagarlamudi. 2011. Do-
+main adaptation for machine translation by mining
+unseen words. In ACL.
+Jerome H. Friedman. 2000. Greedy function approx-
+imation: A gradient boosting machine. Annals of
+Statistics, 29:1189?1232.
+Mark Hopkins and Jonathan May. 2011. Tuning as
+ranking. In EMNLP.
+Patrick Nguyen, Milind Mahajan, and Xiaodong He.
+2007. Training non-parametric features for statis-
+tical machine translation. In Second Workshop on
+Statistical Machine Translation.
+Franz Josef Och and Hermann Ney. 2002. Discrimina-
+tive training and maximum entropy models for sta-
+tistical machine translation. In ACL.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. BLEU: a method for automatic
+evaluation of machine translation. In ACL.
+TaroWatanabe, Jun Suzuki, Hajime Tsukuda, and
+Hideki Isozaki. 2007. Online large-margin training
+for statistical machine translation. In EMNLP.
+410
+QiangWu, Christopher J. Burges, Krysta M. Svore, and
+Jianfeng Gao. 2010. Adapting boosting for infor-
+mation retrieval measures. Information Retrieval,
+13(3), June.
+4 Appendix A: Derivation of derivatives
+Here we express the loss as a function of phrase-
+level in context scores and derive the derivative of
+the loss with respect to these scores.
+Let us number all phrase-pairs in context in
+all hypotheses in all sentences as p1, . . . , pR and
+denote their input feature vectors as x1, . . . ,xR.
+We will use F (pr) and F (xr) interchange-
+ably, because the score of a phrase-pair in
+context is defined by its input feature vec-
+tor. The loss ?(F (xr)) is expressed as follows:
+?N
+n=1
+?K
+k=1 log(1 + e
+?
+pr?hnjk
+F (xr)?
+?
+pr?hnik
+F (xr)).
+Next we derive the derivatives of the loss
+?(F (x)) with respect to the phrase scores. Intu-
+itively, we are treating the scores we want to learn
+as parameters for the loss function; thus the loss
+function has a huge number of parameters, one
+for each instance of each phrase pair in context in
+each translation. We ask the loss function if these
+scores could be set in an arbitrary way, what di-
+rection it would like to move them in to be mini-
+mized. This is the direction given by the negative
+gradient.
+Each phrase-pair in context pr occurs in exactly
+one hypothesis h in one sentence. It is possible
+that two phrase-pairs in context share the same set
+of input features, but for ease of implementation
+and exposition, we treat these as different train-
+ing instances. To express the gradient with respect
+to F (xr) we therefore need to focus on the terms
+of the loss from a single sentence and to take into
+account the hypothesis pairs [hj,k, hi,k] where the
+left or the right hypothesis is the hypothesis h con-
+taining our focus phrase pair pr. ??(F (x))?F (xr) is ex-pressed as:
+= ?k:h=hik ?
+e
+?
+pr?hnjk
+F (xr)?
+?
+pr?hnik
+F (xr)
+1+e
+?
+pr?hnjk
+F (xr)?
+?
+pr?hnik
+F (xr)
++ ?k:h=hjk
+e
+?
+pr?hnjk
+F (xr)?
+?
+pr?hnik
+F (xr)
+1+e
+?
+pr?hnjk
+F (xr)?
+?
+pr?hnik
+F (xr)
+Since in the boosting step we induce a deci-
+sion tree to fit the negative gradient, we can see
+that the feature induction algorithm is trying to in-
+crease the scores of phrases that occur in better
+hypotheses (the first hypothesis in each pair), and
+it increases the scores more if weaker hypotheses
+have higher advantage; it is also trying to decrease
+the scores of phrases in weaker hypotheses that are
+currently receiving high scores.
+411
+Proceedings of the Workshop on Automatic Summarization for Different Genres, Media, and Languages, pages 33?40,
+Portland, Oregon, June 23, 2011. c?2011 Association for Computational Linguistics
+WikiTopics: What is Popular on Wikipedia and Why
+Byung Gyu Ahn1 and Benjamin Van Durme1,2 and Chris Callison-Burch1
+1Center for Language and Speech Processing
+2Human Language Technology Center of Excellence
+Johns Hopkins University
+Abstract
+We establish a novel task in the spirit of news sum-
+marization and topic detection and tracking (TDT):
+daily determination of the topics newly popular with
+Wikipedia readers. Central to this effort is a new
+public dataset consisting of the hourly page view
+statistics of all Wikipedia articles over the last three
+years. We give baseline results for the tasks of:
+discovering individual pages of interest, clustering
+these pages into coherent topics, and extracting the
+most relevant summarizing sentence for the reader.
+When compared to human judgements, our system
+shows the viability of this task, and opens the door
+to a range of exciting future work.
+1 Introduction
+In this paper we analyze a novel dataset: we have
+collected the hourly page view statistics1 for every
+Wikipedia page in every language for the last three years.
+We show how these page view statistics, along with other
+features like article text and inter-page hyperlinks, can
+be used to identify and explain popular trends, including
+popular films and music, sports championships, elections,
+natural disasters, etc.
+Our approach is to select a set of articles whose daily
+pageviews for the last fifteen days dramatically increase
+above those of the preceding fifteen day period. Rather
+than simply selecting the most popular articles for a given
+day, this selects articles whose popularity is rapidly in-
+creasing. These popularity spikes tend to be due to sig-
+nificant current events in the real world. We examine 100
+such articles for each of 5 randomly selected days in 2009
+and attempt to group the articles into clusters such that
+the clusters coherently correspond to current events and
+extract a summarizing sentence that best explains the rel-
+evant event. Quantitative and qualitative analyses are pro-
+vided along with the evaluation dataset.
+1The data does not contain any identifying information about who
+viewed the pages. See http://dammit.lt/wikistats
+Barack Obama
+Joe Biden
+White House
+Inauguration
+. . .
+US Airways Flight 1549
+Chesley Sullenberger
+Hudson River
+. . .
+Super Bowl
+Arizona Cardinals
+Figure 1: Automatically selected articles for Jan 27, 2009.
+We compare our automatically collected articles to
+those in the daily current events portal of Wikipedia
+where Wikipedia editors manually chronicle current
+events, which comprise armed conflicts, international re-
+lations, law and crime, natural disasters, social, political,
+sports events, etc. Each event is summarized with a sim-
+ple phrase or sentence that links to related articles. We
+view our work as an automatic mechanism that could po-
+tentially supplant this hand-curated method of selecting
+current events by editors.
+Figure 1 shows examples of automatically selected ar-
+ticles for January 27, 2009. We would group the arti-
+cles into 3 clusters, {Barack Obama, Joe Biden, White
+House, Inauguration} which corresponds to the inaugu-
+ration of Barack Obama, {US Airways Flight 1549, Ches-
+ley Sullenburger, Hudson River} which corresponds to
+the successful ditching of an airplane into the Hudson
+river without loss of life, and {Superbowl, Arizona Car-
+dinals} which corresponds to the then upcoming Super-
+bowl XLIII.
+We further try to explain the clusters by selecting sen-
+tences from the articles. For the first cluster, a good se-
+lection would be ?the inauguration of Barack Obama as
+the 44th president . . . took place on January 20, 2009?.
+For the second cluster, ?Chesley Burnett ?Sully? Sullen-
+berger III (born January 23, 1951) is an American com-
+33
+mercial airline pilot, . . . , who successfully carried out the
+emergency water landing of US Airways Flight 1549 on
+the Hudson River, offshore from Manhattan, New York
+City, on January 15, 2009, . . . ? would be a nice sum-
+mary, which also provides links to the other articles in
+the same cluster. For the third cluster, ?Superbowl XLIII
+will feature the American Football Conference champion
+Pittsburgh Steelers (14-4) and the National Football Con-
+ference champion Arizona Cardinals (12-7) .? would be
+a good choice which delineates the association with Ari-
+zona Cardinals.
+Different clustering methods and sentence selection
+features are evaluated and results are compared. Topic
+models, such as K-means (Manning et al, 2008) vector
+space clustering and latent Dirichlet alocation (Blei et
+al., 2003), are compared to clustering using Wikipedia?s
+link structure. To select sentences we make use of NLP
+technologies such as coreference resolution, and named
+entity and date taggers. Note that the latest revision of
+each article on the day on which the article is selected is
+used in clustering and textualization to simulate the situa-
+tion where article selection, clustering, and textualization
+are performed once every day.
+Figure 2 illustrates the pipeline of our WikiTopics sys-
+tem: article selection, clustering, and textualization.
+2 Article selection
+We would like to identify an uptrend in popularity of ar-
+ticles. In an online encyclopedia such as Wikipedia, the
+pageviews for an article reflect its popularity. Following
+the Trending Topics software2, WikiTopics?s articles se-
+lection algorithm determines each articles? monthly trend
+value as increase in pageviews within last 30 days. The
+monthly trend value tk of an article k is defined as be-
+low:
+tk =
+15?
+i=1
+dki ?
+30?
+i=16
+dki
+where
+dki = daily pageviews i? 1 days ago for an article k
+We selected 100 articles of the highest trend value for
+each day in 2009. We call the articles WikiTopics articles.
+We leave as future work other possibilities to determine
+the trend value and choose articles3, and only briefly dis-
+cuss some alternatives in this section.
+Wikipedia has a portal page called ?current events?,
+in which significant current events are listed manu-
+ally by Wikipedia editors. Figure 3 illustrates spikes in
+2http://www.trendingtopics.org
+3For example, one might leverage additional signals of real world
+events, such as Twitter feeds, etc.
+ 100
+ 1000
+ 10000
+ 100000
+ 1e+06
+ 1e+07
+ 1e+08
+Dec 06 Dec 20 Jan 03 Jan 17 Jan 31
+P
+ag
+e 
+vi
+ew
+s
+Barack Obama
+United States
+List of Presidents of the United States
+President of the United States
+African American
+List of African-American firsts
+Figure 3: Pageviews for all the hand-curated articles related
+to the inauguration of Barack Obama. Pageviews spike on the
+same day as the event took place?January 20, 2009.
+pageviews of the hand-curated articles related to the in-
+auguration of Barack Obama, which shows clear correla-
+tion between the spikes and the day on which the relevant
+event took place. It is natural to contrast WikiTopics ar-
+ticles to this set of hand-curated articles. We evaluated
+WikiTopics articles against hand-curated articles as gold
+standard and had negative results with precision of 0.13
+and recall of 0.28.
+There are a few reasons for this. First, there are
+much fewer hand-curated articles than WikiTopics arti-
+cles: 17,253 hand-selected articles vs 36,4004 WikiTopics
+articles; so precision cannot be higher than 47%. Second,
+many of the hand-selected articles turned out to have very
+low pageviews: 6,294 articles (36.5%) have maximum
+daily pageviews less than 1,000 whereas WikiTopics arti-
+cles have increase in pageviews of at least 10,000. It is ex-
+tremely hard to predict the hand-curated articles based on
+pageviews. Figure 4 further illustrates hand-curated arti-
+cles? lack of increase in pageviews as opposed to Wiki-
+Topics articles. On the contrary, nearly half of the hand-
+curated articles have decrease in pageviews. For the hand-
+curated articles, it seems that spikes in pageviews are
+an exception rather than a commonality. We therefore
+concluded that it is futile to predict hand-curated arti-
+cles based on pageviews. The hand-curated articles suffer
+from low popularity and do not spike in pageviews often.
+Figure 5 contrasts the WikiTopics articles and the hand-
+curated articles. The WikiTopics articles shown here do
+not appear in the hand-curated articles within fifteen days
+before or after, and vice versa. WikiTopics selected arti-
+cles about people who played a minor role in the relevant
+event, recently released films, their protagonists, popular
+TV series, etc. Wikipedia editors selected articles about
+4One day is missing from our 2009 pageviews statistics.
+34
+Daily Page Views Topic Selection Clustering Textualization
+Figure 2: Process diagram: (a) Topic selection: select interesting articles based on increase in pageviews. (b) Clustering: cluster the
+articles according to relevant events using topic models or Wikipedia?s hyperlink structure. (c) Textualization: select the sentence
+that best summarizes the relevant event.
+-2
+ 0
+ 2
+ 4
+ 6
+ 8
+ 0  0.2  0.4  0.6  0.8  1
+lo
+g 
+ra
+tio
+quantile
+WikiTopics articles
+hand-curated articles
+Figure 4: Log ratio of the increase in pageviews:
+log
+?
+i = 115dik/
+?
+i = 1630. Zero means no change
+in pageviews. WikiTopics articles show pageviews increase in
+a few orders of magnitude as opposed to hand-curated articles.
+actions, things, geopolitical or organizational names in
+the relevant event and their event description mentions
+all of them.
+For this paper we introduce the problem of topic se-
+lection along with a baseline solution. There are vari-
+ous viable alternatives to the monthly trend value. As
+one of them, we did some preliminary experiments with
+the daily trend value, which is defined by dk1 ? d
+k
+2 , i.e.
+the difference of the pageviews between the day and the
+previous day: we found that articles selected using the
+daily trend value have little overlap?less than half the ar-
+ticles overlapped with the monthly trend value. Future
+work will consider the addition of sources other than
+pageviews, such as edit histories and Wikipedia category
+information, along with more intelligent techniques to
+combine these different sources.
+3 Clustering
+Clustering plays a central role to identify current events;
+a group of coherently related articles corresponds to a
+WikiTopics articles
+Joe Biden
+Notorious (2009 film)
+The Notorious B.I.G.
+Lost (TV series)
+. . .
+hand-curated articles
+Fraud
+Florida
+Hedge fund
+Arthur Nadel
+Federal Bureau of Investigation
+Figure 5: Illustrative articles for January 27, 2009. WikiTopics
+articles here do not appear in hand-curated articles within fifteen
+days before or after, and vice versa. The hand-curated articles
+shown here are all linked from a single event ?Florida hedge
+fund manager Arthur Nadel is arrested by the United States Fed-
+eral Bureau of Investigation and charged with fraud.?
+current event. Clusters, in general, may have hierarchies
+and an element may be a member of multiple clusters.
+Whereas Wikipedia?s current events are hierarchically
+compiled into different levels of events, we focus on flat
+clustering, leaving hierarchical clustering as future work,
+but allow multiple memberships.
+In addition to clustering using Wikipedia?s inter-page
+hyperlink structure, we experimented with two families
+of clustering algorithms pertaining to topic models: the
+K-means clustering vector space model and the latent
+Dirichlet alocation (LDA) probabilistic topic model. We
+used the Mallet software (McCallum, 2002) to run these
+topic models. We retrieve the latest revision of each arti-
+cle on the day that WikiTopics selected it. We strip unnec-
+essary HTML tags and Wiki templates with mwlib5 and
+split sentences with NLTK (Loper and Bird, 2002). Nor-
+malization, tokenization, and stop words removal were
+performed, but no stemming was performed. The uni-
+gram (bag-of-words) model was used and the number
+5http://code.pediapress.com/wiki/wiki/mwlib
+35
+Test set # Clusters B3 F-score
+Human-1 48.6 0.70 ? 0.08
+Human-2 50.0 0.71 ? 0.11
+Human-3 53.8 0.74 ? 0.10
+ConComp 31.8 0.42 ? 0.18
+OneHop 45.2 0.58 ? 0.17
+K-means tf 50 0.52 ? 0.04
+K-means tf-idf 50 0.58 ? 0.09
+LDA 44.8 0.43 ? 0.08
+Table 1: Clustering evaluation: F-scores are averaged across
+gold standard datasets. ConComp and OneHop are using the
+link structure. K-means clustering with tf-idf performs best.
+Manual clusters were evaluated against those of the other two
+annotators to determine inter-annotator agreement.
+of clusters/topics K was set to 50, which is the average
+number of clusters in the human clusters6. For K-means,
+the common settings were used: tf and tf-idf weighting
+and cosine similarity (Allan et al, 2000). For LDA, we
+chose the most probable topic for each article as the clus-
+ter ID. Two different clustering schemes make use of the
+inter-page hyperlink structure: ConComp and OneHop.
+In these schemes, the link structure is treated as a graph,
+in which each page corresponds to a vertex and each link
+to an undirected edge. ConComp groups a set of arti-
+cles that are connected together. OneHop chooses an ar-
+ticle and groups a set of articles that are directly linked.
+The number of resulting clusters depends on the order
+in which you choose an article. To find the minimum or
+maximum number of such clusters would be computa-
+tionally expensive. Instead of attempting to find the op-
+timal number of clusters, we take a greedy approach and
+iteratively create clusters that maximize the central node
+connectivity, stopping when all nodes are in at least one
+cluster. This allows for singleton clusters.
+Three annotators manually clustered WikiTopics arti-
+cles for five randomly selected days. The three manual
+clusters were evaluated against each other to measure
+inter-annotator agreement, using the multiplicity B3 met-
+ric (Amigo? et al, 2009). Table 1 shows the results. The
+B3 metric is an extrinsic clustering evaluation metric and
+needs a gold standard set of clusters to evaluate against.
+The multiplicity B3 works nicely for overlapping clus-
+ters: the metric does not need to match cluster IDs and
+only considers the number of the clusters that a pair of
+data points shares. For a pair of data points e and e?, let
+C(e) be the set of the test clusters that e belongs to, and
+L(e) be the set of e?s gold standard clusters. The multi-
+6K=50 worked reasonably well for the most cases. We are planning
+to explore a more principled way to set the number.
+Airbus A320 family
+Air Force One
+Chesley Sullenberger
+US Airways Flight 1549
+Super Bowl XLIII
+Arizona Cardinals
+Super Bowl
+Kurt Warner
+2009 flu pandemic by country
+Severe acute respiratory syndrome
+2009 flu pandemic in the United States
+Figure 6: Examples of clusters: K-means clustering on the arti-
+cles of January 27, 2009 and May 12, 2009. The centroid article
+for each cluster, defined as the closest article to the center of the
+cluster in vector space, is in bold.
+plicity B3 scores are evaluated as follows:
+Prec(e, e?) =
+min (|C(e) ? C(e?)|, |L(e) ? L(e?)|)
+|C(e) ? C(e?)|
+Recall(e, e?) =
+min (|C(e) ? C(e?)|, |L(e) ? L(e?)|)
+|L(e) ? L(e?)|
+The overall B3 scores are evaluated as follows:
+Prec = AvgeAvge?.C(e)?C(e?)6=0Prec(e, e
+?)
+Recall = AvgeAvge?.L(e)?L(e?)6=0Recall(e, e
+?)
+The inter-annotator agreement in the B3 scores are in the
+range of 67%?74%. K-means clustering performs best,
+achieving 79% precision compared to manual cluster-
+ing. OneHop clustering using the link structure achieved
+comparable performance. LDA performed significantly
+worse, comparable to ConComp clustering.
+Clustering the articles according to the relevance to re-
+cent popularity is not trivial even for humans. In Wiki-
+Topics articles for February 10, 2009, Journey (band) and
+Bruce Springsteen may seem to be relevant to Grammy
+Awards, but in fact they are relevant on this day because
+they performed the halftime show at the Super Bowl. K-
+means fails to recognize this and put them into the cluster
+of Grammy Awards, while ConComp merged Grammy
+Awards and Super Bowl into the same cluster. OneHop
+kept the two clusters intact and benefited from putting
+Bruce Springsteen into both the clusters. LDA cluster-
+ing does not have such a benefit; its performance might
+have suffered from our allowing only a single member-
+ship for an article. Clustering using the link structure per-
+forms comparably with other clustering algorithms with-
+out using topic models. It is worth noting that there are
+a few ?octopus? articles that have links to many articles.
+The United States on January 27, 2009 was disastrous,
+with its links to 58 articles, causing ConComp clustering
+to group 89 articles into a single cluster. OneHop clus-
+tering?s condition that groups only articles that are one
+hop away alleviates the issue and it also benefited from
+putting an article into multiple clusters.
+36
+To see if external source help better clustering, we ex-
+plored the use of news articles. We included the news ar-
+ticles that we crawled from various news websites into
+the same vector space as the Wikipedia articles, and ran
+K-means clustering with the same settings as before. For
+each day, we experimented with news articles within dif-
+ferent numbers of past days. The results did not show
+significant improvement over clustering without external
+news articles. This needs further investigation7.
+4 Textualization
+We would like to generate textual descriptions for the
+clustered articles to explain why they are popular and
+what current event they are relevant to. We started with
+a two-step approach similar to multi-document extrac-
+tive summarization approaches (Mckeown et al, 2005).
+The first step is sentence selection; we extract the best
+sentence that describes the relevant event for each arti-
+cle. The second step is combining the selected sentences
+of a cluster into a coherent summary. Here, we focus on
+the first step of selecting a sentence and evaluate the se-
+lected sentences. The selected sentences for each clus-
+ter are then put together without modification, where the
+quality of generated summary mainly depends on the ex-
+tracted sentences at the first step. We consider each article
+separately, using as features only information such as date
+expressions and references to the topic of the article. Fu-
+ture work will consider sentence extraction, aware of the
+related articles in the same cluster, and better summariza-
+tion techniques, such as sentence fusion or paraphrasing.
+We preprocess the Wikipedia articles using the Serif
+system (Boschee et al, 2005) for date tagging and coref-
+erence resolution. The identified temporal expressions
+are in various formats such as exact date (?February 12,
+1809?), a season (?spring?), a month (?December 1808?),
+a date without a specific year (?November 19?), and even
+relative time (?now?, ?later that year?, ?The following
+year?). Some examples are shown in Figure 7. The en-
+tities mentioned in a given article are compiled into a list
+and the mentions of each entity, including pronouns, are
+linked to the entity as a coreference chain. Some exam-
+ples are shown in Figure 9.
+In our initial scheme, we picked the first sentence
+of each article because the first sentence is usually an
+overview of the topic of the article and often relevant to
+the current event. For example, a person?s article often
+has the first line with one?s recent achievement or death.
+An article about an album or a film often begins with the
+release date. We call this First.
+7News articles tend to group with other news articles. We are cur-
+rently experimenting with different filtering and parameters. Also note
+that we only experimented with all news articles on a given day. Clus-
+tering with selective news articles might help.
+February 12, 1809
+1860
+now
+the 17th century
+some time
+December 1808
+34 years old
+spring
+September
+Later that year
+November 19
+that same month
+The following winter
+The following year
+April 1865
+late 1863
+Figure 7: Selected examples of temporal expressions identified
+by Serif from 247 such date and time expressions extracted from
+the article Abraham Lincoln.
+We also picked the sentence with the most recent date
+to the day on which the article was selected. Dates in the
+near future are considered in the same way as the recent
+dates. Dates may appear in various formats, so we make a
+more specific format take precedence, i.e. ?February 20,
+2009? is selected over vaguer dates such as ?February
+2009? or ?2009?. We call this scheme Recent.
+As the third scheme, we picked the sentence with the
+most recent date among those with a reference to the ar-
+ticle?s title. The reasoning behind this is if the sentence
+refers to the title of the article, it is more likely to be rel-
+evant to the current event. We call this scheme Self.
+After selecting a sentence for each cluster, we substi-
+tute personal pronouns in the sentence with their proper
+names. This step enhances readability of the sentence,
+which often refers to people by a pronoun such as ?he?,
+?his?, ?she?, or ?her?. The examples of substituted proper
+names appear in Figure 9 in bold. The Serif system classi-
+fies which entity mentions are proper names for the same
+person, but choosing the best name among the names is
+not a trivial task: proper names may vary from John to
+John Kennedy to John Fitzgerald ?Jack? Kennedy. We
+choose the most frequent proper name.
+For fifty randomly chosen articles over the five se-
+lected days, two annotators selected the sentences that
+best describes why an article gained popularity recently,
+among 289 sentences per each article on average from
+the article text. For each article, annotators picked a sin-
+gle best sentence, and possibly multiple alternative sen-
+tences. If there is no such single sentence that best de-
+scribes a relevant event, annotators marked none as the
+best sentence and listed alternative sentences that par-
+tially explain the relevant event. The evaluation results
+for all the selection schemes are shown in Table 2. To
+see inter-annotator agreement, two annotators? selections
+were evaluated against each other. The other selection
+schemes are evaluated against both the two annotators?
+selection and their scores in the table are averaged across
+the two. The precision and recall score for best sentences
+are determined by evaluating a scheme?s selection of the
+37
+2009-01-27: Inauguration of Barack Obama
+Gold: The inauguration of Barack Obama as the forty-fourth President
+of the United States took place on January 20, 2009.
+Alternatives: 1. The inauguration, with a record attendance for any
+event held in Washington, D.C., marked the commencement of the
+four-year term of Barack Obama as President and Joseph Biden as
+Vice President. 2. With his inauguration as President of the United
+States, Obama became the first African American to hold the office
+and the first President born in Hawaii. 3. Official events were held in
+Washington, D.C. from January 18 to 21, 2009, including the We Are
+One: The Obama Inaugural Celebration at the Lincoln Memorial, a day
+of service on the federal observance of the Martin Luther King, Jr. Day,
+a ?Kids? Inaugural: We Are the Future? concert event at the Verizon
+Center, the inaugural ceremony at the U.S. Capitol, an inaugural
+luncheon at National Statuary Hall, a parade along Pennsylvania
+Avenue, a series of inaugural balls at the Washington Convention
+Center and other locations, a private White House gala and an inaugural
+prayer service at the Washington National Cathedral.
+First: The inauguration of Barack Obama as the forty-fourth President
+of the United States took place on January 20, 2009.
+Recent: On January 22, 2009, a spokesperson for the Joint Committee
+on Inaugural Ceremonies also announced that holders of blue, purple
+and silver tickets who were unable to enter the Capitol grounds to view
+the inaugural ceremony would receive commemorative items.
+Self: On January 21, 2009, President Obama, First Lady Michelle
+Obama, Vice President Biden and Dr. Jill Biden attended an inaugural
+prayer service at the Washington National Cathedral.
+2009-02-10: February 2009 Great Britain and Ireland snowfall
+Gold: The snowfall across Great Britain and Ireland in February 2009
+is a prolonged period of snowfall that began on 1 February 2009.
+Alternative: Many areas experienced their largest snowfall levels in 18
+years.
+First: The snowfall across Great Britain and Ireland in February 2009
+is a prolonged period of snowfall that began on 1 February 2009.
+Recent: BBC regional summary - 4 February 2009
+Self: The snowfall across Great Britain and Ireland in February 2009 is
+a prolonged period of snowfall that began on 1 February 2009.
+2009-04-19: Wilkins Sound
+Gold: On 5 April 2009 the thin bridge of ice to the Wilkins Ice Shelf
+off the coast of Antarctica splintered, and scientists expect it could
+cause the collapse of the Shelf.
+Alternatives: 1. There are reports the shelf has exploded into hundreds
+of small ice bergs. 2. On 5 April 2009, the ice bridge connecting part
+of the ice shelf to Charcot Island collapsed.
+First: Wilkins Sound is a seaway in Antarctica that is largely occupied
+by the Wilkins Ice Shelf.
+Recent: On 5 April 2009 the thin bridge of ice to the Wilkins Ice Shelf
+off the coast of Antarctica splintered, and scientists expect it could
+cause the collapse of the Shelf.
+Self: On 25 March 2008 a chunk of the Wilkins ice shelf disintegrated,
+putting an even larger portion of the glacial ice shelf at risk.
+Figure 8: Sentence selection: First selects the first sentence, and
+often fails to relate the current event. Recent tend to pinpoint the
+exact sentence that describes the relevant current event, but fails
+when there are several sentences with a recent temporal expres-
+sion. Self helps avoid sentences that does not refer to the topic
+of the article, but suffers from errors propagated from corefer-
+ence resolution.
+2009-01-27: Barack Obama
+Before: He was inaugurated as President on January 20, 2009.
+After: Obama was inaugurated as President on January 20,
+2009.
+Coref: {Barack Hussein Obama II (brk hsen obm; born August
+4,, Barack Obama, Barack Obama as the forty-fourth President,
+Barack Obama, Sr. , Crain?s Chicago Business naming Obama,
+Michelle Obama, Obama, Obama in Indonesian, Senator
+Obama,}
+2009-02-10: Rebirth (Lil Wayne album)
+Before: He also stated the album will be released on April 7,
+2009.
+After: Lil Wayne also stated the album will be released on
+April 7, 2009.
+Coref: {American rapper Lil Wayne, Lil Wayne, Wayne}
+2009-04-19: Phil Spector
+Before: His second trial resulted in a conviction of second
+degree murder on April 13, 2009.
+After: Spector?s second trial resulted in a conviction of second
+degree murder on April 13, 2009.
+Coref: {Mr. Spector, Phil Spector, Phil Spector? The character
+of Ronnie ?Z, Spector, Spector-, Spector (as a producer),
+Spector himself, Spector of second-degree murder, Spector,
+who was conducting the band for all the acts,, Spektor, wife
+Ronnie Spector}
+2009-05-12: Eminem
+Before: He is planning on releasing his first album since 2004,
+Relapse, on May 15, 2009.
+After: Eminem is planning on releasing his first album since
+2004, Relapse, on May 15, 2009.
+Coref: {Eminem, Marshall Bruce Mathers, Marshall Bruce
+Mathers III, Marshall Bruce Mathers III (born October 17,,
+Mathers}
+2009-10-12: Brett Favre
+Before: He came out of retirement for the second time and
+signed with the Minnesota Vikings on August 18, 2009.
+After: Favre came out of retirement for the second time and
+signed with the Minnesota Vikings on August 18, 2009.
+Coref: {Bonita Favre, Brett Favre, Brett Lorenzo Favre, Brett?s
+father Irvin Favre, Deanna Favre, Favre, Favre,, Favre (ISBN
+978-1590710364) which discusses their personal family and
+Green Bay Packers family, Irvin Favre, Southern Miss. Favre,
+the Brett Favre, The following season Favre, the jersey Favre}
+Figure 9: Pronoun replacement: Personal pronouns are substi-
+tuted with their proper names, which are italicized. The coref-
+erence chain for the entity is also shown; our method correctly
+avoids names wrongly placed in the chain. Note that unlike the
+other sentences, the last one is not related to the current event,
+Brett Favre?s victory against Green Bay Packers.
+38
+Single best Alternatives
+Scheme Precision Recall Precision Recall
+Human 0.50 0.55 0.85 0.75
+First 0.14 0.20 0.33 0.40
+Recent 0.31 0.44 0.51 0.60
+Self 0.31 0.36 0.49 0.48
+Self fallback 0.33 0.46 0.52 0.62
+Table 2: Textualization: evaluation results of sentence selection
+schemes. Self fallback scheme first tries to select the best sen-
+tence as the Self scheme, and if it fails to select one it falls back
+to the Recent scheme.
+best sentences against a gold standard?s selection. To
+evaluate alternative sentences, precision is measured as
+the fraction of articles where the test and gold standard
+selections overlap (share at least one sentence), compared
+to the total number of articles that have at least one sen-
+tence selected according to the test set. Recall is defined
+by instead dividing by the number of articles that have at
+least one sentence selected in the gold standard.
+The low inter-annotator agreement for selecting the
+best sentence shows the difficulty of the task. However,
+when their sentence selection is evaluated by allowing
+multiple alternative gold standard sentences, the agree-
+ment is higher. It seems that there are a set of articles for
+which it is easy to pick the best sentence that two anno-
+tators and automatic selection schemes easily agree on,
+and another set of articles for which it is difficult to find
+such a sentence. In the easier articles, the best sentence
+often includes a recent date expression, which is easily
+picked up by the Recent scheme. Figure 8 illustrates such
+cases. In the more difficult articles, there are no such sen-
+tences with recent dates. X2 (film) is such an example; it
+was released in 2003. The release of the prequel X-Men
+Origins: Wolverine in 2009 renewed its popularity and
+the X2 (film) article still does not have any recent dates.
+There is a more subtle case: the article Farrah Fawcett
+includes many sentences with recent dates in a section,
+which describes the development of a recent event. It is
+hard to pinpoint the best one among them.
+Sentence selection heavily depends on other NLP com-
+ponents, so errors in them could result in the error in sen-
+tence selection. Serena Williams is an example where an
+error in sentence splitting propagates to sentence selec-
+tion. The best sentence manually selected was the first
+sentence in the article ?Serena Jameka Williams . . . , as of
+February 2, 2009, is ranked World No. 1 by the Women?s
+Tennis Association . . . .? The sentence was disastrously
+divided into two sentences right after ?No.? by NLTK
+during preprocessing. In other words, the gold standard
+sentence could not be selected no matter how well se-
+lection performs. Another source of error propagation is
+coreference resolution. The Self scheme limits sentence
+selection to the sentences with a reference to the articles?
+title, and it failed to improve over Recent. In qualitative
+analysis, 3 out of 4 cases that made a worse choice re-
+sulted from failing to recognize a reference to the topic
+of the article. By having it fall back to Recent?s selection
+when it failed to find any best sentence, its performance
+marginally improved. Improvements of the components
+would result in better performance of sentence selection.
+WikiTopics?s current sentence extraction succeeded in
+generating the best or alternative sentences that summa-
+rizes the relevant current event for more than half of the
+articles, in enhanced readability through coreference res-
+olution. For the other difficult cases, it needs to take dif-
+ferent strategies rather than looking for the most recent
+date expressions. Alternatives may consider references to
+other related articles. In future work, selected sentences
+will be combined to create summary of a current event,
+and will use sentence compression, fusion and paraphras-
+ing to create more succinct summaries.
+5 Related work
+WikiTopics?s pipeline architecture resembles that of news
+summarization systems such as Columbia Newsblaster
+(McKeown et al, 2002). Newsblaster?s pipeline is com-
+prised of components for performing web crawls, article
+text extraction, clustering, classification, summarization,
+and web page generation. The system processes a con-
+stant stream of newswire documents. In contrast, Wiki-
+Topics analyzes a static set of articles. Hierarchical clus-
+tering like three-level clustering of Newsblaster (Hatzi-
+vassiloglou et al, 2000) could be applied to WikiTopics
+to organize current events hierarchically. Summarizing
+multiple sentences that are extracted from the articles in
+the same cluster would provide a comprehensive descrip-
+tion about the current event. Integer linear programming-
+based models (Woodsend and Lapata, 2010) may prove to
+be useful to generate summaries while global constraints
+like length, grammar, and coverage are met.
+The problem of Topic Detection and Tracking (TDT)
+is to identify and follow new events in newswire, and
+to detect the first story about a new event (Allan et al,
+1998). Allan et al (2000) evaluated a variety of vector
+space clustering schemes, where the best settings from
+those experiments were then used in our work. This was
+followed recently by Petrovic? et al (2010), who took an
+approximate approach to first story detection, as applied
+to Twitter in an on-line streaming setting. Such a system
+might provide additional information to WikiTopics by
+helping to identify and describe current events that have
+yet to be explicitly described in a Wikipedia article. Svore
+et al (2007) explored enhancing single-document sum-
+mariation using news query logs, which may also be ap-
+plicable to WikiTopics.
+Wikipedia?s inter-article links have been utilized to
+39
+construct a topic ontology (Syed et al, 2008), word seg-
+mentation corpora (Gabay et al, 2008), or to compute
+semantic relatedness (Milne and Witten, 2008). In our
+work, we found the link structure to be as useful to cluster
+topically related articles as well as the article text. In fu-
+ture work, the text and the link structure will be combined
+as Chaudhuri et al (2009) explored multi-view hierarchi-
+cal clustering for Wikipedia articles.
+6 Conclusions
+We have described a pipeline for article selection, clus-
+tering, and textualization in order to identify and describe
+significant current events as according to Wikipedia con-
+tent, and metadata. Similarly to Wikipedia editors main-
+taining that site?s ?current events? pages, we are con-
+cerned with neatly collecting articles of daily relevance,
+only automatically, and more in line with expressed user
+interest (through the use of regularly updated page view
+logs). We have suggested that Wikipedia?s hand-curated
+articles cannot be predicted solely based on pageviews.
+Clustering methods based on topic models and inter-
+article link structure are shown to be useful to group
+a set of articles that are coherently related to a current
+event. Clustering based on only link structure achieved
+comparable performance with clustering based on topic
+models. In a third of cases, the sentence that best de-
+scribed a current event could be extracted from the ar-
+ticle text based on temporal expressions within an article.
+We employed a coreference resolution system assist in
+text generation, for improved readability. As future work,
+sentence compression, fusion, and paraphrasing could be
+applied to selected sentences with various strategies to
+more succinctly summarize the current events. Our ap-
+proach is language independent, and may be applied to
+multi-lingual current event detection, exploiting further
+the online encyclopedia?s cross-language references. Fi-
+nally, we plan to leverage social media such as Twit-
+ter as an additional signal, especially in cases where es-
+sential descriptive information has yet to be added to a
+Wikipedia article of interest.
+Acknowledgments
+We appreciate Domas Mituzas and Fre?de?ric Schu?tz for
+the pageviews statistics and Peter Skomoroch for the
+Trending Topics software. We also thank three anony-
+mous reviewers for their thoughtful advice. This re-
+search was supported in part by the NSF under grant IIS-
+0713448 and the EC through the EuroMatrixPlus project.
+The first author was funded by Samsung Scholarship.
+Opinions, interpretations, and conclusions are those of
+the authors and not necessarily endorsed by the sponsors.
+References
+James Allan, Jaime Carbonell, George Doddington, Jonathan
+Yamron, and Yiming Yang. 1998. Topic Detection and
+Tracking Pilot Study Final Report. In Proceedings of the
+DARPA Broadcast News Transcription and Understanding
+Workshop.
+James Allan, Victor Lavrenko, Daniella Malin, and Russell
+Swan. 2000. Detections, bounds, and timelines: UMass
+and TDT-3. In Proceedings of Topic Detection and Track-
+ing Workshop.
+Enrique Amigo?, Julio Gonzalo, Javier Artiles, and Felisa
+Verdejo. 2009. A comparison of extrinsic clustering
+evaluation metrics based on formal constraints. Inf. Retr.,
+12(4):461?486.
+D.M. Blei, A.Y. Ng, and M.I. Jordan. 2003. Latent Dirichlet
+allocation. Journal of Machine Learning Research.
+Elizabeth Boschee, Ralph Weischedel, and Alex Zamanian.
+2005. Automatic information extraction. In Proceedings of
+IA.
+Kamalika Chaudhuri, Sham M. Kakade, Karen Livescu, and
+Karthik Sridharan. 2009. Multi-view clustering via canoni-
+cal correlation analysis. In Proceedings of ICML.
+David Gabay, Ziv Ben-Eliahu, and Michael Elhadad. 2008. Us-
+ing wikipedia links to construct word segmentation corpora.
+In Proceedings of AAAI Workshops.
+Vasileios Hatzivassiloglou, Luis Gravano, and Ankineedu Ma-
+ganti. 2000. An investigation of linguistic features and clus-
+tering algorithms for topical document clustering. In Pro-
+ceedings of SIGIR.
+Edward Loper and Steven Bird. 2002. NLTK: the Natural Lan-
+guage Toolkit. In Proceedings of ACL.
+C. Manning, P. Raghavan, and H. Schu?tze. 2008. Introduction
+to information retrieval. Cambridge University Press.
+Andrew Kachites McCallum. 2002. MALLET: A Machine
+Learning for Language Toolkit. http://mallet.cs.umass.edu.
+Kathleen R. McKeown, Regina Barzilay, David Evans,
+Vasileios Hatzivassiloglou, Judith L. Klavans, Ani Nenkova,
+Carl Sable, Barry Schiffman, and Sergey Sigelman. 2002.
+Tracking and summarizing news on a daily basis with
+Columbia?s Newsblaster. In Proceedings of HLT.
+Kathleen Mckeown, Rebecca J. Passonneau, David K. Elson,
+Ani Nenkova, and Julia Hirschberg. 2005. Do summaries
+help? a task-based evaluation of multi-document summariza-
+tion. In Proceedings of SIGIR.
+David Milne and Ian H. Witten. 2008. An effective, low-cost
+measure of semantic relatedness obtained from Wikipedia
+links. In Proceedings of AAAI Workshops.
+Sas?a Petrovic?, Miles Osborne, and Victor Lavrenko. 2010.
+Streaming first story dectection with application to Twitter.
+In Proceedings of NAACL.
+Krysta M. Svore, Lucy Vanderwende, and Christopher J.C.
+Burges. 2007. Enhancing single-document summarization
+by combining ranknet and third-party sources. In Proceed-
+ings of EMNLP-CoLing.
+Zareen Saba Syed, Tim Finin, and Anupam Joshi. 2008.
+Wikipedia as an ontology for describing documents. In Pro-
+ceedings of ICWSM.
+Kristian Woodsend and Mirella Lapata. 2010. Automatic gen-
+eration of story highlights. In Proceedings of ACL.
+40

@@ -1,0 +1,3787 @@
+Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 322?332,
+Seattle, Washington, USA, 18-21 October 2013. c?2013 Association for Computational Linguistics
+Efficient Higher-Order CRFs for Morphological Tagging
+Thomas Mu?ller??, Helmut Schmid??, and Hinrich Schu?tze?
+?Center for Information and Language Processing, University of Munich, Germany
+?Institute for Natural Language Processing , University of Stuttgart, Germany
+muellets@cis.lmu.de
+Abstract
+Training higher-order conditional random
+fields is prohibitive for huge tag sets. We
+present an approximated conditional random
+field using coarse-to-fine decoding and early
+updating. We show that our implementation
+yields fast and accurate morphological taggers
+across six languages with different morpho-
+logical properties and that across languages
+higher-order models give significant improve-
+ments over 1st-order models.
+1 Introduction
+Conditional Random Fields (CRFs) (Lafferty et al,
+2001) are arguably one of the best performing se-
+quence prediction models for many Natural Lan-
+guage Processing (NLP) tasks. During CRF train-
+ing forward-backward computations, a form of dy-
+namic programming, dominate the asymptotic run-
+time. The training and also decoding times thus
+depend polynomially on the size of the tagset and
+exponentially on the order of the CRF. This prob-
+ably explains why CRFs, despite their outstanding
+accuracy, normally only are applied to tasks with
+small tagsets such as Named Entity Recognition and
+Chunking; if they are applied to tasks with bigger
+tagsets ? e.g., to part-of-speech (POS) tagging for
+English ? then they generally are used as 1st-order
+models.
+In this paper, we demonstrate that fast and accu-
+rate CRF training and tagging is possible for large
+tagsets of even thousands of tags by approximat-
+ing the CRF objective function using coarse-to-fine
+decoding (Charniak and Johnson, 2005; Rush and
+Petrov, 2012). Our pruned CRF (PCRF) model has
+much smaller runtime than higher-order CRF mod-
+els and may thus lead to an even broader application
+of CRFs across NLP tagging tasks.
+We use POS tagging and combined POS and
+morphological (POS+MORPH) tagging to demon-
+strate the properties and benefits of our approach.
+POS+MORPH disambiguation is an important pre-
+processing step for syntactic parsing. It is
+usually tackled by applying sequence prediction.
+POS+MORPH tagging is also a good example of a
+task where CRFs are rarely applied as the tagsets are
+often so big that even 1st-order dynamic program-
+ming is too expensive. A workaround is to restrict
+the possible tag candidates per position by using ei-
+ther morphological analyzers (MAs), dictionaries or
+heuristics (Hajic?, 2000). In this paper, however we
+show that when using pruning (i.e., PCRFs), CRFs
+can be trained in reasonable time, which makes hard
+constraints unnecessary.
+In this paper, we run successful experiments on
+six languages with different morphological prop-
+erties; we interpret this as evidence that our ap-
+proach is a general solution to the problem of
+POS+MORPH tagging. The tagsets in our experi-
+ments range from small sizes of 12 to large sizes of
+up to 1811. We will see that even for the smallest
+tagset, PCRFs need only 40% of the training time of
+standard CRFs. For the bigger tagset sizes we can
+reduce training times from several days to several
+hours. We will also show that training higher-order
+PCRF models takes only several minutes longer than
+training 1st-order models and ? depending on the
+language ? may lead to substantial accuracy im-
+322
+Language Sentences Tokens POS MORPH POS+MORPH OOV
+Tags Tags Tags Rate
+ar (Arabic) 15,760 614,050 38 516 516 4.58%
+cs (Czech) 38,727 652,544 12 1,811 1,811 8.58%
+en (English) 38,219 912,344 45 45 3.34%
+es (Spanish) 14,329 427,442 12 264 303 6.47%
+de (German) 40,472 719,530 54 255 681 7.64%
+hu (Hungarian) 61,034 1,116,722 57 1,028 1,071 10.71%
+Table 1: Training set statistics. Out-Of-Vocabulary (OOV) rate is regarding the development sets.
+provements. For example in German POS+MORPH
+tagging, a 1st-order model (trained in 32 minutes)
+achieves an accuracy of 88.96 while a 3rd-order
+model (trained in 35 minutes) achieves an accuracy
+of 90.60.
+The remainder of the paper is structured as fol-
+lows: Section 2 describes our CRF implementa-
+tion1 and the feature set used. Section 3 sum-
+marizes related work on tagging with CRFs, effi-
+cient CRF tagging and coarse-to-fine decoding. Sec-
+tion 4 describes experiments on POS tagging and
+POS+MORPH tagging and Section 5 summarizes
+the main contributions of the paper.
+2 Methodology
+2.1 Standard CRF Training
+In a standard CRF we model our sentences using a
+globally normalized log-linear model. The proba-
+bility of a tag sequence ~y given a sentence ~x is then
+given as:
+p(~y|~x) =
+exp
+?
+t,i ?i ? ?i(~y, ~x, t)
+Z(~?, ~x)
+Z(~?, ~x) =
+?
+~y
+exp
+?
+t,i
+?i ? ?i(~y, ~x, t)
+Where t and i are token and feature indexes, ?i is
+a feature function, ?i is a feature weight and Z is a
+normalization constant. During training the feature
+weights ? are set to maximize the conditional log-
+likelihood of the training data D:
+1Our java implementation MarMoT is available at
+https://code.google.com/p/cistern/
+llD(~?) =
+?
+(~x,~y)?D
+log p(~y|~x,~?)
+In order to use numerical optimization we have to
+calculate the gradient of the log-likelihood, which is
+a vector of partial derivatives ?llD(~?)/??i. For a
+training sentence ~x, ~y and a token index t the deriva-
+tive wrt feature i is given by:
+?i(~y, ~x, t)?
+?
+~y?
+?i(~y
+?, ~x, t) p(~y?|~x,~?)
+This is the difference between the empirical fea-
+ture count in the training data and the estimated
+count in the current model ~?. For a 1st-order model,
+we can replace the expensive sum over all possible
+tag sequences ~y? by a sum over all pairs of tags:
+?i(yt, yt+1, ~x, t)?
+?
+y,y?
+?i(y, y
+?, ~x, t) p(y, y?|~x,~?)
+The probability of a tag pair p(y, y?|~x,~?) can then
+be calculated efficiently using the forward-backward
+algorithm. If we further reduce the complexity of the
+model to a 0-order model, we obtain simple maxi-
+mum entropy model updates:
+?i(yt, ~x, t)?
+?
+y
+?i(y, ~x, t) p(y|~x,~?)
+2.2 Pruned CRF Training
+As we discussed in the introduction, we want to de-
+code sentences by applying a variant of coarse-to-
+fine tagging. Naively, to later tag with nth-order
+323
+accuracy we would train a series of n CRFs of in-
+creasing order. We would then use the CRF of order
+n ? 1 to restrict the input of the CRF of order n.
+In this paper we approximate this approach, but do
+so while training only one integrated model. This
+way we can save both memory (by sharing feature
+weights between different models) and training time
+(by saving lower-order updates).
+The main idea of our approach is to create increas-
+ingly complex lattices and to filter candidate states
+at every step to prevent a polynomial increase in lat-
+tice size. The first step is to create a 0-order lat-
+tice, which as discussed above, is identical to a se-
+ries of independent local maximum entropy models
+p(y|~x, t). The models base their prediction on the
+current word xt and the immediate lexical context.
+We then calculate the posterior probabilities and re-
+move states y with p(y|~x, t) < ?0 from the lattice,
+where ?0 is a parameter. The resulting reduced lat-
+tice is similar to what we would obtain using candi-
+date selection based on an MA.
+We can now create a first order lattice by adding
+transitions to the pruned lattice and pruning with
+threshold ?1. The only difference to 0-order prun-
+ing is that we now have to run forward-backward
+to calculate the probabilities p(y|~x, t). Note that in
+theory we could also apply the pruning to transition
+probabilities of the form p(y, y?|~x, t); however, this
+does not seem to yield more accurate models and is
+less efficient than state pruning.
+For higher-order lattices we merge pairs of states
+into new states, add transitions and prune with
+threshold ?i.
+We train the model using l1-regularized Stochas-
+tic Gradient Descent (SGD) (Tsuruoka et al, 2009).
+We would like to create a cascade of increasingly
+complex lattices and update the weight vector with
+the gradient of the last lattice. The updates, how-
+ever, are undefined if the gold sequence is pruned
+from the lattice. A solution would be to simply rein-
+sert the gold sequence, but this yields poor results
+as the model never learns to keep the gold sequence
+in the lower-order lattices. As an alternative we per-
+form the gradient update with the highest lattice still
+containing the gold sequence. This approach is sim-
+ilar to ?early updating? (Collins and Roark, 2004)
+in perceptron learning, where during beam search
+an update with the highest scoring partial hypothe-
+1: function GETSUMLATTICE(sentence, ~? )
+2: gold-tags? getTags(sentence)
+3: candidates? getAllCandidates(sentence)
+4: lattice? ZeroOrderLattice(candidates)
+5: for i = 1? n do
+6: candidates? lattice. prune(?i?1)
+7: if gold-tags 6? candidates then
+8: return lattice
+9: end if
+10: if i > 1 then
+11: candidates? mergeStates(candidates)
+12: end if
+13: candidates? addTransitions(candidates)
+14: lattice? SequenceLattice(candidates, i)
+15: end for
+16: return lattice
+17: end function
+Figure 1: Lattice generation during training
+sis is performed whenever the gold candidate falls
+out of the beam. Intuitively, we are trying to opti-
+mize an nth-order CRF objective function, but ap-
+ply small lower-order corrections to the weight vec-
+tor when necessary to keep the gold candidate in the
+lattice. Figure 1 illustrates the lattice generation pro-
+cess. The lattice generation during decoding is iden-
+tical, except that we always return a lattice of the
+highest order n.
+The savings in training time of this integrated ap-
+proach are large; e.g., training a maximum entropy
+model over a tagset of roughly 1800 tags and more
+than half a million instances is slow as we have to
+apply 1800 weight vector updates for every token
+in the training set and every SGD iteration. In the
+integrated model we only have to apply 1800 up-
+dates when we lose the gold sequence during fil-
+tering. Thus, in our implementation training a 0-
+order model for Czech takes roughly twice as long
+as training a 1st-order model.
+2.3 Threshold Estimation
+Our approach would not work if we were to set the
+parameters ?i to fixed predetermined values; e.g.,
+the ?i depend on the size of the tagset and should
+be adapted during training as we start the training
+with a uniform model that becomes more specific.
+We therefore set the ?i by specifying ?i, the average
+number of tags per position that should remain in
+the lattice after pruning. This also guarantees sta-
+ble lattice sizes and thus stable training times. We
+324
+achieve stable average number of tags per position
+by setting the ?i dynamically during training: we
+measure the real average number of candidates per
+position ??i and apply corrections after processing a
+certain fraction of the sentences of the training set.
+The updates are of the form:
+?i =
+{
++0.1 ? ?i if ??i < ?i
+?0.1 ? ?i if ??i > ?i
+Figure 2 shows an example training run for Ger-
+man with ?0 = 4. Here the 0-order lattice reduces
+the number of tags per position from 681 to 4 losing
+roughly 15% of the gold sequences of the develop-
+ment set, which means that for 85% of the sentences
+the correct candidate is still in the lattice. This cor-
+responds to more than 99% of the tokens. We can
+also see that after two iterations only a very small
+number of 0-order updates have to be performed.
+2.4 Tag Decomposition
+As we discussed before for the very large
+POS+MORPH tagsets, most of the decoding time is
+spent on the 0-order level. To decrease the number
+of tag candidates in the 0-order model, we decode in
+two steps by separating the fully specified tag into a
+coarse-grained part-of-speech (POS) tag and a fine-
+grained MORPH tag containing the morphological
+features. We then first build a lattice over POS can-
+didates and apply our pruning strategy. In a second
+step we expand the remaining POS tags into all the
+combinations with MORPH tags that were seen in
+the training set. We thus build a sequence of lattices
+of both increasing order and increasing tag complex-
+ity.
+2.5 Feature Set
+We use the features of Ratnaparkhi (1996) and Man-
+ning (2011): the current, preceding and succeed-
+ing words as unigrams and bigrams and for rare
+words prefixes and suffixes up to length 10, and
+the occurrence of capital characters, digits and spe-
+cial characters. We define a rare word as a word
+with training set frequency ? 10. We concate-
+nate every feature with the POS and MORPH tag
+and every morphological feature. E.g., for the word
+?der?, the POS tag art (article) and the MORPH
+tag gen|sg|fem (genitive, singular, feminine) we
+ 0
+ 0.05
+ 0.1
+ 0.15
+ 0.2
+ 0  1  2  3  4  5  6  7  8  9  10
+Unre
+acha
+ble g
+old c
+and
+idat
+es
+Epochs
+traindev
+Figure 2: Example training run of a pruned 1st-order
+model on German showing the fraction of pruned gold se-
+quences (= sentences) during training for training (train)
+and development sets (dev).
+get the following features for the current word tem-
+plate: der+art, der+gen|sg|fem, der+gen,
+der+sg and der+fem.
+We also use an additional binary feature, which
+indicates whether the current word has been seen
+with the current tag or ? if the word is rare ? whether
+the tag is in a set of open tag classes. The open tag
+classes are estimated by 10-fold cross validation on
+the training set: We first use the folds to estimate
+how often a tag is seen with an unknown word. We
+then consider tags with a relative frequency ? 10?4
+as open tag classes. While this is a heuristic, it is
+safer to use a ?soft? heuristic as a feature in the lat-
+tice than a hard constraint.
+For some experiments we also use the output of a
+morphological analyzer (MA). In that case we sim-
+ply use every analysis of the MA as a simple nom-
+inal feature. This approach is attractive because it
+does not require the output of the MA and the an-
+notation of the treebank to be identical; in fact, it
+can even be used if treebank annotation and MA use
+completely different features.
+Because the weight vector dimensionality is high
+for large tagsets and productive languages, we use a
+hash kernel (Shi et al, 2009) to keep the dimension-
+ality constant.
+3 Related Work
+Smith et al (2005) use CRFs for POS+MORPH tag-
+ging, but use a morphological analyzer for candidate
+selection. They report training times of several days
+325
+and that they had to use simplified models for Czech.
+Several methods have been proposed to reduce
+CRF training times. Stochastic gradient descent can
+be applied to reduce the training time by a factor of 5
+(Tsuruoka et al, 2009) and without drastic losses in
+accuracy. Lavergne et al (2010) make use of feature
+sparsity to significantly speed up training for mod-
+erate tagset sizes (< 100) and huge feature spaces.
+It is unclear if their approach would also work for
+huge tag sets (> 1000).
+Coarse-to-fine decoding has been successfully ap-
+plied to CYK parsing where full dynamic program-
+ming is often intractable when big grammars are
+used (Charniak and Johnson, 2005). Weiss and
+Taskar (2010) develop cascades of models of in-
+creasing complexity in a framework based on per-
+ceptron learning and an explicit trade-off between
+accuracy and efficiency.
+Kaji et al (2010) propose a modified Viterbi algo-
+rithm that is still optimal but depending on task and
+especially for big tag sets might be several orders of
+magnitude faster. While their algorithm can be used
+to produce fast decoders, there is no such modifica-
+tion for the forward-backward algorithm used during
+CRF training.
+4 Experiments
+We run POS+MORPH tagging experiments on Ara-
+bic (ar), Czech (cs), Spanish (es), German (de) and
+Hungarian (hu). The following table shows the type-
+token (T/T) ratio, the average number of tags of ev-
+ery word form that occurs more than once in the
+training set (A) and the number of tags of the most
+ambiguous word form (A?):
+T/T A A?
+ar 0.06 2.06 17
+cs 0.13 1.64 23
+es 0.09 1.14 9
+de 0.11 2.15 44
+hu 0.11 1.11 10
+Arabic is a Semitic language with nonconcate-
+native morphology. An additional difficulty is that
+vowels are often not written in Arabic script. This
+introduces a high number of ambiguities; on the
+other hand it reduces the type-token ratio, which
+generally makes learning easier. In this paper, we
+work with the transliteration of Arabic provided in
+the Penn Arabic Treebank. Czech is a highly inflect-
+ing Slavic language with a large number of morpho-
+logical features. Spanish is a Romance language.
+Based on the statistics above we can see that it has
+few POS+MORPH ambiguities. It is also the lan-
+guage with the smallest tagset and the only language
+in our setup that ? with a few exceptions ? does not
+mark case. German is a Germanic language and ?
+based on the statistics above ? the language with
+the most ambiguous morphology. The reason is that
+it only has a small number of inflectional suffixes.
+The total number of nominal inflectional suffixes for
+example is five. A good example for a highly am-
+biguous suffix is ?en?, which is a marker for infini-
+tive verb forms, for the 1st and 3rd person plural and
+for the polite 2nd person singular. Additionally, it
+marks plural nouns of all cases and singular nouns
+in genitive, dative and accusative case.
+Hungarian is a Finno-Ugric language with an ag-
+glutinative morphology; this results in a high type-
+token ratio, but also the lowest level of word form
+ambiguity among the selected languages.
+POS tagging experiments are run on all the lan-
+guages above and also on English.
+4.1 Resources
+For Arabic we use the Penn Arabic Tree-
+bank (Maamouri et al, 2004), parts 1?3 in
+their latest versions (LDC2010T08, LDC2010T13,
+LDC2011T09). As training set we use parts 1 and 2
+and part 3 up to section ANN20020815.0083. All
+consecutive sections up to ANN20021015.0096
+are used as development set and the remainder as
+test set. We use the unvocalized and pretokenized
+transliterations as input. For Czech and Spanish,
+we use the CoNLL 2009 data sets (Hajic? et al,
+2009); for German, the TIGER treebank (Brants et
+al., 2002) with the split from Fraser et al (2013);
+for Hungarian, the Szeged treebank (Csendes et al,
+2005) with the split from Farkas et al (2012). For
+English we use the Penn Treebank (Marcus et al,
+1993) with the split from Toutanova et al (2003).
+We also compute the possible POS+MORPH tags
+for every word using MAs. For Arabic we use the
+AraMorph reimplementation of Buckwalter (2002),
+for Czech the ?free? morphology (Hajic?, 2001), for
+Spanish Freeling (Padro? and Stanilovsky, 2012), for
+German DMOR (Schiller, 1995) and for Hungarian
+326
+Magyarlanc 2.0 (Zsibrita et al, 2013).
+4.2 Setup
+To compare the training and decoding times we run
+all experiments on the same test machine, which fea-
+tures two Hexa-Core Intel Xeon X5680 CPUs with
+3,33 GHz and 6 cores each and 144 GB of mem-
+ory. The baseline tagger and our PCRF implemen-
+tation are run single threaded.2 The taggers are im-
+plemented in different programming languages and
+with different degrees of optimization; still, the run
+times are indicative of comparative performance to
+be expected in practice.
+Our Java implementation is always run with 10
+SGD iterations and a regularization parameter of
+0.1, which for German was the optimal value out of
+{0, 0.01, 0.1, 1.0}. We follow Tsuruoka et al (2009)
+in our implementation of SGD and shuffle the train-
+ing set between epochs. All numbers shown are av-
+erages over 5 independent runs. Where not noted
+otherwise, we use ?0 = 4, ?1 = 2 and ?2 = 1.5.
+We found that higher values do not consistently in-
+crease performance on the development set, but re-
+sult in much higher training times.
+4.3 POS Experiments
+In a first experiment we evaluate the speed and ac-
+curacy of CRFs and PCRFs on the POS tagsets.
+As shown in Table 1 the tagset sizes range from
+12 for Czech and Spanish to 54 and 57 for Ger-
+man and Hungarian, with Arabic (38) and English
+(45) in between. The results of our experiments are
+given in Table 2. For the 1st-order models, we ob-
+serve speed-ups in training time from 2.3 to 31 at no
+loss in accuracy. For all languages, training pruned
+higher-order models is faster than training unpruned
+1st-order models and yields more accurate models.
+Accuracy improvements range from 0.08 for Hun-
+garian to 0.25 for German. We can conclude that
+for small and medium tagset sizes PCRFs give sub-
+stantial improvements in both training and decod-
+ing speed3 and thus allow for higher-order tagging,
+2Our tagger might actually use more than one core because
+the Java garbage collection is run in parallel.
+3Decoding speeds are provided in an appendix submitted
+separately.
+which for all languages leads to significant4 accu-
+racy improvements.
+4.4 POS+MORPH Oracle Experiments
+Ideally, for the full POS+MORPH tagset we would
+also compare our results to an unpruned CRF, but
+our implementation turned out to be too slow to do
+the required number of experiments. For German,
+the model processed ? 0.1 sentences per second
+during training; so running 10 SGD iterations on
+the 40,472 sentences would take more than a month.
+We therefore compare our model against models that
+perform oracle pruning, which means we perform
+standard pruning, but always keep the gold candi-
+date in the lattice. The oracle pruning is applied dur-
+ing training and testing on the development set. The
+oracle model performance is thus an upper bound for
+the performance of an unpruned CRF.
+The most interesting pruning step happens at the
+0-order level when we reduce from hundreds of can-
+didates to just a couple. Table 3 shows the results for
+1st-order CRFs.
+We can roughly group the five languages into
+three groups: for Spanish and Hungarian the dam-
+age is negligible, for Arabic we see a small decrease
+of 0.07 and only for Czech and German we observe
+considerable differences of 0.14 and 0.37. Surpris-
+ingly, doubling the number of candidates per posi-
+tion does not lead to significant improvements.
+We can conclude that except for Czech and Ger-
+man losses due to pruning are insignificant.
+4.5 POS+MORPH Higher-Order Experiments
+One argument for PCRFs is that while they might
+be less accurate than standard CRFs they allow to
+train higher-order models, which in turn might be
+more accurate than their standard lower-order coun-
+terparts. In this section, we investigate how big the
+improvements of higher-order models are. The re-
+sults are given in the following table:
+n ar cs es de hu
+1 90.90 92.45 97.95 88.96 96.47
+2 91.86* 93.06* 98.01 90.27* 96.57*
+3 91.88* 92.97* 97.87 90.60* 96.50
+4Throughout the paper we establish significance by running
+approximate randomization tests on sentences (Yeh, 2000).
+327
+ar cs es de hu en
+n TT ACC TT ACC TT ACC TT ACC TT ACC TT ACC
+CRF 1 106 96.21 10 98.95 7 98.51 234 97.69 374 97.63 154 97.05
+PCRF 1 5 96.21 4 98.96 3 98.52 7 97.70 12 97.64 5 97.07
+PCRF 2 6 96.43* 5 99.01* 3 98.65* 9 97.91* 13 97.71* 6 97.21*
+PCRF 3 6 96.43* 6 99.03* 4 98.66* 9 97.94* 14 97.69 6 97.19*
+Table 2: POS tagging experiments with pruned and unpruned CRFs with different orders n. For every language the
+training time in minutes (TT) and the POS accuracy (ACC) are given. * indicates models significantly better than CRF
+(first line).
+ar cs es de hu
+1 Oracle ?0 = 4 90.97 92.59 97.91 89.33 96.48
+2 Model ?0 = 4 90.90 92.45* 97.95 88.96* 96.47
+3 Model ?0 = 8 90.89 92.48* 97.94 88.94* 96.47
+Table 3: Accuracies for models with and without oracle pruning. * indicates models significantly worse than the oracle
+model.
+We see that 2nd-order models give improvements for
+all languages. For Spanish and Hungarian we see
+minor improvements ? 0.1.
+For Czech we see a moderate improvement of
+0.61 and for Arabic and German we observe sub-
+stantial improvements of 0.96 and 1.31. An analysis
+on the development set revealed that for all three lan-
+guages, case is the morphological feature that bene-
+fits most from higher-order models. A possible ex-
+planation is that case has a high correlation with syn-
+tactic relations and is thus affected by long-distance
+dependencies.
+German is the only language where fourgram
+models give an additional improvement over trigram
+models. The reason seem to be sentences with long-
+range dependencies, e.g., ?Die Rebellen haben kein
+Lo?segeld verlangt? (The rebels have not demanded
+any ransom); ?verlangt? (demanded) is a past partic-
+ple that is separated from the auxilary verb ?haben?
+(have). The 2nd-order model does not consider
+enough context and misclassifies ?verlangt? as a fi-
+nite verb form, while the 3rd-order model tags it cor-
+rectly.
+We can also conclude that the improvements for
+higher-order models are always higher than the loss
+we estimated in the oracle experiments. More pre-
+cisely we see that if a language has a low number of
+word form ambiguities (e.g., Hungarian) we observe
+a small loss during 0-order pruning but we also have
+to expect less of an improvement when increasing
+the order of the model. For languages with a high
+number of word form ambiguities (e.g., German) we
+must anticipate some loss during 0-order pruning,
+but we also see substantial benefits for higher-order
+models.
+Surprisingly, we found that higher-order PCRF
+models can also avoid the pruning errors of lower-
+order models. Here is an example from the German
+data. The word ?Januar? (January) is ambiguous: in
+the training set, it occurs 108 times as dative, 9 times
+as accusative and only 5 times as nominative. The
+development set contains 48 nominative instances of
+?Januar? in datelines at the end of news articles, e.g.,
+?TEL AVIV, 3. Januar?. For these 48 occurrences,
+(i) the oracle model in Table 3 selects the correct
+case nominative, (ii) the 1st-order PCRF model se-
+lects the incorrect case accusative, and (iii) the 2nd-
+and 3rd-order models select ? unlike the 1st-order
+model ? the correct case nominative. Our interpreta-
+tion is that the correct nominative reading is pruned
+from the 0-order lattice. However, the higher-order
+models can put less weight on 0-order features as
+they have access to more context to disambiguate the
+sequence. The lower weights of order-0 result in a
+more uniform posterior distribution and the nomina-
+tive reading is not pruned from the lattice.
+4.6 Experiments with Morph. Analyzers
+In this section we compare the improvements of
+higher-order models when used with MAs. The re-
+328
+ar cs es de hu en
+TT ACC TT ACC TT ACC TT ACC TT ACC TT ACC
+SVMTool 178 96.39 935 98.94 64 98.42 899 97.29 2653 97.42 253 97.09
+Morfette 9 95.91 6 99.00 3 98.43 16 97.28 30 97.53 17 96.85
+CRFSuite 4 96.20 2 99.02 2 98.40 8 97.57 15 97.48 8 96.80
+Stanford 29 95.98 8 99.08 7 98.53 51 97.70 40 97.53 65 97.24
+PCRF 1 5 96.21* 4 98.96* 3 98.52 7 97.70 12 97.64* 5 97.07*
+PCRF 2 6 96.43 5 99.01* 3 98.65* 9 97.91* 13 97.71* 6 97.21
+PCRF 3 6 96.43 6 99.03 4 98.66* 9 97.94* 14 97.69* 6 97.19
+Table 4: Development results for POS tagging. Given are training times in minutes (TT) and accuracies (ACC).
+Best baseline results are underlined and the overall best results bold. * indicates a significant difference (positive or
+negative) between the best baseline and a PCRF model.
+ar cs es de hu en
+SVMTool 96.19 98.82 98.44 96.44 97.32 97.12
+Morfette 95.55 98.91 98.41 96.68 97.28 96.89
+CRFSuite 95.97 98.91 98.40 96.82 97.32 96.94
+Stanford 95.75 98.99 98.50 97.09 97.32 97.28
+PCRF 1 96.03* 98.83* 98.46 97.11 97.44* 97.09*
+PCRF 2 96.11 98.88* 98.66* 97.36* 97.50* 97.23
+PCRF 3 96.14 98.87* 98.66* 97.44* 97.49* 97.19*
+Table 5: Test results for POS tagging. Best baseline results are underlined and the overall best results bold. * indicates
+a significant difference between the best baseline and a PCRF model.
+ar cs es de hu
+TT ACC TT ACC TT ACC TT ACC TT ACC
+SVMTool 454 89.91 2454 89.91 64 97.63 1649 85.98 3697 95.61
+RFTagger 4 89.09 3 90.38 1 97.44 5 87.10 10 95.06
+Morfette 132 89.97 539 90.37 63 97.71 286 85.90 540 95.99
+CRFSuite 309 89.33 9274 91.10 69 97.53 1295 87.78 5467 95.95
+PCRF 1 22 90.90* 301 92.45* 25 97.95* 32 88.96* 230 96.47*
+PCRF 2 26 91.86* 318 93.06* 32 98.01* 37 90.27* 242 96.57*
+PCRF 3 26 91.88* 318 92.97* 35 97.87* 37 90.60* 241 96.50*
+Table 6: Development results for POS+MORPH tagging. Given are training times in minutes (TT) and accuracies
+(ACC). Best baseline results are underlined and the overall best results bold. * indicates a significant difference
+between the best baseline and a PCRF model.
+ar cs es de hu
+SVMTool 89.58 89.62 97.56 83.42 95.57
+RFTagger 88.76 90.43 97.35 84.28 94.99
+Morfette 89.62 90.01 97.58 83.48 95.79
+CRFSuite 89.05 90.97 97.60 85.68 95.82
+PCRF 1 90.32* 92.31* 97.82* 86.92* 96.22*
+PCRF 2 91.29* 92.94* 97.93* 88.48* 96.34*
+PCRF 3 91.22* 92.99* 97.82* 88.58* 96.29*
+Table 7: Test results for POS+MORPH tagging. Best baseline results are underlined and the overall best results bold.
+* indicates a significant difference between the best baseline and a PCRF model.
+329
+sults are given in the following table:
+n ar cs es de hu
+1 90.90? 92.45? 97.95? 88.96? 96.47?
+2 91.86+ 93.06 98.01? 90.27+ 96.57?
+3 91.88+ 92.97? 97.87? 90.60+ 96.50?
+MA 1 91.22 93.21 98.27 89.82 97.28
+MA 2 92.16+ 93.87+ 98.37+ 91.31+ 97.51+
+MA 3 92.14+ 93.88+ 98.28 91.65+ 97.48+
+Plus and minus indicate models that are signif-
+icantly better or worse than MA1. We can see
+that the improvements due to higher-order models
+are orthogonal to the improvements due to MAs
+for all languages. This was to be expected as
+MAs provide additional lexical knowledge while
+higher-order models provide additional information
+about the context. For Arabic and German the
+improvements of higher-order models are bigger
+than the improvements due to MAs.
+4.7 Comparison with Baselines
+We use the following baselines: SVMTool
+(Gime?nez and Ma`rquez, 2004), an SVM-based dis-
+criminative tagger; RFTagger (Schmid and Laws,
+2008), an n-gram Hidden Markov Model (HMM)
+tagger developed for POS+MORPH tagging; Mor-
+fette (Chrupa?a et al, 2008), an averaged percep-
+tron with beam search decoder; CRFSuite (Okazaki,
+2007), a fast CRF implementation; and the Stanford
+Tagger (Toutanova et al, 2003), a bidirectional Max-
+imum Entropy Markov Model. For POS+MORPH
+tagging, all baselines are trained on the concatena-
+tion of POS tag and MORPH tag. We run SVM-
+Tool with the standard feature set and the optimal
+c-values ? {0.1, 1, 10}. Morfette is run with the de-
+fault options. For CRFSuite we use l2-regularized
+SGD training. We use the optimal regularization pa-
+rameter ? {0.01, 0.1, 1.0} and stop after 30 itera-
+tions where we reach a relative improvement in reg-
+ularized likelihood of at most 0.01 for all languages.
+The feature set is identical to our model except for
+some restrictions: we only use concatenations with
+the full tag and we do not use the binary feature that
+indicates whether a word-tag combination has been
+observed. We also had to restrict the combinations
+of tag and features to those observed in the training
+set5. Otherwise the memory requirements would ex-
+ceed the memory of our test machine (144 GB) for
+Czech and Hungarian. The Stanford Tagger is used
+5We set the CRFSuite option possible states = 0
+as a bidirectional 2nd-order model and trained us-
+ing OWL-BFGS. For Arabic, German and English
+we use the language specific feature sets and for the
+other languages the English feature set.
+Development set results for POS tagging are
+shown in Table 4. We can observe that Morfette,
+CRFSuite and the PCRF models for different orders
+have training times in the same order of magnitude.
+For Arabic, Czech and English, the PCRF accuracy
+is comparable to the best baseline models. For the
+other languages we see improvements of 0.13 for
+Spanish, 0.18 for Hungarian and 0.24 for German.
+Evaluation on the test set confirms these results, see
+Table 5.6
+The POS+MORPH tagging development set re-
+sults are presented in Table 6. Morfette is the fastest
+discriminative baseline tagger. In comparison with
+Morfette the speed up for 3rd-order PCRFs lies be-
+tween 1.7 for Czech and 5 for Arabic. Morfette
+gives the best baseline results for Arabic, Spanish
+and Hungarian and CRFSuite for Czech and Ger-
+man. The accuracy improvements of the best PCRF
+models over the best baseline models range from
+0.27 for Spanish over 0.58 for Hungarian, 1.91 for
+Arabic, 1.96 for Czech to 2.82 for German. The test
+set experiments in Table 7 confirm these results.
+5 Conclusion
+We presented the pruned CRF (PCRF) model for
+very large tagsets. The model is based on coarse-to-
+fine decoding and stochastic gradient descent train-
+ing with early updating. We showed that for mod-
+erate tagset sizes of ? 50, the model gives signif-
+icant speed-ups over a standard CRF with negligi-
+ble losses in accuracy. Furthermore, we showed that
+training and tagging for approximated trigram and
+fourgram models is still faster than standard 1st-
+order tagging, but yields significant improvements
+in accuracy.
+In oracle experiments with POS+MORPH tagsets
+we demonstrated that the losses due to our approx-
+imation depend on the word level ambiguity of the
+respective language and are moderate (? 0.14) ex-
+cept for German where we observed a loss of 0.37.
+6Gime?nez and Ma`rquez (2004) report an accuracy of 97.16
+instead of 97.12 for SVMTool for English and Manning (2011)
+an accuracy of 97.29 instead of 97.28 for the Stanford tagger.
+330
+We also showed that higher order tagging ? which
+is prohibitive for standard CRF implementations ?
+yields significant improvements over unpruned 1st-
+order models. Analogous to the oracle experiments
+we observed big improvements for languages with a
+high level of POS+MORPH ambiguity such as Ger-
+man and smaller improvements for languages with
+less ambiguity such as Hungarian and Spanish.
+Acknowledgments
+The first author is a recipient of the Google Europe
+Fellowship in Natural Language Processing, and this
+research is supported in part by this Google Fellow-
+ship. This research was also funded by DFG (grant
+SFB 732).
+References
+Sabine Brants, Stefanie Dipper, Silvia Hansen, Wolfgang
+Lezius, and George Smith. 2002. The TIGER tree-
+bank. In Proceedings of the workshop on treebanks
+and linguistic theories.
+Tim Buckwalter. 2002. Buckwalter Arabic Morpholog-
+ical Analyzer Version 1.0. Linguistic Data Consor-
+tium, University of Pennsylvania, 2002. LDC Catalog
+No.: LDC2002L49.
+Eugene Charniak and Mark Johnson. 2005. Coarse-to-
+fine n-best parsing and MaxEnt discriminative rerank-
+ing. In Proceedings of ACL.
+Grzegorz Chrupa?a, Georgiana Dinu, and Josef van Gen-
+abith. 2008. Learning morphology with Morfette. In
+Proceedings of LREC.
+Michael Collins and Brian Roark. 2004. Incremental
+parsing with the perceptron algorithm. In Proceedings
+of ACL.
+Michael Collins. 2002. Discriminative training meth-
+ods for hidden Markov models: Theory and experi-
+ments with perceptron algorithms. In Proceedings of
+EMNLP.
+Do?ra Csendes, Ja?nos Csirik, Tibor Gyimo?thy, and Andra?s
+Kocsor. 2005. The Szeged treebank. In Proceedings
+of Text, Speech and Dialogue.
+Richa?rd Farkas, Veronika Vincze, and Helmut Schmid.
+2012. Dependency parsing of Hungarian: Baseline re-
+sults and challenges. In Proceedings of EACL.
+Alexander Fraser, Helmut Schmid, Richa?rd Farkas, Ren-
+jing Wang, and Hinrich Schu?tze. 2013. Knowl-
+edge Sources for Constituent Parsing of German, a
+Morphologically Rich and Less-Configurational Lan-
+guage. Computational Linguistics.
+Jesu?s Gime?nez and Lluis Ma`rquez. 2004. Svmtool: A
+general POS tagger generator based on Support Vector
+Machines. In Proceedings of LREC.
+Jan Hajic?, Massimiliano Ciaramita, Richard Johans-
+son, Daisuke Kawahara, Maria Anto`nia Mart??, Llu??s
+Ma`rquez, Adam Meyers, Joakim Nivre, Sebastian
+Pado?, Jan S?te?pa?nek, et al 2009. The CoNLL-2009
+shared task: Syntactic and semantic dependencies in
+multiple languages. In Proceedings of CoNLL.
+Jan Hajic?. 2000. Morphological tagging: Data vs. dictio-
+naries. In Proceedings of NAACL.
+Jan Hajic?. 2001. Czech ?Free? Morphology. URL
+http://ufal.mff.cuni.cz/pdt/Morphology and Tagging.
+Nobuhiro Kaji, Yasuhiro Fujiwara, Naoki Yoshinaga, and
+Masaru Kitsuregawa. 2010. Efficient staggered de-
+coding for sequence labeling. In Proceedings of ACL.
+John Lafferty, Andrew McCallum, and Fernando Pereira.
+2001. Conditional random fields: Probabilistic mod-
+els for segmenting and labeling sequence data. In Pro-
+ceedings of ICML.
+Thomas Lavergne, Olivier Cappe?, and Franc?ois Yvon.
+2010. Practical very large scale CRFs. In Proceed-
+ings of ACL.
+Mohamed Maamouri, Ann Bies, Tim Buckwalter, and
+Wigdan Mekki. 2004. The Penn Arabic treebank:
+Building a large-scale annotated Arabic corpus. In
+Proceedings of NEMLAR.
+Christopher D Manning. 2011. Part-of-speech tagging
+from 97% to 100%: Is it time for some linguistics?
+In Computational Linguistics and Intelligent Text Pro-
+cessing. Springer.
+Mitchell P. Marcus, Mary A. Marcinkiewicz, and Beat-
+rice Santorini. 1993. Building a large annotated cor-
+pus of English: The Penn Treebank. Computational
+linguistics.
+Naoaki Okazaki. 2007. Crfsuite: A fast implemen-
+tation of conditional random fields (CRFs). URL
+http://www.chokkan.org/software/crfsuite.
+Llu??s Padro? and Evgeny Stanilovsky. 2012. Freeling
+3.0: Towards Wider Multilinguality. In Proceedings
+of LREC.
+Adwait Ratnaparkhi. 1996. A maximum entropy model
+for part-of-speech tagging. In EMNLP.
+Alexander M. Rush and Slav Petrov. 2012. Vine pruning
+for efficient multi-pass dependency parsing. In Pro-
+ceedings of NAACL.
+Anne Schiller. 1995. DMOR Benutzerhandbuch. Uni-
+versita?t Stuttgart, Institut fu?r maschinelle Sprachver-
+arbeitung.
+Helmut Schmid and Florian Laws. 2008. Estimation of
+conditional probabilities with decision trees and an ap-
+plication to fine-grained POS tagging. In Proceedings
+of COLING.
+331
+Helmut Schmid. 1994. Probabilistic part-of-speech tag-
+ging using decision trees. In Proceedings of NEMLP.
+Libin Shen, Giorgio Satta, and Aravind Joshi. 2007.
+Guided Learning for Bidirectional Sequence Classifi-
+cation. In Proceedings of ACL.
+Qinfeng Shi, James Petterson, Gideon Dror, John Lang-
+ford, Alex Smola, and S.V.N. Vishwanathan. 2009.
+Hash Kernels for Structured Data. J. Mach. Learn.
+Res.
+Noah A. Smith, David A. Smith, and Roy W. Tromble.
+2005. Context-based morphological disambiguation
+with random fields. In Proceedings of EMNLP.
+Kristina Toutanova, Dan Klein, Christopher D. Manning,
+and Yoram Singer. 2003. Feature-rich part-of-speech
+tagging with a cyclic dependency network. In Pro-
+ceedings of NAACL.
+Yoshimasa Tsuruoka, Jun?ichi Tsujii, and Sophia Ana-
+niadou. 2009. Stochastic gradient descent training
+for L1-regularized log-linear models with cumulative
+penalty. In Proceedings of ACL.
+David Weiss and Ben Taskar. 2010. Structured predic-
+tion cascades. In In Proceedings of AISTATS.
+Alexander Yeh. 2000. More accurate tests for the statis-
+tical significance of result differences. In Proceedings
+of COLING.
+Ja?nos Zsibrita, Veronika Vincze, and Richa?rd Farkas.
+2013. Magyarlanc 2.0: Szintaktikai elemze?s e?s fel-
+gyors??tott szo?faji egye?rtelmu?s??te?s. In IX. Magyar
+Sza?m??to?ge?pes Nyelve?szeti Konferencia.
+332
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 963?967,
+October 25-29, 2014, Doha, Qatar.
+c?2014 Association for Computational Linguistics
+Dependency parsing with latent refinements of part-of-speech tags
+Thomas M?uller
+?
+, Richard Farkas
+?
+, Alex Judea
+?
+, Helmut Schmid
+?
+, and Hinrich Sch?utze
+?
+?
+Center for Information and Language Processing, University of Munich, Germany
+?
+Department of Informatics, University of Szeged, Hungary
+?
+Heidelberg Institute for Theoretical Studies, Heidelberg, Germany
+muellets@cis.lmu.de
+Abstract
+In this paper we propose a method to
+increase dependency parser performance
+without using additional labeled or unla-
+beled data by refining the layer of pre-
+dicted part-of-speech (POS) tags. We per-
+form experiments on English and Ger-
+man and show significant improvements
+for both languages. The refinement is
+based on generative split-merge training
+for Hidden Markov models (HMMs).
+1 Introduction
+Probabilistic Context-free Grammars with latent
+annotations (PCFG-LA) have been shown (Petrov
+et al., 2006) to yield phrase structure parsers
+with state-of-the-art accuracy. While Hidden
+Markov Models with latent annotations (HMM-
+LA) (Huang et al., 2009), stay somewhat behind
+the performance of state-of-the-art discriminative
+taggers (Eidelman et al., 2010). In this paper we
+address the question of whether the resulting la-
+tent POS tags are linguistically meaningful and
+useful for upstream tasks such as syntactic pars-
+ing. We find that this is indeed the case, lead-
+ing to a procedure that significantly increases the
+performance of dependency parsers. The proce-
+dure is attractive because the refinement of pre-
+dicted part-of-speech sequences using a coarse-to-
+fine strategy (Petrov and Klein, 2007) is fast and
+efficient. More precisely, we show that incorpo-
+rating the induced POS into a state-of-the-art de-
+pendency parser (Bohnet, 2010) gives increases in
+Labeled Attachment Score (LAS): from 90.34 to
+90.57 for English and from 87.92 to 88.24 (resp.
+88.35 to 88.51) for German without using (resp.
+with using) morphological features.
+2 Related Work
+Petrov et al. (2006) introduce generative split-
+merge training for PCFGs and provide a fully au-
+tomatic method for training state-of-the-art phrase
+structure parsers. They argue that the resulting la-
+tent annotations are linguistically meaningful. Sun
+et al. (2008) induce latent sub-states into CRFs and
+show that noun phrase (NP) recognition can be im-
+proved, especially if no part-of-speech features are
+available. Huang et al. (2009) apply split-merge
+training to create HMMs with latent annotations
+(HMM-LA) for Chinese POS tagging. They re-
+port that the method outperforms standard gener-
+ative bigram and trigram tagging, but do not com-
+pare to discriminative methods. Eidelman et al.
+(2010) show that a bidirectional variant of latent
+HMMs with incorporation of prosodic information
+can yield state-of-the-art results in POS tagging of
+conversational speech.
+3 Split-Merge Training for HMMs
+Split-merge training for HMMs (Huang et al.,
+2009) iteratively splits every tag into two subtags.
+Word emission and tag transition probabilities of
+subtags are then initialized close to the values of
+the parent tags but with some randomness to break
+symmetry. Using expectation?maximization (EM)
+training the parameters can then be set to a local
+maximum of the training data likelihood. After
+this split phase, the merge phase reverts splits that
+only lead to small improvements in the likelihood
+function in order to increase the robustness of the
+model. This approach requires an approximation
+of the gain in likelihood of every split analogous
+to Petrov et al. (2006) as an exact computation is
+not feasible.
+We have observed that this procedure is not
+963
+Universal Tag Feature Tag
+0
+Tag
+1
+English Adjectives p(w|t) more (0.05) many (0.03) last (0.03) new (0.03) other (0.03) first (0.02)
+(ADJ) p(u|t) VERB (0.32) ADV (0.27) NOUN (0.14) DET (0.39) ADP (0.17) ADJ (0.10)
+Particles p(w|t) ?s (0.93) ? (0.07) to (0.89) up (0.04) out (0.02) off (0.01)
+(PRT) p(b|t) POS (1.00) TO (0.89) RP (0.10)
+Prepositions p(w|t) that (0.11) in (0.10) by (0.09) of (0.43) in (0.19) for (0.11)
+(ADP) p(u|t) VERB (0.46) NOUN (0.15) . (0.13) NOUN (0.84) NUM (0.06) ADJ (0.03)
+Pronouns p(w|t) its (0.30) their (0.15) his (0.14) it (0.21) he (0.16) they (0.12)
+(PRON) p(b|t) PRP$ (0.68) PRP (0.26) WP (0.05) PRP (0.87) WP (0.11) PRP$ (0.02)
+Verbs p(w|t) be (0.06) been (0.02) have (0.02) is (0.10) said (0.08) was (0.05)
+(VERB) p(u|t) VERB (0.38) PRT (0.22) ADV (0.11) NOUN (0.52) PRON (0.20) . (0.12)
+German Conjunctions p(w|t) da? (0.26) wenn (0.08) um (0.06) und (0.76) oder (0.07) als (0.06)
+(CONJ) p(b|t) KOUS (0.58) KON (0.30) KOUI (0.06) KON (0.88) KOKOM (0.10) APPR (0.02)
+Particles p(w|t) an (0.13) aus (0.10) ab (0.09) nicht (0.49) zu (0.46) Nicht (0.01)
+(PRT) p(b|t) PTKVZ (0.92) ADV (0.04) ADJD (0.01) PTKNEG (0.52) PTKZU (0.44) PTKA (0.02)
+Pronouns p(w|t) sich (0.13) die (0.08) es (0.07) ihre (0.06) seine (0.05) seiner (0.05)
+(PRON) p(b|t) PPER (0.33) PRF (0.14) PRELS (0.14) PPOSAT (0.40) PIAT (0.34) PDAT (0.16)
+Verbs p(w|t) werden (0.04) worden (0.02) ist (0.02) ist (0.07) hat (0.04) sind (0.03)
+(VERB) p(u|t) NOUN (0.46) VERB (0.22) PRT (0.10) NOUN (0.49) . (0.19) PRON (0.16)
+Table 1: Induced sub-tags and their statistics, word forms (p(w|t)), treebank tag (p(b|t)) and preceding
+Universal tag probability (p(u|t)). Bold: linguistically interesting differences.
+only a way to increase HMM tagger performance
+but also yields annotations that are to a consid-
+erable extent linguistically interpretable. As an
+example we discuss some splits that occurred af-
+ter a particular split-merge step for English and
+German. For the sake of comparability we ap-
+plied the split to the Universal Tagset (Petrov et
+al., 2011). Table 1 shows the statistics used for
+this analysis. The Universal POS tag set puts the
+three Penn-Treebank tags RP (particle), POS (pos-
+sessive marker) and TO into one particle tag (see
+?PRT? in English part of the table). The training
+essentially reverses this by splitting particles first
+into possessive and non-possessive markers and in
+a subsequent split the non-possessives into TO and
+particles. For German we have a similar split into
+verb particles, negation particles like nicht ?not?
+and the infinitive marker zu ?to? (?PRT?) in the
+German part of the table). English prepositions
+get split by proximity to verbs or nouns (?ADP?).
+Subordinate conjunctions like that, which in the
+Penn-Treebank annotation are part of the prepo-
+sition tag IN, get assigned to the sub-class next
+to verbs. For German we also see a separation
+of ?CONJ? into predominantly subordinate con-
+junctions (Tag 0) and predominantly coordinating
+conjunctions (Tag 1). For both languages adjec-
+tives get split by predicative and attributive use.
+For English the predicative sub-class also seems
+to hold rather atypical adjectives like ?such? and
+?last.? For English, verbs (?VERB?) get split into
+a predominantly infinite tag (Tag 0) and a predom-
+inantly finite tag (Tag 1) while for German we get
+a separation by verb position. In German we get a
+separation of pronouns (?PRON?) into possessive
+and non-possessive; in English, pronouns get split
+by predominant usage in subject position (Tag 0)
+and as possessives (Tag 1).
+Our implementation of HMM-LA has been re-
+leased under an open-source licence.
+1
+In the next section we evaluate the utility of
+these annotations for dependency parsing.
+4 Dependency Parsing
+In this section we investigate the utility of in-
+duced POS as features for dependency parsing.
+We run our experiments on the CoNLL-2009 data
+sets (Haji?c et al., 2009) for English and German.
+As a baseline system we use the latest version
+of the mate-tools parser (Bohnet, 2010).
+3
+It was
+the highest scoring syntactic parser for German
+and English in the CoNLL 2009 shared task eval-
+uation. The parser gets automatically annotated
+lemmas, POS and morphological features as input
+which are part of the CoNLL-2009 data sets.
+In this experiment we want to examine the ben-
+efits of tag refinements isolated from the improve-
+ments caused by using two taggers in parallel,
+thus we train the HMM-LA on the automatically
+tagged POS sequences of the training set and use
+it to add an additional layer of refined POS to the
+input data of the parser. We do this by calculating
+the forward-backward charts that are also used in
+the E-steps during training ? in these charts base
+1
+https://code.google.com/p/cistern/
+1
+Unlabeled Attachment Score
+3
+We use v3.3 of Bohnet?s graph-based parser.
+964
+#Tags ?
+LAS
+max
+LAS
+?
+LAS
+?
+UAS
+max
+UAS
+?
+UAS
+English Baseline 88.43 91.46
+58 88.52 (88.59) 0.06 91.52 (91.61) 0.08
+73 88.55 (88.61) 0.05 91.54 (91.59) 0.04
+92 88.60 (88.71) 0.08 91.60 (91.72) 0.08
+115 88.62 (88.73) 0.07 91.58 (91.71) 0.08
+144 88.60 (88.70) 0.07 91.60 (91.71) 0.07
+German (no feat.) Baseline 87.06 89.54
+85 87.09 (87.18) 0.06 89.61 (89.67) 0.04
+107 87.23 (87.36) 0.09 89.74 (89.83) 0.08
+134 87.22 (87.31) 0.09 89.75 (89.86) 0.09
+German (feat.) Baseline 87.35 89.75
+85 87.33 (87.47) 0.11 89.76 (89.88) 0.09
+107 87.43 (87.73) 0.16 89.81 (90.14) 0.17
+134 87.38 (87.53) 0.08 89.75 (89.89) 0.08
+Table 2: LAS and UAS
+1
+mean (?), best value (max) and std. deviation (?) for the development set for
+English and German dependency parsing with (feat.) and without morphological features (no feat.).
+tags of the refined tags are constrained to be iden-
+tical to the automatically predicted tags.
+We use 100 EM iterations after each split and
+merge phase. The percentage of splits reverted in
+each merge phase is set to .75.
+We integrate the tags by adding one additional
+feature for every edge: the conjunction of latent
+tags of the two words connected by the edge.
+Table 2 shows results of our experiments. All
+numbers are averages of five independent runs.
+For English the smaller models with 58 and 73
+tags achieve improvements of ?.1. The improve-
+ments for the larger tag sets are ?.2. The best
+individual model improves LAS by .3. For the
+German experiments without morphological fea-
+tures we get only marginal average improvements
+for the smallest tag set and improvements of ?.15
+for the bigger tag sets. The average ULA scores
+for 107 and 134 tags are at the same level as the
+ULA scores of the baseline with morph. features.
+The best model improves LAS by .3. For German
+with morphological features the absolute differ-
+ences are smaller: The smallest tag set does not
+improve the parser on average. For the tag set
+of 107 tags the average improvement is .08. The
+best model improves LAS by .38. In all experi-
+ments we see the highest improvements for tag set
+sizes of roughly the same size (115 for English,
+107 for German). While average improvements
+are low (esp. for German with morphological fea-
+tures), peak improvements are substantial.
+Running the best English system on the test set
+gives an improvement in LAS from 90.34 to 90.57;
+this improvement is significant
+4
+(p < .02). For
+German we get an improvement from 87.92 to
+4
+Approx. randomization test (Yeh, 2000) on LAS scores
+88.24 without and from 88.35 to 88.51 with mor-
+phological features. The difference between the
+values without morphological features is signifi-
+cant (p < .05), but the difference between mod-
+els with morphological features is not (p = .26).
+However, the difference between the baseline sys-
+tem with morphological features and the best sys-
+tem without morphological features is also not sig-
+nificant (p = .49).
+We can conclude that HMM-LA tags can sig-
+nificantly improve parsing results. For German we
+see that HMM-LA tags can substitute morpholog-
+ical features up to an insignificant difference. We
+also see that morphological features and HMM-
+LA seem to be correlated as combining the two
+gives only insignificant improvements.
+5 Contribution Analysis
+In this section we try to find statistical evidence
+for why a parser using a fine-grained tag set might
+outperform a parser based on treebank tags only.
+The results indicate that an induced latent tag
+set as a whole increases parsing performance.
+However, not every split made by the HMM-LA
+seems to be useful for the parser. The scatter plots
+in Figure 1 show that there is no strict correlation
+between tagging accuracy of a model and the re-
+sulting LAS. This is expected as the latent induc-
+tion optimizes a tagging objective function, which
+does not directly translate into better parsing per-
+formance. An example is lexicalization. Most
+latent models for English create a subtag for the
+preposition ?of?. This is useful for a HMM as ?of?
+is frequent and has a very specific context. A lexi-
+calized syntactic parser, however, does not benefit
+from such a tag.
+965
+l l l ll
+88.40 88.45 88.50 88.55 88.60 88.65 88.70 88.75
+97.5
+97.6
+97.7
+97.8
+97.9
+98.0
+LAS
+Taggin
+g Accu
+racy
+87.00 87.05 87.10 87.15 87.20 87.25 87.30 87.35
+97.10
+97.12
+97.14
+97.16
+97.18
+97.20
+LAS
+Taggin
+g Accu
+racy
+87.2 87.3 87.4 87.5 87.6 87.7
+97.10
+97.12
+97.14
+97.16
+97.18
+97.20
+LAS
+Taggin
+g Accu
+racy
+Figure 1: Scatter plots of LAS vs tagging accuracy for English (left) and German without (middle) and
+with (right) morphological features. English tag set sizes are 58 (squares), 73 (diamonds), 92 (trian-
+gles), 115 (triangles pointing downwards) and 144 (circles). German tag set sizes are 85 (squares), 107
+(diamonds) and 134 (triangles). The dashed lines indicate the baselines.
+We base the remainder of our analysis on the
+results of the baseline parser on the English devel-
+opment set and the results of the best performing
+latent model. The best performing model has a
+LAS score of 88.73 vs 88.43 for the baseline, a dif-
+ference of .3. If we just look at the LAS of words
+with incorrectly predicted POS we see a difference
+of 1.49. A look at the data shows that the latent
+model helps the parser to identify words that might
+have been annotated incorrectly. As an example
+consider plural nouns (NNS) and two of their la-
+tent subtags NNS
+1
+and NNS
+2
+and how often they
+get classified correctly and misclassified as proper
+nouns (NNPS):
+NNS NNPS
+NNS 2019 104
+NNS
+1
+90 72
+NNS
+2
+1100 13
+. . . . . . . . .
+We see that NNS
+1
+is roughly equally likely to
+be a NNPS or NNS while NNS
+2
+gives much more
+confidence of the actual POS being NNS. So one
+benefit of HMM-LA POS tag sets are tags of dif-
+ferent levels of confidence.
+Another positive effect is that latent POS tags
+have a higher correlation with certain dependency
+relations. Consider proper nouns (NNP):
+NAME NMOD SBJ
+NNP 962 662 468
+NNP
+1
+10 27 206
+NNP
+2
+24 50 137
+. . . . . . . . . . . .
+We see that NNP
+1
+and NNP
+2
+are more likely
+to appear in subject relations. NNP
+1
+contains sur-
+names; the most frequent word forms are Keating,
+Papandreou and Kaye. In contrast, NNP
+2
+con-
+tains company names such as Sony, NBC and Key-
+stone. This explains why the difference in LAS is
+twice as high for NNPs as on average.
+For German we see similar effects and the an-
+ticipated correlation with morphology. The 5 de-
+terminer subtags, for example, strongly correlate
+with grammatical case:
+Nom Gen Dat Acc
+ART 1185 636 756 961
+ART
+1
+367 7 38
+ART
+2
+11 28 682 21
+ART
+3
+6 602 7 3
+ART
+4
+39 43 429
+ART
+5
+762 6 17 470
+6 Conclusion and Future Work
+We have shown that HMMs with latent anno-
+tations (HMMLA) can generate latent part-of-
+speech tagsets are linguistically interpretable and
+can be used to improve dependency parsing. Our
+best systems improve an English parser from a
+LAS of 90.34 to 90.57 and a German parser from
+87.92 to 88.24 when not using morphological fea-
+tures and from 88.35 to 88.51 when using mor-
+phological features . Our analysis of the parsing
+results shows that the major reasons for the im-
+provements are: the separation of POS tags into
+more and less trustworthy subtags, the creation of
+POS subtags with higher correlation to certain de-
+pendency labels and for German a correlation of
+tags and morphological features such as case.
+7 Future Work
+The procedure works well in general. However,
+not every split is useful for the parser; e.g., as
+966
+discussed above lexicalization increases HMM ac-
+curacy, but does not help an already lexicalized
+parser. We would like to use additional informa-
+tion (e.g., from the dependency trees) to identify
+useless splits. The different granularities of the hi-
+erarchy induced by split-merge training are poten-
+tially useful. However, the levels of the hierarchy
+are incomparable: a child tag is in general not a
+subtag of a parent tag. We think that coupling par-
+ents and children in the tag hierarchy might be one
+way to force a consistent hierarchy.
+Acknowledgments
+We would like to thank the anonymous reviewers
+for their comments. The first author is a recipient
+of the Google Europe Fellowship in Natural Lan-
+guage Processing, and this research is supported in
+part by this Google Fellowship and by DFG (grant
+SFB 732). Most of this work was conducted while
+the authors worked at the Institute for Natural Lan-
+guage Processing of the University of Stuttgart.
+References
+Bernd Bohnet. 2010. Very high accuracy and fast de-
+pendency parsing is not a contradiction. In Proceed-
+ings of COLING.
+Vladimir Eidelman, Zhongqiang Huang, and Mary
+Harper. 2010. Lessons learned in part-of-speech
+tagging of conversational speech. In Proceedings of
+EMNLP.
+Jan Haji?c, Massimiliano Ciaramita, Richard Johans-
+son, Daisuke Kawahara, Maria Ant`onia Mart??, Llu??s
+M`arquez, Adam Meyers, Joakim Nivre, Sebastian
+Pad?o, Jan
+?
+St?ep?anek, et al. 2009. The conll-2009
+shared task: Syntactic and semantic dependencies in
+multiple languages. In Proceedings of CoNLL.
+Zhongqiang Huang, Vladimir Eidelman, and Mary
+Harper. 2009. Improving a simple bigram hmm
+part-of-speech tagger by latent annotation and self-
+training. In Proceedings of NAACL.
+Slav Petrov and Dan Klein. 2007. Improved infer-
+ence for unlexicalized parsing. In Proceedings of
+NAACL.
+Slav Petrov, Leon Barrett, Romain Thibaux, and Dan
+Klein. 2006. Learning accurate, compact, and inter-
+pretable tree annotation. In Proceedings of ACL.
+Slav Petrov, Dipanjan Das, and Ryan McDon-
+ald. 2011. A universal part-of-speech tagset.
+ArXiv:1104.2086v1.
+Xu Sun, Louis-Philippe Morency, Daisuke Okanohara,
+and Jun?ichi Tsujii. 2008. Modeling latent-dynamic
+in shallow parsing: a latent conditional model with
+improved inference. In Proceedings of COLING.
+Alexander Yeh. 2000. More accurate tests for the
+statistical significance of result differences. In Pro-
+ceedings of COLING.
+967
+2012 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 386?395,
+Montre?al, Canada, June 3-8, 2012. c?2012 Association for Computational Linguistics
+A Comparative Investigation of Morphological Language Modeling for the
+Languages of the European Union
+Thomas Mu?ller, Hinrich Schu?tze and Helmut Schmid
+Institute for Natural Language Processing
+University of Stuttgart, Germany
+{muellets,schmid}@ims.uni-stuttgart.de
+Abstract
+We investigate a language model that com-
+bines morphological and shape features with
+a Kneser-Ney model and test it in a large
+crosslingual study of European languages.
+Even though the model is generic and we use
+the same architecture and features for all lan-
+guages, the model achieves reductions in per-
+plexity for all 21 languages represented in the
+Europarl corpus, ranging from 3% to 11%. We
+show that almost all of this perplexity reduc-
+tion can be achieved by identifying suffixes by
+frequency.
+1 Introduction
+Language models are fundamental to many natural
+language processing applications. In the most com-
+mon approach, language models estimate the proba-
+bility of the next word based on one or more equiv-
+alence classes that the history of preceding words is
+a member of. The inherent productivity of natural
+language poses a problem in this regard because the
+history may be rare or unseen or have unusual prop-
+erties that make assignment to a predictive equiva-
+lence class difficult.
+In many languages, morphology is a key source
+of productivity that gives rise to rare and unseen
+histories. For example, even if a model can learn
+that words like ?large?, ?dangerous? and ?serious?
+are likely to occur after the relatively frequent his-
+tory ?potentially?, this knowledge cannot be trans-
+ferred to the rare history ?hypothetically? without
+some generalization mechanism like morphological
+analysis.
+Our primary goal in this paper is not to de-
+velop optimized language models for individual lan-
+guages. Instead, we investigate whether a simple
+generic language model that uses shape and mor-
+phological features can be made to work well across
+a large number of languages. We find that this is
+the case: we achieve considerable perplexity reduc-
+tions for all 21 languages in the Europarl corpus.
+We see this as evidence that morphological language
+modeling should be considered as a standard part of
+any language model, even for languages like English
+that are often not viewed as a good application of
+morphological modeling due to their morphological
+simplicity.
+To understand which factors are important for
+good performance of the morphological compo-
+nent of a language model, we perform an exten-
+sive crosslingual analysis of our experimental re-
+sults. We look at three parameters of the morpho-
+logical model we propose: the frequency threshold
+? that divides words subject to morphological clus-
+tering from those that are not; the number of suffixes
+used ?; and three different morphological segmen-
+tation algorithms. We also investigate the differen-
+tial effect of morphological language modeling on
+different word shapes: alphabetical words, punctua-
+tion, numbers and other shapes.
+Some prior work has used morphological models
+that require careful linguistic analysis and language-
+dependent adaptation. In this paper we show that
+simple frequency analysis performs only slightly
+worse than more sophisticated morphological anal-
+ysis. This potentially removes a hurdle to using
+morphological models in cases where sufficient re-
+sources to do the extra work required for sophisti-
+cated morphological analysis are not available.
+The motivation for using morphology in lan-
+guage modeling is similar to distributional clustering
+386
+(Brown et al, 1992). In both cases, we form equiv-
+alence classes of words with similar distributional
+behavior. In a preliminary experiment, we find that
+morphological equivalence classes reduce perplex-
+ity as much as traditional distributional classes ? a
+surprising result we intend to investigate in future
+work.
+The main contributions of this paper are as fol-
+lows. We present a language model design and a
+set of morphological and shape features that achieve
+reductions in perplexity for all 21 languages rep-
+resented in the Europarl corpus, ranging from 3%
+to 11%, compared to a Kneser-Ney model. We
+show that identifying suffixes by frequency is suf-
+ficient for getting almost all of this perplexity reduc-
+tion. More sophisticated morphological segmenta-
+tion methods do not further increase perplexity or
+just slightly. Finally, we show that there is one pa-
+rameter that must be tuned for good performance for
+most languages: the frequency threshold ? above
+which a word is not subject to morphological gen-
+eralization because it occurs frequently enough for
+standard word n-gram language models to use it ef-
+fectively for prediction.
+The paper is organized as follows. In Section 2
+we discuss related work. In Section 3 we describe
+the morphological and shape features we use. Sec-
+tion 4 introduces language model and experimental
+setup. Section 5 discusses our results. Section 6
+summarizes the contributions of this paper.
+2 Related Work
+Whittaker and Woodland (2000) apply language
+modeling to morpheme sequences and investigate
+data-driven segmentation methods. Creutz et al
+(2007) propose a similar method that improves
+speech recognition for highly inflecting languages.
+They use Morfessor (Creutz and Lagus, 2007) to
+split words into morphemes. Both approaches are
+essentially a simple form of a factored language
+model (FLM) (Bilmes and Kirchhoff, 2003). In a
+general FLM a number of different back-off paths
+are combined by a back-off function to improve the
+prediction after rare or unseen histories. Vergyri et
+al. (2004) apply FLMs and morphological features
+to Arabic speech recognition.
+These papers and other prior work on using mor-
+phology in language modeling have been language-
+specific and have paid less attention to the ques-
+tion as to how morphology can be useful across
+languages and what generic methods are appropri-
+ate for this goal. Previous work also has concen-
+trated on traditional linguistic morphology whereas
+we compare linguistically motivated morphologi-
+cal segmentation with frequency-based segmenta-
+tion and include shape features in our study.
+Our initial plan for this paper was to use com-
+plex language modeling frameworks that allow ex-
+perimenters to include arbitrary features (including
+morphological and shape features) in the model. In
+particular, we looked at publicly available imple-
+mentations of maximum entropy models (Rosen-
+feld, 1996; Berger et al, 1996) and random forests
+(Xu and Jelinek, 2004). However, we found that
+these methods do not currently scale to running a
+large set of experiments on a multi-gigabyte parallel
+corpus of 21 languages. Similar considerations ap-
+ply to other sophisticated language modeling tech-
+niques like Pitman-Yor processes (Teh, 2006), re-
+current neural networks (Mikolov et al, 2010) and
+FLMs in their general, more powerful form. In ad-
+dition, perplexity reductions of these complex mod-
+els compared to simpler state-of-the-art models are
+generally not large.
+We therefore decided to conduct our study in the
+framework of smoothed n-gram models, which cur-
+rently are an order of magnitude faster and more
+scalable. More specifically, we adopt a class-based
+approach, where words are clustered based on mor-
+phological and shape features. This approach has the
+nice property that the number of features used to es-
+timate the classes does not influence the time needed
+to train the class language model, once the classes
+have been found. This is an important consideration
+in the context of the questions asked in this paper as
+it allows us to use large numbers of features in our
+experiments.
+3 Modeling of morphology and shape
+Our basic approach is to define a number of morpho-
+logical and shape features and then assign all words
+with identical feature values to one class. For the
+morphological features, we investigate three differ-
+ent automatic suffix identification algorithms: Re-
+387
+s, e, d, ed, n, g, ng, ing, y, t, es, r, a, l, on, er, ion,
+ted, ly, tion, rs, al, o, ts, ns, le, i, ation, an, ers, m, nt,
+ting, h, c, te, sed, ated, en, ty, ic, k, ent, st, ss, ons, se,
+ity, ble, ne, ce, ess, ions, us, ry, re, ies, ve, p, ate, in,
+tions, ia, red, able, is, ive, ness, lly, ring, ment, led,
+ned, tes, as, ls, ding, ling, sing, ds, ded, ian, nce, ar,
+ating, sm, ally, nts, de, nd, ism, or, ge, ist, ses, ning,
+u, king, na, el
+Figure 1: The 100 most frequent English suffixes in Eu-
+roparl, ordered by frequency
+ports (Keshava and Pitler, 2006), Morfessor (Creutz
+and Lagus, 2007) and Frequency, where Frequency
+simply selects the most frequent word-final letter se-
+quences as suffixes. The 100 most frequent suffixes
+found by Frequency for English are given in Fig-
+ure 1.
+We use the ? most frequent suffixes for all three
+algorithms, where ? is a parameter. The focus of our
+work is to evaluate the utility of these algorithms for
+language modeling; we do not directly evaluate the
+quality of the suffixes.
+A word is segmented by identifying the longest of
+the ? suffixes that it ends with. Thus, each word has
+one suffix feature if it ends with one of the ? suffixes
+and none otherwise.
+In addition to suffix features, we define features
+that capture shape properties: capitalization, special
+characters and word length. If a word in the test set
+has a combination of feature values that does not oc-
+cur in the training set, then it is assigned to the class
+whose features are most similar. We described the
+similarity measure and details of the shape features
+in prior work (Mu?ller and Schu?tze, 2011). The shape
+features are listed in Table 1.
+4 Experimental Setup
+Experiments are performed using srilm (Stolcke,
+2002), in particular the Kneser-Ney (KN) and
+generic class model implementations. Estimation of
+optimal interpolation parameters is based on (Bahl
+et al, 1991).
+4.1 Baseline
+Our baseline is a modified KN model (Chen and
+Goodman, 1999).
+4.2 Morphological class language model
+We use a variation of the model proposed by Brown
+et al (1992) that we developed in prior work on En-
+glish (Mu?ller and Schu?tze, 2011). This model is a
+class-based language model that groups words into
+classes and replaces the word transition probability
+by a class transition probability and a word emission
+probability:
+PC(wi|wi?1i?N+1) =
+P (g(wi)|g(wi?1i?N+1)) ? P (wi|g(wi))
+where g(w) is the class of word w and we write
+g(wi . . . wj) for g(wi) . . . g(wj).
+Our approach targets rare and unseen histories.
+We therefore exclude all frequent words from clus-
+tering on the assumption that enough training data
+is available for them. Thus, clustering of words is
+restricted to those below a certain token frequency
+threshold ?. As described above, we simply group
+all words with identical feature values into one class.
+Words with a training set frequency above ? are
+added as singletons. The class transition probabil-
+ity P (g(wi)|g(wi?1i?N+1)) is estimated using Witten-
+Bell smoothing.1
+The word emission probability is defined as fol-
+lows:
+P (w|c) =
+?
+??
+??
+1 , N(w) > ?
+N(w)P
+w?c N(w) ?
+?(c)
+|c|?1 , ??N(w)>0
+?(c) , N(w) = 0
+where c = g(w) is w?s class and N(w) is the fre-
+quency of w in the training set. The class-dependent
+out-of-vocabulary (OOV) rate ?(c) is estimated on
+held-out data. Our final model PM interpolates PC
+with a modified KN model:
+PM (wi|wi?N+1i?1 ) =
+?(g(wi?1)) ? PC(wi|wi?N+1i?1 )
++(1? ?(g(wi?1))) ? PKN(wi|wi?N+1i?1 ) (1)
+This model can be viewed as a generalization of
+the simple interpolation ?PC + (1? ?)PW used by
+Brown et al (1992) (where PW is a word n-gram
+1Witten-Bell smoothing outperformed modified Kneser-Ney
+(KN) and Good-Turing (GT).
+388
+is capital(w) first character of w is an uppercase letter
+is all capital(w) ? c ? w : c is an uppercase letter
+capital character(w) ? c ? w : c is an uppercase letter
+appears in lowercase(w) ?capital character(w) ? w? ? ?T
+special character(w) ? c ? w : c is not a letter or digit
+digit(w) ? c ? w : c is a digit
+is number(w) w ? L([+? ?][0? 9] (([., ][0? 9])|[0? 9]) ?)
+Table 1: Shape features as defined by Mu?ller and Schu?tze (2011). ?T is the vocabulary of the training corpus T , w? is
+obtained from w by changing all uppercase letters to lowercase and L(expr) is the language generated by the regular
+expression expr.
+model and PC a class n-gram model). For the set-
+ting ? = ? (clustering of all words), our model is
+essentially a simple interpolation of a word n-gram
+and a class n-gram model except that the interpola-
+tion parameters are optimized for each class instead
+of using the same interpolation parameter ? for all
+classes. We have found that ? = ? is never optimal;
+it is always beneficial to assign the most frequent
+words to their own singleton classes.
+Following Yuret and Bic?ici (2009), we evaluate
+models on the task of predicting the next word from
+a vocabulary that consists of all words that occur
+more than once in the training corpus and the un-
+known word UNK. Performing this evaluation for
+KN is straightforward: we map all words with fre-
+quency one in the training set to UNK and then com-
+pute PKN(UNK |h) in testing.
+In contrast, computing probability estimates for
+PC is more complicated. We define the vocabulary
+of the morphological model as the set of all words
+found in the training corpus, including frequency-1
+words, and one unknown word for each class. We
+do this because ? as we argued above ? morpholog-
+ical generalization is only expected to be useful for
+rare words, so we are likely to get optimal perfor-
+mance for PC if we include all words in clustering
+and probability estimation, including hapax legom-
+ena. Since our testing setup only evaluates on words
+that occur more than once in the training set, we ide-
+ally would want to compute the following estimate
+when predicting the unknown word:
+PC(UNKKN |h) =?
+{w:N(w)=1}
+PC(w|h) +
+?
+c
+PC(UNKc |h) (2)
+where we distinguish the unknown words of the
+morphological classes from the unknown word used
+in evaluation and by the KN model by giving the lat-
+ter the subscript KN.
+However, Eq. 2 cannot be computed efficiently
+and we would not be able to compute it in practical
+applications that require fast language models. For
+this reason, we use the modified class model P ?C in
+Eq. 1 that is defined as follows:
+P ?C(w|h) =
+{ PC(w|h) , N(w) ? 1
+PC(UNKg(w) |h), N(w) = 0
+P ?C and ? by extension ? PM are deficient. This
+means that the evaluation of PM we present below
+is pessimistic in the sense that the perplexity reduc-
+tions would probably be higher if we were willing to
+spend additional computational resources and com-
+pute Eq. 2 in its full form.
+4.3 Distributional class language model
+The most frequently used type of class-based lan-
+guage model is the distributional model introduced
+by Brown et al (1992). To understand the dif-
+ferences between distributional and morphological
+class language models, we compare our morpholog-
+ical model PM with a distributional model PD that
+has exactly the same form as PM; in particular, it
+is defined by Equations (1) and (2). The only dif-
+ference is that the classes are morphological for PM
+and distributional for PD.
+The exchange algorithm that was used by Brown
+et al (1992) has very long running times for large
+corpora in standard implementations like srilm. It
+is difficult to conduct the large number of cluster-
+ings necessary for an extensive study like ours using
+standard implementations.
+389
+Language T/T ? #Sentences
+S bg Bulgarian .0183 .0094 181,415
+S cs Czech .0185 .0097 369,881
+S pl Polish .0189 .0096 358,747
+S sk Slovak .0187 .0088 368,624
+S sl Slovene .0156 .0090 365,455
+G da Danish .0086 .0077 1,428,620
+G de German .0091 .0073 1,391,324
+G en English .0028 .0023 1,460,062
+G nl Dutch .0061 .0048 1,457,629
+G sv Swedish .0090 .0095 1,342,667
+E el Greek .0081 .0079 851,636
+R es Spanish .0040 .0031 1,429,276
+R fr French .0029 .0024 1,460,062
+R it Italian .0040 .0030 1,389,665
+R pt Portuguese .0042 .0032 1,426,750
+R ro Romanian .0142 .0079 178,284
+U et Estonian .0329 .0198 375,698
+U fi Finnish .0231 .0183 1,394,043
+U hu Hungarian .0312 .0163 364,216
+B lt Lithuanian .0265 .0147 365,437
+B lv Latvian .0182 .0086 363,104
+Table 2: Statistics for the 21 languages. S = Slavic, G
+= Germanic, E = Greek, R = Romance, U = Uralic, B
+= Baltic. Type/token ratio (T/T) and # sentences for the
+training set and OOV rate ? for the validation set. The
+two smallest and largest values in each column are bold.
+We therefore induce the distributional classes
+as clusters in a whole-context distributional vector
+space model (Schu?tze and Walsh, 2011), a model
+similar to the ones described by Schu?tze (1992)
+and Turney and Pantel (2010) except that dimension
+words are immediate left and right neighbors (as op-
+posed to neighbors within a window or specific types
+of governors or dependents). Schu?tze and Walsh
+(2011) present experimental evidence that suggests
+that the resulting classes are competitive with Brown
+classes.
+4.4 Corpus
+Our experiments are performed on the Europarl cor-
+pus (Koehn, 2005), a parallel corpus of proceed-
+ings of the European Parliament in 21 languages.
+The languages are members of the following fam-
+ilies: Baltic languages (Latvian, Lithuanian), Ger-
+manic languages (Danish, Dutch, English, Ger-
+man, Swedish), Romance languages (French, Ital-
+ian, Portuguese, Romanian, Spanish), Slavic lan-
+guages (Bulgarian, Czech, Polish, Slovak, Slovene),
+Uralic languages (Estonian, Finnish, Hungarian)
+and Greek. We only use the part of the corpus that
+can be aligned to English sentences. All 21 corpora
+are divided into training set (80%), validation set
+(10%) and test set (10%). The training set is used for
+morphological and distributional clustering and esti-
+mation of class and KN models. The validation set
+is used to estimate the OOV rates ? and the optimal
+parameters ?, ? and ?. Table 2 gives basic statistics
+about the corpus. The sizes of the corpora of lan-
+guages whose countries have joined the European
+community more recently are smaller than for coun-
+tries who have been members for several decades.
+We see that English and French have the lowest
+type/token ratios and OOV rates; and the Uralic lan-
+guages (Estonian, Finnish, Hungarian) and Lithua-
+nian the highest. The Slavic languages have higher
+values than the Germanic languages, which in turn
+have higher values than the Romance languages ex-
+cept for Romanian. Type/token ratio and OOV
+rate are one indicator of how much improvement
+we would expect from a language model with
+a morphological component compared to a non-
+morphological language model.2
+5 Results and Discussion
+We performed all our experiments with an n-gram
+order of 4; this was the order for which the KN
+model performs best for all languages on the vali-
+dation set.
+5.1 Morphological model
+Using grid search, we first determined on the vali-
+dation set the optimal combination of three param-
+eters: (i) ? ? {100, 200, 500, 1000, 2000, 5000},
+(ii) ? ? {50, 100, 200, 500} and (iii) segmentation
+method. Recall that we only cluster words whose
+frequency is below ? and only consider the ? most
+2The tokenization of the Europarl corpus has a preference
+for splitting tokens in unclear cases. OOV rates would be higher
+for more conservative tokenization strategies.
+4A two-tailed paired t-test on the improvements by language
+shows that the morphological model significantly outperforms
+the distributional model with p=0.0027. A test on the Germanic,
+Romance and Greek languages yields p=0.19.
+390
+PPKN ??M ?? M? PPC PPM ?M ??D PPWC PPD ?D
+S bg 74 200 50 f 103 69 0.07 500 141 71 0.04
+S cs 141 500 100 f 217 129 0.08 1000 298 134 0.04
+S pl 148 500 100 m 241 134 0.09 1000 349 141 0.05
+S sk 123 500 200 f 186 111 0.10 1000 261 116 0.06
+S sl 118 500 100 m 177 107 0.09 1000 232 111 0.06
+G da 69 1000 100 r 89 65 0.05 2000 103 65 0.05
+G de 100 2000 50 m 146 94 0.06 2000 150 94 0.06
+G en 55 2000 50 f 73 53 0.03 5000 87 53 0.04
+G nl 70 2000 50 r 100 67 0.04 5000 114 67 0.05
+G sv 98 1000 50 m 132 92 0.06 2000 154 92 0.06
+E el 80 1000 100 f 108 73 0.08 2000 134 74 0.07
+R es 57 2000 100 m 77 54 0.05 5000 93 54 0.05
+R fr 45 1000 50 f 56 43 0.04 5000 71 42 0.05
+R it 69 2000 100 m 101 66 0.04 2000 100 66 0.05
+R pt 62 2000 50 m 88 59 0.05 2000 87 59 0.05
+R ro 76 500 100 m 121 70 0.07 1000 147 71 0.07
+U et 256 500 100 m 422 230 0.10 1000 668 248 0.03
+U fi 271 1000 500 f 410 240 0.11 2000 706 261 0.04
+U hu 151 200 200 m 222 136 0.09 1000 360 145 0.03
+B lt 175 500 200 m 278 161 0.08 1000 426 169 0.03
+B lv 154 500 200 f 237 142 0.08 1000 322 147 0.05
+Table 3: Perplexities on the test set for N = 4. S = Slavic, G = Germanic, E = Greek, R = Romance, U =
+Uralic, B = Baltic. ??x, ?? and M? denote frequency threshold, suffix count and segmentation method optimal on the
+validation set. The letters f, m and r stand for the frequency-based method, Morfessor and Reports. PPKN, PPC,
+PPM, PPWC, PPD are the perplexities of KN, morphological class model, interpolated morphological class model,
+distributional class model and interpolated distributional class model, respectively. ?x denotes relative improvement:
+(PPKN?PPx)/PPKN. Bold numbers denote maxima and minima in the respective column.4
+frequent suffixes. An experiment with the optimal
+configuration was then run on the test set. The re-
+sults are shown in Table 3. The KN perplexities vary
+between 45 for French and 271 for Finnish.
+The main result is that the morphological model
+PM consistently achieves better performance than
+KN (columns PPM and ?M), in particular for
+Slavic, Uralic and Baltic languages and Greek. Im-
+provements range from 0.03 for English to 0.11 for
+Finnish.
+Column ??M gives the threshold that is optimal for
+the validation set. Values range from 200 to 2000.
+Column ?? gives the optimal number of suffixes. It
+ranges from 50 to 500. The morphologically com-
+plex language Finnish seems to benefit from more
+suffixes than morphologically simple languages like
+Dutch, English and German, but there are a few lan-
+guages that do not fit this generalization, e.g., Esto-
+nian for which 100 suffixes are optimal.
+The optimal morphological segmenter is given in
+column M?: f = Frequency, r = Reports, m = Mor-
+fessor. The most sophisticated segmenter, Morfes-
+sor is optimal for about half of the 21 languages, but
+Frequency does surprisingly well. Reports is opti-
+mal for two languages, Danish and Dutch. In gen-
+eral, Morfessor seems to have an advantage for com-
+plex morphologies, but is beaten by Frequency for
+Finnish and Latvian.
+5.2 Distributional model
+Columns PPD and ?D show the performance of the
+distributional class language model. As one would
+perhaps expect, the morphological model is superior
+to the distributional model for morphologically com-
+plex languages like Estonian, Finnish and Hungar-
+ian. These languages have many suffixes that have
+391
+??+ ???? ?+ ?? ??+ ???? ?+ ?? ?M+ ??M? M+ M?
+S bg 0.03 200 5000 0.01 50 500 f m
+S cs 0.03 500 5000 100 500 f r
+S pl 0.03 500 5000 0.01 100 500 m r
+S sk 0.02 500 5000 200 500 0.01 f r
+S sl 0.03 500 5000 0.01 100 500 m r
+G da 0.02 1000 100 100 50 r f
+G de 0.02 2000 100 50 500 m f
+G en 0.01 2000 100 50 500 f r
+G nl 0.01 2000 100 50 500 r f
+G sv 0.02 1000 100 50 500 m f
+E el 0.02 1000 100 100 500 0.01 f r
+R es 0.02 2000 100 100 500 m r
+R fr 0.01 1000 100 50 500 f r
+R it 0.01 2000 100 100 500 m r
+R pt 0.02 2000 100 50 500 m r
+R ro 0.03 500 5000 100 500 m r
+U et 0.02 500 5000 0.01 100 50 0.01 m r
+U fi 0.03 1000 100 0.03 500 50 0.02 f r
+U hu 0.03 200 5000 0.01 200 50 m r
+B lt 0.02 500 5000 200 50 m r
+B lv 0.02 500 5000 200 500 f r
+Table 4: Sensitivity of perplexity values to the parameters (on the validation set). S = Slavic, G = Germanic, E =
+Greek, R = Romance, U = Uralic, B = Baltic. ?x+ and ?x? denote the relative improvement of PM over the KN
+model when parameter x is set to the best (x+) and worst value (x?), respectively. The remaining parameters are set
+to the optimal values of Table 3. Cells with differences of relative improvements that are smaller than 0.01 are left
+empty.
+high predictive power for the distributional contexts
+in which a word can occur. A morphological model
+can exploit this information even if a word with an
+informative suffix did not occur in one of the lin-
+guistically licensed contexts in the training set. For
+a distributional model it is harder to learn this type
+of generalization.
+What is surprising about the comparative perfor-
+mance of morphological and distributional models is
+that there is no language for which the distributional
+model outperforms the morphological model by a
+wide margin. Perplexity reductions are lower than
+or the same as those of the morphological model
+in most cases, with only four exceptions ? English,
+French, Italian, and Dutch ? where the distributional
+model is better by one percentage point than the
+morphological model (0.05 vs. 0.04 and 0.04 vs.
+0.03).
+Column ??D gives the frequency threshold for the
+distributional model. The optimal threshold ranges
+from 500 to 5000. This means that the distributional
+model benefits from restricting clustering to less fre-
+quent words ? and behaves similarly to the morpho-
+logical class model in that respect. We know of no
+previous work that has conducted experiments on
+frequency thresholds for distributional class models
+and shown that they increase perplexity reductions.
+5.3 Sensitivity analysis of parameters
+Table 3 shows results for parameters that were opti-
+mized on the validation set. We now want to analyze
+how sensitive performance is to the three parame-
+ters ?, ? and segmentation method. To this end, we
+present in Table 4 the best and worst values of each
+parameter and the difference in perplexity improve-
+ment between the two.
+Differences of perplexity improvement between
+best and worst values of ?M range between 0.01
+392
+and 0.03. The four languages with the smallest
+difference 0.01 are morphologically simple (Dutch,
+English, French, Italian). The languages with the
+largest difference (0.03) are morphologically more
+complex languages. In summary, the frequency
+threshold ?M has a comparatively strong influence
+on perplexity reduction. The strength of the effect is
+correlated with the morphological complexity of the
+language.
+In contrast to ?, the number of suffixes ? and
+the segmentation method have negligible effect on
+most languages. The perplexity reductions for dif-
+ferent values of ? are 0.03 for Finnish, 0.01 for Bul-
+garian, Estonian, Hungarian, Polish and Slovenian,
+and smaller than 0.01 for the other languages. This
+means that, with the exception of Finnish, we can
+use a value of ? = 100 for all languages and be very
+close to the optimal perplexity reduction ? either be-
+cause 100 is optimal or because perplexity reduction
+is not sensitive to choice of ?. Finnish is the only
+language that clearly benefits from a large number
+of suffixes.
+Surprisingly, the performance of the morphologi-
+cal segmentation methods is very close for 17 of the
+21 languages. For three of the four where there is
+a difference in improvement of ? 0.01, Frequency
+(f) performs best. This means that Frequency is a
+good segmentation method for all languages, except
+perhaps for Estonian.
+5.4 Impact of shape
+The basic question we are asking in this paper is
+to what extent the sequence of characters a word
+is composed of can be exploited for better predic-
+tion in language modeling. In the final analysis in
+Table 5 we look at four different types of character
+sequences and their contributions to perplexity re-
+duction. The four groups are alphabetic character
+sequences (W), numbers (N), single special charac-
+ters (P = punctuation), and other (O). Examples for
+O would be ?751st? and words containing special
+characters like ?O?Neill?. The parameters used are
+the optimal ones of Table 3. Table 5 shows that the
+impact of special characters on perplexity is similar
+across languages: 0.04 ? ?P ? 0.06. The same is
+true for numbers: 0.23 ? ?N ? 0.33, with two out-
+liers that show a stronger effect of this class: Finnish
+?N = 0.38 and German ?N = 0.40.
+?W ?P ?N ?O
+S bg 0.07 0.04 0.28 0.16
+S cs 0.09 0.04 0.26 0.33
+S pl 0.10 0.05 0.23 0.22
+S sk 0.10 0.05 0.25 0.28
+S sl 0.10 0.04 0.28 0.28
+G da 0.05 0.05 0.31 0.18
+G de 0.06 0.05 0.40 0.18
+G en 0.03 0.04 0.33 0.14
+G nl 0.04 0.05 0.31 0.26
+G sv 0.06 0.05 0.31 0.35
+E el 0.08 0.05 0.33 0.14
+R es 0.05 0.04 0.26 0.14
+R fr 0.04 0.04 0.29 0.01
+R it 0.04 0.05 0.33 0.02
+R pt 0.05 0.05 0.28 0.39
+R ro 0.08 0.04 0.25 0.17
+U et 0.11 0.05 0.26 0.26
+U fi 0.12 0.06 0.38 0.36
+U hu 0.10 0.04 0.32 0.23
+B lt 0.08 0.06 0.27 0.05
+B lv 0.08 0.05 0.26 0.19
+Table 5: Relative improvements of PM on the valida-
+tion set compared to KN for histories wi?1i?N+1 grouped
+by the type of wi?1. The possible types are alphabetic
+word (W), punctuation (P), number (N) and other (O).
+The fact that special characters and numbers be-
+have similarly across languages is encouraging as
+one would expect less crosslinguistic variation for
+these two classes of words.
+In contrast, ?true? words (those exclusively com-
+posed of alphabetic characters) show more variation
+from language to language: 0.03 ? ?W ? 0.12.
+The range of variation is not necessarily larger than
+for numbers, but since most words are alphabetical
+words, class W is responsible for most of the differ-
+ence in perplexity reduction between different lan-
+guages. As before we observe a negative correlation
+between morphological complexity and perplexity
+reduction; e.g., Dutch and English have small ?W
+and Estonian and Finnish large values.
+We provide the values of ?O for completeness.
+The composition of this catch-all group varies con-
+siderably from language to language. For exam-
+ple, many words in this class are numbers with al-
+phabetic suffixes like ?2012-ben? in Hungarian and
+393
+words with apostrophes in French.
+6 Summary
+We have investigated an interpolation of a KN model
+with a class language model whose classes are de-
+fined by morphology and shape features. We tested
+this model in a large crosslingual study of European
+languages.
+Even though the model is generic and we use
+the same architecture and features for all languages,
+the model achieves reductions in perplexity for all
+21 languages represented in the Europarl corpus,
+ranging from 3% to 11%, when compared to a KN
+model. We found perplexity reductions across all
+21 languages for histories ending with four different
+types of word shapes: alphabetical words, special
+characters, and numbers.
+We looked at the sensitivity of perplexity reduc-
+tions to three parameters of the model: ?, a thresh-
+old that determines for which frequencies words are
+given their own class; ?, the number of suffixes used
+to determine class membership; and morphological
+segmentation. We found that ? has a considerable
+influence on the performance of the model and that
+optimal values vary from language to language. This
+parameter should be tuned when the model is used
+in practice.
+In contrast, the number of suffixes and the mor-
+phological segmentation method only had a small
+effect on perplexity reductions. This is a surprising
+result since it means that simple identification of suf-
+fixes by frequency and choosing a fixed number of
+suffixes ? across languages is sufficient for getting
+most of the perplexity reduction that is possible.
+7 Future Work
+A surprising result of our experiments was that the
+perplexity reductions due to morphological classes
+were generally better than those due to distributional
+classes even though distributional classes are formed
+directly based on the type of information that a lan-
+guage model is evaluated on ? the distribution of
+words or which words are likely to occur in se-
+quence. An intriguing question is to what extent the
+effect of morphological and distributional classes is
+additive. We ran an exploratory experiment with
+a model that interpolates KN, morphological class
+model and distributional class model. This model
+only slightly outperformed the interpolation of KN
+and morphological class model (column PPM in Ta-
+ble 3). We would like to investigate in future work if
+the information provided by the two types of classes
+is indeed largely redundant or if a more sophisticated
+combination would perform better than the simple
+linear interpolation we have used here.
+Acknowledgments. This research was funded by
+DFG (grant SFB 732). We would like to thank the
+anonymous reviewers for their valuable comments.
+References
+Lalit R. Bahl, Peter F. Brown, Peter V. de Souza,
+Robert L. Mercer, and David Nahamoo. 1991. A fast
+algorithm for deleted interpolation. In Eurospeech.
+Adam L. Berger, Vincent J. Della Pietra, and Stephen
+A. Della Pietra. 1996. A maximum entropy approach
+to natural language processing. Comput. Linguist.
+Jeff A. Bilmes and Katrin Kirchhoff. 2003. Factored
+language models and generalized parallel backoff. In
+NAACL-HLT.
+Peter F. Brown, Peter V. de Souza, Robert L. Mercer, Vin-
+cent J. Della Pietra, and Jenifer C. Lai. 1992. Class-
+based n-gram models of natural language. Comput.
+Linguist.
+Stanley F. Chen and Joshua Goodman. 1999. An empir-
+ical study of smoothing techniques for language mod-
+eling. Computer Speech & Language.
+Mathias Creutz and Krista Lagus. 2007. Unsupervised
+models for morpheme segmentation and morphology
+learning. ACM TSLP.
+Mathias Creutz, Teemu Hirsima?ki, Mikko Kurimo, Antti
+Puurula, Janne Pylkko?nen, Vesa Siivola, Matti Var-
+jokallio, Ebru Arisoy, Murat Sarac?lar, and Andreas
+Stolcke. 2007. Morph-based speech recognition
+and modeling of out-of-vocabulary words across lan-
+guages. ACM TSLP.
+Samarth Keshava and Emily Pitler. 2006. A simpler,
+intuitive approach to morpheme induction. In PASCAL
+Morpho Challenge.
+Philipp Koehn. 2005. Europarl: A parallel corpus for
+statistical machine translation. In MT summit.
+Toma?s? Mikolov, Martin Karafia?t, Luka?s? Burget, Jan
+C?ernocky?, and Sanjeev Khudanpur. 2010. Recurrent
+neural network based language model. In ICSLP.
+Thomas Mu?ller and Hinrich Schu?tze. 2011. Improved
+modeling of out-of-vocabulary words using morpho-
+logical classes. In ACL.
+394
+Ronald Rosenfeld. 1996. A maximum entropy approach
+to adaptive statistical language modelling. Computer
+Speech & Language.
+Hinrich Schu?tze and Michael Walsh. 2011. Half-context
+language models. Comput. Linguist.
+Hinrich Schu?tze. 1992. Dimensions of meaning.
+In ACM/IEEE Conference on Supercomputing, pages
+787?796.
+Andreas Stolcke. 2002. SRILM - An extensible lan-
+guage modeling toolkit. In Interspeech.
+Yee Whye Teh. 2006. A hierarchical bayesian language
+model based on Pitman-Yor processes. In ACL.
+Peter D. Turney and Patrick Pantel. 2010. From fre-
+quency to meaning: Vector space models of semantics.
+JAIR.
+Dimitra Vergyri, Katrin Kirchhoff, Kevin Duh, and An-
+dreas Stolcke. 2004. Morphology-based language
+modeling for Arabic speech recognition. In ICSLP.
+E.W.D. Whittaker and P.C. Woodland. 2000. Particle-
+based language modelling. In ICSLP.
+Peng Xu and Frederick Jelinek. 2004. Random forests in
+language modeling. In EMNLP.
+Deniz Yuret and Ergun Bic?ici. 2009. Modeling morpho-
+logically rich languages using split words and unstruc-
+tured dependencies. In ACL-IJCNLP.
+395
+Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics:shortpapers, pages 524?528,
+Portland, Oregon, June 19-24, 2011. c?2011 Association for Computational Linguistics
+Improved Modeling of Out-Of-Vocabulary Words Using Morphological
+Classes
+Thomas Mu?ller and Hinrich Schu?tze
+Institute for Natural Language Processing
+University of Stuttgart, Germany
+muellets@ims.uni-stuttgart.de
+Abstract
+We present a class-based language model that
+clusters rare words of similar morphology
+together. The model improves the predic-
+tion of words after histories containing out-
+of-vocabulary words. The morphological fea-
+tures used are obtained without the use of la-
+beled data. The perplexity improvement com-
+pared to a state of the art Kneser-Ney model is
+4% overall and 81% on unknown histories.
+1 Introduction
+One of the challenges in statistical language mod-
+eling are words that appear in the recognition task
+at hand, but not in the training set, so called out-
+of-vocabulary (OOV) words. Especially for produc-
+tive language it is often necessary to at least reduce
+the number of OOVs. We present a novel approach
+based on morphological classes to handling OOV
+words in language modeling for English. Previous
+work on morphological classes in English has not
+been able to show noticeable improvements in per-
+plexity. In this article class-based language mod-
+els as proposed by Brown et al (1992) are used to
+tackle the problem. Our model improves perplex-
+ity of a Kneser-Ney (KN) model for English by 4%,
+the largest improvement of a state-of-the-art model
+for English due to morphological modeling that we
+are aware of. A class-based language model groups
+words into classes and replaces the word transition
+probability by a class transition probability and a
+word emission probability:
+P (w3|w1w2) = P (c3|c1c2) ? P (w3|c3). (1)
+Brown et al and many other authors primarily use
+context information for clustering. Niesler et al
+(1998) showed that context clustering works better
+than clusters based on part-of-speech tags. How-
+ever, since the context of an OOV word is unknown
+and it therefore cannot be assigned to a cluster, OOV
+words are as much a problem to a context-based
+class model as to a word model. That is why we
+use non-distributional features ? features like mor-
+phological suffixes that only depend on the shape of
+the word itself ? to design a new class-based model
+that can naturally integrate unknown words.
+In related work, factored language models
+(Bilmes and Kirchhoff, 2003) were proposed to
+make use of morphological information in highly
+inflecting languages such as Finnish (Creutz et al,
+2007), Turkish (Creutz et al, 2007; Yuret and Bic?ici,
+2009) and Arabic (Creutz et al, 2007; Vergyri et
+al., 2004) or compounding languages like German
+(Berton et al, 1996). The main idea is to replace
+words by sequences of factors or features and to
+apply statistical language modeling to the resulting
+factor sequences. If, for example, words were seg-
+mented into morphemes, an unknown word would
+be split into an unseen sequence, which could be rec-
+ognized using discounting techniques. However, if
+one morpheme, e.g. the stem, is unknown to the sys-
+tem, the fundamental problem remains unsolved.
+Our class-based model uses a number of features
+that have not been used in factored models (e.g.,
+shape and length features) and achieves ? in con-
+trast to factored models ? good perplexity gains for
+English.
+524
+is capital(w) first character of w is an uppercase letter
+is all capital(w) ? c ? w : c is an uppercase letter
+capital character(w) ? c ? w : c is an uppercase letter
+appears in lowercase(w) ?capital character(w) ? w? ? ?T
+special character(w) ? c ? w : c is not a letter or digit
+digit(w) ? c ? w : c is a digit
+is number(w) w ? L([+ ? ?][0 ? 9] (([., ][0 ? 9])|[0 ? 9]) ?)
+not special(w) ?(special character(w) ? digit(w) ? is number(w))
+Table 1: Predicates of the capitalization and special character groups. ?T is the vocabulary of the training corpus T ,
+w? is obtained from w by changing all uppercase letters to lowercase and L(expr) is the language generated by the
+regular expression expr.
+2 Morphological Features
+The feature vector of a word consists of four parts
+that represent information about suffixes, capitaliza-
+tion, special characters and word length. For the
+suffix group, we define a binary feature for each
+of the 100 most frequent suffixes learned on the
+training corpus by the Reports algorithm (Keshava,
+2006), a general purpose unsupervised morphology
+learning algorithm. One additional binary feature is
+used for all other suffixes learned by Reports, in-
+cluding the empty suffix.
+The feature groups capitalization and special
+characters are motivated by the analysis shown in
+Table 2. Our goal is to improve OOV modeling.
+The table shows that most OOV words (f = 0) are
+numbers (CD), names (NP), and nouns and adjec-
+tives (NN, NNS, JJ). This distribution is similar to
+hapax legomena (f = 1), but different from the POS
+distribution of all tokens. Capitalization and special
+character features are of obvious utility in identify-
+ing the POS classes NP and CD since names in En-
+glish are usually capitalized and numbers are writ-
+ten with digits and special characters such as comma
+and period. To capture these ?shape? properties of a
+word, we define the features listed in Table 1.
+The fourth feature group is length. Short words
+often have unusual distributional properties. Exam-
+ples are abbreviations and bond credit ratings like
+Aaa. To represent this information in the length
+part of the vector, we define four binary features for
+lengths 1, 2, 3 and greater than 3. The four parts
+of the vector (suffixes, capitalization, special char-
+acters, length) are weighted equally by normalizing
+the subvector of each subgroup to unit length.
+We designed the four feature groups to group
+word types to either resemble POS classes or to in-
+duce an even finer sub-partitioning. Unsupervised
+POS clustering is a hard task in English and it is vir-
+tually impossible if a word?s context (which is not
+available for OOV items) is not taken into account.
+For example, there is no way we can learn that ?the?
+and ?a? are similar or that ?child? has the same re-
+lationship to ?children? as ?kid? does to ?kids?. But
+as our analysis in Table 2 shows, part of the benefit
+of morphological analysis for OOVs comes from an
+appropriate treatment of names and numbers. The
+suffix feature group is useful for categorizing OOV
+nouns and adjectives because there are very few ir-
+regular morphemes like ?ren? in children in English
+and OOV words are likely to be regular words.
+So even though morphological learning based on
+the limited information we use is not possible in gen-
+eral, it can be partially solved for the special case of
+OOV words. Our experimental results in Section 5
+confirm that this is the case. We also testes prefixes
+and features based on word stems. However, they
+produced inferior clustering solutions.
+3 The Language Model
+As mentioned before in the literature, e.g. by Mal-
+tese and Mancini (1992), class-based models only
+outperform word models in cases of insufficient
+data. That is why we use a frequency-based ap-
+proach and only include words below a certain to-
+ken frequency threshold ? in the clustering process.
+A second motivation is that the contexts of low fre-
+quency words are more similar to the expected con-
+texts of OOV words.
+Given a training corpus, all words with a fre-
+525
+tag types tokens
+f = 1 f = 0 (OOV)
+CD 0.39 0.38 0.05
+NP 0.35 0.35 0.14
+NN 0.10 0.10 0.17
+NNS 0.05 0.06 0.07
+JJ 0.05 0.06 0.07
+V* 0.04 0.05 0.15
+? 0.98 0.99 0.66
+Table 2: Proportion of dominant POS for types with train-
+ing set frequencies f ? {0, 1} and for tokens. V* consists
+of all verb POS tags.
+quency below the threshold ? are partitioned into
+k clusters using the bisecting k-means algorithm
+(Steinbach et al, 2000). The cluster of an OOV
+word w can be defined as the cluster whose centroid
+is closest to the feature vector of w. The formerly
+removed high-frequency words are added as single-
+ton clusters to produce a complete clustering. How-
+ever, OOV words can only be assigned to the orig-
+inal k-means clusters. Over this clustering a class-
+based trigram model can be defined, as introduced
+by Brown et al (1992). The word transition proba-
+bility of such a model is given by equation 1, where
+ci denotes the cluster of the word wi. The class
+transition probability P (c3|c1c2) is estimated using
+the unsmoothed maximum likelihood estimate. The
+emission probability is defined as follows:
+P (w3|c3) =
+?
+?
+?
+?
+?
+1 if c(w3) > ?
+(1 ? ?) c(w3)P
+w?c3
+c(w) if ??c(w3)>0
+? if c(w3) = 0
+where c(w) is the frequency of w in the training set.
+? is estimated on held-out data. The morphologi-
+cal language model is then interpolated with a modi-
+fied Kneser-Ney trigram model. In this interpolation
+the parameters ? depend on the cluster c2 of the his-
+tory word w2, i.e.:
+P (w3|w1w2) = ?(c2) ? PM (w3|w1w2)
++ (1 ? ?(c2)) ? PKN (w3|w1w2).
+This setup may cause overfitting as every high fre-
+quent word w2 corresponds to a singleton class. A
+grouping of several words into equivalence classes
+could therefore further improve the model; this,
+however, is beyond the scope of this article. We es-
+timate optimal parameters ?(c2) using the algorithm
+described by Bahl et al (1991).
+4 Experimental Setup
+We compare the performance of the described model
+with a Kneser-Ney model and an interpolated model
+based on part-of-speech (POS) tags. The relation be-
+tween words and POS tags is many-to-many, but we
+transform it to a many-to-one relation by labeling
+every word ? independent of its context ? with its
+most frequent tag. OOV words are treated equally
+even though their POS classes would not be known
+in a real application. Treetagger (Schmid, 1994) was
+used to tag the entire corpus.
+The experiments are carried out on a Wall Street
+Journal (WSJ) corpus of 50 million words that is
+split into training set (80%), valdev (5%), valtst
+(5%), and test set (10%). The number of distinct fea-
+ture vectors in training set, valdev and validation set
+(valdev+valtst) are 632, 466, and 512, respectively.
+As mentioned above, the training set is used to learn
+suffixes and the maximum likelihood n-gram esti-
+mates. The unknown word rate of the validation set
+is ? ? 0.028.
+We use two setups to evaluate our methods. The
+first uses valdev for parameter estimation and valtst
+for testing and the second the entire validation set for
+parameter estimation and the test set for testing. All
+models with a threshold greater or equal to the fre-
+quency of the most frequent word type are identical.
+We use ? as the threshold to refer to these models.
+In a similar manner, the cluster count ? denotes a
+clustering where two words are in the same cluster
+if and only if their features are identical. This is the
+finest possible clustering of the feature vectors.
+5 Results
+Table 3 shows the results of our experiments. The
+KN model yields a perplexity of 88.06 on valtst (top
+row). For small frequency thresholds overfitting ef-
+fects cause that the interpolated models are worse
+than the KN model. We can see that a clustering
+of the feature vectors is not necessary as the differ-
+ences between all cluster models are small and c?
+is the overall best model. Surprisingly, morphologi-
+cal clustering and POS classes are close even though
+526
+? cPOS c1 c50 c100 c?
+0 88.06 88.06 88.06 88.06 88.06
+1 89.74 89.84 89.73 89.74 89.74
+5 89.07 89.36 89.07 89.06 89.07
+10 88.59 89.01 88.58 88.57 88.58
+50 86.72 87.58 86.69 86.68 86.68
+102 85.92 87.06 85.92 85.91 85.89
+103 84.43 86.88 84.83 84.77 84.56
+104 85.22 87.59 85.89 85.73 85.26
+105 86.82 87.99 87.44 87.32 86.79
+? 87.31 88.06 87.96 87.92 87.62
+? cPOS c1 c50 c100 c?
+0 813.50 813.50 813.50 813.50 813.50
+1 181.25 206.17 182.78 183.62 184.43
+5 152.51 185.54 154.52 152.98 153.83
+10 147.48 186.12 149.34 147.98 147.48
+50 146.21 203.10 142.21 140.67 140.46
+102 149.06 215.54 143.95 142.48 141.67
+103 173.91 279.02 164.22 159.04 150.13
+104 239.72 349.54 221.42 208.85 180.57
+105 317.13 373.98 318.04 297.18 236.90
+? 348.76 378.38 366.92 357.80 292.34
+Table 3: Perplexities for different frequency thresholds ? and cluster models. In the left table, perplexity is calculated
+over all events P (w3|w1w2) of the valtst set. On the right side, the subset of events where w1 or w2 are unknown is
+taken into account. The overall best results for class models and POS models are highlighted in bold.
+the POS class model uses oracle information to as-
+sign the right POS to an unknown word. The optimal
+threshold is ? = 103 ? the bolded perplexity values
+84.43 and 84.56; that means that only 1.35% of the
+word types were excluded from the morphological
+clustering (86% of the tokens). The improvement
+over the KN model is 4%.
+In a second evaluation we reduce the perplexity
+calculations to predictions of the form P (w3|w1w2)
+where w1 or w2 are OOV words. On such an event
+the KN model has to back off to a bigram or even
+unigram estimate, which results in inferior predic-
+tions and higher perplexity. The perplexity for the
+KN model is 813.50 (top row). A first observation
+is that the perplexity of model c1 starts at a good
+value, but worsens with rising values for ? ? 10.
+The reason is the dominance of proper nouns and
+cardinal numbers at a frequency threshold of one and
+in the distribution of OOV words (cf. Table 2). The
+c1 model with ? = 1 is specialized for predicting
+words after unknown nouns and cardinal numbers
+and two thirds of the unknown words are of exactly
+that type. However, with rising ?, other word classes
+get a higher influence and different probability dis-
+tributions are superimposed. The best morphologi-
+cal model c? reduces the KN perplexity of 813.50
+to 140.46 (bolded), an improvement of 83%.
+As a final experiment, we evaluated our method
+on the test set. In this case, we used the entire
+validation set for parameter tuning (i.e., valdev and
+valtst). The overall perplexity of the KN model is
+88.28, the perplexities for the best POS and c? clus-
+ter model for ? = 1000 are 84.59 and 84.71 respec-
+tively, which corresponds again to an improvement
+of 4%. For unknown histories the KN model per-
+plexity is 767.25 and the POS and c? cluster model
+perplexities at ? = 50 are 150.90 and 144.77. Thus,
+the morphological model reduces perplexity by 81%
+compared to the KN model.
+6 Conclusion
+We have presented a new class-based morphological
+language model. In an experiment the model outper-
+formed a modified Kneser-Ney model, especially in
+the prediction of the continuations of histories con-
+taining OOV words. The model is entirely unsuper-
+vised, but works as well as a model using part-of-
+speech information.
+Future Work. We plan to use our model for do-
+main adaptation in applications like machine trans-
+lation. We then want to extend our model to other
+languages, which could be more challenging, as cer-
+tain languages have a more complex morphology
+than English, but also worthwhile, if the unknown
+word rate is higher. Preliminary experiments on
+German and Finnish show promising results. The
+model could be further improved by using contex-
+tual information for the word clustering and training
+a classifier based on morphological features to as-
+sign OOV words to these clusters.
+Acknowledgments. This research was funded by
+DFG (grant SFB 732). We would like to thank Hel-
+mut Schmid and the anonymous reviewers for their
+valuable comments.
+527
+References
+Lalit R. Bahl, Peter F. Brown, Peter V. de Souza,
+Robert L. Mercer, and David Nahamoo. 1991. A fast
+algorithm for deleted interpolation. In Speech Com-
+munication and Technology, pages 1209?1212.
+Andre Berton, Pablo Fetter, and Peter Regel-Brietzmann.
+1996. Compound words in large-vocabulary German
+speech recognition systems. In Spoken Language, vol-
+ume 2, pages 1165 ?1168 vol.2, October.
+Jeff A. Bilmes and Katrin Kirchhoff. 2003. Factored
+language models and generalized parallel backoff. In
+Human Language Technology, NAACL ?03, pages 4?
+6. Association for Computational Linguistics.
+Peter F. Brown, Peter V. de Souza, Robert L. Mercer, Vin-
+cent J. Della Pietra, and Jenifer C. Lai. 1992. Class-
+based n-gram models of natural language. Computa-
+tional Linguistics, 18:467?479, December.
+Mathias Creutz, Teemu Hirsima?ki, Mikko Kurimo, Antti
+Puurula, Janne Pylkko?nen, Vesa Siivola, Matti Var-
+jokallio, Ebru Arisoy, Murat Sarac?lar, and Andreas
+Stolcke. 2007. Morph-based speech recognition
+and modeling of out-of-vocabulary words across lan-
+guages. ACM Transactions on Speech and Language
+Processing, 5:3:1?3:29, December.
+Samarth Keshava. 2006. A simpler, intuitive approach
+to morpheme induction. In PASCAL Challenge Work-
+shop on Unsupervised Segmentation of Words into
+Morphemes, pages 31?35.
+Giulio Maltese and Federico Mancini. 1992. An auto-
+matic technique to include grammatical and morpho-
+logical information in a trigram-based statistical lan-
+guage model. In Acoustics, Speech, and Signal Pro-
+cessing, volume 1, pages 157 ?160 vol.1, March.
+Thomas R. Niesler, Edward W.D. Whittaker, and
+Philip C. Woodland. 1998. Comparison of part-of-
+speech and automatically derived category-based lan-
+guage models for speech recognition. In Acoustics,
+Speech and Signal Processing, volume 1, pages 177
+?180 vol.1, May.
+Helmut Schmid. 1994. Probabilistic part-of-speech tag-
+ging using decision trees. In New Methods in Lan-
+guage Processing, pages 44?49.
+Michael Steinbach, George Karypis, and Vipin Kumar.
+2000. A comparison of document clustering tech-
+niques. In KDD Workshop on Text Mining.
+Dimitra Vergyri, Katrin Kirchhoff, Kevin Duh, and An-
+dreas Stolcke. 2004. Morphology-based language
+modeling for Arabic speech recognition. In Spoken
+Language Processing, pages 2245?2248.
+Deniz Yuret and Ergun Bic?ici. 2009. Modeling morpho-
+logically rich languages using split words and unstruc-
+tured dependencies. In International Joint Conference
+on Natural Language Processing, pages 345?348. As-
+sociation for Computational Linguistics.
+528
+Proceedings of the Fourth Workshop on Statistical Parsing of Morphologically Rich Languages, pages 135?145,
+Seattle, Washington, USA, 18 October 2013. c?2013 Association for Computational Linguistics
+(Re)ranking Meets Morphosyntax: State-of-the-art Results
+from the SPMRL 2013 Shared Task?
+Anders Bjo?rkelund?, O?zlem C?etinog?lu?, Richa?rd Farkas?, Thomas Mu?ller??, and Wolfgang Seeker?
+?Institute for Natural Language Processing , University of Stuttgart, Germany
+?Department of Informatics, University of Szeged, Hungary
+?Center for Information and Language Processing, University of Munich, Germany
+{anders,ozlem,muellets,seeker}@ims.uni-stuttgart.de
+rfarkas@inf.u-szeged.hu
+Abstract
+This paper describes the IMS-SZEGED-CIS
+contribution to the SPMRL 2013 Shared Task.
+We participate in both the constituency and
+dependency tracks, and achieve state-of-the-
+art for all languages. For both tracks we make
+significant improvements through high quality
+preprocessing and (re)ranking on top of strong
+baselines. Our system came out first for both
+tracks.
+1 Introduction
+In this paper, we present our contribution to the 2013
+Shared Task on Parsing Morphologically Rich Lan-
+guages (MRLs). MRLs pose a number of interesting
+challenges to today?s standard parsing algorithms,
+for example a free word order and, due to their rich
+morphology, greater lexical variation that aggravates
+out-of-vocabulary problems considerably (Tsarfaty
+et al, 2010).
+Given the wide range of languages encompassed
+by the term MRL, there is, as of yet, no clear con-
+sensus on what approaches and features are gener-
+ally important for parsing MRLs. However, devel-
+oping tailored solutions for each language is time-
+consuming and requires a good understanding of
+the language in question. In our contribution to the
+SPMRL 2013 Shared Task (Seddah et al, 2013), we
+therefore chose an approach that we could apply to
+all languages in the Shared Task, but that would also
+allow us to fine-tune it for individual languages by
+varying certain components.
+?Authors in alphabetical order.
+For the dependency track, we combined the n-
+best output of multiple parsers and subsequently
+ranked them to obtain the best parse. While this
+approach has been studied for constituency parsing
+(Zhang et al, 2009; Johnson and Ural, 2010; Wang
+and Zong, 2011), it is, to our knowledge, the first
+time this has been applied successfully within de-
+pendency parsing. We experimented with different
+kinds of features in the ranker and developed fea-
+ture models for each language. Our system ranked
+first out of seven systems for all languages except
+French.
+For the constituency track, we experimented
+with an alternative way of handling unknown words
+and applied a products of Context Free Grammars
+with Latent Annotations (PCFG-LA) (Petrov et al,
+2006), whose output was reranked to select the best
+analysis. The additional reranking step improved
+results for all languages. Our system beats vari-
+ous baselines provided by the organizers for all lan-
+guages. Unfortunately, no one else participated in
+this track.
+For both settings, we made an effort to automat-
+ically annotate our data with the best possible pre-
+processing (POS, morphological information). We
+used a multi-layered CRF (Mu?ller et al, 2013) to
+annotate each data set, stacking with the information
+provided by the organizers when this was beneficial.
+The high quality of our preprocessing considerably
+improved the performance of our systems.
+The Shared Task involved a variety of settings as
+to whether gold or predicted part-of-speech tags and
+morphological information were available, as well
+as whether the full training set or a smaller (5k sen-
+135
+Arabic Basque French German Hebrew Hungarian Korean Polish Swedish
+MarMoT 97.38/92.22 97.02/87.08 97.61/90.92 98.10/91.80 97.09/97.67 98.72/97.59 94.03/87.68 98.12/90.84 97.27/97.13
+Stacked 98.23/89.05 98.56/92.63 97.83/97.62
+Table 1: POS/morphological feature accuracies on the development sets.
+tences) training set was used for training. Through-
+out this paper we focus on the settings with pre-
+dicted preprocessing information with gold segmen-
+tation and the full1 training sets. Unless stated other-
+wise, all given numbers are drawn from experiments
+in this setting. For all other settings, we refer the
+reader to the Shared Task overview paper (Seddah et
+al., 2013).
+The remainder of the paper is structured as fol-
+lows: We present our preprocessing in Section 2 and
+afterwards describe both our systems for the con-
+stituency (Section 3) and for the dependency tracks
+(Section 4). Section 5 discusses the results on the
+Shared Task test sets. We conclude with Section 6.
+2 Preprocessing
+We first spent some time on preparing the data sets,
+in particular we automatically annotated the data
+with high-quality POS and morphological informa-
+tion. We consider this kind of preprocessing to be an
+essential part of a parsing system, since the quality
+of the automatic preprocessing strongly affects the
+performance of the parsers.
+Because our tools work on CoNLL09 format, we
+first converted the training data from the CoNLL06
+format to CoNLL09. We thus had to decide whether
+to use coarse or fine part-of-speech (POS) tags. In
+a preliminary experiment we found that fine tags are
+the better option for all languages but Basque and
+Korean. For Korean the reason seems to be that the
+fine tag set is huge (> 900) and that the same infor-
+mation is also provided in the feature column.
+We predict POS tags and morphological features
+jointly using the Conditional Random Field (CRF)
+tagger MarMoT2 (Mu?ller et al, 2013).
+MarMoT incrementally creates forward-
+backward lattices of increasing order to prune
+the sizable space of possible morphological analy-
+ses. We use MarMoT with the default parameters.
+1Although, for Hebrew and Swedish only 5k sentences were
+available for training, and the two settings thus coincide.
+2https://code.google.com/p/cistern/
+Since morphological dictionaries can improve au-
+tomatic POS tagging considerably, we also created
+such dictionaries for each language. For this, we an-
+alyzed the word forms provided in the data sets with
+language-specific morphological analyzers except
+for Hebrew and German where we just extracted the
+morphological information from the lattice files pro-
+vided by the organizers. For the other languages
+we used the following tools: Arabic: AraMorph
+a reimplementation of Buckwalter (2002), Basque:
+Apertium (Forcada et al, 2011), French: an IMS
+internal tool,3 Hungarian: Magyarlanc (Zsibrita et
+al., 2013), Korean: HanNanum (Park et al, 2010),
+Polish: Morfeusz (Wolin?ski, 2006), and Swedish:
+Granska (Domeij et al, 2000).
+The created dictionaries were shared with the
+other Shared Task participants. We used these dic-
+tionaries as additional features for MarMoT.
+For some languages we also integrated the pre-
+dicted tags provided by the organizers into the fea-
+ture model. These stacked models gave improve-
+ments for Swedish, Polish and Basque (cf. Table 1
+for accuracies).
+For the full setting the training data was annotated
+using 5-fold jackknifing. In the 5k setting, we addi-
+tionally added all sentences not present in the parser
+training data to the training data sets of the tagger.
+This is similar to the predicted 5k files provided by
+the organizers, where more training data than the 5k
+was also used for prediction.
+Table 3 presents a comparison between our graph-
+based baseline parser using the preprocessing ex-
+plained in this section (denoted mate) and the
+preprocessing provided by the organizers (denoted
+mate?). Our preprocessing yields improvements
+for all languages but Swedish. The worse perfor-
+mance for Swedish is due to the fact that the pre-
+dictions provided by the organizers were produced
+by models that were trained on a much larger data
+3The French morphology was written by Zhenxia Zhou,
+Max Kisselew and Helmut Schmid. It is an extension of Zhou
+(2007) and implemented in SFST (Schmid, 2005).
+136
+Arabic Basque French German Hebrew Hungarian Korean Polish Swedish
+Berkeley 78.24 69.17 79.74 81.74 87.83 83.90 70.97 84.11 74.50
+Replaced 78.70 84.33 79.68 82.74 89.55 89.08 82.84 87.12 75.52
+Product 80.30 86.21 81.42 84.56 90.49 89.80 84.15 88.32 79.25
+Reranked 81.24 87.35 82.49 85.01 90.49 91.07 84.63 88.40 79.53
+Table 2: PARSEVAL scores on the development sets.
+set. The comparison with other parsers demonstrates
+that for some languages (e.g., Hebrew or Korean)
+the improvements due to better preprocessing can
+be greater than the improvements due to a better
+parser. For instance, for Hebrew the parser trained
+on the provided preprocessing is more than three
+points (LAS) behind the three parsers trained on
+our own preprocessing. However, the difference be-
+tween these three parsers is less than a point.
+3 Constituency Parsing
+The phrase structure parsing pipeline is based on
+products of Context Free Grammars with Latent An-
+notations (PCFG-LA) (Petrov et al, 2006) and dis-
+criminative reranking. We further replace rare words
+by their predicted morphological analysis.
+We preprocess the treebank trees by removing the
+morphological annotation of the POS tags and the
+function labels of all non-terminals. We also reduce
+the 177 compositional Korean POS tags to their first
+atomic tag, which results in a POS tag set of 9 tags.
+PCFG-LAs are incrementally built by split-
+ting non-terminals, refining parameters using EM-
+training and reversing splits that only cause small
+increases in likelihood.
+Running the Berkeley Parser4 ? the reference im-
+plementation of PCFG-LAs ? on the data sets results
+in the PARSEVAL scores given in Table 2 (Berke-
+ley). The Berkeley parser only implements a simple
+signature-based unknown word model that seems to
+be ineffective for some of the languages, especially
+Basque and Korean.
+We thus replace rare words (frequency < 20) by
+the predicted morphological tags of Section 2 (or the
+true morphological tag for the gold setup). The intu-
+ition is that our discriminative tagger has a more so-
+phisticated unknown word treatment than the Berke-
+ley parser, taking for example prefixes, suffixes and
+4http://code.google.com/p/
+berkeleyparser/
+the immediate lexical context into account. Further-
+more, the morphological tag contains most of the
+necessary syntactic information. An exception, for
+instance, might be the semantic information needed
+to disambiguate prepositional attachment. We think
+that replacing rare words by tags has an advan-
+tage over constraining the pre-terminal layer of the
+parser, because the parser can still decide to assign
+a different tag, for example in cases were the tag-
+ger produces errors due to long-distance dependen-
+cies. The used frequency threshold of 20 results
+in token replacement rates of 18% (French) to 57%
+(Korean and Polish), which correspond to 209 (for
+Polish) to 3221 (for Arabic) word types that are not
+replaced. The PARSEVAL scores for the described
+method are again given in Table 2 (Replaced). The
+method yields improvements for all languages ex-
+cept for French where we observe a drop of 0.06.
+The improvements range from 0.46 for Arabic to
+1.02 for Swedish, 3.1 for Polish and more than 10
+for Basque and Korean.
+To further improve results, we employ the
+product-of-grammars procedure (Petrov, 2010),
+where different grammars are trained on the same
+data set but with different initialization setups. We
+trained 8 grammars and used tree-level inference.
+In Table 2 (Product) we can see that this leads to
+improvements from 0.72 for Hungarian to 3.73 for
+Swedish.
+On the 50-best output of the product parser,
+we also carry out discriminative reranking. The
+reranker is trained for the maximum entropy objec-
+tive function of Charniak and Johnson (2005) and
+use the standard feature set ? without language-
+specific feature engineering ? from Charniak and
+Johnson (2005) and Collins (2000). We use a
+slightly modified version of the Mallet toolkit (Mc-
+Callum, 2002) for reranking.
+Improvements range from negligible differences
+(< .1) for Hebrew and Polish to substantial differ-
+ences (> 1.) for Basque, French, and Hungarian.
+137
+mate parser
+best-first
+parser
+turboparser
+merged list
+of 50-100 best
+trees/sentence
+merged list
+scored by
+all parsers
+ranker
+ptb trees
+Parsing Ranking
+IN OUT
+scores
+scores
+scores
+features
+Figure 1: Architecture of the dependency ranking system.
+For our final submission, we used the reranker
+output for all languages except French, Hebrew, Pol-
+ish, and Swedish. This decision was based on an
+earlier version of the evaluation setting provided by
+the organizers. In this setup, reranking did not help
+or was even harmful for these four languages. The
+figures in Table 2 use the latest evaluation script and
+are thus consistent with the test set results presented
+in Section 5.
+After the submission deadline the Shared Task
+organizers made us aware that we had surprisingly
+low exact match scores for Polish (e.g., 1.22 for
+the reranked setup). The reason seems to be that
+the Berkeley parser cannot produce unary chains of
+length > 2. The gold development set contains 1783
+such chains while the prediction of the reranked sys-
+tem contains none. A particularly frequent unary
+chain with 908 occurences in the gold data is ff ?
+fwe ? formaczas. As this chain cannot be pro-
+duced the parser leaves out the fwe phrase. Inserting
+new fwe nodes between ff and formacszas nodes
+raises the PARSEVAL scores of the reranked model
+from 88.40 to 90.64 and the exact match scores to
+11.34. This suggests that the Polish results could be
+improved substantially if unary chains were properly
+dealt with, for example by collapsing unary chains.5
+4 Dependency Parsing
+The core idea of our dependency parsing system
+is the combination of the n-best output of several
+5Thanks to Slav Petrov for pointing us to the unary chain
+length limit.
+parsers followed by a ranking step on the com-
+bined list. Specifically, we first run two parsers that
+each output their 50-best analyses for each sentence.
+These 50-best analyses are merged together into one
+single n-best list of between 50 and 100 analyses
+(depending on the overlap between the n-best lists
+of the two parsers). We then use the two parsers
+plus an additional one to score each tree in the n-
+best lists according to their parsing model, thus pro-
+viding us with three different scores for each tree in
+the n-best lists. The n-best lists are then given to
+a ranker, which ranks the list using the three scores
+and a small set of additional features in order to find
+the best overall analysis. Figure 1 shows a schematic
+of the process.
+As a preprocessing step, we reduced the depen-
+dency label set for the Hungarian training data.
+The Hungarian dependency data set encodes ellipses
+through composite edge labels which leads to a pro-
+liferation of edge labels (more than 400). Since
+many of these labels are extremely rare and thus hard
+to learn for the parsers, we reduced the set of edge la-
+bels during the conversion. Specifically, we retained
+the 50 most frequent labels, while reducing the com-
+posite labels to their base label.
+For producing the initial n-best lists, we use
+the mate parser6 (Bohnet, 2010) and a variant of
+the EasyFirst parser (Goldberg and Elhadad, 2010),
+which we here call best-first parser.
+The mate parser is a state-of-the-art graph-based
+dependency parser that uses second-order features.
+6https://code.google.com/p/mate-tools
+138
+The parser works in two steps. First, it uses dy-
+namic programming to find the optimal projective
+tree using the Carreras (2007) decoder. It then
+applies the non-projective approximation algorithm
+proposed by McDonald and Pereira (2006) in or-
+der to produce non-projective parse trees. The non-
+projective approximation algorithm is a greedy hill
+climbing algorithm that starts from the optimal pro-
+jective parse and iteratively tries to reattach all to-
+kens, one at a time, everywhere in the sentence as
+long as the tree property holds. It halts when the in-
+crease in the score of the tree according to the pars-
+ing model is below a certain threshold.
+n-best lists are obtained by applying the non-
+projective approximation algorithm in a non-greedy
+manner, exploring multiple possibilities. All trees
+are collected in a list, and when no new trees are
+found, or newer trees have a significantly lower
+score than the currently best one, search halts. The
+n best trees are then retrieved from the list. It
+should be noted that, in the standard case, the non-
+projective approximation algorithm may find a local
+optimum, and that there may be other trees that have
+a higher score which were not explored. Thus the
+best parse in the greedy case may not necessarily
+be the one with the highest score in the n-best list.
+Since the parser is trained with the greedy version
+of the non-projective approximation algorithm, the
+greedily chosen output parse tree is of special in-
+terest. We thus flag this tree as the baseline mate
+parse, in order to use that for features in the ranker.
+The baseline mate parse is also our overall baseline
+in the dependency track.
+The best-first parser deviates from the EasyFirst
+parser in several small respects: The EasyFirst de-
+coder creates dependency links between the roots of
+adjacent substructures, which gives an O(n log n)
+complexity, but restricts the output to projective
+trees. The best-first parser is allowed to choose as
+head any node of an adjacent substructure instead of
+only the root, which increases complexity to O(n2),
+but accounts for a big part of possible non-projective
+structures. We additionally implemented a swap-
+operation (Nivre, 2009; Tratz and Hovy, 2011) to
+account for the more complex structures. The best-
+first parser relies on a beam-search strategy7 to pur-
+7Due to the nature of the decoder, the parser can produce
+sue multiple derivations, which we also use to pro-
+duce the n-best output.
+In the scoring step, we additionally apply the tur-
+boparser8 (Martins et al, 2010), which is based on
+linear programming relaxations.9 We changed all
+three parsers such that they would return a score for
+a given tree. We use this to extract scores from each
+parser for all trees in the n-best lists. It is impor-
+tant to have a score from every parser for every tree,
+as previously observed by Zhang et al (2009) in the
+context of constituency reranking.
+4.1 Ranking
+Table 3 shows the performance of the individual
+parsers measured on the development sets. It also
+displays the oracle scores over the different n-best
+lists, i.e., the maximal possible score over an n-best
+list if the best tree is always selected.
+The mate parser generally performs best followed
+by turboparser, while the best-first parser comes last.
+But we can see from the oracle scores that the best-
+first parser often shows comparable or even higher
+oracle scores than mate, and that the combination
+of the n-best lists always adds substantial improve-
+ments to the oracle scores. These findings show that
+the mate and best-first parsers are providing differ-
+ent sets of n-best lists. Moreover, all three parsers
+rely on different parsing algorithms and feature sets.
+For these reasons, we hypothesized that the parsers
+contribute different views on the parse trees and that
+their combination would result in better overall per-
+formance.
+In order to leverage the diversity between the
+parsers we experimented with ranking10 on the
+n-best lists. We used the same ranking model in-
+troduced in Section 3 here as well. The model is
+trained to select the best parse according to the la-
+beled attachment score (LAS). The training data for
+the ranker was created by 5-fold jackknifing on the
+training sets. The feature sets for the ranker for
+spurious ambiguities in the beam. If this occurs, only the one
+with the higher score is kept.
+8http://www.ark.cs.cmu.edu/TurboParser/
+9Ideally we would also extract n-best lists from the tur-
+boparser, however time prevented us from making the necessary
+modifications.
+10We refrain from calling it reranking in this setting, since
+we are using merged n-best lists and the initial ranking is not
+entirely clear to begin with.
+139
+Arabic Basque French German Hebrew Hungarian Korean Polish Swedish
+Baseline results for individual parsers
+mate? 88.50/83.50 88.18/84.49 92.71/90.85 83.63/75.89 87.07/82.84 86.06/82.39 91.17/85.81 83.65/77.16
+mate 87.68/85.42 89.11/84.43 88.30/84.84 93.15/91.46 86.05/79.37 88.03/84.41 87.91/85.76 91.51/86.30 83.53/77.05
+bf 87.61/85.32 84.07/75.90 87.45/83.92 92.90/91.10 86.10/79.57 83.85/75.94 86.54/83.97 90.10/83.75 82.27/75.36
+turbo 87.82/85.35 88.88/83.84 88.24/84.57 93.59/91.54 85.74/78.95 86.86/82.80 88.35/86.23 90.97/85.55 83.24/76.15
+Oracle scores for n-best lists
+mate 90.85/88.74 93.39/89.85 90.99/87.81 97.14/95.84 89.05/83.03 91.41/88.19 94.86/92.96 95.19/91.67 87.19/81.66
+bf 91.47/89.46 91.68/86.46 91.38/88.68 97.40/96.60 91.04/85.67 87.64/81.79 94.90/92.94 96.25/93.74 87.60/82.46
+merged 92.65/90.71 95.15/91.91 92.97/90.43 98.19/97.44 92.39/87.18 92.12/88.76 96.23/94.65 97.28/95.29 89.87/84.96
+Table 3: Baseline performance and n-best oracle scores (UAS/LAS) on the development sets. mate? uses the prepro-
+cessing provided by the organizers, the other parsers use the preprocessing described in Section 2.
+each language were optimized manually via cross-
+validation on the training sets. The features used for
+each language, as well as a default (baseline) fea-
+ture set, are shown in Table 4. We now outline the
+features we used in the ranker:
+Score from the base parsers ? denoted B, M,
+T, for the best-first, mate, and turbo parsers, re-
+spectively. We also have indicator features whether
+a certain parse was the best according to a given
+parser, denoted GB, GM, GT, respectively. Since
+the mate parser does not necessarily assign the high-
+est score to the baseline mate parse, the GM fea-
+ture is a ternary feature which indicates whether a
+parse is the same as the baseline mate parse, or bet-
+ter, or worse. We also experimented with transfor-
+mations and combinations of the scores from the
+parsers. Specifically, BMProd denotes the product
+of B and M; BMeProd denotes the sum of B and M
+in e-space, i.e., eB+M ; reBMT, reBT, reMT denote
+the normalized product of the corresponding scores,
+where scores are normalized in a softmax fashion
+such that all features take on values in the interval
+(0, 1).
+Projectivity features (Hall et al, 2007) ? the
+number of non-projective edges in a tree, denoted
+np. Whether a tree is ill-nested, denoted I. Since ill-
+nested trees are extremely rare in the treebanks, this
+helps the ranker filter out unlikely candidates from
+the n-best lists. For a definition and further discus-
+sion of ill-nestedness, we refer to (Havelka, 2007).
+Constituent features ? from the constituent track
+we also have constituent trees of all sentences which
+can be used for feature extraction. Specifically, for
+every head-dependent pair, we extract the path in the
+constituent tree between the nodes, denoted ptbp.
+Case agreement ? on head-dependent pairs that
+both have a case value assigned among their mor-
+phological features, we mark whether it is the same
+case or not, denoted case.
+Function label uniqueness ? on each training set
+we extracted a list of function labels that generally
+occur at most once as the dependent of a node, e.g.,
+subjects or objects. Features are then extracted from
+all nodes that have one or more dependents of each
+label aimed at capturing mistakes such as double
+subjects on a verb. This template is denoted FL.
+In addition to the features mentioned above, we
+experimented with a variety of feature templates, in-
+cluding features drawn from previous work on de-
+pendency reranking (Hall, 2007), e.g., lexical and
+POS-based features over edges, ?subcategorization?
+frames (i.e., the concatenation of POS-tags that are
+headed by a certain node in the tree), etc, although
+these features did not seem to help. For German we
+created feature templates based on the constraints
+used in the constraint-based parser by Seeker and
+Kuhn (2013). This includes, e.g., violations in case
+or number agreement between heads and depen-
+dents, as well as more complex features that con-
+sider labels on entire verb complexes. None of these
+features yielded any clear improvements though. We
+also experimented with features that target some
+specific constructions (and specifics of annotation
+schemes) which the parsers typically cannot fully
+see, such as coordination, however, also here we saw
+no clear improvements.
+4.2 Effects of Ranking
+In Table 5, we show the improvements from using
+the ranker, both with the baseline and optimized fea-
+tures sets for the ranker. For the sake of comparison,
+140
+Arabic Basque French German Hebrew Hungarian Korean Polish Swedish
+Baseline 87.68/85.42 89.11/84.43 88.30/84.84 93.15/91.46 86.05/79.37 88.03/84.41 87.91/85.76 91.51/86.30 83.53/77.05
+Ranked-dflt 88.54/86.32 89.99/85.43 88.85/85.39 94.06/92.36 87.28/80.44 88.16/84.54 88.71/86.65 92.26/87.12 84.51/77.83
+Ranked 88.93/86.74 89.95/85.61 89.37/85.96 94.20/92.68 87.63/81.02 88.38/84.77 89.20/87.12 93.02/87.69 85.04/78.57
+Oracle 92.65/90.71 95.15/91.91 92.97/90.43 98.19/97.44 92.39/87.18 92.12/88.76 96.23/94.65 97.28/95.29 89.87/84.96
+Table 5: Performance (UAS/LAS) of the reranker on the development sets. Baseline denotes our baseline. Ranked-dflt
+and Ranked denote the default and optimized ranker feature sets, respectively. Oracle denotes the oracle scores.
+default B, M, T, GB, GM, GT, I
+Arabic B, M, T, GB, GM, I, ptbp, reBMT
+Basque B, M, T, GB, GM, GT, I, ptbp, I, reMT, case
+French B, M, T, GB, GM, GT, I, ptbp
+German B, M, T, GM, I, BMProd, FL
+Hebrew B, M, T, GB, GM, GT, I, ptbp, FL, BMeProd
+Hungarian B, M, T, GB, GM, GT, I, ptbp, reBM, FL
+Korean B, M, T, GB, GM, GT, I, ptbp, reMT, FL
+Polish B, M, T, GB, GM, GT, I, ptbp, np
+Swedish B, M, T, GB, GM, GT, I, ptbp, reBM, FL
+Table 4: Feature sets for the dependency ranker for each
+language. default denotes the default ranker feature set.
+the baseline mate parses as well as the oracle parses
+on the merged n-best lists are repeated from Table 3.
+We see that ranking clearly helps, both with a tai-
+lored feature set, as well as the default feature set.
+The improvement in LAS between the baseline and
+the tailored ranking feature sets ranges from 1.1%
+(French) to 1.6% (Hebrew) absolute, with the excep-
+tion of Hungarian, where improvements on the dev
+set are more modest (contrary to the test set results,
+cf. Section 5). Even with the default feature set, the
+improvements range from 0.5% (French) to 1.1%
+(Hebrew) absolute, again setting Hungarian aside.
+We believe that this is an interesting result consid-
+ering the simplicity of the default feature set.
+5 Test Set Results
+In this section we outline our final results on the test
+sets. As previously, we focus on the setting with
+predicted tags in gold segmentation and the largest
+training set. We also present results on Arabic and
+Hebrew for the predicted segmentation setting. For
+the gold preprocessing and all 5k settings, we refer
+the reader to the Shared Task overview paper (Sed-
+dah et al, 2013).11
+In Table 7, we present our results in the con-
+11Or the results page online: http://www.spmrl.org/
+spmrl2013-sharedtask-results.html
+stituency track. Since we were the only participat-
+ing team in the constituency track, we compare our-
+selves with the best baseline12 provided by the or-
+ganizers. Our system outperforms the baseline for
+all languages in terms of PARSEVAL F1. Follow-
+ing the trend on the development sets, reranking is
+consistently helping across languages.13 Despite the
+lack of other submissions in the shared task, we be-
+lieve our numbers are generally strong and hope that
+they can serve as a reference for future work on con-
+stituency parsing on these data sets.
+Table 8 displays our results in the dependency
+track. We submitted two runs: a baseline, which
+is the baseline mate parse, and the reranked trees.
+The table also compares our results to the best per-
+forming other participant in the shared task (denoted
+Other) as well as the MaltParser (Nivre et al, 2007)
+baseline provided by the shared task organizers (de-
+noted ST Baseline). We obtain the highest scores
+for all languages, with the exception of French. It is
+also clear that we make considerable gains over our
+baseline, confirming our results on the development
+sets reported in Section 4. It is also noteworthy that
+our baseline (i.e., the mate parser with our own pre-
+processing) outperforms the best other system for 5
+languages.
+Arabic Hebrew
+Other 90.75/8.48 88.33/12.20
+Dep. Baseline 91.13/9.10 89.27/15.01
+Dep. Ranked 91.74/9.83 89.47/16.97
+Constituency 92.06/9.49 89.30/13.60
+Table 6: Unlabeled TedEval scores (accuracy/exact
+match) for the test sets in the predicted segmentation set-
+ting. Only sentences of length ? 70 are evaluated.
+12It should be noted that the Shared Task organizers com-
+puted 2 different baselines on the test sets. The best baseline
+results for each language thus come from different parsers.
+13We remind the reader that our submission decisions are not
+based on figures in Table 2, cf. Section 3.
+141
+Arabic Basque French German Hebrew Hungarian Korean Polish Swedish
+ST Baseline 79.19 74.74 80.38 78.30 86.96 85.22 78.56 86.75 80.64
+Product 80.81 87.18 81.83 80.70 89.46 90.58 83.49 87.55 83.99
+Reranked 81.32 87.86 82.86 81.27 89.49 91.85 84.27 87.76 84.88
+Table 7: Final PARSEVAL F1 scores for constituents on the test set for the predicted setting. ST Baseline denotes the
+best baseline (out of 2) provided by the Shared Task organizers. Our submission is underlined.
+Arabic Basque French German Hebrew Hungarian Korean Polish Swedish
+ST Baseline 83.18/80.36 79.77/70.11 82.49/77.98 81.51/77.81 76.49/69.97 80.72/70.15 85.72/82.06 82.19/75.63 80.29/73.21
+Other 85.78/83.20 89.19/84.25 89.19/85.86 90.80/88.66 81.05/73.63 88.93/84.97 85.84/82.65 88.12/82.56 87.28/80.88
+Baseline 86.96/84.81 89.32/84.25 87.87/84.37 90.54/88.37 85.88/79.67 89.09/85.31 87.41/85.51 90.30/85.51 86.85/80.67
+Ranked 88.32/86.21 89.88/85.14 88.68/85.24 91.64/89.65 86.70/80.89 89.81/86.13 88.47/86.62 91.75/87.07 88.06/82.13
+Table 8: Final UAS/LAS scores for dependencies on the test sets for the predicted setting. Other denotes the highest
+scoring other participant in the Shared Task. ST Baseline denotes the MaltParser baseline provided by the Shared Task
+organizers.
+Table 6 shows the unlabeled TedEval (Tsarfaty et
+al., 2012) scores (accuracy/exact match) on the test
+sets for the predicted segmentation setting for Ara-
+bic and Hebrew. Note that these figures only include
+sentences of length less than or equal to 70. Since
+TedEval enables cross-framework comparison, we
+compare our submissions from the dependency track
+to our submission from the constituency track. In
+these runs we used the same systems that were used
+for the gold segmentation with predicted tags track.
+The predicted segmentation was provided by the
+Shared Task organizers. We also compare our re-
+sults to the best other system from the Shared Task
+(denoted Other).
+Also here we obtain the highest results for both
+languages. However, it is unclear what syntactic
+paradigm (dependencies or constituents) is better
+suited for the task. All in all it is difficult to assess
+whether the differences between the best and second
+best systems for each language are meaningful.
+6 Conclusion
+We have presented our contribution to the 2013
+SPMRL Shared Task. We participated in both the
+constituency and dependency tracks. In both tracks
+we make use of a state-of-the-art tagger for POS and
+morphological features. In the constituency track,
+we use the tagger to handle unknown words and em-
+ploy a product-of-grammars-based PCFG-LA parser
+and parse tree reranking. In the dependency track,
+we combine multiple parsers output as input for a
+ranker.
+Since there were no other participants in the con-
+stituency track, it is difficult to draw any conclusions
+from our results. We do however show that the ap-
+plication of product grammars, our handling of rare
+words, and a subsequent reranking step outperforms
+a baseline PCFG-LA parser.
+In the dependency track we obtain the best re-
+sults for all languages except French among 7 partic-
+ipants. Our reranking approach clearly outperforms
+a baseline graph-based parser. This is the first time
+multiple parsers have been used in a dependency
+reranking setup.
+Aside from minor decisions made on the basis
+of each language, our approach is language agnos-
+tic and does not target morphology in any particu-
+lar way as part of the parsing process. We show
+that with a strong baseline and with no language
+specific treatment it is possible to achieve state-of-
+the-art results across all languages. Our architec-
+ture for the dependency parsing track enables the use
+of language-specific features in the ranker, although
+we only had minor success with features that target
+morphology. However, it may be the case that ap-
+proaches from previous work on parsing MRLs, or
+the approaches taken by other teams in the Shared
+Task, can be successfully combined with ours and
+improve parsing accuracy even more.
+Acknowledgments
+Richa?rd Farkas is funded by the European Union and
+the European Social Fund through the project Fu-
+turICT.hu (grant no.: TA?MOP-4.2.2.C-11/1/KONV-
+142
+2012-0013). Thomas Mu?ller is supported by a
+Google Europe Fellowship in Natural Language
+Processing. The remaining authors are funded by
+the Deutsche Forschungsgemeinschaft (DFG) via
+the SFB 732, projects D2 and D8 (PI: Jonas Kuhn).
+We also express our gratitude to the treebank
+providers for each language: Arabic (Maamouri et
+al., 2004; Habash and Roth, 2009; Habash et al,
+2009; Green and Manning, 2010), Basque (Aduriz
+et al, 2003), French (Abeille? et al, 2003), He-
+brew (Sima?an et al, 2001; Tsarfaty, 2010; Gold-
+berg, 2011; Tsarfaty, 2013), German (Brants et al,
+2002; Seeker and Kuhn, 2012), Hungarian (Csendes
+et al, 2005; Vincze et al, 2010), Korean (Choi
+et al, 1994; Choi, 2013), Polish (S?widzin?ski and
+Wolin?ski, 2010), and Swedish (Nivre et al, 2006).
+References
+Anne Abeille?, Lionel Cle?ment, and Franc?ois Toussenel.
+2003. Building a treebank for french. In Anne
+Abeille?, editor, Treebanks. Kluwer, Dordrecht.
+I. Aduriz, M. J. Aranzabe, J. M. Arriola, A. Atutxa,
+A. D??az de Ilarraza, A. Garmendia, and M. Oronoz.
+2003. Construction of a Basque dependency treebank.
+In TLT-03, pages 201?204.
+Bernd Bohnet. 2010. Top Accuracy and Fast Depen-
+dency Parsing is not a Contradiction. In Proceed-
+ings of the 23rd International Conference on Compu-
+tational Linguistics (Coling 2010), pages 89?97, Bei-
+jing, China, August. Coling 2010 Organizing Commit-
+tee.
+Sabine Brants, Stefanie Dipper, Silvia Hansen, Wolf-
+gang Lezius, and George Smith. 2002. The TIGER
+treebank. In Erhard Hinrichs and Kiril Simov, edi-
+tors, Proceedings of the First Workshop on Treebanks
+and Linguistic Theories (TLT 2002), pages 24?41, So-
+zopol, Bulgaria.
+Tim Buckwalter. 2002. Buckwalter Arabic Morpholog-
+ical Analyzer Version 1.0. Linguistic Data Consor-
+tium, University of Pennsylvania, 2002. LDC Catalog
+No.: LDC2002L49.
+Xavier Carreras. 2007. Experiments with a Higher-
+Order Projective Dependency Parser. In Proceedings
+of the CoNLL Shared Task Session of EMNLP-CoNLL
+2007, pages 957?961, Prague, Czech Republic, June.
+Association for Computational Linguistics.
+Eugene Charniak and Mark Johnson. 2005. Coarse-to-
+fine n-best parsing and MaxEnt discriminative rerank-
+ing. In Proceedings of the 43rd Annual Meeting on
+Association for Computational Linguistics, ACL ?05,
+pages 173?180.
+Key-Sun Choi, Young S Han, Young G Han, and Oh W
+Kwon. 1994. Kaist tree bank project for korean:
+Present and future development. In Proceedings of
+the International Workshop on Sharable Natural Lan-
+guage Resources, pages 7?14. Citeseer.
+Jinho D. Choi. 2013. Preparing korean data for
+the shared task on parsing morphologically rich lan-
+guages. ArXiv e-prints.
+Michael Collins. 2000. Discriminative Reranking for
+Natural Language Parsing. In Proceedings of the Sev-
+enteenth International Conference on Machine Learn-
+ing, ICML ?00, pages 175?182.
+Do?ra Csendes, Jano?s Csirik, Tibor Gyimo?thy, and Andra?s
+Kocsor. 2005. The Szeged treebank. In Va?clav Ma-
+tous?ek, Pavel Mautner, and Toma?s? Pavelka, editors,
+Text, Speech and Dialogue: Proceedings of TSD 2005.
+Springer.
+Rickard Domeij, Ola Knutsson, Johan Carlberger, and
+Viggo Kann. 2000. Granska-an efficient hybrid sys-
+tem for Swedish grammar checking. In In Proceed-
+ings of the 12th Nordic Conference in Computational
+Linguistics.
+Mikel L Forcada, Mireia Ginest??-Rosell, Jacob Nord-
+falk, Jim O?Regan, Sergio Ortiz-Rojas, Juan An-
+tonio Pe?rez-Ortiz, Felipe Sa?nchez-Mart??nez, Gema
+Ram??rez-Sa?nchez, and Francis M Tyers. 2011. Aper-
+tium: A free/open-source platform for rule-based ma-
+chine translation. Machine Translation.
+Yoav Goldberg and Michael Elhadad. 2010. An Ef-
+ficient Algorithm for Easy-First Non-Directional De-
+pendency Parsing. In Human Language Technologies:
+The 2010 Annual Conference of the North American
+Chapter of the Association for Computational Linguis-
+tics, pages 742?750, Los Angeles, California, June.
+Association for Computational Linguistics.
+Yoav Goldberg. 2011. Automatic syntactic processing of
+Modern Hebrew. Ph.D. thesis, Ben Gurion University
+of the Negev.
+Spence Green and Christopher D. Manning. 2010. Bet-
+ter arabic parsing: Baselines, evaluations, and anal-
+ysis. In Proceedings of the 23rd International Con-
+ference on Computational Linguistics (Coling 2010),
+pages 394?402, Beijing, China, August. Coling 2010
+Organizing Committee.
+Nizar Habash and Ryan Roth. 2009. Catib: The
+columbia arabic treebank. In Proceedings of the ACL-
+IJCNLP 2009 Conference Short Papers, pages 221?
+224, Suntec, Singapore, August. Association for Com-
+putational Linguistics.
+Nizar Habash, Reem Faraj, and Ryan Roth. 2009. Syn-
+tactic Annotation in the Columbia Arabic Treebank. In
+Proceedings of MEDAR International Conference on
+Arabic Language Resources and Tools, Cairo, Egypt.
+143
+Keith Hall, Jiri Havelka, and David A. Smith. 2007.
+Log-Linear Models of Non-Projective Trees, k-best
+MST Parsing and Tree-Ranking. In Proceedings of the
+CoNLL Shared Task Session of EMNLP-CoNLL 2007,
+pages 962?966, Prague, Czech Republic, June. Asso-
+ciation for Computational Linguistics.
+Keith Hall. 2007. K-best Spanning Tree Parsing. In Pro-
+ceedings of the 45th Annual Meeting of the Association
+of Computational Linguistics, pages 392?399, Prague,
+Czech Republic, June. Association for Computational
+Linguistics.
+Jiri Havelka. 2007. Beyond Projectivity: Multilin-
+gual Evaluation of Constraints and Measures on Non-
+Projective Structures. In Proceedings of the 45th
+Annual Meeting of the Association of Computational
+Linguistics, pages 608?615, Prague, Czech Republic,
+June. Association for Computational Linguistics.
+Mark Johnson and Ahmet Engin Ural. 2010. Rerank-
+ing the Berkeley and Brown Parsers. In Human Lan-
+guage Technologies: The 2010 Annual Conference of
+the North American Chapter of the Association for
+Computational Linguistics, pages 665?668, Los An-
+geles, California, June. Association for Computational
+Linguistics.
+Mohamed Maamouri, Ann Bies, Tim Buckwalter, and
+Wigdan Mekki. 2004. The Penn Arabic Treebank:
+Building a Large-Scale Annotated Arabic Corpus. In
+NEMLAR Conference on Arabic Language Resources
+and Tools.
+Andre Martins, Noah Smith, Eric Xing, Pedro Aguiar,
+and Mario Figueiredo. 2010. Turbo Parsers: Depen-
+dency Parsing by Approximate Variational Inference.
+In Proceedings of the 2010 Conference on Empirical
+Methods in Natural Language Processing, pages 34?
+44, Cambridge, MA, October. Association for Compu-
+tational Linguistics.
+Andrew Kachites McCallum. 2002. ?mal-
+let: A machine learning for language toolkit?.
+http://mallet.cs.umass.edu.
+Ryan McDonald and Fernando Pereira. 2006. On-
+line learning of approximate dependency parsing al-
+gorithms. In Proceedings of the 11th Conference of
+the European Chapter of the Association for Compu-
+tational Linguistics, pages 81?88, Trento, Italy. Asso-
+ciation for Computational Linguistics.
+Thomas Mu?ller, Helmut Schmid, and Hinrich Schu?tze.
+2013. Efficient Higher-Order CRFs for Morphological
+Tagging. In In Proceedings of EMNLP.
+Joakim Nivre, Jens Nilsson, and Johan Hall. 2006. Tal-
+banken05: A Swedish treebank with phrase structure
+and dependency annotation. In Proceedings of LREC,
+pages 1392?1395, Genoa, Italy.
+Joakim Nivre, Johan Hall, Jens Nilsson, Atanas Chanev,
+Gu?ls?en Eryig?it, Sandra Ku?bler, Svetoslav Marinov,
+and Erwin Marsi. 2007. MaltParser: A language-
+independent system for data-driven dependency pars-
+ing. Natural Language Engineering, 13:95?135, 6.
+Joakim Nivre. 2009. Non-Projective Dependency Pars-
+ing in Expected Linear Time. In Proceedings of the
+Joint Conference of the 47th Annual Meeting of the
+ACL and the 4th International Joint Conference on
+Natural Language Processing of the AFNLP, pages
+351?359, Suntec, Singapore, August. Association for
+Computational Linguistics.
+S Park, D Choi, E-k Kim, and KS Choi. 2010. A plug-in
+component-based Korean morphological analyzer. In
+Proceedings of HCLT2010.
+Slav Petrov, Leon Barrett, Romain Thibaux, and Dan
+Klein. 2006. Learning accurate, compact, and inter-
+pretable tree annotation. In Proceedings of the 21st
+International Conference on Computational Linguis-
+tics and the 44th annual meeting of the Association for
+Computational Linguistics, pages 433?440. Associa-
+tion for Computational Linguistics.
+Slav Petrov. 2010. Products of Random Latent Variable
+Grammars. In Human Language Technologies: The
+2010 Annual Conference of the North American Chap-
+ter of the Association for Computational Linguistics,
+pages 19?27, Los Angeles, California, June. Associa-
+tion for Computational Linguistics.
+Helmut Schmid. 2005. A programming language for
+finite state transducers. In FSMNLP.
+Djame? Seddah, Reut Tsarfaty, Sandra Ku?bler, Marie Can-
+dito, Jinho Choi, Richa?rd Farkas, Jennifer Foster, Iakes
+Goenaga, Koldo Gojenola, Yoav Goldberg, Spence
+Green, Nizar Habash, Marco Kuhlmann, Wolfgang
+Maier, Joakim Nivre, Adam Przepiorkowski, Ryan
+Roth, Wolfgang Seeker, Yannick Versley, Veronika
+Vincze, Marcin Wolin?ski, and Alina Wro?blewska.
+2013. Overview of the SPMRL 2013 Shared Task: A
+Cross-Framework Evaluation of Parsing Morphologi-
+cally Rich Languages. In Proceedings of the 4th Work-
+shop on Statistical Parsing of Morphologically Rich
+Languages: Shared Task, Seattle, WA.
+Wolfgang Seeker and Jonas Kuhn. 2012. Making El-
+lipses Explicit in Dependency Conversion for a Ger-
+man Treebank. In Proceedings of the 8th Interna-
+tional Conference on Language Resources and Eval-
+uation, pages 3132?3139, Istanbul, Turkey. European
+Language Resources Association (ELRA).
+Wolfgang Seeker and Jonas Kuhn. 2013. Morphological
+and Syntactic Case in Statistical Dependency Parsing.
+Computational Linguistics, 39(1):23?55.
+Khalil Sima?an, Alon Itai, Yoad Winter, Alon Altman,
+and Noa Nativ. 2001. Building a Tree-Bank for
+Modern Hebrew Text. In Traitement Automatique des
+Langues.
+144
+Marek S?widzin?ski and Marcin Wolin?ski. 2010. Towards
+a bank of constituent parse trees for Polish. In Text,
+Speech and Dialogue: 13th International Conference
+(TSD), Lecture Notes in Artificial Intelligence, pages
+197?204, Brno, Czech Republic. Springer.
+Stephen Tratz and Eduard Hovy. 2011. A Fast, Ac-
+curate, Non-Projective, Semantically-Enriched Parser.
+In Proceedings of the 2011 Conference on Empiri-
+cal Methods in Natural Language Processing, pages
+1257?1268, Edinburgh, Scotland, UK., July. Associa-
+tion for Computational Linguistics.
+Reut Tsarfaty, Djame? Seddah, Yoav Goldberg, Sandra
+Kuebler, Yannick Versley, Marie Candito, Jennifer
+Foster, Ines Rehbein, and Lamia Tounsi. 2010. Sta-
+tistical Parsing of Morphologically Rich Languages
+(SPMRL) What, How and Whither. In Proc. of the
+SPMRL Workshop of NAACL-HLT, pages 1?12, Los
+Angeles, CA, USA.
+Reut Tsarfaty, Joakim Nivre, and Evelina Andersson.
+2012. Joint Evaluation of Morphological Segmen-
+tation and Syntactic Parsing. In Proceedings of the
+50th Annual Meeting of the Association for Compu-
+tational Linguistics (Volume 2: Short Papers), pages
+6?10, Jeju Island, Korea, July. Association for Com-
+putational Linguistics.
+Reut Tsarfaty. 2010. Relational-Realizational Parsing.
+Ph.D. thesis, University of Amsterdam.
+Reut Tsarfaty. 2013. A Unified Morpho-Syntactic
+Scheme of Stanford Dependencies. Proceedings of
+ACL.
+Veronika Vincze, Do?ra Szauter, Attila Alma?si, Gyo?rgy
+Mo?ra, Zolta?n Alexin, and Ja?nos Csirik. 2010. Hun-
+garian dependency treebank. In LREC.
+Zhiguo Wang and Chengqing Zong. 2011. Parse Rerank-
+ing Based on Higher-Order Lexical Dependencies. In
+Proceedings of 5th International Joint Conference on
+Natural Language Processing, pages 1251?1259, Chi-
+ang Mai, Thailand, November. Asian Federation of
+Natural Language Processing.
+Marcin Wolin?ski. 2006. Morfeusz - A practical tool for
+the morphological analysis of Polish. In Intelligent in-
+formation processing and web mining, pages 511?520.
+Springer.
+Hui Zhang, Min Zhang, Chew Lim Tan, and Haizhou
+Li. 2009. K-Best Combination of Syntactic Parsers.
+In Proceedings of the 2009 Conference on Empiri-
+cal Methods in Natural Language Processing, pages
+1552?1560, Singapore, August. Association for Com-
+putational Linguistics.
+Zhenxia Zhou. 2007. Entwicklung einer franzo?sischen
+Finite-State-Morphologie. Diplomarbeit, Institute for
+Natural Language Processing, University of Stuttgart.
+Ja?nos Zsibrita, Veronika Vincze, and Richa?rd Farkas.
+2013. Magyarlanc 2.0: Szintaktikai elemze?s e?s fel-
+gyors??tott szo?faji egye?rtelmu?s??te?s. In IX. Magyar
+Sza?m??to?ge?pes Nyelve?szeti Konferencia.
+145
+First Joint Workshop on Statistical Parsing of Morphologically Rich Languages
+and Syntactic Analysis of Non-Canonical Languages, pages 97?102 Dublin, Ireland, August 23-29 2014.
+Introducing the IMS-Wroc?aw-Szeged-CIS Entry at the SPMRL 2014
+Shared Task: Reranking and Morphosyntax Meet Unlabeled Data?
+Anders Bjo?rkelund? and O?zlem C?etinog?lu? and Agnieszka Falen?ska,?
+Richa?rd Farkas? and Thomas Mu?ller? and Wolfgang Seeker? and Zsolt Sza?nto??
+?Institute for Natural Language Processing University of Stuttgart, Germany
+Institute of Computer Science, University of Wroc?aw, Poland
+?Department of Informatics University of Szeged, Hungary
+?Center for Information and Language Processing University of Munich, Germany
+{anders,ozlem,muellets,seeker}@ims.uni-stuttgart.de
+agnieszka.falenska@cs.uni.wroc.pl
+{rfarkas,szantozs}@inf.u-szeged.hu
+Abstract
+We summarize our approach taken in the SPMRL 2014 Shared Task on parsing morphologically
+rich languages. Our approach builds upon our contribution from last year, with a number of
+modifications and extensions. Though this paper summarizes our contribution, a more detailed
+description and evaluation will be presented in the accompanying volume containing notes from
+the SPMRL 2014 Shared Task.
+1 Introduction
+This paper summarizes the approach of IMS-Wroc?aw-Szeged-CIS taken for the SPMRL 2014 Shared
+Task on parsing morphologically rich languages (Seddah et al., 2014). Since this paper is a rough sum-
+mary that is written before submission of test runs we refer the reader to the full description paper which
+will be published after the shared task (Bjo?rkelund et al., 2014).1
+The SPMRL 2014 Shared Task is a direct extension of the SPMRL 2013 Shared Task (Seddah et al.,
+2013) which targeted parsing morphologically rich languages. The task involves parsing both depen-
+dency and phrase-structure representations of 9 languages: Arabic, Basque, French, German, Hebrew,
+Hungarian, Korean, Polish, and Swedish. The only difference between the two tasks is that large amounts
+of unlabeled data are additionally available to participants for the 2014 task.
+Our contribution builds upon our system from last year (Bjo?rkelund et al., 2013), with additional
+features and components that try to exploit the unlabeled data. Given the limited window of time to
+participate in this year?s shared task, we only contribute to the setting with predicted preprocessing,
+using the largest available training data set for each language.2 We also do not participate in the Arabic
+track since the shared task organizers did not provide any unlabeled data at a reasonable time.
+2 Review of Last Year?s System
+Our current system is based on the system we participated with in the SPMRL 2013 Shared Task. We
+summarize the architecture of this system as three different components.
+?Authors in alphabetical order
+1Due to logistical constraints this paper had to be written before the deadlines for the actual shared task and do thus not contain
+a full description of the system, nor the experimental evaluation of the same.
+2In other words, no gold preprocessing or smaller training sets.
+This work is licenced under a Creative Commons Attribution 4.0 International License. Page numbers and proceedings footer
+are added by the organizers. License details: http://creativecommons.org/licenses/by/4.0/
+97
+2.1 Preprocessing
+As the initial step of preprocessing we converted the Shared Task data from the CoNLL06 format to
+CoNLL09, which required a decision on using coarse or fine grained POS tags. After a set of preliminary
+experiments we picked fine POS tags where possible, except Basque and Korean.
+We used MarMoT3 (Mu?ller et al., 2013) to predict POS tags and morphological features jointly. We in-
+tegrated the output from external morphological analyzers as features to MarMoT. We also experimented
+with the integration of predicted tags provided by the organizers and observed that these stacked models
+help improve Basque, Polish, and Swedish preprocessing. The stacked models provided additional infor-
+mation to our tagger since the provided predictions were coming from models trained on larger training
+sets than the shared task training sets.
+2.2 Dependency Parsing
+The dependency parsing architecture of our SPMRL 2013 Shared Task contribution is summarized in
+Figure 1. The first step combines the n-best trees of two parsers, namely the mate parser4 (Bohnet, 2010)
+and a variant of the EasyFirst parser (Goldberg and Elhadad, 2010), which we call best-first parser. We
+merged the 50-best analyses from these parsers into one n-best list of 50 to 100 trees. We then added
+parsing scores to the n-best trees from the two parsers, and additionally from the turboparser5 (Martins
+et al., 2010).
+mate parser
+best-first
+parser
+turboparser
+merged list
+of 50-100 best
+trees/sentence
+merged list
+scored by
+all parsers
+ranker
+ptb trees
+Parsing Ranking
+IN OUT
+scores
+scores
+scores
+features
+Figure 1: Architecture of the dependency ranking system from (Bjo?rkelund et al., 2013).
+The scored trees are fed into the ranking system. The ranker utilizes the parsing scores and fea-
+tures coming from both constituency and dependency parses. We specified a default feature set and
+experimented with additional features for each language for optimal results. We achieved over 1% LAS
+improvement on all languages except a 0.3% improvement on Hungarian.
+2.3 Constituency Parsing
+The constituency parsing architecture advances in three steps. For all setups we removed the morphologi-
+cal annotation of POS tags and the function labels of non-terminals and apply the Berkeley Parser (Petrov
+et al., 2006) as our baseline. As the first setup, we replaced words with a frequency < 20 with their pre-
+dicted part-of-speech and morphology tags and improved the PARSEVAL scores across languages. The
+second setup employed a product grammar (Petrov, 2010), where we combined 8 different grammars
+trained on the same data but with different initialization setups. As a result, the scores substantially
+improved on all languages.
+Finally, we conducted ranking experiments on the 50-best outputs of the product grammars. We used
+a slightly modified version of the Mallet toolkit (McCallum, 2002), where the reranker is trained for the
+3https://code.google.com/p/cistern/
+4https://code.google.com/p/mate-tools
+5http://www.ark.cs.cmu.edu/TurboParser/
+98
+maximum entropy objective function of Charniak and Johnson (2005) and uses the standard feature set
+from Charniak and Johnson (2005) and Collins (2000). Hebrew and Polish scores remained almost the
+same, whereas Basque, French, and Hungarian highly benefited from reranking.
+3 Planned Additions to Last Year?s System
+This year we extend our systems for both the constituency and dependency tracks to add additional
+information and try to profit from unlabeled data.
+3.1 Preprocessing
+We use the mate-tools? lemmatizer and MarMoT to preprocess all labeled and unlabeled data. From the
+SPMRL 2013 Shared Task, we learned that getting as good preprocessing as possible is an important
+part of the overall improvements. Preprocessing consists of predicting lemmas, part-of-speech, and
+morphological features. Preprocessing for the training data is done via 5-fold jackknifing to produce
+realistic input features for the parsers. This year we do not do stacking on top of provided morphological
+analyses since the annotations on the labeled and unlabeled data were inconsistent for some languages.6
+3.2 Dependency Parsing
+We pursue two different ways of integrating additional information into our system from the SPMRL
+2013 Shared Task (Bjo?rkelund et al., 2013): supertags and co-training.
+Supertags (Bangalore and Joshi, 1999) are tags that encode more syntactic information than standard
+part-of-speech tags. Supertags have been used in deep grammar formalisms like CCG or HPSG to prune
+the search space for the parser. The idea has been applied to dependency parsing by Foth et al. (2006)
+and recently to statistical dependency parsing (Ouchi et al., 2014; Ambati et al., 2014), where supertags
+are used as features rather than to prune the search space. Since the supertag set is dynamically derived
+from the gold-standard syntactic structures, we can encode different kinds of information into a supertag,
+in particular also morphological information. Supertags are predicted before parsing using MarMoT and
+are then used as features in the mate parser and the turboparser.
+We will use a variant of co-training (Blum and Mitchell, 1998) by applying two different parsers to
+select additional training material from unlabeled data. We use the mate parser and the turboparser to
+parse the unlabeled data provided by the organizers. We then select sentences where both parsers agree
+on the structure as additional training examples following Sagae and Tsujii (2007). We then train two
+more models: one on the labeled training data and the unlabeled data selected by the two parsers, and
+one only on the unlabeled data. These two models are then integrated into our parsing system from 2013
+as additional scorers to score the n-best list. Their scores are used as features in the ranker.
+Before we parse the unlabeled data to obtain the training sentences, we filter it in order to arrive
+at a cleaner corpus. Most importantly, we only keep sentences up to length 50, and which contain at
+maximum two unknown words (compared to the labeled training data).
+3.3 Constituency Parsing
+We experiment with two approaches for improving constituency parsing:
+Preterminal labelsets play an important role in constituency parsing of morphologically rich lan-
+guages (Dehdari et al., 2011). Instead of removing the morphological annotation of POS tags, we use a
+preterminal set which carries more linguistic information while still keeping it compact. We follow the
+merge procedure for morphological feature values of Sza?nto? and Farkas (2014). This procedure outputs a
+clustering of full morphological descriptions and we use the cluster IDs as preterminal labels for training
+the Berkeley Parser.
+Reranking at the constituency parsing side is enriched by novel features. We define feature tem-
+plates exploiting co-occurrence statistics from the unlabeled datasets; automatic dependency parses of
+the sentence in question (Farkas and Bohnet, 2012); Brown clusters (Brown et al., 1992); and atomic
+morphological feature values (Sza?nto? and Farkas, 2014).
+6The organizers later resolved this issue by patching the data, although time constraints prevented us from using the patched
+data.
+99
+4 Conclusion
+This paper describes our plans for the SPMRL 2014 Shared Task, most of which are yet to be imple-
+mented. For the actual system description and our results, we refer the interested reader to (Bjo?rkelund
+et al., 2014) and (Seddah et al., 2014).
+Acknowledgements
+Agnieszka Falen?ska is funded through the Project International computer science and applied mathemat-
+ics for business study programme at the University of Wroc?aw co-financed with European Union funds
+within the European Social Fund No. POKL.04.01.01-00-005/13. Richa?rd Farkas and Zsolt Sza?nto? are
+funded by the European Union and the European Social Fund through the project FuturICT.hu (grant no.:
+TA?MOP-4.2.2.C-11/1/KONV-2012-0013). Thomas Mu?ller is supported by a Google Europe Fellowship
+in Natural Language Processing. The remaining authors are funded by the Deutsche Forschungsgemein-
+schaft (DFG) via the SFB 732, projects D2 and D8 (PI: Jonas Kuhn).
+We also express our gratitude to the treebank providers for each language: Arabic (Maamouri et al.,
+2004; Habash and Roth, 2009; Habash et al., 2009; Green and Manning, 2010), Basque (Aduriz et al.,
+2003), French (Abeille? et al., 2003), Hebrew (Sima?an et al., 2001; Tsarfaty, 2010; Goldberg, 2011;
+Tsarfaty, 2013), German (Brants et al., 2002; Seeker and Kuhn, 2012), Hungarian (Csendes et al., 2005;
+Vincze et al., 2010), Korean (Choi et al., 1994; Choi, 2013), Polish (S?widzin?ski and Wolin?ski, 2010),
+and Swedish (Nivre et al., 2006).
+References
+Anne Abeille?, Lionel Cle?ment, and Franc?ois Toussenel. 2003. Building a treebank for french. In Anne Abeille?,
+editor, Treebanks. Kluwer, Dordrecht.
+I. Aduriz, M. J. Aranzabe, J. M. Arriola, A. Atutxa, A. D??az de Ilarraza, A. Garmendia, and M. Oronoz. 2003.
+Construction of a Basque dependency treebank. In TLT-03, pages 201?204.
+Bharat Ram Ambati, Tejaswini Deoskar, and Mark Steedman. 2014. Improving dependency parsers using combi-
+natory categorial grammar. In Proceedings of the 14th Conference of the European Chapter of the Association
+for Computational Linguistics, volume 2: Short Papers, pages 159?163, Gothenburg, Sweden, April. Associa-
+tion for Computational Linguistics.
+Srinivas Bangalore and Aravind K. Joshi. 1999. Supertagging: An approach to almost parsing. Computational
+Linguistics, 25(2):237?265.
+Anders Bjo?rkelund, O?zlem C?etinog?lu, Richa?rd Farkas, Thomas Mu?ller, and Wolfgang Seeker. 2013. (re)ranking
+meets morphosyntax: State-of-the-art results from the SPMRL 2013 shared task. In Proceedings of the Fourth
+Workshop on Statistical Parsing of Morphologically-Rich Languages, pages 135?145, Seattle, Washington,
+USA, October. Association for Computational Linguistics.
+Anders Bjo?rkelund, O?zlem C?etinog?lu, Agnieszka Falen?ska, Richa?rd Farkas, Thomas Mu?ller, Wolfgang Seeker,
+and Zsolt Sza?nto?. 2014. The IMS-Wroc?aw-Szeged-CIS entry at the SPMRL 2014 Shared Task: Reranking and
+Morphosyntax meet Unlabeled Data. In Notes of the SPMRL 2014 Shared Task on Parsing Morphologically-
+Rich Languages, Dublin, Ireland, August.
+Avrim Blum and Tom Mitchell. 1998. Combining labeled and unlabeled data with co-training. In Proceedings of
+the Eleventh Annual Conference on Computational Learning Theory, COLT? 98, pages 92?100, New York, NY,
+USA. ACM.
+Bernd Bohnet. 2010. Top Accuracy and Fast Dependency Parsing is not a Contradiction. In Proceedings of
+the 23rd International Conference on Computational Linguistics (Coling 2010), pages 89?97, Beijing, China,
+August. Coling 2010 Organizing Committee.
+Sabine Brants, Stefanie Dipper, Silvia Hansen, Wolfgang Lezius, and George Smith. 2002. The TIGER treebank.
+In Erhard Hinrichs and Kiril Simov, editors, Proceedings of the First Workshop on Treebanks and Linguistic
+Theories (TLT 2002), pages 24?41, Sozopol, Bulgaria.
+Peter F. Brown, Vincent J. Della Pietra, Peter V. deSouza, Jenifer C. Lai, and Robert L. Mercer. 1992. Class-based
+n-gram models of natural language. Computational Linguistics, 18(4):467?479.
+100
+Eugene Charniak and Mark Johnson. 2005. Coarse-to-fine n-best parsing and MaxEnt discriminative reranking.
+In Proceedings of the 43rd Annual Meeting on Association for Computational Linguistics, ACL ?05, pages
+173?180.
+Key-Sun Choi, Young S Han, Young G Han, and Oh W Kwon. 1994. Kaist tree bank project for korean: Present
+and future development. In Proceedings of the International Workshop on Sharable Natural Language Re-
+sources, pages 7?14. Citeseer.
+Jinho D. Choi. 2013. Preparing korean data for the shared task on parsing morphologically rich languages. CoRR,
+abs/1309.1649.
+Michael Collins. 2000. Discriminative Reranking for Natural Language Parsing. In Proceedings of the Seven-
+teenth International Conference on Machine Learning, ICML ?00, pages 175?182.
+Do?ra Csendes, Jano?s Csirik, Tibor Gyimo?thy, and Andra?s Kocsor. 2005. The Szeged treebank. In Va?clav Ma-
+tous?ek, Pavel Mautner, and Toma?s? Pavelka, editors, Text, Speech and Dialogue: Proceedings of TSD 2005.
+Springer.
+Jon Dehdari, Lamia Tounsi, and Josef van Genabith. 2011. Morphological features for parsing morphologically-
+rich languages: A case of arabic. In Proceedings of the Second Workshop on Statistical Parsing of Morphologi-
+cally Rich Languages, pages 12?21, Dublin, Ireland, October. Association for Computational Linguistics.
+Richa?rd Farkas and Bernd Bohnet. 2012. Stacking of dependency and phrase structure parsers. In Proceedings of
+COLING 2012, pages 849?866, Mumbai, India, December. The COLING 2012 Organizing Committee.
+Kilian A. Foth, Tomas By, and Wolfgang Menzel. 2006. Guiding a constraint dependency parser with supertags.
+In Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of
+the Association for Computational Linguistics, pages 289?296, Sydney, Australia, July. Association for Com-
+putational Linguistics.
+Yoav Goldberg and Michael Elhadad. 2010. An Efficient Algorithm for Easy-First Non-Directional Dependency
+Parsing. In Human Language Technologies: The 2010 Annual Conference of the North American Chapter of
+the Association for Computational Linguistics, pages 742?750, Los Angeles, California, June. Association for
+Computational Linguistics.
+Yoav Goldberg. 2011. Automatic syntactic processing of Modern Hebrew. Ph.D. thesis, Ben Gurion University of
+the Negev.
+Spence Green and Christopher D. Manning. 2010. Better arabic parsing: Baselines, evaluations, and analysis. In
+Proceedings of the 23rd International Conference on Computational Linguistics (Coling 2010), pages 394?402,
+Beijing, China, August. Coling 2010 Organizing Committee.
+Nizar Habash and Ryan Roth. 2009. Catib: The columbia arabic treebank. In Proceedings of the ACL-IJCNLP
+2009 Conference Short Papers, pages 221?224, Suntec, Singapore, August. Association for Computational
+Linguistics.
+Nizar Habash, Reem Faraj, and Ryan Roth. 2009. Syntactic Annotation in the Columbia Arabic Treebank. In
+Proceedings of MEDAR International Conference on Arabic Language Resources and Tools, Cairo, Egypt.
+Mohamed Maamouri, Ann Bies, Tim Buckwalter, and Wigdan Mekki. 2004. The Penn Arabic Treebank: Building
+a Large-Scale Annotated Arabic Corpus. In NEMLAR Conference on Arabic Language Resources and Tools.
+Andre Martins, Noah Smith, Eric Xing, Pedro Aguiar, and Mario Figueiredo. 2010. Turbo Parsers: Dependency
+Parsing by Approximate Variational Inference. In Proceedings of the 2010 Conference on Empirical Meth-
+ods in Natural Language Processing, pages 34?44, Cambridge, MA, October. Association for Computational
+Linguistics.
+Andrew Kachites McCallum. 2002. ?mallet: A machine learning for language toolkit?.
+http://mallet.cs.umass.edu.
+Thomas Mu?ller, Helmut Schmid, and Hinrich Schu?tze. 2013. Efficient Higher-Order CRFs for Morphological
+Tagging. In In Proceedings of EMNLP.
+Joakim Nivre, Jens Nilsson, and Johan Hall. 2006. Talbanken05: A Swedish treebank with phrase structure and
+dependency annotation. In Proceedings of LREC, pages 1392?1395, Genoa, Italy.
+101
+Hiroki Ouchi, Kevin Duh, and Yuji Matsumoto. 2014. Improving dependency parsers with supertags. In Proceed-
+ings of the 14th Conference of the European Chapter of the Association for Computational Linguistics, volume
+2: Short Papers, pages 154?158, Gothenburg, Sweden, April. Association for Computational Linguistics.
+Slav Petrov, Leon Barrett, Romain Thibaux, and Dan Klein. 2006. Learning accurate, compact, and interpretable
+tree annotation. In Proceedings of the 21st International Conference on Computational Linguistics and the 44th
+annual meeting of the Association for Computational Linguistics, pages 433?440. Association for Computa-
+tional Linguistics.
+Slav Petrov. 2010. Products of Random Latent Variable Grammars. In Human Language Technologies: The 2010
+Annual Conference of the North American Chapter of the Association for Computational Linguistics, pages
+19?27, Los Angeles, California, June. Association for Computational Linguistics.
+Kenji Sagae and Jun?ichi Tsujii. 2007. Dependency parsing and domain adaptation with LR models and parser
+ensembles. In Proceedings of the CoNLL Shared Task Session of EMNLP-CoNLL 2007, pages 1044?1050,
+Prague, Czech Republic, June. Association for Computational Linguistics.
+Djame? Seddah, Reut Tsarfaty, Sandra Ku?bler, Marie Candito, Jinho D. Choi, Richa?rd Farkas, Jennifer Foster, Iakes
+Goenaga, Koldo Gojenola Galletebeitia, Yoav Goldberg, Spence Green, Nizar Habash, Marco Kuhlmann, Wolf-
+gang Maier, Joakim Nivre, Adam Przepio?rkowski, Ryan Roth, Wolfgang Seeker, Yannick Versley, Veronika
+Vincze, Marcin Wolin?ski, Alina Wro?blewska, and Eric Villemonte de la Clergerie. 2013. Overview of the
+SPMRL 2013 shared task: A cross-framework evaluation of parsing morphologically rich languages. In Pro-
+ceedings of the Fourth Workshop on Statistical Parsing of Morphologically-Rich Languages, pages 146?182,
+Seattle, Washington, USA, October. Association for Computational Linguistics.
+Djame? Seddah, Reut Tsarfaty, Sandra Ku?bler, Marie Candito, Jinho Choi, Matthieu Constant, Richa?rd Farkas,
+Iakes Goenaga, Koldo Gojenola, Yoav Goldberg, Spence Green, Nizar Habash, Marco Kuhlmann, Wolfgang
+Maier, Joakim Nivre, Adam Przepiorkowski, Ryan Roth, Wolfgang Seeker, Yannick Versley, Veronika Vincze,
+Marcin Wolin?ski, Alina Wro?blewska, and Eric Villemonte de la Cle?rgerie. 2014. Overview of the SPMRL 2014
+shared task on parsing morphologically rich languages. In Notes of the SPMRL 2014 Shared Task on Parsing
+Morphologically-Rich Languages, Dublin, Ireland.
+Wolfgang Seeker and Jonas Kuhn. 2012. Making Ellipses Explicit in Dependency Conversion for a German
+Treebank. In Proceedings of the 8th International Conference on Language Resources and Evaluation, pages
+3132?3139, Istanbul, Turkey. European Language Resources Association (ELRA).
+Khalil Sima?an, Alon Itai, Yoad Winter, Alon Altman, and Noa Nativ. 2001. Building a Tree-Bank for Modern
+Hebrew Text. In Traitement Automatique des Langues.
+Marek S?widzin?ski and Marcin Wolin?ski. 2010. Towards a bank of constituent parse trees for Polish. In Text,
+Speech and Dialogue: 13th International Conference (TSD), Lecture Notes in Artificial Intelligence, pages
+197?204, Brno, Czech Republic. Springer.
+Zsolt Sza?nto? and Richa?rd Farkas. 2014. Special techniques for constituent parsing of morphologically rich lan-
+guages. In Proceedings of the 14th Conference of the European Chapter of the Association for Computational
+Linguistics, pages 135?144, Gothenburg, Sweden, April. Association for Computational Linguistics.
+Reut Tsarfaty. 2010. Relational-Realizational Parsing. Ph.D. thesis, University of Amsterdam.
+Reut Tsarfaty. 2013. A Unified Morpho-Syntactic Scheme of Stanford Dependencies. Proceedings of ACL.
+Veronika Vincze, Do?ra Szauter, Attila Alma?si, Gyo?rgy Mo?ra, Zolta?n Alexin, and Ja?nos Csirik. 2010. Hungarian
+dependency treebank. In LREC.
+102

@@ -1,0 +1,2336 @@
+Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of the ACL, pages 961?968,
+Sydney, July 2006. c?2006 Association for Computational Linguistics
+Scalable Inference and Training of
+Context-Rich Syntactic Translation Models
+Michel Galley*, Jonathan Graehl?, Kevin Knight??, Daniel Marcu??,
+Steve DeNeefe?, Wei Wang? and Ignacio Thayer?
+*Columbia University
+Dept. of Computer Science
+New York, NY 10027
+galley@cs.columbia.edu, {graehl,knight,marcu,sdeneefe}@isi.edu,
+wwang@languageweaver.com, thayer@google.com
+?University of Southern California
+Information Sciences Institute
+Marina del Rey, CA 90292
+?Language Weaver, Inc.
+4640 Admiralty Way
+Marina del Rey, CA 90292
+Abstract
+Statistical MT has made great progress in the last
+few years, but current translation models are weak
+on re-ordering and target language fluency. Syn-
+tactic approaches seek to remedy these problems.
+In this paper, we take the framework for acquir-
+ing multi-level syntactic translation rules of (Gal-
+ley et al, 2004) from aligned tree-string pairs, and
+present two main extensions of their approach: first,
+instead of merely computing a single derivation that
+minimally explains a sentence pair, we construct
+a large number of derivations that include contex-
+tually richer rules, and account for multiple inter-
+pretations of unaligned words. Second, we pro-
+pose probability estimates and a training procedure
+for weighting these rules. We contrast different
+approaches on real examples, show that our esti-
+mates based on multiple derivations favor phrasal
+re-orderings that are linguistically better motivated,
+and establish that our larger rules provide a 3.63
+BLEU point increase over minimal rules.
+1 Introduction
+While syntactic approaches seek to remedy word-
+ordering problems common to statistical machine
+translation (SMT) systems, many of the earlier
+models?particularly child re-ordering models?
+fail to account for human translation behavior.
+Galley et al (2004) alleviate this modeling prob-
+lem and present a method for acquiring millions
+of syntactic transfer rules from bilingual corpora,
+which we review below. Here, we make the fol-
+lowing new contributions: (1) we show how to
+acquire larger rules that crucially condition on
+more syntactic context, and show how to com-
+pute multiple derivations for each training exam-
+ple, capturing both large and small rules, as well
+as multiple interpretations for unaligned words;
+(2) we develop probability models for these multi-
+level transfer rules, and give estimation methods
+for assigning probabilities to very large rule sets.
+We contrast our work with (Galley et al, 2004),
+highlight some severe limitations of probability
+estimates computed from single derivations, and
+demonstrate that it is critical to account for many
+derivations for each sentence pair. We also use
+real examples to show that our probability mod-
+els estimated from a large number of derivations
+favor phrasal re-orderings that are linguistically
+well motivated. An empirical evaluation against
+a state-of-the-art SMT system similar to (Och and
+Ney, 2004) indicates positive prospects. Finally,
+we show that our contextually richer rules provide
+a 3.63 BLEU point increase over those of (Galley
+et al, 2004).
+2 Inferring syntactic transformations
+We assume we are given a source-language (e.g.,
+French) sentence f , a target-language (e.g., En-
+glish) parse tree pi, whose yield e is a translation
+of f , and a word alignment a between f and e.
+Our aim is to gain insight into the process of trans-
+forming pi into f and to discover grammatically-
+grounded translation rules. For this, we need
+a formalism that is expressive enough to deal
+with cases of syntactic divergence between source
+and target languages (Fox, 2002): for any given
+(pi, f ,a) triple, it is useful to produce a derivation
+that minimally explains the transformation be-
+tween pi and f , while remaining consistent with a.
+Galley et al (2004) present one such formalism
+(henceforth ?GHKM?).
+2.1 Tree-to-string alignments
+It is appealing to model the transformation of pi
+into f using tree-to-string (xRs) transducers, since
+their theory has been worked out in an exten-
+sive literature and is well understood (see, e.g.,
+(Graehl and Knight, 2004)). Formally, transfor-
+mational rules ri presented in (Galley et al, 2004)
+are equivalent to 1-state xRs transducers mapping
+a given pattern (subtree to match in pi) to a right
+hand side string. We will refer to them as lhs(ri)
+and rhs(ri), respectively. For example, some xRs
+961
+rules may describe the transformation of does not
+into ne ... pas in French. A particular instance may
+look like this:
+VP(AUX(does), RB(not), x0:VB) ? ne, x0, pas
+lhs(ri) can be any arbitrary syntax tree fragment.
+Its leaves are either lexicalized (e.g. does) or vari-
+ables (x0, x1, etc). rhs(ri) is represented as a se-
+quence of target-language words and variables.
+Now we give a brief overview of how such
+transformational rules are acquired automatically
+in GHKM.1 In Figure 1, the (pi, f ,a) triple is rep-
+resented as a directed graph G (edges going down-
+ward), with no distinction between edges of pi and
+alignments. Each node of the graph is labeled with
+its span and complement span (the latter in italic
+in the figure). The span of a node n is defined by
+the indices of the first and last word in f that are
+reachable from n. The complement span of n is
+the union of the spans of all nodes n? in G that
+are neither descendants nor ancestors of n. Nodes
+of G whose spans and complement spans are non-
+overlapping form the frontier set F ? G.
+What is particularly interesting about the fron-
+tier set? For any frontier of graph G containing
+a given node n ? F , spans on that frontier de-
+fine an ordering between n and each other frontier
+node n?. For example, the span of VP[4-5] either
+precedes or follows, but never overlaps the span of
+any node n? on any graph frontier. This property
+does not hold for nodes outside of F . For instance,
+PP[4-5] and VBG[4] are two nodes of the same
+graph frontier, but they cannot be ordered because
+of their overlapping spans.
+The purpose of xRs rules in this framework is
+to order constituents along sensible frontiers in G,
+and all frontiers containing undefined orderings,
+as between PP[4-5] and VBG[4], must be disre-
+garded during rule extraction. To ensure that xRs
+rules are prevented from attempting to re-order
+any such pair of constituents, these rules are de-
+signed in such a way that variables in their lhs can
+only match nodes of the frontier set. Rules that
+satisfy this property are said to be induced by G.2
+For example, rule (d) in Table 1 is valid accord-
+ing to GHKM, since the spans corresponding to
+1Note that we use a slightly different terminology.
+2Specifically, an xRs rule ri is extracted fromG by taking
+a subtree ? ? pi as lhs(ri), appending a variable to each
+leaf node of ? that is internal to pi, adding those variables to
+rhs(ri), ordering them in accordance to a, and if necessary
+inserting any word of f to ensure that rhs(ri) is a sequence of
+contiguous spans (e.g., [4-5][6][7-8] for rule (f) in Table 1).
+DT
+CD
+VBP
+NNS
+IN
+NNP
+NP
+NNS
+VBG
+3
+2
+2
+1
+7-8
+4
+4
+5
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+3 1-2,4
+-9
+2 1-9
+2 1-9
+1 2-9
+7-8 1-5,9
+4 1-9
+4 1-9
+5 1-4,7
+-9
+9 1-8
+1-2 3-9
+NP 7-8 1-5,9
+NP 5 1-4, 7
+-9
+PP 4-5 1-4,7
+-9
+VP 4-5 1-3,7
+-9
+NP 4-8 1-3,9
+VP 3-8 1-2,9
+S 1-9 ?
+7!
+"#
+$
+%&
+'(
+)
+*+
+,
+.
+Thes
+e
+peop
+le
+inclu
+de
+astro
+naut
+s
+com
+ing
+from
+Fran
+ce
+..
+7
+-
+Figure 1: Spans and complement-spans determine what
+rules are extracted. Constituents in gray are members of the
+frontier set; a minimal rule is extracted from each of them.
+(a) S(x0:NP, x1:VP, x2:.) ? x0, x1, x2
+(b) NP(x0:DT, CD(7), NNS(people)) ? x0, 7?
+(c) DT(these) ??
+(d) VP(x0:VBP, x1:NP) ? x0, x1
+(e) VBP(include) ?-?
+(f) NP(x0:NP, x1:VP) ? x1,?, x0
+(g) NP(x0:NNS) ? x0
+(h) NNS(astronauts) ??*,X
+(i) VP(VBG(coming), PP(IN(from), x0:NP)) ?e?, x0
+(j) NP(x0:NNP) ? x0
+(k) NNP(France) ???
+(l) .(.) ? .
+Table 1: A minimal derivation corresponding to Figure 1.
+its rhs constituents (VBP[3] and NP[4-8]) do not
+overlap. Conversely, NP(x0:DT, x1:CD:, x2:NNS)
+is not the lhs of any rule extractible from G, since
+its frontier constituents CD[2] and NNS[2] have
+overlapping spans.3 Finally, the GHKM proce-
+dure produces a single derivation from G, which
+is shown in Table 1.
+The concern in GHKM was to extract minimal
+rules, whereas ours is to extract rules of any arbi-
+trary size. Minimal rules defined over G are those
+that cannot be decomposed into simpler rules in-
+duced by the same graph G, e.g., all rules in Ta-
+ble 1. We call minimal a derivation that only con-
+tains minimal rules. Conversely, a composed rule
+results from the composition of two or more min-
+imal rules, e.g., rule (b) and (c) compose into:
+NP(DT(these), CD(7), NNS(people)) ??, 7?
+3It is generally reasonable to also require that the root n
+of lhs(ri) be part of F , because no rule induced by G can
+compose with ri at n, due to the restrictions imposed on the
+extraction procedure, and ri wouldn?t be part of any valid
+derivation.
+962
+OR
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+,!
+, x0
+VP
+(x0
+:VB
+P, 
+x1:
+NP
+) 
+!
+x0
+ , x
+1
+S(x
+0:N
+P, 
+x1:
+VP
+, x
+2:.
+) 
+!
+x0
+ , x
+1, x
+2
+NP
+(x0
+:DT
+ CD
+(7)
+, N
+NS
+(pe
+opl
+e))
+ 
+!
+x0
+, 7"
+.(.)
+ 
+!
+.
+DT
+(th
+ese
+) 
+!
+#
+VB
+P(i
+ncl
+ude
+) 
+!
+$%
+&
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+, x0
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+, x0
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m),
+ x0
+:N
+P))
+  
+!
+'(
+, x0
+, !
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m),
+ x0
+:N
+P))
+ 
+!
+'(
+, x0
+NP
+(x0
+:NN
+S) 
+!
+x0
+NP
+(x0
+:NN
+S) 
+!
+!,
+ x0
+NP
+(x0
+:NN
+P) 
+!
+x0
+, !
+NN
+P(F
+ran
+ce)
+ 
+!
+)*
+NN
+S(a
+stro
+nau
+ts) 
+!
++,
+, -
+OR
+OR N
+NS
+(as
+tro
+nau
+ts) 
+!!
+,+
+,,
+ -
+OR
+NP
+(x0
+:NN
+P) 
+!
+x0
+NP
+(x0
+:NN
+P) 
+!
+x0
+NN
+P(F
+ran
+ce)
+ 
+!
+)*
+, !
+NP
+(x0
+:NN
+S) 
+!
+x0
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m),
+ x0
+:N
+P))
+ 
+!
+'(
+, x0
+co
+min
+g
+fro
+m
+NN
+S
+IN
+NN
+P
+NP
+VP
+NP
+VB
+G
+PP
+NP
+7-8
+5
+7-8
+5
+7-8
+4
+4
+5
+4
+5
+6
+7
+8
+4
+4
+4-5
+4-5
+4-8
+NN
+P(F
+ran
+ce)
+ 
+!)
+*,
+ !
+NP
+(x0
+:NN
+P) 
+!
+x0
+, !
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m)
+, 
+x0:
+NP
+))  
+!
+'(
+, x0
+, !
+NN
+S(a
+stro
+nau
+ts) 
+!
+! ,
+ +
+,,
+ -
+NP
+(x0
+:NN
+S) 
+!
+! ,
+ x0
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+, !
+, x0
+(a)
+(b)
+-
+'(
+)*
+!
++,
+as
+tro
+na
+uts
+Fra
+nce
+Figure 2: (a) Multiple ways of aligning? to constituents in the tree. (b) Derivation corresponding to the parse tree in Figure 1,
+which takes into account all alignments of? pictured in (a).
+Note that these properties are dependent on G, and
+the above rule would be considered a minimal rule
+in a graph G? similar to G, but additionally con-
+taining a word alignment between 7 and ?. We
+will see in Sections 3 and 5 why extracting only
+minimal rules can be highly problematic.
+2.2 Unaligned words
+While the general theory presented in GHKM ac-
+counts for any kind of derivation consistent with
+G, it does not particularly discuss the case where
+some words of the source-language string f are
+not aligned to any word of e, thus disconnected
+from the rest of the graph. This case is highly fre-
+quent: 24.1% of Chinese words in our 179 mil-
+lion word English-Chinese bilingual corpus are
+unaligned, and 84.8% of Chinese sentences con-
+tain at least one unaligned word. The question is
+what to do with such lexical items, e.g., ? in
+Figure 2(a). The approach of building one mini-
+mal derivation for G as in the algorithm described
+in GHKM assumes that we commit ourselves to
+a particular heuristic to attach the unaligned item
+to a certain constituent of pi, e.g., highest attach-
+ment (in the example, ? is attached to NP[4-8]
+and the heuristic generates rule (f)). A more rea-
+sonable approach is to invoke the principle of in-
+sufficient reason and make no a priori assump-
+tion about what is a ?correct? way of assigning
+the item to a constituent, and return all derivations
+that are consistent with G. In Section 4, we will
+see how to use corpus evidence to give preference
+to unaligned-word attachments that are the most
+consistent across the data. Figure 2(a) shows the
+six possible ways of attaching ? to constituents
+of pi: besides the highest attachment (rule (f)),?
+can move along the ancestors of France, since it is
+to the right of the translation of that word, and be
+considered to be part of an NNP, NP, or VP rule.
+We make the same reasoning to the left: ? can
+either start the NNS of astronauts, or start an NP.
+Our account of all possible ways of consistently
+attaching ? to constituents means we must ex-
+tract more than one derivation to explain transfor-
+mations in G, even if we still restrict ourselves to
+minimal derivations (a minimal derivation for G
+is unique if and only if no source-language word
+in G is unaligned). While we could enumerate
+all derivations separately, it is much more effi-
+cient both in time and space to represent them as a
+derivation forest, as in Figure 2(b). Here, the for-
+est covers all minimal derivations that correspond
+to G. It is necessary to ensure that for each deriva-
+tion, each unaligned item (here ?) appears only
+once in the rules of that derivation, as shown in
+Figure 2 (which satisfies the property). That re-
+quirement will prove to be critical when we ad-
+dress the problem of estimating probabilities for
+our rules: if we allowed in our example to spuri-
+ously generate?s in multiple successive steps of
+the same derivation, we would not only represent
+the transformation incorrectly, but also ?-rules
+would be disproportionately represented, leading
+to strongly biased estimates. We will now see how
+to ensure this constraint is satisfied in our rule ex-
+traction and derivation building algorithm.
+963
+2.3 Algorithm
+The linear-time algorithm presented in GHKM is
+only a particular case of the more general one we
+describe here, which is used to extract all rules,
+minimal and composed, induced by G. Similarly
+to the GHKM algorithm, ours performs a top-
+down traversal of G, but differs in the operations
+it performs at each node n ? F : we must explore
+all subtrees rooted at n, find all consistent ways
+of attaching unaligned words of f, and build valid
+derivations in accordance to these attachments.
+We use a table or-dforest[x, y, c] to store OR-
+nodes, in which each OR-node can be uniquely
+defined by a syntactic category c and a span [x, y]
+(which may cover unaligned words of f). This ta-
+ble is used to prevent the same partial derivation
+to be followed multiple times (the in-degrees of
+OR-nodes generally become large with composed
+rules). Furthermore, to avoid over-generating un-
+aligned words, the root and variables in each rule
+are represented with their spans. For example, in
+Figure 2(b), the second and third child of the top-
+most OR-node respectively span across [4-5][6-8]
+and [4-6][7-8] (after constituent reordering). In
+the former case, ? will eventually be realized in
+an NP, and in the latter case, in a VP.
+The preprocessing step consists of assigning
+spans and complement spans to nodes of G, in
+the first case by a bottom-up exploration of the
+graph, and in the latter by a top-down traversal.
+To assign complement spans, we assign the com-
+plement span of any node n to each of its children,
+and for each of them, add the span of the child
+to the complement span of all other children. In
+another traversal of G, we determine the minimal
+rule extractible from each node in F .
+We explore all tree fragments rooted at n by
+maintaining an open and a closed queue of rules
+extracted from n (qo and qc). At each step, we
+pick the smallest rule in qo, and for each of its
+variable nodes, try to discover new rules (?succes-
+sor rules?) by means of composition with minimal
+rules, until a given threshold on rule size or maxi-
+mum number of rules in qc is reached. There may
+be more that one successor per rule, since we must
+account for all possible spans than can be assigned
+to non-lexical leaves of a rule. Once a threshold is
+reached, or if the open queue is empty, we connect
+a new OR-node to all rules that have just been ex-
+tracted from n, and add it to or-dforest. Finally,
+we proceed recursively, and extract new rules from
+each node at the frontier of the minimal rule rooted
+at n. Once all nodes of F have been processed, the
+or-dforest table contains a representation encod-
+ing only valid derivations.
+3 Probability models
+The overall goal of our translation system is to
+transform a given source-language sentence f
+into an appropriate translation e in the set E
+of all possible target-language sentences. In a
+noisy-channel approach to SMT, we uses Bayes?
+theorem and choose the English sentence e? ? E
+that maximizes:4
+e? = argmax
+e?E
+{
+Pr(e) ? Pr(f |e)
+}
+(1)
+Pr(e) is our language model, and Pr(f |e) our
+translation model. In a grammatical approach to
+MT, we hypothesize that syntactic information
+can help produce good translation, and thus
+introduce dependencies on target-language syntax
+trees. The function to optimize becomes:
+e? = argmax
+e?E
+{
+Pr(e) ?
+?
+pi??(e)
+Pr(f |pi) ?Pr(pi|e)
+}
+(2)
+?(e) is the set of all English trees that yield the
+given sentence e. Estimating Pr(pi|e) is a prob-
+lem equivalent to syntactic parsing and thus is not
+discussed here. Estimating Pr(f |pi) is the task of
+syntax-based translation models (SBTM).
+Given a rule set R, our SBTM makes the
+common assumption that left-most compositions
+of xRs rules ?i = r1 ? ... ? rn are independent
+from one another in a given derivation ?i ? ?,
+where ? is the set of all derivations constructible
+from G = (pi, f ,a) using rules of R. Assuming
+that ? is the set of all subtree decompositions of pi
+corresponding to derivations in ?, we define the
+estimate:
+Pr(f |pi) =
+1
+|?|
+?
+?i??
+?
+rj??i
+p(rhs(rj)|lhs(rj)) (3)
+under the assumption:
+?
+rj?R:lhs(rj)=lhs(ri)
+p(rhs(rj)|lhs(rj)) = 1 (4)
+It is important to notice that the probability
+distribution defined in Equation 3 requires a
+normalization factor (|?|) in order to be tight, i.e.,
+sum to 1 over all strings fi ? F that can be derived
+4We denote general probability distributions with Pr(?)
+and use p(?) for probabilities assigned by our models.
+964
+Xa
+Y b
+a?
+b?
+c?c
+(!,f 1
+,a 1):
+X
+a
+Y b
+b?
+a?
+c?c
+(!,f 2
+,a 2):
+Figure 3: Example corpus.
+from pi. A simple example suffices to demonstrate
+it is not tight without normalization. Figure 3
+contains a sample corpus from which four rules
+can be extracted:
+r1: X(a, Y(b, c)) ? a?, b?, c?
+r2: X(a, Y(b, c)) ? b?, a?, c?
+r3: X(a, x0:Y) ? a?, x0
+r4: Y(b, c) ? b?, c?
+From Equation 4, the probabilities of r3 and r4
+must be 1, and those of r1 and r2 must sum to
+1. Thus, the total probability mass, which is dis-
+tributed across two possible output strings a?b?c?
+and b?a?c?, is: p(a?b?c?|pi) + p(b?a?c?|pi) = p1 +
+p3 ? p4 + p2 = 2, where pi = p(rhs(ri)|lhs(ri)).
+It is relatively easy to prove that the probabil-
+ities of all derivations that correspond to a given
+decomposition ?i ? ? sum to 1 (the proof is omit-
+ted due to constraints on space). From this prop-
+erty we can immediately conclude that the model
+described by Equation 3 is tight.5
+We examine two estimates p(rhs(r)|lhs(r)).
+The first one is the relative frequency estimator
+conditioning on left hand sides:
+p(rhs(r)|lhs(r)) =
+f(r)
+?
+r?:lhs(r?)=lhs(r) f(r
+?)
+(5)
+f(r) represents the number of times rule r oc-
+curred in the derivations of the training corpus.
+One of the major negative consequences of
+extracting only minimal rules from a corpus is
+that an estimator such as Equation 5 can become
+extremely biased. This again can be observed
+from Figure 3. In the minimal-rule extraction of
+GHKM, only three rules are extracted from the ex-
+ample corpus, i.e. rules r2, r3, and r4. Let?s as-
+sume now that the triple (pi, f1,a1) is represented
+99 times, and (pi, f2,a2) only once. Given a tree
+pi, the model trained on that corpus can generate
+the two strings a?b?c? and b?a?c? only through two
+derivations, r3 ? r4 and r2, respectively. Since
+all rules in that example have probability 1, and
+5If each tree fragment in pi is the lhs of some rule in R,
+then we have |?| = 2n, where n is the number of nodes of
+the frontier set F ? G (each node is a binary choice point).
+given that the normalization factor |?| is 2, both
+probabilities p(a?b?c?|pi) and p(b?a?c?|pi) are 0.5.
+On the other hand, if all rules are extracted and
+incorporated into our relative-frequency probabil-
+ity model, r1 seriously counterbalances r2 and the
+probability of a?b?c? becomes: 12 ?(
+99
+100+1) = .995
+(since it differs from .99, the estimator remains bi-
+ased, but to a much lesser extent).
+An alternative to the conditional model of
+Equation 3 is to use a joint model conditioning on
+the root node instead of the entire left hand side:
+p(r|root(r)) =
+f(r)
+?
+r?:root(r?)=root(r) f(r
+?)
+(6)
+This can be particularly useful if no parser or
+syntax-based language model is available, and we
+need to rely on the translation model to penalize
+ill-formed parse trees. Section 6 will describe an
+empirical evaluation based on this estimate.
+4 EM training
+In our previous discussion of parameter estima-
+tion, we did not explore the possibility that one
+derivation in a forest may be much more plau-
+sible than the others. If we knew which deriva-
+tion in each forest was the ?true? derivation, then
+we could straightforwardly collect rule counts off
+those derivations. On the other hand, if we had
+good rule probabilities, we could compute the
+most likely (Viterbi) derivations for each training
+example. This is a situation in which we can em-
+ploy EM training, starting with uniform rule prob-
+abilities. For each training example, we would like
+to: (1) score each derivation ?i as a product of the
+probabilities of the rules it contains, (2) compute
+a conditional probability pi for each derivation ?i
+(conditioned on the observed training pair) by nor-
+malizing those scores to add to 1, and (3) collect
+weighted counts for each rule in each ?i, where
+the weight is pi. We can then normalize the counts
+to get refined probabilities, and iterate; the corpus
+likelihood is guaranteed to improve with each it-
+eration. While it is infeasible to enumerate the
+millions of derivations in each forest, Graehl and
+Knight (2004) demonstrate an efficient algorithm.
+They also analyze how to train arbitrary tree trans-
+ducers into two steps. The first step is to build a
+derivation forest for each training example, where
+the forest contains those derivations licensed by
+the (already supplied) transducer?s rules. The sec-
+ond step employs EM on those derivation forests,
+running in time proportional to the size of the
+965
+Best minimal-rule derivation (Cm) p(r)
+(a) S(x0:NP-C x1:VP x2:.) ? x0 x1 x2 .845
+(b) NP-C(x0:NPB) ? x0 .82
+(c) NPB(DT(the) x0:NNS) ? x0 .507
+(d) NNS(gunmen) ??K .559
+(e) VP(VBD(were) x0:VP-C) ? x0 .434
+(f) VP-C(x0:VBN x1:PP) ? x1 x0 .374
+(g) PP(x0:IN x1:NP-C) ? x0 x1 .64
+(h) IN(by) ?? .0067
+(i) NP-C(x0:NPB) ? x0 .82
+(j) NPB(DT(the) x0:NN) ? x0 .586
+(k) NN(police) ?f? .0429
+(l) VBN(killed) ??? .0072
+(m) .(.) ? . .981
+.
+ 
+The
+gunm
+enw
+ere
+killed
+by
+the
+polic
+e.
+DT
+VBD
+VBN
+DT
+NN
+NP
+PP
+VP-C
+VPS
+NNS
+IN
+NP
+.
+!"
+#$
+%
+&'
+Best composed-rule derivation (C4) p(r)
+(o) S(NP-C(NPB(DT(the) NNS(gunmen))) x0:VP .(.)) ??K x0 . 1
+(p) VP(VBD(were) VP-C(x0:VBN PP(IN(by) x1:NP-C))) ?? x1 x0 0.00724
+(q) NP-C(NPB(DT(the) NN(police))) ?f? 0.173
+(r) VBN(killed) ??? 0.00719
+Figure 4: Two most probable derivations for the graph on the right: the top table restricted to minimal rules; the bottom one,
+much more probable, using a large set of composed rules. Note: the derivations are constrained on the (pi, f ,a) triple, and thus
+include some non-literal translations with relatively low probabilities (e.g. killed, which is more commonly translated as{?).
+rule nb. of nb. of deriv- EM-
+set rules nodes time time
+Cm 4M 192M 2 h. 4 h.
+C3 142M 1255M 52 h. 34 h.
+C4 254M 2274M 134 h. 60 h.
+Table 2: Rules and derivation nodes for a 54M-word, 1.95M
+sentence pair English-Chinese corpus, and time to build
+derivations (on 10 cluster nodes) and run 50 EM iterations.
+forests. We only need to borrow the second step
+for our present purposes, as we construct our own
+derivation forests when we acquire our rule set.
+A major challenge is to scale up this EM train-
+ing to large data sets. We have been able to run
+EM for 50 iterations on our Chinese-English 54-
+million word corpus. The derivation forests for
+this corpus contain 2.2 billion nodes; the largest
+forest contains 1.1 million nodes. The outcome
+is to assign probabilities to over 254 million rules.
+Our EM runs with either lhs normalization or lhs-
+root normalization. In the former case, each lhs
+has an average of three corresponding rhs?s that
+compete with each other for probability mass.
+5 Model coverage
+We now present some examples illustrating the
+benefit of composed rules. We trained three
+p(rhs(ri)|lhs(ri)) models on a 54 million-word
+English-Chinese parallel corpus (Table 2): the first
+one (Cm) with only minimal rules, and the two
+others (C3 and C4) additionally considering com-
+posed rules with no more than three, respectively
+four, internal nodes in lhs(ri). We evaluated these
+models on a section of the NIST 2002 evaluation
+corpus, for which we built derivation forests and
+lhs: S(x0:NP-C VP(x1:VBD x2:NP-C) x3:.)
+corpus rhsi p(rhsi|lhs)
+Chinese x1 x0 x2 x3 .3681
+(minimal) x0 x1 , x3 x2 .0357
+x2 , x0 x1 x3 .0287
+x0 x1 , x3 x2 . .0267
+Chinese x0 x1 x2 x3 .9047
+(composed) x0 x1 , x2 x3 .016
+x0 , x1 x2 x3 .0083
+x0 x1 ? x2 x3 .0072
+Arabic x1 x0 x2 x3 .5874
+(composed) x0 x1 x2 x3 .4027
+x1 x2 x0 x3 .0077
+x1 x0 x2 " x3 .0001
+Table 3: Our model transforms English subject-verb-object
+(SVO) structures into Chinese SVO and into Arabic VSO.
+With only minimal rules, Chinese VSO is wrongly preferred.
+extracted the most probable one (Viterbi) for each
+sentence pair (based on an automatic alignment
+produced by GIZA). We noticed in general that
+Viterbi derivations according to C4 make exten-
+sive usage of composed rules, as it is the case in
+the example in Figure 4. It shows the best deriva-
+tion according to Cm and C4 on the unseen (pi,f,a)
+triple displayed on the right. The second deriva-
+tion (log p = ?11.6) is much more probable than
+the minimal one (log p = ?17.7). In the case
+of Cm, we can see that many small rules must be
+applied to explain the transformation, and at each
+step, the decision regarding the re-ordering of con-
+stituents is made with little syntactic context. For
+example, from the perspective of a decoder, the
+word by is immediately transformed into a prepo-
+sition (IN), but it is in general useful to know
+which particular function word is present in the
+sentence to motivate good re-orderings in the up-
+966
+lhs1: NP-C(x0:NPB PP(IN(of) x1:NP-C)) (NP-of-NP)
+lhs2: PP(IN(of) NP-C(x0:NPB PP(IN(of) NP-C(x1:NPB x2:VP)))) (of-NP-of-NP-VP)
+lhs3: VP(VBD(said) SBAR-C(IN(that) x0:S-C)) (said-that-S)
+lhs4: SBAR(WHADVP(WRB(when)) S-C(x0:NP-C VP(VBP(are) x1:VP-C))) (when-NP-are-VP)
+rhs1i p(rhs1i|lhs1) rhs2i p(rhs2i|lhs2) rhs3i p(rhs3i|lhs3) rhs4i p(rhs4i|lhs4)
+x1 x0 .54 x2 ? x1 ? x0 .6754 ? , x0 .6062 ( x1 x0 ? .6618
+x0 x1 .2351 ( x2 ? x1 ? x0 .035 ? x0 .1073 S x1 x0 ? .0724
+x1 ? x0 .0334 x2 ? x1 ? x0 , .0263 h: , x0 .0591 ( x1 x0 ? , .0579
+x1 x0 ? .026 x2 ? x1 ? x0 	 .0116 ? ? , x0 .0234 , ( x1 x0 ? .0289
+Table 4: Translation probabilities promote linguistically motivated constituent re-orderings (for lhs1 and lhs2), and enable
+non-constituent (lhs3) and non-contiguous (lhs4) phrasal translations.
+per levels of the tree. A rule like (e) is particu-
+larly unfortunate, since it allows the word were to
+be added without any other evidence that the VP
+should be in passive voice. On the other hand, the
+composed-rule derivation of C4 incorporates more
+linguistic evidence in its rules, and re-orderings
+are motivated by more syntactic context. Rule
+(p) is particularly appropriate to create a passive
+VP construct, since it expects a Chinese passive
+marker (?), an NP-C, and a verb in its rhs, and
+creates the were ... by construction at once in the
+left hand side.
+5.1 Syntactic translation tables
+We evaluate the promise of our SBTM by analyz-
+ing instances of translation tables (t-table). Table 3
+shows how a particular form of SVO construc-
+tion is transformed into Chinese, which is also an
+SVO language. While the t-table for Chinese com-
+posed rules clearly gives good estimates for the
+?correct? x0 x1 ordering (p = .9), i.e. subject be-
+fore verb, the t-table for minimal rules unreason-
+ably gives preference to verb-subject ordering (x1
+x0, p = .37), because the most probable transfor-
+mation (x0 x1) does not correspond to a minimal
+rule. We obtain different results with Arabic, an
+VSO language, and our model effectively learns
+to move the subject after the verb (p = .59).
+lhs1 in Table 4 shows that our model is able
+to learn large-scale constituent re-orderings, such
+as re-ordering NPs in a NP-of-NP construction,
+and put the modifier first as it is more commonly
+the case in Chinese (p = .54). If more syntac-
+tic context is available as in lhs2, our model
+provides much sharper estimates, and appropri-
+ately reverses the order of three constituents with
+high probability (p = .68), inserting modifiers first
+(possessive markers? are needed here for better
+syntactic disambiguation).
+A limitation of earlier syntax-based systems is
+their poor handling of non-constituent phrases.
+Table 4 shows that our model can learn rules for
+such phrases, e.g., said that (lhs3). While the that
+has no direct translation, our model effectively
+learns to separate? (said) from the relative clause
+with a comma, which is common in Chinese.
+Another promising prospect of our model seems
+to lie in its ability to handle non-contiguous
+phrases, a feature that state of the art systems
+such as (Och and Ney, 2004) do not incorpo-
+rate. The when-NP-are-VP construction of lhs4
+presents such a case. Our model identifies that are
+needs to be deleted, that when translates into the
+phrase( ...?, and that the NP needs to be moved
+after the VP in Chinese (p = .66).
+6 Empirical evaluation
+The task of our decoder is to find the most likely
+English tree pi that maximizes all models involved
+in Equation 2. Since xRs rules can be converted to
+context-free productions by increasing the number
+of non-terminals, we implemented our decoder as
+a standard CKY parser with beam search. Its rule
+binarization is described in (Zhang et al, 2006).
+We compare our syntax-based system against
+an implementation of the alignment template
+(AlTemp) approach to MT (Och and Ney, 2004),
+which is widely considered to represent the state
+of the art in the field. We registered both systems
+in the NIST 2005 evaluation; results are presented
+in Table 5. With a difference of 6.4 BLEU points
+for both language pairs, we consider the results
+of our syntax-based system particularly promis-
+ing, since these are the highest scores to date that
+we know of using linguistic syntactic transforma-
+tions. Also, on the one hand, our AlTemp sys-
+tem represents quite mature technology, and in-
+corporates highly tuned model parameters. On
+the other hand, our syntax decoder is still work in
+progress: only one model was used during search,
+i.e., the EM-trained root-normalized SBTM, and
+as yet no language model is incorporated in the
+search (whereas the search in the AlTemp sys-
+tem uses two phrase-based translation models and
+967
+Syntactic AlTemp
+Arabic-to-English 40.2 46.6
+Chinese-to-English 24.3 30.7
+Table 5: BLEU-4 scores for the 2005 NIST test set.
+Cm C3 C4
+Chinese-to-English 24.47 27.42 28.1
+Table 6: BLEU-4 scores for the 2002 NIST test set, with rules
+of increasing sizes.
+12 other feature functions). Furthermore, our de-
+coder doesn?t incorporate any syntax-based lan-
+guage model, and admittedly our ability to penal-
+ize ill-formed parse trees is still limited.
+Finally, we evaluated our system on the NIST-
+02 test set with the three different rule sets (see
+Table 6). The performance with our largest rule
+set represents a 3.63 BLEU point increase (14.8%
+relative) compared to using only minimal rules,
+which indicates positive prospects for using even
+larger rules. While our rule inference algorithm
+scales to higher thresholds, one important area of
+future work will be the improvement of our de-
+coder, conjointly with analyses of the impact in
+terms of BLEU of contextually richer rules.
+7 Related work
+Similarly to (Poutsma, 2000; Wu, 1997; Yamada
+and Knight, 2001; Chiang, 2005), the rules dis-
+cussed in this paper are equivalent to productions
+of synchronous tree substitution grammars. We
+believe that our tree-to-string model has several
+advantages over tree-to-tree transformations such
+as the ones acquired by Poutsma (2000). While
+tree-to-tree grammars are richer formalisms that
+provide the potential benefit of rules that are lin-
+guistically better motivated, modeling the syntax
+of both languages comes as an extra cost, and it
+is admittedly more helpful to focus our syntac-
+tic modeling effort on the target language (e.g.,
+English) in cases where it has syntactic resources
+(parsers and treebanks) that are considerably more
+available than for the source language. Further-
+more, we think there is, overall, less benefit in
+modeling the syntax of the source language, since
+the input sentence is fixed during decoding and is
+generally already grammatical.
+With the notable exception of Poutsma, most
+related works rely on models that are restricted
+to synchronous context-free grammars (SCFG).
+While the state-of-the-art hierarchical SMT sys-
+tem (Chiang, 2005) performs well despite strin-
+gent constraints imposed on its context-free gram-
+mar, we believe its main advantage lies in its
+ability to extract hierarchical rules across phrasal
+boundaries. Context-free grammars (such as Penn
+Treebank and Chiang?s grammars) make indepen-
+dence assumptions that are arguably often unrea-
+sonable, but as our work suggests, relaxations
+of these assumptions by using contextually richer
+rules results in translations of increasing quality.
+We believe it will be beneficial to account for this
+finding in future work in syntax-based SMT and in
+efforts to improve upon (Chiang, 2005).
+8 Conclusions
+In this paper, we developed probability models for
+the multi-level transfer rules presented in (Galley
+et al, 2004), showed how to acquire larger rules
+that crucially condition on more syntactic context,
+and how to pack multiple derivations, including
+interpretations of unaligned words, into derivation
+forests. We presented some theoretical arguments
+for not limiting extraction to minimal rules, val-
+idated them on concrete examples, and presented
+experiments showing that contextually richer rules
+provide a 3.63 BLEU point increase over the min-
+imal rules of (Galley et al, 2004).
+Acknowledgments
+We would like to thank anonymous review-
+ers for their helpful comments and suggestions.
+This work was partially supported under the
+GALE program of the Defense Advanced Re-
+search Projects Agency, Contract No. HR0011-
+06-C-0022.
+References
+D. Chiang. 2005. A hierarchical phrase-based model for
+statistical machine translation. In Proc. of ACL.
+H. Fox. 2002. Phrasal cohesion and statistical machine trans-
+lation. In Proc. of EMNLP, pages 304?311.
+M. Galley, M. Hopkins, K. Knight, and D. Marcu. 2004.
+What?s in a translation rule? In Proc. of HLT/NAACL-04.
+J. Graehl and K. Knight. 2004. Training tree transducers. In
+Proc. of HLT/NAACL-04, pages 105?112.
+F. Och and H. Ney. 2004. The alignment template approach
+to statistical machine translation. Computational Linguis-
+tics, 30(4):417?449.
+A. Poutsma. 2000. Data-oriented translation. In Proc. of
+COLING, pages 635?641.
+D. Wu. 1997. Stochastic inversion transduction grammars
+and bilingual parsing of parallel corpora. Computational
+Linguistics, 23(3):377?404.
+K. Yamada and K. Knight. 2001. A syntax-based statistical
+translation model. In Proc. of ACL, pages 523?530.
+H. Zhang, L. Huang, D. Gildea, and K. Knight. 2006. Syn-
+chronous binarization for machine translation. In Proc. of
+HLT/NAACL.
+968
+Proceedings of the 2008 Conference on Empirical Methods in Natural Language Processing, pages 725?734,
+Honolulu, October 2008. c?2008 Association for Computational Linguistics
+Lattice-based Minimum Error Rate Training
+for Statistical Machine Translation
+Wolfgang Macherey Franz Josef Och Ignacio Thayer Jakob Uszkoreit
+Google Inc.
+1600 Amphitheatre Parkway
+Mountain View, CA 94043, USA
+{wmach,och,thayer,uszkoreit}@google.com
+Abstract
+Minimum Error Rate Training (MERT) is an
+effective means to estimate the feature func-
+tion weights of a linear model such that an
+automated evaluation criterion for measuring
+system performance can directly be optimized
+in training. To accomplish this, the training
+procedure determines for each feature func-
+tion its exact error surface on a given set of
+candidate translations. The feature function
+weights are then adjusted by traversing the
+error surface combined over all sentences and
+picking those values for which the resulting
+error count reaches a minimum. Typically,
+candidates in MERT are represented as N -
+best lists which contain the N most probable
+translation hypotheses produced by a decoder.
+In this paper, we present a novel algorithm that
+allows for efficiently constructing and repre-
+senting the exact error surface of all trans-
+lations that are encoded in a phrase lattice.
+Compared to N -best MERT, the number of
+candidate translations thus taken into account
+increases by several orders of magnitudes.
+The proposed method is used to train the
+feature function weights of a phrase-based
+statistical machine translation system. Experi-
+ments conducted on the NIST 2008 translation
+tasks show significant runtime improvements
+and moderate BLEU score gains over N -best
+MERT.
+1 Introduction
+Many statistical methods in natural language pro-
+cessing aim at minimizing the probability of sen-
+tence errors. In practice, however, system quality
+is often measured based on error metrics that assign
+non-uniform costs to classification errors and thus
+go far beyond counting the number of wrong de-
+cisions. Examples are the mean average precision
+for ranked retrieval, the F-measure for parsing, and
+the BLEU score for statistical machine transla-
+tion (SMT). A class of training criteria that provides
+a tighter connection between the decision rule and
+the final error metric is known as Minimum Error
+Rate Training (MERT) and has been suggested for
+SMT in (Och, 2003).
+MERT aims at estimating the model parameters
+such that the decision under the zero-one loss func-
+tion maximizes some end-to-end performance mea-
+sure on a development corpus. In combination with
+log-linear models, the training procedure allows for
+a direct optimization of the unsmoothed error count.
+The criterion can be derived from Bayes? decision
+rule as follows: Let f  f1, ..., fJ denote a source
+sentence (?French?) which is to be translated into a
+target sentence (?English?) e  e1, ..., eI . Under
+the zero-one loss function, the translation which
+maximizes the a posteriori probability is chosen:
+e?  argmax
+e
+ 
+Prpe|fq
+( (1)
+Since the true posterior distribution is unknown,
+Prpe|fq is modeled via a log-linear translation model
+which combines some feature functions hmpe, fq
+with feature function weights ?m, m  1, ...,M :
+Prpe|fq  p?M1 pe|fq
+
+exp
+
+?M
+m1 ?mhmpe, fq
+
+?
+e1 exp
+
+?M
+m1 ?mhmpe1, fq
+
+(2)
+The feature function weights are the parameters of
+the model, and the objective of the MERT criterion
+is to find a parameter set ?M1 that minimizes the error
+count on a representative set of training sentences.
+More precisely, let fS1 denote the source sentences
+of a training corpus with given reference translations
+725
+rS1 , and let Cs  tes,1, ..., es,Ku denote a set of K
+candidate translations. Assuming that the corpus-
+based error count for some translations eS1 is addi-
+tively decomposable into the error counts of the indi-
+vidual sentences, i.e., EprS1 , eS1 q 
+?S
+s1 Eprs, esq,
+the MERT criterion is given as:
+??M1  argmin
+?M1
+#
+S?
+s1
+E
+ 
+rs, e?pfs;?M1 q
+
++
+(3)
+ argmin
+?M1
+#
+S?
+s1
+K?
+k1
+Eprs, es,kq?
+ 
+e?pfs;?M1 q, es,k
+
++
+with
+e?pfs;?M1 q  argmaxe
+#
+M?
+m1
+?mhmpe, fsq
++
+(4)
+In (Och, 2003), it was shown that linear models can
+effectively be trained under the MERT criterion us-
+ing a special line optimization algorithm. This line
+optimization determines for each feature function
+hm and sentence fs the exact error surface on a set
+of candidate translations Cs. The feature function
+weights are then adjusted by traversing the error
+surface combined over all sentences in the training
+corpus and moving the weights to a point where the
+resulting error reaches a minimum.
+Candidate translations in MERT are typically rep-
+resented as N -best lists which contain the N most
+probable translation hypotheses. A downside of this
+approach is, however, that N -best lists can only
+capture a very small fraction of the search space.
+As a consequence, the line optimization algorithm
+needs to repeatedly translate the development corpus
+and enlarge the candidate repositories with newly
+found hypotheses in order to avoid overfitting on Cs
+and preventing the optimization procedure from
+stopping in a poor local optimum.
+In this paper, we present a novel algorithm that
+allows for efficiently constructing and representing
+the unsmoothed error surface for all translations
+that are encoded in a phrase lattice. The number
+of candidate translations thus taken into account
+increases by several orders of magnitudes compared
+to N -best MERT. Lattice MERT is shown to yield
+significantly faster convergence rates while it ex-
+plores a much larger space of candidate translations
+which is exponential in the lattice size. Despite
+this vast search space, we show that the suggested
+algorithm is always efficient in both running time
+and memory.
+The remainder of this paper is organized as fol-
+lows. Section 2 briefly reviews N -best MERT and
+introduces some basic concepts that are used in
+order to develop the line optimization algorithm for
+phrase lattices in Section 3. Section 4 presents an
+upper bound on the complexity of the unsmoothed
+error surface for the translation hypotheses repre-
+sented in a phrase lattice. This upper bound is
+used to prove the space and runtime efficiency of
+the suggested algorithm. Section 5 lists some best
+practices for MERT. Section 6 discusses related
+work. Section 7 reports on experiments conducted
+on the NIST 2008 translation tasks. The paper
+concludes with a summary in Section 8.
+2 Minimum Error Rate Training on
+N -best Lists
+The goal of MERT is to find a weights set that
+minimizes the unsmoothed error count on a rep-
+resentative training corpus (cf. Eq. (3)). This
+can be accomplished through a sequence of line
+minimizations along some vector directions tdM1 u.
+Starting from an initial point ?M1 , computing the
+most probable sentence hypothesis out of a set of K
+candidate translations Cs  te1, ..., eKu along the
+line ?M1   ?  dM1 results in the following optimiza-
+tion problem (Och, 2003):
+e?pfs; ?q  argmax
+ePCs
+!
+p?M1   ?  dM1 qJ  hM1 pe, fsq
+)
+ argmax
+ePCs
+"
+?
+m
+?mhmpe, fsq
+loooooooomoooooooon
+ape,fsq
+  ? 
+?
+m
+dmhmpe, fsq
+loooooooomoooooooon
+bpe,fsq
+*
+ argmax
+ePCs
+ 
+ape, fsq   ?  bpe, fsq
+looooooooooomooooooooooon
+pq
+( (5)
+Hence, the total score pq for any candidate trans-
+lation corresponds to a line in the plane with ? as
+the independent variable. For any particular choice
+of ?, the decoder seeks that translation which yields
+the largest score and therefore corresponds to the
+topmost line segment.
+Overall, the candidate repository Cs defines K
+lines where each line may be divided into at most
+K line segments due to possible intersections with
+the other K  1 lines. The sequence of the topmost
+line segments constitute the upper envelope which
+is the pointwise maximum over all lines induced by
+Cs. The upper envelope is a convex hull and can
+be inscribed with a convex polygon whose edges
+are the segments of a piecewise linear function in ?
+(Papineni, 1999; Och, 2003):
+Envpfq  max
+ePC
+ 
+ape, fq   ?  bpe, fq : ? P R
+( (6)
+726
+Score
+?
+Error
+count
+?
+0
+0
+e1
+e2
+e5
+e6
+e8
+e1e2
+e3
+e4
+e5
+e6
+e7
+e8
+Figure 1: The upper envelope (bold, red curve) for a set
+of lines is the convex hull which consists of the topmost
+line segments. Each line corresponds to a candidate
+translation and is thus related to a certain error count.
+Envelopes can efficiently be computed with Algorithm 1.
+The importance of the upper envelope is that it pro-
+vides a compact encoding of all possible outcomes
+that a rescoring of Cs may yield if the parameter
+set ?M1 is moved along the chosen direction. Once
+the upper envelope has been determined, we can
+project its constituent line segments onto the error
+counts of the corresponding candidate translations
+(cf. Figure 1). This projection is independent of
+how the envelope is generated and can therefore be
+applied to any set of line segments1.
+An effective means to compute the upper enve-
+lope is a sweep line algorithm which is often used in
+computational geometry to determine the intersec-
+tion points of a sequence of lines or line segments
+(Bentley and Ottmann, 1979). The idea is to shift
+(?sweep?) a vertical ray from 8 to  8 over the
+plane while keeping track of those points where two
+or more lines intersect. Since the upper envelope
+is fully specified by the topmost line segments, it
+suffices to store the following components for each
+line object ?: the x-intercept ?.x with the left-
+adjacent line, the slope ?.m, and the y-intercept ?.y;
+a fourth component, ?.t, is used to store the candi-
+date translation. Algorithm 1 shows the pseudo code
+for a sweep line algorithm which reduces an input
+array a[0..K-1] consisting of the K line objects
+of the candidate repository Cs to its upper envelope.
+By construction, the upper envelope consists of at
+most K line segments. The endpoints of each line
+1 For lattice MERT, it will therefore suffice to find an
+efficient way to compute the upper envelope over all translations
+that are encoded in a phrase graph.
+Algorithm 1 SweepLine
+input: array a[0..K-1] containing lines
+output: upper envelope of a
+sort(a:m);
+j = 0; K = size(a);
+for (i = 0; i < K; ++i) {
+? = a[i];
+?.x = -8;
+if (0 < j) {
+if (a[j-1].m == ?.m) {
+if (?.y <= a[j-1].y) continue;
+--j;
+}
+while (0 < j) {
+?.x = (?.y - a[j-1].y)/
+(a[j-1].m - ?.m);
+if (a[j-1].x < ?.x) break;
+--j;
+}
+if (0 == j) ?.x = -8;
+a[j++] = ?;
+} else a[j++] = ?;
+}
+a.resize(j);
+return a;
+segment define the interval boundaries at which the
+decision made by the decoder will change. Hence,
+as ? increases from 8 to  8, we will see that
+the most probable translation hypothesis will change
+whenever ? passes an intersection point.
+Let ?fs1 ? ?
+fs
+2 ? ...? ?
+fs
+Ns denote the sequence of
+interval boundaries and let ?Efs1 ,?Efs2 , ...,?EfsNs
+denote the corresponding sequence of changes in the
+error count where ?Efsn is the amount by which the
+error count will change if ? is moved from a point in
+r?fsn1, ?fsn q to a point in r?fsn , ?
+fs
+n 1q. Both sequences
+together provide an exhaustive representation of the
+unsmoothed error surface for the sentence fs along
+the line ?M1   ?  dM1 . The error surface for the
+whole training corpus is obtained by merging the
+interval boundaries (and their corresponding error
+counts) over all sentences in the training corpus.
+The optimal ? can then be found by traversing the
+merged error surface and choosing a point from the
+interval where the total error reaches its minimum.
+After the parameter update, ??M1  ?M1  ?opt dM1 ,
+the decoder may find new translation hypotheses
+which are merged into the candidate repositories if
+they are ranked among the top N candidates. The
+relation K  N holds therefore only in the first
+iteration. From the second iteration on, K is usually
+larger than N . The sequence of line optimizations
+and decodings is repeated until (1) the candidate
+repositories remain unchanged and (2) ?opt  0.
+727
+3 Minimum Error Rate Training on
+Lattices
+In this section, the algorithm for computing the
+upper envelope on N -best lists is extended to phrase
+lattices. For a description on how to generate
+lattices, see (Ueffing et al, 2002).
+Formally, a phrase lattice for a source sentence f
+is defined as a connected, directed acyclic graph
+Gf  pVf , Ef q with vertice set Vf , unique source and
+sink nodes s, t P Vf , and a set of arcs Ef ? Vf  Vf .
+Each arc is labeled with a phrase ?ij  ei1 , ..., eij
+and the (local) feature function values hM1 p?ij , fq.
+A path ?  pv0, ?0, v1, ?1, ..., ?n1, vnq in Gf (with
+?i P Ef and vi, vi 1 P Vf as the tail and head of
+?i, 0 ? i ? n) defines a partial translation epi of f
+which is the concatenation of all phrases along this
+path. The corresponding feature function values are
+obtained by summing over the arc-specific feature
+function values:
+? : 
+v0
+?0,1
+???????
+hM1 p?0,1, fq
+
+v1
+?1,2
+???????
+hM1 p?1,2, fq
+  
+?n1,n
+?????????
+hM1 p?n1,n, fq
+
+vn
+epi  ?
+i,j :vi?vjPpi
+?ij  ?0,1  ...  ?n1,n
+hM1 pepi, fq 
+?
+i,j :vi?vjPpi
+hM1 p?ij, fq
+In the following, we use the notation inpvq and outpvq
+to refer to the set of incoming and outgoing arcs for
+a node v P Vf . Similarly, headp?q and tailp?q denote
+the head and tail of ? P Ef .
+To develop the algorithm for computing the up-
+per envelope of all translation hypotheses that are
+encoded in a phrase lattice, we first consider a node
+v P Vf with some incoming and outgoing arcs:
+v
+v1?
+Each path that starts at the source node s and ends in
+v defines a partial translation hypothesis which can
+be represented as a line (cf. Eq. (5)). We now assume
+that the upper envelope for these partial translation
+hypotheses is known. The lines that constitute this
+envelope shall be denoted by f1, ..., fN . Next we
+consider continuations of these partial translation
+candidates by following one of the outgoing arcs
+Algorithm 2 Lattice Envelope
+input: a phrase lattice Gf  pVf , Ef q
+output: upper envelope of Gf
+a = H;
+L = H;
+TopSort(Gf);
+for v = s to t do {
+a = SweepLine(
+?
+?Pinpvq
+L[?]);
+foreach (? P inpvq)
+L.delete(?);
+foreach (? P outpvq) {
+L[?] = a;
+for (i = 0; i < a.size(); ++i) {
+L[?][i].m = a[i].m +
+?
+m dmhmp?, fq;
+L[?][i].y = a[i].y +
+?
+m ?mhmp?, fq;
+L[?][i].p = a[i].p ?v,headp?q;
+}
+}
+}
+return a;
+? P outpvq. Each such arc defines another line
+denoted by gp?q. If we add the slope and y-intercept
+of gp?q to each line in the set tf1, ..., fN u, then the
+upper envelope will be constituted by segments of
+f1   gp?q, ..., fN   gp?q. This operation neither
+changes the number of line segments nor their rela-
+tive order in the envelope, and therefore it preserves
+the structure of the convex hull. As a consequence,
+we can propagate the resulting envelope over an
+outgoing arc ? to a successor node v1  headp?q.
+Other incoming arcs for v1 may be associated with
+different upper envelopes, and all that remains is
+to merge these envelopes into a single combined
+envelope. This is, however, easy to accomplish
+since the combined envelope is simply the convex
+hull of the union over the line sets which constitute
+the individual envelopes. Thus, by merging the
+arrays that store the line segments for the incoming
+arcs and applying Algorithm 1 to the resulting array
+we obtain the combined upper envelope for all
+partial translation candidates that are associated with
+paths starting at the source node s and ending in
+v1. The correctness of this procedure is based on
+the following two observations:
+(1) A single translation hypothesis cannot consti-
+tute multiple line segments of the same envelope.
+This is because translations associated with different
+line segments are path-disjoint.
+(2) Once a partial translation has been discarded
+from an envelope because its associated line f? is
+completely covered by the topmost line segments
+of the convex hull, there is no path continuation
+that could bring back f? into the upper envelope
+728
+again. Proof: Suppose that such a continuation
+exists, then this continuation can be represented as
+a line g, and since f? has been discarded from the
+envelope, the path associated with g must also be a
+valid continuation for the line segments f1, ..., fN
+that constitute the envelope. Thus it follows that
+maxpf1   g, ..., fN   gq  maxpf1, ..., fN q   g ?
+f?   g for some ? P R. This, however, is in contra-
+diction with the premise that f? ? maxpf1, ..., fN q
+for all ? P R.
+To keep track of the phrase expansions when
+propagating an envelope over an outgoing arc ? P
+tailpvq, the phrase label ?v,headp?q has to be appended
+from the right to all partial translation hypotheses in
+the envelope. The complete algorithm then works
+as follows: First, all nodes in the phrase lattice
+are sorted in topological order. Starting with the
+source node, we combine for each node v the upper
+envelopes that are associated with v?s incoming arcs
+by merging their respective line arrays and reducing
+the merged array into a combined upper envelope
+using Algorithm 1. The combined envelope is then
+propagated over the outgoing arcs by associating
+each ? P outpvq with a copy of the combined
+envelope. This copy is modified by adding the
+parameters (slope and y-intercept) of the line gp?q
+to the envelope?s constituent line segments. The
+envelopes of the incoming arcs are no longer needed
+and can be deleted in order to release memory. The
+envelope computed at the sink node is by construc-
+tion the convex hull over all translation hypotheses
+represented in the lattice, and it compactly encodes
+those candidates which maximize the decision rule
+Eq. (1) for any point along the line ?M1   ?  dM1 .
+Algorithm 2 shows the pseudo code. Note that
+the component ?.x does not change and therefore
+requires no update.
+It remains to verify that the suggested algorithm
+is efficient in both running time and memory. For
+this purpose, we first analyze the complexity of
+Algorithm 1 and derive from it the running time of
+Algorithm 2.
+After sorting, each line object in Algorithm 1 is
+visited at most three times. The first time is when
+it is picked by the outer loop. The second time is
+when it either gets discarded or when it terminates
+the inner loop. Whenever a line object is visited
+for the third time, it is irrevocably removed from
+the envelope. The runtime complexity is therefore
+dominated by the initial sorting and amounts to
+OpK logKq
+Topological sort on a phrase lattice G  pV, Eq
+can be performed in time ?p|V|   |E |q. As will be
+shown in Section 4, the size of the upper envelope
+for G can never exceed the size of the arc set E . The
+same holds for any subgraph G
+rs,vs of G which is
+induced by the paths that connect the source node
+s with v P V . Since the envelopes propagated from
+the source to the sink node can only increase linearly
+in the number of previously processed arcs, the total
+running time amounts to a worst case complexity of
+Op|V|  |E | log |E |q.
+4 Upper Bound for Size of Envelopes
+The memory efficiency of the suggested algorithm
+results from the following theorem which provides
+a novel upper bound for the number of cost mini-
+mizing paths in a directed acyclic graph with arc-
+specific affine cost functions. The bound is not only
+meaningful for proving the space efficiency of lattice
+MERT, but it also provides deeper insight into the
+structure and complexity of the unsmoothed error
+surface induced by log-linear models. Since we are
+examining a special class of shortest paths problems,
+we will invert the sign of each local feature function
+value in order to turn the feature scores into cor-
+responding costs. Hence, the objective of finding
+the best translation hypotheses in a phrase lattice
+becomes the problem of finding all cost-minimizing
+paths in a graph with affine cost functions.
+Theorem: Let G  pV, Eq be a connected directed
+acyclic graph with vertex set V , unique source and
+sink nodes s, t P V , and an arc set E ? V  V in
+which each arc ? P E is associated with an affine
+cost function c?p?q  a?  ?   b?, a?, b? P R.
+Counting ties only once, the cardinality of the union
+over the sets of all cost-minimizing paths for all
+? P R is then upper-bounded by |E |:
+
+
+
+?
+?PR
+ 
+? : ?  ?pG; ?q is a cost-minimizing
+path in G given ?
+(
+
+
+
+? |E | (7)
+Proof: The proposition holds for the empty graph
+as well as for the case that V  ts, tu with all
+arcs ? P E joining the source and sink node. Let
+G therefore be a larger graph. Then we perform
+an s-t cut and split G into two subgraphs G1 (left
+subgraph) and G2 (right subgraph). Arcs spanning
+the section boundary are duplicated (with the costs
+of the copied arcs in G2 being set to zero) and
+connected with a newly added head or tail node:
+G: G G1 2c1
+c3
+c2
+c4
+c1
+c3
+c4
+c2
+0: :
+729
+The zero-cost arcs in G2 that emerged from the
+duplication process are contracted, which can be
+done without loss of generality because zero-cost
+arcs do not affect the total costs of paths in the
+lattice. The contraction essentially amounts to a
+removal of arcs and is required in order to ensure
+that the sum of edges in both subgraphs does not
+exceed the number of edges in G. All nodes in
+G1 with out-degree zero are then combined into a
+single sink node t1. Similarly, nodes in G2 whose
+in-degree is zero are combined into a single source
+node s2. Let N1 and N2 denote the number of
+arcs in G1 and G2, respectively. By construction,
+N1   N2  |E |. Both subgraphs are smaller
+than G and thus, due to the induction hypothesis,
+their lower envelopes consist of at most N1 and N2
+line segments, respectively. We further notice that
+either envelope is a convex hull whose constituent
+line segments inscribe a convex polygon, in the
+following denoted by P1 and P2. Now, we combine
+both subgraphs into a single graph G1 by merging
+the sink node t1 in G1 with the source node s2
+in G2. The merged node is an articulation point
+whose removal would disconnect both subgraphs,
+and hence, all paths in G1 that start at the source
+node s and stop in the sink node t lead through this
+articulation point. The graph G1 has at least as many
+cost minimizing paths as G, although these paths
+as well as their associated costs might be different
+from those in G. The additivity of the cost function
+and the articulation point allow us to split the costs
+for any path from s to t into two portions: the first
+portion can be attributed to G1 and must be a line
+inside P1; the remainder can be attributed to G2
+and must therefore be a line inside P2. Hence, the
+total costs for any path in G1 can be bounded by
+the convex hull of the superposition of P1 and P2.
+This convex hull is again a convex polygon which
+consists of at most N1   N2 edges, and therefore,
+the number of cost minimizing paths in G1 (and thus
+also in G) is upper bounded by N1   N2. l
+Corollary: The upper envelope for a phrase lattice
+Gf  pVf , Ef q consists of at most |Ef | line segments.
+This bound can even be refined and one obtains
+(proof omitted) |E | |V| 2. Both bounds are tight.
+This result may seem somewhat surprising as it
+states that, independent of the choice of the direction
+along which the line optimization is performed, the
+structure of the error surface is far less complex
+than one might expect based on the huge number
+of alternative translation candidates that are rep-
+resented in the lattice and thus contribute to the
+error surface. In fact, this result is a consequence
+of using a log-linear model which constrains how
+costs (or scores, respectively) can evolve due to
+hypothesis expansion. If instead quadratic cost
+functions were used, the size of the envelopes could
+not be limited in the same way. The above theorem
+does not, however, provide any additional guidance
+that would help to choose more promising directions
+in the line optimization algorithm to find better local
+optima. To alleviate this problem, the following
+section lists some best practices that we found to be
+useful in the context of MERT.
+5 Practical Aspects
+This section addresses some techniques that we
+found to be beneficial in order to improve the
+performance of MERT.
+(1) Random Starting Points: To prevent the line
+optimization algorithm from stopping in a poor local
+optimum, MERT explores additional starting points
+that are randomly chosen by sampling the parameter
+space.
+(2) Constrained Optimization: This technique
+allows for limiting the range of some or all feature
+function weights by defining weights restrictions.
+The weight restriction for a feature function hm is
+specified as an interval Rm  rlm, rms, lm, rm P
+RYt8, 8u which defines the admissible region
+from which the feature function weight ?m can be
+chosen. If the line optimization is performed under
+the presence of weights restrictions, ? needs to be
+chosen such that the following constraint holds:
+lM1 ? ?M1   ?  dM1 ? rM1 (8)
+(3) Weight Priors: Weight priors give a small (pos-
+itive or negative) boost ? on the objective function
+if the new weight is chosen such that it matches a
+certain target value ?m:
+?opt  argmin?
+!
+?
+s
+E
+ 
+rs, e?pfs; ?q
+
+ 
+?
+m
+?p?m   ?  dm, ?mq  ?
+)
+(9)
+A zero-weights prior (?m  0) provides a means of
+doing feature selection since the weight of a feature
+function which is not discriminative will be set to
+zero. An initial-weights prior (?m  ?m) can
+be used to confine changes in the parameter update
+with the consequence that the new parameter may
+be closer to the initial weights set. Initial weights
+priors are useful in cases where the starting weights
+already yield a decent baseline.
+730
+(4) Interval Merging: The interval r?fsi , ?fsi 1q of
+a translation hypothesis can be merged with the
+interval r?fsi1, ?
+fs
+i q of its left-adjacent translation
+hypothesis if the corresponding change in the error
+count ?Efsi  0. The resulting interval r?fsi1, ?fsi 1q
+has a larger range, and the choice of ?opt may be
+more reliable.
+(5) Random Directions: If the directions chosen in
+the line optimization algorithm are the coordinate
+axes of the M -dimensional parameter space, each
+iteration will result in the update of a single feature
+function only. While this update scheme provides
+a ranking of the feature functions according to their
+discriminative power (each iteration picks the fea-
+ture function for which changing the corresponding
+weight yields the highest gain), it does not take
+possible correlations between the feature functions
+into account. As a consequence, the optimization
+procedure may stop in a poor local optimum. On
+the other hand, it is difficult to compute a direction
+that decorrelates two or more correlated feature
+functions. This problem can be alleviated by ex-
+ploring a large number of random directions which
+update many feature weights simultaneously. The
+random directions are chosen as the lines which
+connect some randomly distributed points on the
+surface of an M -dimensional hypersphere with the
+hypersphere?s center. The center of the hypersphere
+is defined as the initial parameter set.
+6 Related Work
+As suggested in (Och, 2003), an alternative method
+for the optimization of the unsmoothed error count is
+Powell?s algorithm combined with a grid-based line
+optimization (Press et al, 2007, p. 509). In (Zens
+et al, 2007), the MERT criterion is optimized on
+N -best lists using the Downhill Simplex algorithm
+(Press et al, 2007, p. 503). The optimization proce-
+dure allows for optimizing other objective function
+as, e.g., the expected BLEU score. A weakness
+of the Downhill Simplex algorithm is, however, its
+decreasing robustness for optimization problems in
+more than 10 dimensions. A different approach
+to minimize the expected BLEU score is suggested
+in (Smith and Eisner, 2006) who use deterministic
+annealing to gradually turn the objective function
+from a convex entropy surface into the more com-
+plex risk surface. A large variety of different search
+strategies for MERT are investigated in (Cer et al,
+2008), which provides many fruitful insights into
+the optimization process. In (Duh and Kirchhoff,
+2008), MERT is used to boost the BLEU score on
+Table 1: Corpus statistics for three text translation sets:
+Arabic-to-English (aren), Chinese-to-English (zhen),
+and English-to-Chinese (enzh). Development and test
+data are compiled from evaluation data used in past
+NIST Machine Translation Evaluations.
+data set collection # of sentences
+aren zhen enzh
+dev1 nist02 1043 878 ?
+dev2 nist04 1353 1788 ?
+blind nist08 1360 1357 1859
+N -best re-ranking tasks. The incorporation of a
+large number of sparse feature functions is described
+in (Watanabe et al, 2007). The paper investigates a
+perceptron-like online large-margin training for sta-
+tistical machine translation. The described approach
+is reported to yield significant improvements on top
+of a baseline system which employs a small number
+of feature functions whose weights are optimized
+under the MERT criterion. A study which is comple-
+mentary to the upper bound on the size of envelopes
+derived in Section 4 is provided in (Elizalde and
+Woods, 2006) which shows that the number of
+inference functions of any graphical model as, for
+instance, Bayesian networks and Markov random
+fields is polynomial in the size of the model if the
+number of parameters is fixed.
+7 Experiments
+Experiments were conducted on the NIST 2008
+translation tasks under the conditions of the con-
+strained data track for the language pairs Arabic-
+to-English (aren), English-to-Chinese (enzh), and
+Chinese-to-English (zhen). The development cor-
+pora were compiled from test data used in the
+2002 and 2004 NIST evaluations. Each corpus set
+provides 4 reference translations per source sen-
+tence. Table 1 summarizes some corpus statistics.
+Table 2: BLEU score results on the NIST-08 test set
+obtained after 25 iterations using N -best MERT or 5
+iterations using lattice MERT, respectively.
+dev1+dev2 blind
+task loss N -best lattice N -best lattice
+aren MBR 56.6 57.4 42.9 43.9
+0-1 56.7 57.4 42.8 43.7
+enzh MBR 39.7 39.6 36.5 38.8
+0-1 40.4 40.5 35.1 37.6
+zhen MBR 39.5 39.7 27.5 28.2
+0-1 39.6 39.6 27.0 27.6
+731
+ 35.5
+ 36
+ 36.5
+ 37
+ 37.5
+ 38
+ 38.5
+ 39
+ 39.5
+ 40
+ 0  5  10  15  20  25
+B
+LE
+U
+[%
+]
+iteration
+lattice MERT
+N-best MERT
+ 5
+ 15
+ 25
+ 35
+ 45
+ 0  5  10  15  20  25
+Figure 2: BLEU scores for N -best MERT and lattice
+MERT after each decoding step on the zhen-dev1 corpus.
+The grey shaded subfigure shows the complete graph
+including the bottom part for N -best MERT.
+Translation results were evaluated using the mixed-
+case BLEU score metric in the implementation as
+suggested by (Papineni et al, 2001).
+Translation results were produced with a state-of-
+the-art phrase-based SMT system which uses EM-
+trained word alignment models (IBM1, HMM) and
+a 5-gram language model built from the Web-1T
+collection2 . Translation hypotheses produced on the
+blind test data were reranked using the Minimum-
+Bayes Risk (MBR) decision rule (Kumar and Byrne,
+2004; Tromble et al, 2008). Each system uses a log-
+linear combination of 20 to 30 feature functions.
+In a first experiment, we investigated the conver-
+gence speed of lattice MERT and N -best MERT.
+2http://www.ldc.upenn.edu, catalog entry: LDC2006T13
+ 35.6
+ 35.8
+ 36
+ 36.2
+ 36.4
+ 36.6
+ 36.8
+ 37
+-15 -10 -5  0  5  10  15
+B
+LE
+U
+[%
+]
+?
+lattice
+50-best
+ 36.28
+ 36.3
+ 36.32
+ 36.34
+-0.2 -0.1  0  0.1  0.2
+ 35
+ 35.5
+ 36
+ 36.5
+ 37
+-40 -20  0  20  40
+Figure 3: Error surface of the phrase penalty feature after
+the first iteration on the zhen-dev1 corpus.
+ 0  1  2  3  4  5
+ 35.5
+ 36
+ 36.5
+ 37
+ 37.5
+ 38
+ 38.5
+ 39
+ 39.5
+ 40
+B
+LE
+U
+[%
+]
+iteration
+lattice MERT: 1000 directions
+1 direction
+Figure 4: BLEU scores on the zhen-dev1 corpus for
+lattice MERT with additional directions.
+Figure 2 shows the evolution of the BLEU score
+in the course of the iteration index on the zhen-
+dev1 corpus for either method. In each iteration,
+the training procedure translates the development
+corpus using the most recent weights set and merges
+the top ranked candidate translations (either repre-
+sented as phrase lattices or N -best lists) into the
+candidate repositories before the line optimization
+is performed. For N -best MERT, we used N  50
+which yielded the best results. In contrast to lattice
+MERT, N -best MERT optimizes all dimensions in
+each iteration and, in addition, it also explores a
+large number of random starting points before it
+re-decodes and expands the hypothesis set. As is
+typical for N -best MERT, the first iteration causes
+a dramatic performance loss caused by overadapting
+the candidate repositories, which amounts to more
+than 27.3 BLEU points. Although this performance
+loss is recouped after the 5th iteration, the initial
+decline makes the line optimization under N -best
+MERT more fragile since the optimum found at the
+end of the training procedure is affected by the initial
+performance drop rather than by the choice of the
+initial start weights. Lattice MERT on the other hand
+results in a significantly faster convergence speed
+and reaches its optimum already in the 5th iteration.
+For lattice MERT, we used a graph density of 40
+arcs per phrase which corresponds to an N -best size
+of more than two octillion p2  1027q entries. This
+huge number of alternative candidate translations
+makes updating the weights under lattice MERT
+more reliable and robust and, compared to N -best
+MERT, it becomes less likely that the same feature
+weight needs to be picked again and adjusted in
+subsequent iterations. Figure 4 shows the evolution
+of the BLEU score on the zhen-dev1 corpus using
+732
+Table 3: BLEU score results on the NIST-08 tests set
+obtained after 5 iterations using lattice MERT with
+different numbers of random directions in addition to the
+optimization along the coordinate axes.
+# random dev1+dev2 blind
+task directions 0-1 MBR 0-1 MBR
+aren ? 57.4 57.4 43.7 43.9
+1000 57.6 57.7 43.9 44.5
+zhen ? 39.6 39.7 27.6 28.2
+500 39.5 39.9 27.9 28.3
+lattice MERT with 5 weights updates per iteration.
+The performance drop in iteration 1 is also attributed
+to overfitting the candidate repository. The decline
+of less than 0.5% in terms of BLEU is, however,
+almost negligible compared to the performance drop
+of more than 27% in case of N -best MERT. The
+vast number of alternative translation hypotheses
+represented in a lattice also increases the number
+of phase transitions in the error surface, and thus
+prevents MERT from selecting a low performing
+feature weights set at early stages in the optimization
+procedure. This is illustrated in Figure 3, where
+lattice MERT and N -best MERT find different op-
+tima for the weight of the phrase penalty feature
+function after the first iteration. Table 2 shows the
+BLEU score results on the NIST 2008 blind test
+using the combined dev1+dev2 corpus as training
+data. While only the aren task shows improvements
+on the development data, lattice MERT provides
+consistent gains over N -best MERT on all three
+blind test sets. The reduced performance for N -best
+MERT is a consequence of the performance drop in
+the first iteration which causes the final weights to
+be far off from the initial parameter set. This can
+impair the ability of N -best MERT to generalize to
+unseen data if the initial weights are already capable
+of producing a decent baseline. Lattice MERT on
+the other hand can produce weights sets which are
+closer to the initial weights and thus more likely to
+retain the ability to generalize to unseen data. It
+could therefore be worthwhile to investigate whether
+a more elaborated version of an initial-weights prior
+allows for alleviating this effect in case of N -
+best MERT. Table 3 shows the effect of optimizing
+the feature function weights along some randomly
+chosen directions in addition to the coordinate axes.
+The different local optima found on the development
+set by using random directions result in additional
+gains on the blind test sets and range from 0.1% to
+0.6% absolute in terms of BLEU.
+8 Summary
+We presented a novel algorithm that allows for
+efficiently constructing and representing the un-
+smoothed error surface over all sentence hypotheses
+that are represented in a phrase lattice. The proposed
+algorithm was used to train the feature function
+weights of a log-linear model for a statistical ma-
+chine translation system under the Minimum Error
+Rate Training (MERT) criterion. Lattice MERT was
+shown analytically and experimentally to be supe-
+rior over N -best MERT, resulting in significantly
+faster convergence speed and a reduced number of
+decoding steps. While the approach was used to
+optimize the model parameters of a single machine
+translation system, there are many other applications
+in which this framework can be useful, too. One
+possible usecase is the computation of consensus
+translations from the outputs of multiple machine
+translation systems where this framework allows us
+to estimate the system prior weights directly on con-
+fusion networks (Rosti et al, 2007; Macherey and
+Och, 2007). It is also straightforward to extend the
+suggested method to hypergraphs and forests as they
+are used, e.g., in hierarchical and syntax-augmented
+systems (Chiang, 2005; Zollmann and Venugopal,
+2006). Our future work will therefore focus on how
+much system combination and syntax-augmented
+machine translation can benefit from lattice MERT
+and to what extent feature function weights can
+robustly be estimated using the suggested method.
+References
+J. L. Bentley and T. A. Ottmann. 1979. Algorithms for
+reporting and counting geometric intersections. IEEE
+Trans. on Computers, C-28(9):643?647.
+D. Cer, D. Jurafsky, and C. D. Manning. 2008. Regular-
+ization and Search for Minimum Error Rate Training.
+In Proceedings of the Third Workshop on Statistical
+Machine Translation, 46th Annual Meeting of the
+Association of Computational Linguistics: Human
+Language Technologies (ACL-2008 HLT), pages 26?
+34, Columbus, OH, USA, June.
+D. Chiang. 2005. A Hierarchical Phrase-based Model
+for Statistical Machine Translation. In ACL-2005,
+pages 263?270, Ann Arbor, MI, USA, June.
+K. Duh and K. Kirchhoff. 2008. Beyond Log-Linear
+Models: Boosted Minimum Error Rate Training for
+N-best Re-ranking. In Proceedings of the Third
+Workshop on Statistical Machine Translation, 46th
+Annual Meeting of the Association of Computational
+Linguistics: Human Language Technologies (ACL-
+2008 HLT), pages 37?40, Columbus, OH, USA, June.
+733
+S. Elizalde and K. Woods. 2006. Bounds on the Number
+of Inference Functions of a Graphical Model, October.
+arXiv:math/0610233v1.
+S. Kumar and W. Byrne. 2004. Minimum Bayes-
+Risk Decoding for Statistical Machine Translation.
+In Proc. HLT-NAACL, pages 196?176, Boston, MA,
+USA, May.
+W. Macherey and F. J. Och. 2007. An Empirical Study
+on Computing Consensus Translations from Multiple
+Machine Translation Systems. In Conference on
+Empirical Methods in Natural Language Processing
+(EMNLP), pages 986?995, Prague, Czech Republic,
+June.
+F. J. Och. 2003. Minimum Error Rate Training in Statis-
+tical Machine Translation. In 41st Annual Meeting of
+the Association for Computational Linguistics (ACL),
+pages 160?167, Sapporo, Japan, July.
+K. Papineni, S. Roukos, T. Ward, and W. Zhu.
+2001. BLEU: a Method for Automatic Evaluation
+of Machine Translation. Technical Report RC22176
+(W0109-022), IBM Research Division, Thomas J.
+Watson Research Center, Yorktown Heights, NY,
+USA.
+K. A. Papineni. 1999. Discriminative training via
+linear programming. In IEEE Int. Conf. on Acoustics,
+Speech, and Signal Processing, volume 2, pages 561?
+564, Phoenix, AZ, March.
+W. H. Press, S. A. Teukolsky, W. T. Vetterling, and B. P.
+Flannery. 2007. Numerical Recipes: The Art of
+Scientific Computing. Cambridge University Press,
+Cambridge, UK, third edition.
+A. V. Rosti, N. F. Ayan, B. Xiang, S. Matsoukas,
+R. Schwartz, and B. Dorr. 2007. Combining outputs
+from multiple machine translation systems. In Human
+Language Technologies 2007: The Conference of
+the North American Chapter of the Association for
+Computational Linguistics; Proceedings of the Main
+Conference, pages 228?235, Rochester, New York,
+April. Association for Computational Linguistics.
+D. A. Smith and J. Eisner. 2006. Minimum Risk
+Annealing for Training Log-linear Models. In 21st
+International Conference on Computational Linguis-
+tics and 44th Annual Meeting of the Association for
+Computational Linguistics (Coling/ACL-2006), pages
+787?794, Sydney, Australia, July.
+R. Tromble, S. Kumar, F. J. Och, and W. Macherey. 2008.
+Lattice minimum bayes-risk decoding for statistical
+machine translation. In Conference on Empirical
+Methods in Natural Language Processing (EMNLP),
+page 10, Waikiki, Honolulu, Hawaii, USA, October.
+N. Ueffing, F. J. Och, and H. Ney. 2002. Generation
+of word graphs in statistical machine translation. In
+Proceedings of the 2002 Conference on Empirical
+Methods in Natural Language Processing, pages 156?
+163, Philadelphia, PE, July.
+T. Watanabe, J. Suzuki, H. Tsukada, and H. Isozaki.
+2007. Online large-margin training for statistical
+machine translation. In Proceedings of the 2007 Joint
+Conference on Empirical Methods in Natural Lan-
+guage Processing and Computational Natural Lan-
+guage Learning (EMNLP-CoNLL), pages 764?773,
+Prague, Czech Republic.
+R. Zens, S. Hasan, and H. Ney. 2007. A Systematic
+Comparison of Training Criteria for Statistical Ma-
+chine Translation. In Proceedings of the 2007 Con-
+ference on Empirical Methods in Natural Language
+Processing, Prague, Czech Republic, June. Associa-
+tion for Computational Linguistics.
+A. Zollmann and A. Venugopal. 2006. Syntax aug-
+mented machine translation via chart parsing. In
+NAACL ?06: Proceedings of the 2006 Conference
+of the North American Chapter of the Association
+for Computational Linguistics on Human Language
+Technology, pages 138?141, New York, NY, June.
+Association for Computational Linguistics.
+734

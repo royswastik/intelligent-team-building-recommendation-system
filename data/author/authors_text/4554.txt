@@ -1,0 +1,3323 @@
+Proceedings of the NAACL HLT Workshop on Software Engineering, Testing, and Quality Assurance for Natural Language Processing, pages 31?39,
+Boulder, Colorado, June 2009. c?2009 Association for Computational Linguistics
+Tightly Packed Tries: How to Fit Large Models into Memory,
+and Make them Load Fast, Too
+Ulrich Germann
+University of Toronto and
+National Research Council Canada
+germann@cs.toronto.edu
+Eric Joanis Samuel Larkin
+National Research Council Canada National Research Council Canada
+Eric.Joanis@cnrc-nrc.gc.ca Samuel.Larkin@cnrc-nrc.gc.ca
+Abstract
+We present Tightly Packed Tries (TPTs), a
+compact implementation of read-only, com-
+pressed trie structures with fast on-demand
+paging and short load times.
+We demonstrate the benefits of TPTs for stor-
+ing n-gram back-off language models and
+phrase tables for statistical machine transla-
+tion. Encoded as TPTs, these databases re-
+quire less space than flat text file representa-
+tions of the same data compressed with the
+gzip utility. At the same time, they can be
+mapped into memory quickly and be searched
+directly in time linear in the length of the key,
+without the need to decompress the entire file.
+The overhead for local decompression during
+search is marginal.
+1 Introduction
+The amount of data available for data-driven Nat-
+ural Language Processing (NLP) continues to grow.
+For some languages, language models (LM) are now
+being trained on many billions of words, and par-
+allel corpora available for building statistical ma-
+chine translation (SMT) systems can run into tens
+of millions of sentence pairs. This wealth of data
+allows the construction of bigger, more comprehen-
+sive models, often without changes to the fundamen-
+tal model design, for example by simply increasing
+the n-gram size in language modeling or the phrase
+length in phrase tables for SMT.
+The large sizes of the resulting models pose an en-
+gineering challenge. They are often too large to fit
+entirely in main memory. What is the best way to
+organize these models so that we can swap informa-
+tion in and out of memory as needed, and as quickly
+as possible?
+This paper presents Tightly Packed Tries (TPTs),
+a compact and fast-loading implementation of read-
+only trie structures for NLP databases that store
+information associated with token sequences, such
+as language models, n-gram count databases, and
+phrase tables for SMT.
+In the following section, we first recapitulate
+some basic data structures and encoding techniques
+that are the foundations of TPTs. We then lay out
+the organization of TPTs. Section 3 discusses com-
+pression of node values (i.e., the information asso-
+ciated with each key). Related work is discussed in
+Section 4. In Section 5, we report empirical results
+from run-time tests of TPTs in comparison to other
+implementations. Section 6 concludes the paper.
+2 Fundamental data structures and
+encoding techniques
+2.1 Tries
+Tries (Fredkin, 1960), also known as prefix trees, are
+a well-established data structure for compactly stor-
+ing sets of strings that have common prefixes. Each
+string is represented by a single node in a tree struc-
+ture with labeled arcs so that the sequence of arc la-
+bels from the root node to the respective node ?spells
+out? the token sequence in question. If we augment
+the trie nodes with additional information, tries can
+be used as indexing structures for databases that rely
+on token sequences as search keys. For the remain-
+der of this paper, we will refer to such additional
+31
+total count 20
+a 13
+aa 10
+ab 3
+b 7
+20
+13 7
+10 3
+a b
+a b
+(a) Count table (b) Trie representation
+field 32-bit 64-bit
+index entry: token ID 4 4
+index entry: pointer 4 8
+start of index (pointer) 4 8
+overhead of index structure
+node value
+}
+x y
+total (in bytes) 12 + x 20 + y
+0 13 offset of root node
+1 10 node value of ?aa?
+2 0 size of index to child nodes of ?aa? in bytes
+3 3 node value of ?ab?
+4 0 size of index to child nodes of ?ab? in bytes
+5 13 node value of ?a?
+6 4 size of index to child nodes of ?a? in bytes
+7 a index key for ?aa? coming from ?a?
+8 4 relative offset of node ?aa? (5 ? 4 = 1)
+9 b index key for ?ab? coming from ?a?
+10 2 relative offset of node ?ab? (5 ? 2 = 3)
+11 7 node value of ?b?
+12 0 size of index to child nodes of ?b? in bytes
+13 20 root node value
+14 4 size of index to child nodes of root in bytes
+15 a index key for ?a? coming from root
+16 8 relative offset of node ?a? (13 ? 8 = 5)
+17 b index key for ?b? coming from root
+18 2 relative offset of node ?b? (13 ? 2 = 11)
+(c) Memory footprint per node in an implemen-
+tation using memory pointers
+(d) Trie representation in a contiguous byte array.
+In practice, each field may vary in length.
+Figure 1: A count table (a) stored in a trie structure (b) and the trie?s sequential representation in a file (d). As the
+size of the count table increases, the trie-based storage becomes more efficient, provided that the keys have common
+prefixes. (c) shows the memory footprint per trie node when the trie is implemented as a mutable structure using direct
+memory pointers.
+information as the node value. Figure 1b shows a
+count table (Figure 1a) represented as a trie.
+Tries offer two main advantages over other index-
+ing structures, e.g., binary search trees. First, they
+are more compact because overlapping prefixes are
+stored only once. And second, unless the set of keys
+is extremely small, lookup is faster than with binary
+search trees. While the latter need time logarithmic
+in the number of keys, trie-based search is linear in
+the length of the search key.
+2.2 Representing tries in memory
+Mutable trie implementations usually represent tries
+as collections of fixed-size records containing the
+node value and a pointer or reference to an index-
+ing structure (henceforth: index) that maps from arc
+or token labels to the respective child nodes. Links
+to child nodes are represented by object references
+or C-style memory pointers. To simplify the discus-
+sion, we assume in the following that the code con-
+sistently uses pointers. Since integers are faster to
+compare and require less space to store than char-
+acter strings, token labels are best represented as
+integer IDs. With typical vocabulary sizes ranging
+from hundreds of thousands to several million dis-
+tinct items, 32-bit integers are the data type of choice
+to store token IDs.1
+This type of implementation offers flexibility and
+fast lookup but has two major drawbacks. First, load
+times are significant (cf. Tables 1 and 3). Since each
+node is created individually, the entire trie must be
+traversed at load time. In addition, all the informa-
+tion contained in the database must be copied ex-
+plicitly from the OS-level file cache into the current
+process?s memory.
+Second, these implementations waste memory,
+especially on 64-bit machines. Depending on the
+architecture, memory pointers require 4 or 8 byes
+of memory. In theory, a 64-bit pointer allows us to
+address 16 exabytes (16 million terabytes) of mem-
+ory. In practice, 20 to 30 bits per 64-bit pointer will
+remain unused on most state-of-the-art computing
+equipment.
+The use of 32-bit integers to represent token IDs
+also wastes memory. Even for large corpora, the size
+116 bits have been used occasionally in the past (Clarkson
+and Rosenfeld, 1997; Whittaker and Raj, 2001) but limit the
+vocabulary ca. 64 K tokens.
+32
+of the token vocabulary is on the order of several
+million distinct items or below. The Google 1T web
+n-gram database (Brants and Franz, 2006), for ex-
+ample, has a vocabulary of only ca. 13 million dis-
+tinct items, which can be represented in 24 bits, let-
+ting 8 bits go to waste if IDs are represented as 32-bit
+integers.
+An alternative is to represent the trie in a single
+contiguous byte array as shown in Figure 1d. For
+each node, we store the node value, the size of the
+index, and the actual index as a list of alternating to-
+ken IDs and byte offsets. Byte offsets are computed
+as the distance (in bytes) between the first byte of
+the child node and the first byte of its parent. The
+trie is represented in post-order because this is the
+most efficient way to write it out to a file during
+construction. For each node, we need to store the
+byte offsets of its children. When we write tries to
+file in post-order, this information is available by the
+time we need it. The only exception is the root node,
+whose offset is stored at the beginning of the file in
+a fixed-length field and updated at the very end.
+This representation scheme has two advantages.
+First, since node references are represented as rela-
+tive offsets within the array, the entire structure can
+be loaded or mapped (cf. Section 2.5) into memory
+without an explicit traversal. And secondly, it al-
+lows symbol-level compression of the structure with
+local, on-the-fly decompression as needed.
+2.3 Trie compression by variable-length coding
+Variable-length coding is a common technique for
+lossless compression of information. It exploits the
+uneven distribution of token frequencies in the un-
+derlying data, using short codes for frequently oc-
+curring symbols and long codes for infrequent sym-
+bols. Natural language data with its Zipfian distri-
+bution of token frequencies lends itself very well to
+variable-length coding. Instead of using more elab-
+orate schemes such as Huffman (1952) coding, we
+simply assign token IDs in decreasing order of fre-
+quency. Each integer value is encoded as a sequence
+of digits in base-128 representation. Since the pos-
+sible values of each digit (0?127) fit into 7 bits, the
+eighth bit in each byte is available as a flag bit to
+indicate whether or not more digits need to be read.
+Given the address of the first byte of a compressed
+integer representation, we know when to stop read-
+ing subsequent bytes/digits by looking at the flag
+bit.2
+TPTs use two variants of this variable-length in-
+teger encoding, with different interpretations of the
+flag bit. For ?stand-alone? values (node values, if
+they are integers, and the size of the index), the flag
+bit is set to 1 on the last digit of each number, and to
+0 otherwise. When compressing node indices (i.e.,
+the lists of child nodes and the respective arc labels),
+we use the flag bit on each byte to indicate whether
+the byte belongs to a key (token ID) or to a value
+(byte offset).
+2.4 Binary search in compressed indices
+In binary search in a sorted list of key-value pairs,
+we recursively cut the search range in half by choos-
+ing the midpoint of the current range as the new
+lower or upper bound, depending on whether the
+key at that point is less or greater than the search
+key. The recursion terminates when the search key
+is found or it has been determined that it is not in the
+list.
+With compressed indices, it is not possible to de-
+termine the midpoint of the list precisely, because
+of the variable-length encoding of keys and values.
+However, the alternation of flag bits between keys
+and values in the index encoding allows us to rec-
+ognize each byte in the index as either a ?key byte?
+or a ?value byte?. During search, we jump approx-
+imately to the middle of the search range and then
+scan bytes backwards until we encounter the begin-
+ning of a key, which will either be the byte at the
+very start of the index range or a byte with the flag
+bit set to ?1? immediately preceded by a byte with
+the flag bit set to ?0?. We then read the respective
+key and compare it against the search key.
+2.5 Memory mapping
+Memory mapping is a technique to provide fast
+file access through the OS-level paging mechanism.
+Memory mapping establishes a direct mapping be-
+tween a file on disk and a region of virtual memory,
+2This is a common technique for compact representation
+of non-negative integers. In the Perl world it is know as
+BER (Binary Encoded Representation) compressed integer for-
+mat (see the chapter perlpacktut in the Perl documenta-
+tion). Apache Lucene and Hadoop, among many other software
+projects, also define variable-length encoded integer types.
+33
+often by providing direct access to the kernel?s file
+cache. Transfer from disk to memory and vice versa
+is then handled by the virtual memory manager; the
+program itself can access the file as if it was mem-
+ory. There are several libraries that provide mem-
+ory mapping interfaces; we used the Boost Iostreams
+C++ library.3 One nice side-effect of memory map-
+ping the entire structure is that we can relegate the
+decision as to when to fall back on disk to the oper-
+ating system, without having to design and code our
+own page management system. As long as RAM
+is available, the data will reside in the kernel?s file
+cache; as memory gets sparse, the kernel will start
+dropping pages and re-loading them from disk as
+needed. In a computer network, we can furthermore
+rely on the file server?s file cache in addition to the
+individual host?s file cache to speed up access.
+2.6 Additional tweaks
+In order to keep the trie representation as small as
+possible, we shift key values in the indices two bits
+to the left and pad them with two binary flags. One
+indicates whether or not a node value is actually
+stored on the respective child node. If this flag is
+set to 0, the node is assumed to have an externally
+defined default value. This is particularly useful for
+storing sequence counts. Due to the Zipfian distri-
+bution of frequencies in natural language data, the
+lower the count, the more frequent it is. If we de-
+fine the threshold for storing counts as the default
+value, we don?t need to store that value for all the
+sequences that barely meet the threshold.
+The second flag indicates whether the node is ter-
+minal or whether it has children. Terminal nodes
+have no index, so we don?t need to store the index
+size of 0 on these nodes. In fact, if the value of ter-
+minal nodes can be represented as an integer, we can
+store the node?s value directly in the index of its par-
+ent and set the flag accordingly.
+At search time, these flags are interpreted and
+the value shifted back prior to comparison with the
+search key.
+To speed up search at the top level, the index at
+the root of the trie is implemented as an array of file
+offsets and flags, providing constant time access to
+top-level trie nodes.
+3Available at http://www.boost.org.
+3 Encoding node values
+Information associated with each token sequence is
+stored directly in a compact format ?on the node?
+in the TPT representation. Special reader functions
+convert the packed node value into whatever struc-
+ture best represents the node value in memory. In
+this section, we discuss the encoding of node values
+for various sequence-based NLP databases, namely
+sequence count tables, language models, and phrase
+tables for SMT.
+3.1 Count tables
+The representation of count tables is straightfor-
+ward: we represent the count as a compressed inte-
+ger. For representing sequence co-occurrence counts
+(e.g., bilingual phrase co-occurrences), we concate-
+nate the two sequences with a special marker (an ex-
+tra token) at the concatenation point.
+3.2 Back-off language models
+Back-off language models (Katz, 1987) of order
+n define the conditional probability P(wi |wi?1i?n+1)
+recursively as follows.
+P(wi |wi?1i?n+1)
+=
+{ P?(wi |wi?1i?n+1) if found
+?(wi?1i?n+1) ? P?(wi |wi?1i?n+2) otherwise
+(1)
+Here, P?(wi |wi?1i?n+1) is a smoothed estimate
+of P(wi |wi?1i?n+1), ?(wi?1i?n+1) is the back-off
+weight (a kind of normalization constant), and
+wi?1i?n+1 is a compact notation for the sequence
+wi?n+1, . . . , wi?1.
+In order to retrieve the value P?(wi |wi?1i?n+1), we
+have to retrieve up to n values from the data base.
+In the worst case, the language model contains no
+probability values P?(wi | context) for any context
+but back-off weights for all possible contexts up to
+length n ? 1. Since the contexts wi?1i?n+1, . . . , wi?1i?1
+have common suffixes, it is more efficient to orga-
+nize the trie as a backwards suffix tree (Bell et al,
+1990), that is, to represent the context sequences in
+right-to-left order in the trie. On each node in the
+trie, we store the back-off weight for the respective
+context, and the list of possible successor words and
+their conditional probabilities. The SRI language
+modeling toolkit (Stolcke, 2002) organizes its trie
+structure in the same way.
+34
+Probability values and back-off weights are stored
+via value IDs that are assigned in decreasing order of
+value frequency in the model and encoded as com-
+pressed integers. The list of successor words and
+their probability IDs is represented in the same way
+as the nodes? indices, i.e., as a sorted list of ?word
+ID, probability value ID? pairs in compressed for-
+mat.
+3.3 Phrase tables for SMT
+Phrase tables for phrase-based SMT list for every
+source phrase a number of target phrases and for
+each phrase pair a number of numerical scores that
+are usually combined in a linear or log-linear model
+during translation.
+To achieve a very compact representation of target
+phrases, we organize all target phrases in the table in
+a ?bottom-up? trie: instead of storing on each node
+a list of arcs leading to children, we store the node?s
+label and its parent. Each phrase can thus be repre-
+sented by a single integer that gives the location of
+the leaf node; we can restore the respective phrase
+by following the path from the leaf to the root.
+Phrase pair scores are entropy-encoded and stored
+with variable-length encoding. Since we have sev-
+eral entropy-encoded values to store for each phrase
+pair, and several phrases for each source phrase,
+we can achieve greater compression with optimally
+sized ?bit blocks? instead of the octets we have used
+so far. By way of a historical accident, we are cur-
+rently still using indicator bits on each bit block to
+indicate whether additional blocks need to be read; a
+more principled approach would have been to switch
+to proper Huffman (1952) coding. The optimal sizes
+of the bit blocks are calculated separately for each
+translation table prior to encoding and stored in the
+code book that maps from score IDs to actual scores.
+4 Related work
+The challenges of managing huge models have been
+addressed by a number of researchers in recent
+years.
+4.1 Array offsets instead of memory pointers
+The CMU-Cambridge language modeling toolkit
+(Clarkson and Rosenfeld, 1997) represents the con-
+text trie in contiguous arrays of fixed-size node
+records, where each array corresponds to a certain
+?layer? of the trie. Instead of memory pointers, links
+between nodes are represented by offsets into the
+respective array. With some additional bookkeep-
+ing, the toolkit manages to store array offsets in
+only 16 bits (see Whittaker and Raj (2001) for de-
+tails). Quantization of probability values and back-
+off weights is used to reduce the amount of mem-
+ory needed to store probability values and back-off
+weights (see Section 4.4 below).
+4.2 Model filtering
+Many research systems offer the option to filter the
+models at load time or offline, so that only infor-
+mation pertaining to tokens that occur in a given in-
+put is kept in memory; all other database entries are
+skipped. Language model implementations that of-
+fer model filtering at load time include the SRILM
+toolkit (Stolcke, 2002) and the Portage LM imple-
+mentation (Badr et al, 2007). For translation ta-
+bles, the Moses system (Koehn et al, 2007) as well
+as Portage offer model filtering (Moses: offline;
+Portage: offline and/or at load time). Model filtering
+requires that the input is known when the respective
+program is started and therefore is not feasible for
+server implementations.
+4.3 On-demand loading
+A variant of model filtering that is also viable for
+server implementations is on-demand loading. In
+the context of SMT, Zens and Ney (2007) store the
+phrase table on disk, represented as a trie with rela-
+tive offsets, so that sections of the trie can be loaded
+into memory without rebuilding them. During trans-
+lation, only those sections of the trie that actually
+match the input are loaded into memory. They re-
+port that their approach is ?not slower than the tradi-
+tional approach?, which has a significant load time
+overhead. They do not provide a comparison of pure
+processing speed ignoring the initial table load time
+overhead of the ?traditional approach?.
+IRSTLM (Federico and Cettolo, 2007) offers the
+option to use a custom page manager that relegates
+part of the structure to disk via memory-mapped
+files. The difference with our use of memory map-
+ping is that IRSTLM still builds the structure in
+memory and then swaps part of it out to disk.
+35
+4.4 Lossy compression and pruning
+Large models can also be reduced in size by lossy
+compression. Both SRILM and IRSTLM offer tools
+for language model pruning (Stolcke, 1998): if prob-
+ability values for long contexts can be approximated
+well by the back-off computation, the respective en-
+tries are dropped.
+Another form of lossy compression is the quan-
+tization of probability values and back-off weights.
+Whittaker and Raj (2001) use pruning, quantization
+and difference encoding to store language model pa-
+rameters in as little as 4 bits per value, reducing lan-
+guage model sizes by to 60% with ?minimal loss
+in recognition performance.? Federico and Bertoldi
+(2006) show that the performance of an SMT system
+does not suffer if LM parameters are quantized into
+256 distinct classes (8 bits per value).
+Johnson et al (2007) use significance tests to
+eliminate poor candidates from phrase tables for
+SMT. They are able to eliminate 90% of the phrase
+table entries without an adverse effect on translation
+quality.
+Pruning and lossy compression are orthogonal to
+the approach taken in TPTs. The two approaches
+can be combined to achieve even more compact lan-
+guage models and phrase tables.
+4.5 Hash functions
+An obvious alternative to the use of trie structures
+is the use of hash functions that map from n-grams
+to slots containing associated information. With
+hash-based implementations, the keys are usually
+not stored at all in the database; hash collisions and
+therefore lookup errors are the price to be paid for
+compact storage. This risk can be controlled by
+the design of the hash function. Talbot and Brants
+(2008) show that Bloomier filters (Chazelle et al,
+2004) can be used to create perfect hash functions
+for language models. This guarantees that there are
+no collisions between existing entries in the database
+but does not eliminate the risk of false positives for
+items that are not in the database.
+For situations where space is at a premium and
+speed negotiable (e.g., in interactive context-based
+spelling correction, where the number of lookups is
+not in the range of thousands or millions per sec-
+ond), Church et al (2007) present a compressed tri-
+gram model that combines Stolcke (1998) pruning
+with Golomb (1966) coding of inter-arrival times in
+the (sparse) range of hash values computed by the
+hash function. One major drawback of their method
+of storage is that search is linear in the total num-
+ber of keys in the worst case (usually mediated by
+auxiliary data structures that cache information).
+Since hash-based implementations of token
+sequence-based NLP databases usually don?t store
+the search keys, it is not possible to iterate through
+such databases.
+4.6 Distributed implementations
+Brants et al (2007) present an LM implementation
+that distributes very large language models over a
+network of language model servers. The delay due
+to network latency makes it inefficient to issue indi-
+vidual lookup requests to distributed language mod-
+els. As Brants et al point out: ?Onboard memory is
+around 10,000 times faster? than access via the net-
+work. Instead, requests are batched and sent to the
+server in chunks of 1,000 or 10,000 requests.
+5 Experiments
+We present here the results of empirical evalua-
+tions of the effectiveness of TPTs for encoding n-
+gram language models and phrase tables for SMT.
+We have also used TPTs to encode n-gram count
+databases such as the Google 1T web n-gram
+database (Brants and Franz, 2006), but are not able
+to provide detailed results within the space limita-
+tions of this paper.4
+5.1 Perplexity computation with 5-gram
+language models
+We compared the performance of TPT-encoded lan-
+guage models against three other language model
+implementations: the SRI language modeling toolkit
+(Stolcke, 2002), IRSTLM (Federico and Cettolo,
+2007), and the language model implementation cur-
+rently used in the Portage SMT system (Badr et al,
+2007), which uses a pointer-based implementation
+but is able to perform fast LM filtering at load time.
+The task was to compute the perplexity of a text of
+4Bottom line: the entire Google 1T web n-gram data base
+fits into about 16 GB (file/virtual memory), compared to 24 GB
+as gzip-compressed text files (file only).
+36
+Table 1: Memory use and runtimes of different LM implementations on a perplexity computation task.
+file/mem. size (GB) 1st run (times in sec.) 2nd run (times in sec.)
+file virt. real b/ng1 ttfr2 wall usr sys cpu ttfr wall usr sys cpu
+fu
+ll
+m
+o
+de
+ll
+o
+a
+de
+d SRILM3 5.2 16.3 15.3 42.2 940 1136 217 31 21% 846 1047 215 30 23%
+SRILM-C4 5.2 13.0 12.9 33.6 230 232 215 14 98% 227 229 213 14 98%
+IRST 5.1 5.5 5.4 14.2 614 615 545 13 90% 553 555 544 11 100%
+IRST-m5 5.1 5.5 1.6 14.2 548 744 545 8 74% 547 549 544 5 100%
+IRST-Q6 3.1 3.5 3.4 9.1 588 589 545 9 93% 551 553 544 8 100%
+IRST-Qm 3.1 3.5 1.4 9.1 548 674 546 7 81% 548 549 544 5 99%
+Portage 8.0 10.5 10.5 27.2 120 122 90 15 85% 110 112 90 14 92%
+TPT 2.9 3.4 1.4 7.5 2 127 2 2 2% 1 2 1 1 98%
+fil
+te
+re
+d7 SRILM 5.2 6.0 5.9 111 112 90 12 91% 99 99 90 9 99%
+SRILM-C 5.2 4.6 4.5 112 113 93 11 91% 100 105 93 8 99%
+Portage 8.0 4.5 4.4 120 122 75 11 70% 80 81 74 7 99%
+Notes: 1 Bytes per n-gram (Amount of virtual memory used divided by total number of n-grams). 2 Time to first response
+(first value returned). This was measured in a separate experiment, so the times reported sometimes do not match those in the
+other columns exactly. 3 Node indices stored in hashes. 4 ?Compact? mode: node indices stored in sorted arrays instead of
+hashes. 5 Uses a custom paging mechanism to reduce memory requirements; 6 Values are quantized into 256 discrete classes,
+so that each value can be stored in 1 byte. 7 Models filtered on evaluation text at load time.
+Table 2: Language model statistics.
+Gigaword Hansard
+unigrams 8,135,668 211,055
+bigrams 47,159,160 4,045,363
+trigrams 116,206,275 6,531,550
+4-grams 123,297,762 9,776,573
+5-grams 120,416,442 9,712,384
+file size (ARPA format) 14.0 GB 1.1 GB
+file size (ARPA .gz) 3.7 GB 225 MB
+10,000 lines (275,000 tokens) with a 5-gram lan-
+guage model trained on the English Gigaword cor-
+pus (Graff, 2003). Some language model statistics
+are given in Table 2.
+We measured memory use and total run time in
+two runs: the first run was with an empty OS-level
+file cache, forcing the system to read all data from
+the hard disk. The second run was immediately af-
+ter the first run, utilizing whatever information was
+still cached by the operating system. All experi-
+ments were run successively on the same 64-bit ma-
+chine with 16 GB of physical memory.5 In order to
+eliminate distortions by variances in the network and
+file server load at the time the experiments were run,
+only locally mounted disks were used.
+The results of the comparison are shown in Ta-
+ble 1. SRILM has two modi operandi: one uses
+5Linux kernel version 2.6.18 (SUSE) on an Intel R? Xeon R?
+2.33 GHz processor with 4 MB cache.
+hashes to access child nodes in the underlying trie
+implementation, the other one (SRILM-C) sorted
+arrays. The ?faster? hash-based implementation
+pushes the architecture beyond its limitations: the
+system starts thrashing and is therefore the slowest
+by a wide margin.
+The most significant bottleneck in the TPT im-
+plementation is disk access delay. Notice the huge
+difference in run-time between the first and the sec-
+ond run. In the first run, CPU utilization is merely
+2%: the program is idle most of the time, waiting for
+the data from disk. In the second run, the file is still
+completely in the system?s file cache and is avail-
+able immediately. When processing large amounts
+of data in parallel on a cluster, caching on the clus-
+ter?s file server will benefit all users of the respective
+model, once a particular page has been requested for
+the first time by any of them.
+Another nice feature of the TPT implementation
+is the short delay between starting the program and
+being able to perform the first lookup: the first n-
+gram probability is available after only 2 seconds.
+The slightly longer wall time of TPLMs (?tightly
+packed language models?) in comparison to the
+Portage implementation is due to the way the data
+file is read: Portage reads it sequentially, while
+TPLMs request the pages in more or less random
+order, resulting in slightly less efficient disk access.
+37
+Table 3: Model load times and translation speed for batch translation with the Portage SMT system.
+# of
+sentences
+per batch
+Baseline TPPT + Baseline LM TPLM + Baseline PT TPPT + TPLM
+load
+time w/s
+1 w/s2 loadtime w/s
+1 w/s2 loadtime w/s
+1 w/s2 loadtime3 w/s
+1 w/s2
+47 210s 5.4 2.4 16s 5.0 4.6 178s 5.9 2.67 < 1s 5.5 5.5
+10 187s 5.5 0.8 16s 5.1 3.6 170s 5.6 0.91 < 1s 5.6 5.6
+1 ? ? ? 15s 5.0 1.0 154s 5.5 0.12 < 1s 5.3 5.2
+Baseline: Portage?s implementation as pointer structure with load-time filtering.
+TP: Tightly packed; PT: phrase table; LM: language model
+1 words per second, excluding load time (pure translation time after model loading)
+2 words per second, including load time (bottom line translation speed)
+5.2 TPTs in statistical machine translation
+To test the usefulness of TPTs in a more realistic set-
+ting, we integrated them into the Portage SMT sys-
+tem (Sadat et al, 2005) and ran large-scale transla-
+tions in parallel batch processes on a cluster. Both
+language models and translation tables were en-
+coded as TPTs and compared against the native
+Portage implementation. The system was trained on
+ca. 5.2 million parallel sentences from the Canadian
+Hansard (English: 101 million tokens; French: 113
+million tokens). The language model statistics are
+given in Table 2; the phrase table contained about
+60.6 million pairs of phrases up to length 8. The test
+corpus of 1134 sentences was translated from En-
+glish into French in batches of 1, 10, and 47 or 48
+sentences.6
+Translation tables were not pre-filtered a priori to
+contain only entries matching the input. Pre-filtered
+tables are smaller and therefore faster to read, which
+is advantageous when the same text is translated re-
+peatedly; the set-up we used more closely resem-
+bles a system in production that has to deal with un-
+known input. Portage does, however, filter models
+at load time to reduce memory use. The total (real)
+memory use for translations was between 1 and 1.2
+GB, depending on the batch job, for all systems.
+Table 3 shows the run-time test results. Ignoring
+model load times, the processing speed of the cur-
+rent Portage implementation and TPTs is compara-
+ble. However, when we take into account load times
+(which must be taken into account under realistic
+conditions), the advantages of the TPT implemen-
+tation become evident.
+6The peculiar number 47/48 is the result of using the default
+batch size used in minimum error rate training of the system in
+other experiments.
+6 Conclusions
+We have presented Tightly Packed Tries, a compact
+implementation of trie structures for NLP databases
+that provide a good balance between compactness
+and speed. They are only slightly (if at all) slower
+but require much less memory than pointer-based
+implementations. Extensive use of the memory-
+mapping mechanism provides very short load times
+and allows memory sharing between processes. Un-
+like solutions that are custom-tailored to specific
+models (e.g., trigram language models), TPTs pro-
+vide a general strategy for encoding all types of NLP
+databases that rely on token sequences for indexing
+information. The novelty in our approach lies in the
+compression of the indexing structure itself, not just
+of the associated information. While the underlying
+mechanisms are well-known, we are not aware of
+any work so far that combines them to achieve fast-
+loading, compact and fast data structures for large-
+scale NLP applications.
+References
+Badr, G., E. Joanis, S. Larkin, and R. Kuhn.
+2007. ?Manageable phrase-based statistical ma-
+chine translation models.? 5th Intl. Conf. on Com-
+puter Recognition Systems (CORES). Wroclaw,
+Poland.
+Bell, T. C., J. G. Cleary, and I. H. Witten. 1990. Text
+Compression. Prentice Hall.
+Brants, T. and A. Franz. 2006. ?Web 1T 5-gram Ver-
+sion 1.? LDC Catalogue Number LDC2006T13.
+Brants, T., A. C. Popat, P. Xu, F. J. Och, and J. Dean.
+2007. ?Large language models in machine trans-
+38
+lation.? EMNLP-CoNLL 2007, 858?867. Prague,
+Czech Republic.
+Chazelle, B., J. Kilian, R. Rubinfeld, and A. Tal.
+2004. ?The Bloomier filter: An efficient data
+structure for static support lookup tables.? 15th
+Annual ACM-SIAM Symposium on Discrete Algo-
+rithms. New Orleans, LA, USA.
+Church, K., T. Hart, and J. Gao. 2007. ?Compress-
+ing trigram language models with Golomb cod-
+ing.? EMNLP-CoNLL 2007, 199?207. Prague,
+Czech Republic.
+Clarkson, P. R. and R. Rosenfeld. 1997. ?Statistical
+language modeling using the CMU-Cambridge
+toolkit.? EUROSPEECH 1997, 2707?2710.
+Rhodes, Greece.
+Federico, M. and N. Bertoldi. 2006. ?How many bits
+are needed to store probabilities for phrase-based
+translation?? Workshop on Statistical Machine
+Translation, 94?101. New York City.
+Federico, M. and M. Cettolo. 2007. ?Efficient han-
+dling of n-gram language models for statistical
+machine translation.? Second Workshop on Statis-
+tical Machine Translation, 88?95. Prague, Czech
+Republic.
+Fredkin, E. 1960. ?Trie memory.? Communications
+of the ACM, 3(9):490?499.
+Golomb, S. W. 1966. ?Run-length encodings.? IEEE
+Transactions on Information Theory, 12(3):399?
+401.
+Graff, D. 2003. ?English Gigaword.? LDC Cata-
+logue Number LDC2003T05.
+Huffman, D. A. 1952. ?A method for the construc-
+tion of minimum-redundancy codes.? Proceed-
+ings of the IRE, 40(9):1098?1102. Reprinted in
+Resonance 11(2).
+Johnson, H., J. Martin, G. Foster, and R. Kuhn.
+2007. ?Improving translation quality by discard-
+ing most of the phrasetable.? EMNLP-CoNLL
+2007, 967?975. Prague, Czech Republic.
+Katz, S. M. 1987. ?Estimation of probabilities
+from sparse data for the language model com-
+ponent of a speech recognizer.? IEEE Transac-
+tions on Acoustics, Speech, and Signal Process-
+ing, 35(3):400?401.
+Koehn, P., H. Hoang, A. Birch, C. Callison-Burch,
+M. Federico, N. Bertoldi, B. Cowan, W. Shen,
+C. Moran, R. Zens, C. Dyer, O. Bojar, A. Con-
+stantin, and E. Herbst. 2007. ?Moses: Open
+source toolkit for statistical machine translation.?
+ACL 2007 Demonstration Session. Prague, Czech
+Republic.
+Sadat, F., H. Johnson, A. Agbago, G. Foster,
+R. Kuhn, J. Martin, and A. Tikuisis. 2005.
+?PORTAGE: A phrase-based machine translation
+system.? ACL Workshop on Building and Us-
+ing Parallel Texts, 133?136. Ann Arbor, MI,
+USA. Also available as NRC-IIT publication
+NRC-48525.
+Stolcke, A. 1998. ?Entropy-based pruning of
+backoff language models.? DARPA Broadcast
+News Transcription and Understanding Work-
+shop, 270?274. Lansdowne, VA, USA.
+Stolcke, A. 2002. ?SRILM ? an extensible lan-
+guage modeling toolkit.? Intl. Conf. on Spoken
+Language Processing. Denver, CO, USA.
+Talbot, D. and T. Brants. 2008. ?Randomized
+language models via perfect hash functions.?
+ACL 2008, 505?513. Columbus, Ohio.
+Whittaker, E. W. D. and B. Raj. 2001.
+?Quantization-based language model com-
+pression.? EUROSPEECH 2001, 33?36. Aalborg,
+Denmark.
+Zens, R. and H. Ney. 2007. ?Efficient phrase-table
+representation for machine translation with ap-
+plications to online MT and speech translation.?
+NAACL-HLT 2007 2007, 492?499. Rochester,
+New York.
+39
+Proceedings of the Workshop on Statistical Machine Translation, pages 134?137,
+New York City, June 2006. c?2006 Association for Computational Linguistics
+PORTAGE: with Smoothed Phrase Tables
+and Segment Choice Models
+Howard Johnson
+National Research Council
+Institute for Information Technology
+Interactive Information
+1200 Montreal Road
+Ottawa, ON, Canada K1A 0R6
+Howard.Johnson@cnrc-nrc.gc.ca
+Fatiha Sadat, George Foster, Roland Kuhn,
+Michel Simard, Eric Joanis and Samuel Larkin
+National Research Council
+Institute for Information Technology
+Interactive Language Technologies
+101 St-Jean-Bosco Street
+Gatineau, QC, Canada K1A 0R6
+firstname.lastname@cnrc-nrc.gc.ca
+Abstract
+Improvements to Portage and its partici-
+pation in the shared task of NAACL 2006
+Workshop on Statistical Machine Trans-
+lation are described. Promising ideas in
+phrase table smoothing and global dis-
+tortion using feature-rich models are dis-
+cussed as well as numerous improvements
+in the software base.
+1 Introduction
+The statistical machine translation system Portage is
+participating in the NAACL 2006 Workshop on Sta-
+tistical Machine Translation. This is a good opportu-
+nity to do benchmarking against a publicly available
+data set and explore the benefits of a number of re-
+cently added features.
+Section 2 describes the changes that have been
+made to Portage in the past year that affect the par-
+ticipation in the 2006 shared task. Section 3 outlines
+the methods employed for this task and extensions
+of it. In Section 4 the results are summarized in tab-
+ular form. Following these, there is a conclusions
+section that highlights what can be gleaned of value
+from these results.
+2 Portage
+Because this is the second participation of Portage in
+such a shared task, a description of the base system
+can be found elsewhere (Sadat et al 2005). Briefly,
+Portage is a research vehicle and development pro-
+totype system exploiting the state-of-the-art in sta-
+tistical machine translation (SMT). It uses a custom
+built decoder followed by a rescoring module that
+adjusts weights based on a number of features de-
+fined on the source sentence. We will devote space
+to discussing changes made since the 2005 shared
+task.
+2.1 Phrase-Table Smoothing
+Phrase-based SMT relies on conditional distribu-
+tions p(s|t) and p(t|s) that are derived from the joint
+frequencies c(s, t) of source/target phrase pairs ob-
+served in an aligned parallel corpus. Traditionally,
+relative-frequency estimation is used to derive con-
+ditional distributions, ie p(s|t) = c(s, t)/
+?
+s c(s, t).
+However, relative-frequency estimation has the
+well-known problem of favouring rare events. For
+instance, any phrase pair whose constituents occur
+only once in the corpus will be assigned a probabil-
+ity of 1, almost certainly higher than the probabili-
+ties of pairs for which much more evidence exists.
+During translation, rare pairs can directly compete
+with overlapping frequent pairs, so overestimating
+their probabilities can significantly degrade perfor-
+mance.
+To address this problem, we implemented two
+simple smoothing strategies. The first is based on
+the Good-Turing technique as described in (Church
+and Gale, 1991). This replaces each observed joint
+frequency c with cg = (c + 1)nc+1/nc, where nc
+is the number of distinct pairs with frequency c
+(smoothed for large c). It also assigns a total count
+mass of n1 to unseen pairs, which we distributed
+in proportion to the frequency of each conditioning
+134
+phrase. The resulting estimates are:
+pg(s|t) =
+cg(s, t)
+?
+s cg(s, t) + p(t)n1
+,
+where p(t) = c(t)/
+?
+t c(t). The estimates for
+pg(t|s) are analogous.
+The second strategy is Kneser-Ney smoothing
+(Kneser and Ney, 1995), using the interpolated vari-
+ant described in (Chen and Goodman., 1998):1
+pk(s|t) =
+c(s, t) ? D + D n1+(?, t) pk(s)
+?
+s c(s, t)
+where D = n1/(n1 + 2n2), n1+(?, t) is the num-
+ber of distinct phrases s with which t co-occurs, and
+pk(s) = n1+(s, ?)/
+?
+s n1+(s, ?), with n1+(s, ?)
+analogous to n1+(?, t).
+Our approach to phrase-table smoothing contrasts
+to previous work (Zens and Ney, 2004) in which
+smoothed phrase probabilities are constructed from
+word-pair probabilities and combined in a log-linear
+model with an unsmoothed phrase-table. We believe
+the two approaches are complementary, so a combi-
+nation of both would be worth exploring in future
+work.
+2.2 Feature-Rich DT-based distortion
+In a recent paper (Kuhn et al 2006), we presented a
+new class of probabilistic ?Segment ChoiceModels?
+(SCMs) for distortion in phrase-based systems. In
+some situations, SCMs will assign a better distortion
+score to a drastic reordering of the source sentence
+than to no reordering; in this, SCMs differ from the
+conventional penalty-based distortion, which always
+favours less rather than more distortion.
+We developed a particular kind of SCM based on
+decision trees (DTs) containing both questions of a
+positional type (e.g., questions about the distance
+of a given phrase from the beginning of the source
+sentence or from the previously translated phrase)
+and word-based questions (e.g., questions about the
+presence or absence of given words in a specified
+phrase).
+The DTs are grown on a corpus consisting of
+segment-aligned bilingual sentence pairs. This
+1As for Good-Turing smoothing, this formula applies only
+to pairs s, t for which c(s, t) > 0, since these are the only ones
+considered by the decoder.
+segment-aligned corpus is obtained by training a
+phrase translation model on a large bilingual cor-
+pus and then using it (in conjunction with a distor-
+tion penalty) to carry out alignments between the
+phrases in the source-language sentence and those
+in the corresponding target-language sentence in a
+second bilingual corpus. Typically, the first corpus
+(on which the phrase translation model is trained) is
+the same as the second corpus (on which alignment
+is carried out). To avoid overfitting, the alignment
+algorithm is leave-one-out: statistics derived from
+a particular sentence pair are not used to align that
+sentence pair.
+Note that the experiments reported in (Kuhn et
+al, 2006) focused on translation of Chinese into En-
+glish. The interest of the experiments reported here
+onWMT data was to see if the feature-rich DT-based
+distortion model could be useful for MT between
+other language pairs.
+3 Application to the Shared Task: Methods
+3.1 Restricted Resource Exercise
+The first exercise that was done is to replicate the
+conditions of 2005 as closely as possible to see the
+effects of one year of research and development.
+The second exercise was to replicate all three of
+these translation exercises using the 2006 language
+model, and to do the three exercises of translat-
+ing out of English into French, Spanish, and Ger-
+man. This was our baseline for other studies. A
+third exercise involved modifying the generation
+of the phrase-table to incorporate our Good-Turing
+smoothing. All six language pairs were re-processed
+with these phrase-tables. The improvement in the
+results on the devtest set were compelling. This be-
+came the baseline for further work. A fourth ex-
+ercise involved replacing penalty-based distortion
+modelling with the feature-rich decision-tree based
+distortion modelling described above. A fifth ex-
+ercise involved the use of a Kneser-Ney phrase-
+table smoothing algorithm as an alternative to Good-
+Turing.
+For all of these exercises, 1-best results after de-
+coding were calculated as well as rescoring on 1000-
+best lists of results using 12 feature functions (13
+in the case of decision-tree based distortion mod-
+elling). The results submitted for the shared task
+135
+were the results of the third and fourth exercises
+where rescoring had been applied.
+3.2 Open Resource Exercise
+Our goal in this exercise was to conduct a com-
+parative study using additional training data for the
+French-English shared task. Results of WPT 2005
+showed an improvement of at least 0.3 BLEU point
+when exploiting different resources for the French-
+English pair of languages. In addition to the training
+resources used in WPT 2005 for the French-English
+task, i.e. Europarl and Hansard, we used a bilingual
+dictionary, Le Grand Dictionnaire Terminologique
+(GDT) 2 to train translation models and the English
+side of the UN parallel corpus (LDC2004E13) to
+train an English language model. Integrating termi-
+nological lexicons into a statistical machine transla-
+tion engine is not a straightforward operation, since
+we cannot expect them to come with attached prob-
+abilities. The approach we took consists on view-
+ing all translation candidates of each source term or
+phrase as equiprobable (Sadat et al 2006).
+In total, the data used in this second part of our
+contribution to WMT 2006 is described as follows:
+(1) A set of 688,031 sentences in French and En-
+glish extracted from the Europarl parallel corpus (2)
+A set of 6,056,014 sentences in French and English
+extracted from the Hansard parallel corpus, the offi-
+cial record of Canada?s parliamentary debates. (3) A
+set of 701,709 sentences in French and English ex-
+tracted from the bilingual dictionary GDT. (4) Lan-
+guage models were trained on the French and En-
+glish parts of the Europarl and Hansard. We used
+the provided Europarl corpus while omitting data
+from Q4/2000 (October-December), since it is re-
+served for development and test data. (5) An addi-
+tional English language model was trained on 128
+million words of the UN Parallel corpus.
+For the supplied Europarl corpora, we relied on
+the existing segmentation and tokenization, except
+for French, which we manipulated slightly to bring
+into line with our existing conventions (e.g., convert-
+ing l ? an into l? an, aujourd ? hui into aujourd?hui).
+For the Hansard corpus used to supplement our
+French-English resources, we used our own align-
+ment based on Moore?s algorithm, segmentation,
+2http://www.granddictionnaire.com/
+and tokenization procedures. English preprocessing
+simply included lower-casing, separating punctua-
+tion from words and splitting off ?s.
+4 Results
+The results are shown in Table 1. The numbers
+shown are BLEU scores. The MC rows correspond
+to the multi-corpora results described in the open re-
+source exercise section above. All other rows are
+from the restricted resource exercise.
+The devtest results are the scores computed be-
+fore the shared-task submission and were used to
+drive the choice of direction of the research. The
+test results were computed after the shared-task sub-
+mission and serve for validation of the conclusions.
+We believe that our use of multiple training cor-
+pora as well as our re-tokenization for French and
+an enhanced language model resulted in our overall
+success in the English-French translation track. The
+results for the in-domain test data puts our group at
+the top of the ranking table drawn by the organizers
+(first on Adequacy and fluency and third on BLEU
+scores).
+5 Conclusion
+Benchmarking with same language model and pa-
+rameters as WPT05 reproduces the results with a
+tiny improvement. The larger language model used
+in 2006 for English yields about half a BLEU. Good-
+Turing phrase table smoothing yields roughly half
+a BLEU point. Kneser-Ney phrase table smooth-
+ing yields between a third and half a BLEU point
+more than Good-Turing. Decision tree based distor-
+tion yields a small improvement for the devtest set
+when rescoring was not used but failed to show im-
+provement on the test set.
+In summary, the results from phrase-table
+smoothing are extremely encouraging. On the other
+hand, the feature-rich decision tree distortion mod-
+elling requires additional work before it provides a
+good pay-back. Fortunately we have some encour-
+aging avenues under investigation. Clearly there is
+more work needed for both of these areas.
+Acknowledgements
+We wish to thank Aaron Tikuisis and Denis Yuen
+for important contributions to the Portage code base
+136
+Table 1: Restricted and open resource results
+fr ?? en es ?? en de ?? en en ?? fr en ?? es en ?? de
+devtest: with rescoring
+WPT05 29.32 29.08 23.21
+LM-2005 29.30 29.21 23.41
+LM-2006 29.88 29.54 23.94 30.43 28.81 17.33
+GT-PTS 30.35 29.84 24.60 30.89 29.54 17.62
+GT-PTS+DT-dist 30.09 29.44 24.62 31.06 29.46 17.84
+KN-PTS 30.55 30.12 24.66 31.28 29.90 17.78
+MC WPT05 29.63
+MC 30.09 31.30
+MC+GT-PTS 30.75 31.37
+devtest: 1-best after decoding
+LM-2006 28.59 28.45 23.22 29.22 28.30 16.94
+GT-PTS 29.23 28.91 23.67 30.07 28.86 17.32
+GT-PTS+DT-dist 29.48 29.07 23.50 30.22 29.46 17.42
+KN-PTS 29.77 29.76 23.27 30.73 29.62 17.78
+MC WPT05 28.71
+MC 29.63 31.01
+MC+GT-PTS 29.90 31.22
+test: with rescoring
+LM-2006 26.64 28.43 21.33 28.06 28.01 15.19
+GT-PTS 27.19 28.95 21.91 28.60 28.83 15.38
+GT-PTS+DT-dist 26.84 28.56 21.84 28.56 28.59 15.45
+KN-PTS 27.40 29.07 21.98 28.96 29.06 15.64
+MC 26.95 29.12
+MC+GT-PTS 27.10 29.46
+test: 1-best after decoding
+LM-2006 25.35 27.25 20.46 27.20 27.18 14.60
+GT-PTS 25.95 28.07 21.06 27.85 27.96 15.05
+GT-PTS+DT-dist 25.86 28.04 20.74 27.85 27.97 14.92
+KN-PTS 26.83 28.66 21.36 28.62 28.71 15.42
+MC 26.70 28.74
+MC+GT-PTS 26.81 29.03
+and the OQLF (Office Que?be?cois de la Langue
+Franc?aise) for permission to use the GDT.
+References
+S. F. Chen and J. T. Goodman. 1998. An empirical
+study of smoothing techniques for language modeling.
+Technical Report TR-10-98, Computer Science Group,
+Harvard University.
+K. Church and W. Gale. 1991. A comparison of the en-
+hanced Good-Turing and deleted estimation methods
+for estimating probabilities of English bigrams. Com-
+puter speech and language, 5(1):19?54.
+R. Kneser and H. Ney. 1995. Improved backing-off for
+m-gram language modeling. In Proc. International
+Conference on Acoustics, Speech, and Signal Process-
+ing (ICASSP) 1995, pages 181?184, Detroit, Michi-
+gan. IEEE.
+R. Kuhn, D. Yuen, M. Simard, G. Foster, P. Paul, E. Joa-
+nis and J. H. Johnson. 2006. Segment Choice Models:
+Feature-Rich Models for Global Distortion in Statisti-
+cal Machine Translation (accepted for publication in
+HLT-NAACL conference, to be held June 2006).
+F. Sadat, J. H. Johnson, A. Agbago, G. Foster, R. Kuhn,
+J. Martin and A. Tikuisis. 2005. PORTAGE: A
+Phrase-based Machine Translation System In Proc.
+ACL 2005 Workshop on building and using parallel
+texts. Ann Arbor, Michigan.
+F. Sadat, G. Foster and R. Kuhn. 2006. Syste`me de tra-
+duction automatique statistique combinant diffe?rentes
+ressources. In Proc. TALN 2006 (Traitement Automa-
+tique des Langues Naturelles). Leuven, Belgium, April
+10-13, 2006.
+R. Zens and H. Ney. 2004. Improvements in phrase-
+based statistical machine translation. In Proc. Human
+Language Technology Conference / North American
+Chapter of the ACL, Boston, May.
+137
+Proceedings of the Second Workshop on Statistical Machine Translation, pages 185?188,
+Prague, June 2007. c?2007 Association for Computational Linguistics
+NRC?s PORTAGE system for WMT 2007
+Nicola Ueffing, Michel Simard, Samuel Larkin
+Interactive Language Technologies Group
+National Research Council Canada
+Gatineau, Que?bec, Canada
+firstname.lastname@nrc.gc.ca
+Howard Johnson
+Interactive Information Group
+National Research Council Canada
+Ottawa, Ontario, Canada
+Howard.Johnson@nrc.gc.ca
+Abstract
+We present the PORTAGE statistical
+machine translation system which par-
+ticipated in the shared task of the ACL
+2007 Second Workshop on Statistical
+Machine Translation. The focus of this
+description is on improvements which
+were incorporated into the system over
+the last year. These include adapted lan-
+guage models, phrase table pruning, an
+IBM1-based decoder feature, and rescor-
+ing with posterior probabilities.
+1 Introduction
+The statistical machine translation (SMT) sys-
+tem PORTAGE was developed at the National
+Research Council Canada and has recently been
+made available to Canadian universities and
+research institutions. It is a state-of-the-art
+phrase-based SMT system. We will shortly de-
+scribe its basics in this paper and then high-
+light the new methods which we incorporated
+since our participation in the WMT 2006 shared
+task. These include new scoring methods for
+phrase pairs, pruning of phrase tables based
+on significance, a higher-order language model,
+adapted language models, and several new de-
+coder and rescoring models. PORTAGE was
+also used in a joint system developed in coop-
+eration with Systran. The interested reader is
+referred to (Simard et al, 2007).
+Throughout this paper, let sJ1 := s1 . . . sJ de-
+note a source sentence of length J , tI1 := t1 . . . tI
+a target sentence of length I, and s? and t? phrases
+in source and target language, respectively.
+2 Baseline
+As baseline for our experiments, we used a ver-
+sion of PORTAGE corresponding to its state at
+the time of the WMT 2006 shared task. We pro-
+vide a basic description of this system here; for
+more details see (Johnson et al, 2006).
+PORTAGE implements a two-stage transla-
+tion process: First, the decoder generates N -
+best lists, using a basic set of models which are
+then rescored with additional models in a sec-
+ond step. In the baseline system, the decoder
+uses the following models (or feature functions):
+? one or several phrase table(s), which model
+the translation direction p(s? | t?). They are
+generated from the training corpus via the
+?diag-and? method (Koehn et al, 2003)
+and smoothed using Kneser-Ney smooth-
+ing (Foster et al, 2006),
+? one or several n-gram language model(s)
+trained with the SRILM toolkit (Stolcke,
+2002); in the baseline experiments reported
+here, we used a trigram model,
+? a distortion model which assigns a penalty
+based on the number of source words which
+are skipped when generating a new target
+phrase,
+? a word penalty.
+These different models are combined log-
+linearly. Their weights are optimized
+w.r.t. BLEU score using the algorithm de-
+scribed in (Och, 2003). This is done on the
+provided development corpus. The search
+algorithm implemented in the decoder is a
+dynamic-programming beam-search algorithm.
+185
+After the decoding step, rescoring with addi-
+tional models is performed. The baseline system
+generates a 1,000-best list of alternative trans-
+lations for each source sentence. These lists
+are rescored with the different models described
+above, a character penalty, and three different
+features based on IBM Models 1 and 2 (Brown
+et al, 1993) calculated in both translation di-
+rections. The weights of these additional models
+and of the decoder models are again optimized
+to maximize BLEU score.
+Note that we did not use the decision-tree-
+based distortion models described in (Johnson
+et al, 2006) here because they did not improve
+translation quality.
+In the following subsections, we will describe
+the new models added to the system for our
+WMT 2007 submissions.
+3 Improvements in PORTAGE
+3.1 Phrase translation models
+Whereas the phrase tables used in the baseline
+system contain only one score for each phrase
+pair, namely conditional probabilities calculated
+using Kneser-Ney smoothing, our current sys-
+tem combines seven different phrase scores.
+First, we used several types of phrase table
+smoothing in the WMT 2007 system because
+this proved helpful on other translation tasks:
+relative frequency estimates, Kneser-Ney- and
+Zens-Ney-smoothed probabilities (Foster et al,
+2006). Furthermore, we added normalized joint
+probability estimates to the phrase translation
+model. The other three scores will be explained
+at the end of this subsection.
+We pruned the generated phrase tables fol-
+lowing the method introduced in (Johnson et
+al., 2007). This approach considers all phrase
+pairs (s?, t?) in the phrase table. The count C(s?, t?)
+of all sentence pairs containing (s?, t?) is deter-
+mined, as well as the count of all source/target
+sentences containing s?/t?. Using these counts,
+Fisher?s exact test is carried out to calculate
+the significance of the phrase pair. The phrase
+tables are then pruned based on the p-value.
+Phrase pairs with low significance, i.e. which are
+only weakly supported by the training data, are
+pruned. This reduces the size of the phrase ta-
+bles to 8-16% on the different language pairs.
+See (Johnson et al, 2007) for details.
+Three additional phrase scores were derived
+from information on which this pruning is based:
+? the significance level (or p-value),
+? the number C(s?, t?) of sentence pairs con-
+taining the phrase pair, normalized by the
+number of source sentences containing s?,
+? C(s?, t?), normalized by the number of target
+sentences containing t?.
+For our submissions, we used the last three
+phrase scores only when translating the Eu-
+roParl data. Initial experiments showed that
+they do not improve translation quality on the
+News Commentary data. Apart from this, the
+systems for both domains are identical.
+3.2 Adapted language models
+Concerning the language models, we made two
+changes to our system since WMT 2006. First,
+we replaced the trigram language model by a 4-
+gram model trained on the WMT 2007 data. We
+also investigated the use of a 5-gram, but that
+did not improve translation quality. Second,
+we included adapted language models which
+are specific to the development and test cor-
+pora. For each development or test corpus, we
+built this language model using information re-
+trieval1 to find relevant sentences in the train-
+ing data. To this end, we merged the train-
+ing corpora for EuroParl and News Commen-
+tary. The source sentences from the develop-
+ment or test corpus served as individual queries
+to find relevant training sentence pairs. For
+each source sentence, we retrieved 10 sentence
+pairs from the training data and used their tar-
+get sides as language model training data. On
+this small corpus, we trained a trigram lan-
+guage model, again using the SRILM toolkit.
+The feature function weights in the decoder and
+the rescoring model were optimized using the
+adapted language model for the development
+corpus. When translating the test corpus, we
+kept these weights, but replaced the adapted
+1We used the lemur toolkit for querying, see
+http://www.lemurproject.org/
+186
+language model by that specific to the test cor-
+pus.
+3.3 New decoder and rescoring features
+We integrated several new decoder and rescoring
+features into PORTAGE. During decoding, the
+system now makes use of a feature based on IBM
+Model 1. This feature calculates the probability
+of the (partial) translation over the source sen-
+tence, using an IBM1 translation model in the
+direction p(tI1 | sJ1 ).
+In the rescoring process, we additionally in-
+cluded several types of posterior probabilities.
+One is the posterior probability of the sentence
+length over the N -best list for this source sen-
+tence. The others are determined on the level
+of words, phrases, and n-grams, and then com-
+bined into a value for the whole sentence. All
+posterior probabilities are calculated over theN -
+best list, using the sentence probabilities which
+the baseline system assigns to the translation
+hypotheses. For details on the posterior prob-
+abilities, see (Ueffing and Ney, 2007; Zens and
+Ney, 2006). This year, we increased the length
+of the N -best lists from 1,000 to 5,000.
+3.4 Post-processing
+For truecasing the translation output, we used
+the model described in (Agbago et al, 2005).
+This model uses a combination of statisti-
+cal components, including an n-gram language
+model, a case mapping model, and a special-
+ized language model for unknown words. The
+language model is a 5-gram model trained on
+the WMT 2007 data. The detokenizer which we
+used is the one provided for WMT 2007.
+4 Experimental results
+We submitted results for six of the translation
+directions of the shared task: French ? English,
+German ? English, and Spanish ? English.
+Table 1 shows the improvements result-
+ing from incorporating new techniques into
+PORTAGE on the Spanish ? English EuroParl
+task. The baseline system is the one described
+in section 2. Trained on the 2007 training cor-
+pora, this yields a BLEU score of 30.48. Adding
+the new phrase scores introduced in section 3.1
+yields a slight improvement in translation qual-
+ity. This improvement by itself is not signifi-
+cant, but we observed it consistently across all
+evaluation metrics and across the different devel-
+opment and test corpora. Increasing the order
+of the language model and adding an adapted
+language model specific to the translation input
+(see section 3.2) improves the BLEU score by
+0.6 points. This is the biggest gain we observe
+from introducing a new method. The incorpora-
+tion of the IBM1-based decoder feature causes
+a slight drop in translation quality. This sur-
+prised us because we found this feature to be
+very helpful on the NIST Chinese ? English
+translation task. Adding the posterior proba-
+bilities presented in section 3.3 in rescoring and
+increasing the length of the N -best lists yielded
+a small, but consistent gain in translation qual-
+ity. The overall improvement compared to last
+year?s system is around 1 BLEU point. The gain
+achieved from introducing the new methods by
+themselves are relatively small, but they add up.
+Table 2 shows results on all six language pairs
+we translated for the shared task. The trans-
+lation quality achieved on the 2007 test set is
+similar to that on the 2006 test set. The system
+clearly performs better on the EuroParl domain
+than on News Commentary.
+Table 2: Translation quality in terms of
+BLEU[%] and NIST score on all tasks. True-
+cased and detokenized translation output.
+test2006 test2007
+task BLEU NIST BLEU NIST
+Eu D?E 25.27 6.82 26.02 6.91
+E?D 19.36 5.86 18.94 5.71
+S?E 31.54 7.55 32.09 7.67
+E?S 30.94 7.39 30.92 7.41
+F?E 30.90 7.51 31.90 7.68
+E?F 30.08 7.26 30.06 7.26
+NC D?E 20.23 6.19 23.17 7.10
+E?D 13.84 5.38 16.30 5.95
+S?E 31.07 7.68 31.08 8.11
+E?S 30.79 7.73 32.56 8.25
+F?E 24.97 6.78 26.84 7.47
+E?F 24.91 6.79 26.60 7.24
+187
+Table 1: Effect of integrating new models and methods into the PORTAGE system. Translation
+quality in terms of BLEU and NIST score, WER and PER on the EuroParl Spanish?English 2006
+test set. True-cased and detokenized translation output. Best results printed in boldface.
+system BLEU[%] NIST WER[%] PER[%]
+baseline 30.48 7.44 58.62 42.74
++ new phrase table features 30.66 7.48 58.25 42.46
++ 4-gram LM + adapted LM 31.26 7.53 57.93 42.26
++ IBM1-based decoder feature 31.18 7.51 58.13 42.53
++ refined rescoring 31.54 7.55 57.81 42.24
+5 Conclusion
+We presented the PORTAGE system with which
+we translated six language pairs in the WMT
+2007 shared task. Starting from the state of
+the system during the WMT 2006 evaluation,
+we analyzed the contribution of new methods
+which were incorporated over the last year in
+detail. Our experiments showed that most of
+these changes result in (small) improvements in
+translation quality. In total, we gain about 1
+BLEU point compared to last year?s system.
+6 Acknowledgments
+Our thanks go to the PORTAGE team at NRC
+for their contributions and valuable feedback.
+References
+A. Agbago, R. Kuhn, and G. Foster. 2005. True-
+casing for the Portage system. In Recent Ad-
+vances in Natural Language Processing, pages 21?
+24, Borovets, Bulgaria, September.
+P. F. Brown, S. A. Della Pietra, V. J. Della Pietra,
+and R. L. Mercer. 1993. The mathematics of sta-
+tistical machine translation: Parameter estima-
+tion. Computational Linguistics, 19(2):263?311,
+June.
+G. Foster, R. Kuhn, and J. H. Johnson. 2006.
+Phrasetable smoothing for statistical machine
+translation. In Proc. of the Conf. on Empir-
+ical Methods for Natural Language Processing
+(EMNLP), pages 53?61, Sydney, Australia, July.
+J. H. Johnson, F. Sadat, G. Foster, R. Kuhn,
+M. Simard, E. Joanis, and S. Larkin. 2006.
+Portage: with smoothed phrase tables and seg-
+ment choice models. In Proc. HLT/NAACL
+Workshop on Statistical Machine Translation
+(WMT), pages 134?137, New York, NY, June.
+H. Johnson, J. Martin, G. Foster, and R. Kuhn.
+2007. Improving translation quality by discard-
+ing most of the phrasetable. In Proc. of the
+Conf. on Empirical Methods for Natural Language
+Processing and Conf. on Computational Natural
+Language Learning (EMNLP-CoNLL), to appear,
+Prague, Czech Republic, June.
+P. Koehn, F. J. Och, and D. Marcu. 2003. Statistical
+phrase-based translation. In Proc. of the Human
+Language Technology Conf. (HLT-NAACL), pages
+127?133, Edmonton, Canada, May/June.
+F. J. Och. 2003. Minimum error rate training in sta-
+tistical machine translation. In Proc. of the 41st
+Annual Meeting of the Association for Computa-
+tional Linguistics (ACL), pages 160?167, Sapporo,
+Japan, July.
+M. Simard, J. Senellart, P. Isabelle, R. Kuhn,
+J. Stephan, and N. Ueffing. 2007. Knowledge-
+based translation with statistical phrase-based
+post-editing. In Proc. ACL Second Workshop on
+Statistical Machine Translation (WMT), to ap-
+pear, Prague, Czech Republic, June.
+A. Stolcke. 2002. SRILM ? an extensible language
+modeling toolkit. In Proc. Int. Conf. on Spoken
+Language Processing (ICSLP), volume 2, pages
+901?904, Denver, CO.
+N. Ueffing and H. Ney. 2007. Word-level confi-
+dence estimation for machine translation. Com-
+putational Linguistics, 33(1):9?40, March.
+R. Zens and H. Ney. 2006. N-gram posterior
+probabilities for statistical machine translation.
+In Proc. HLT/NAACL Workshop on Statistical
+Machine Translation (WMT), pages 72?77, New
+York, NY, June.
+188
+Proceedings of the 50th Annual Meeting of the Association for Computational Linguistics, pages 930?939,
+Jeju, Republic of Korea, 8-14 July 2012. c?2012 Association for Computational Linguistics
+PORT:  a Precision-Order-Recall MT Evaluation Metric for Tuning 
+ 
+ 
+Boxing Chen, Roland Kuhn and Samuel Larkin 
+National Research Council Canada 
+283 Alexandre-Tach? Boulevard, Gatineau (Qu?bec), Canada J8X 3X7 
+{Boxing.Chen, Roland.Kuhn, Samuel.Larkin}@nrc.ca 
+ 
+  
+Abstract 
+Many machine translation (MT) evaluation 
+metrics have been shown to correlate better 
+with human judgment than BLEU. In 
+principle, tuning on these metrics should 
+yield better systems than tuning on BLEU. 
+However, due to issues such as speed, 
+requirements for linguistic resources, and 
+optimization difficulty, they have not been 
+widely adopted for tuning. This paper 
+presents PORT 1 , a new MT  evaluation 
+metric which combines precision, recall 
+and an ordering metric and which is 
+primarily designed for tuning MT systems. 
+PORT does not require external resources 
+and is quick to compute. It has a better 
+correlation with human judgment than 
+BLEU. We compare PORT-tuned MT 
+systems to BLEU-tuned baselines in five 
+experimental conditions involving four 
+language pairs. PORT tuning achieves 
+consistently better performance than BLEU 
+tuning, according to four automated 
+metrics (including BLEU) and to human 
+evaluation: in comparisons of outputs from 
+300 source sentences, human judges 
+preferred the PORT-tuned output 45.3% of 
+the time (vs. 32.7% BLEU tuning  
+preferences and 22.0% ties).  
+1 Introduction 
+Automatic evaluation metrics for machine 
+translation (MT) quality are a key part of building 
+statistical MT (SMT) systems. They play two 
+                                                           
+1
+ PORT: Precision-Order-Recall Tunable metric. 
+roles: to allow rapid (though sometimes inaccurate) 
+comparisons between different systems or between 
+different versions of the same system, and to 
+perform tuning of parameter values during system 
+training. The latter has become important since the 
+invention of minimum error rate training (MERT) 
+(Och, 2003) and related tuning methods. These 
+methods perform repeated decoding runs with 
+different system parameter values, which are tuned 
+to optimize the value of the evaluation metric over 
+a development set with reference translations. 
+MT evaluation metrics fall into three groups:  
+? BLEU (Papineni et al, 2002), NIST 
+(Doddington, 2002), WER, PER, TER 
+(Snover et al, 2006), and LRscore (Birch and 
+Osborne, 2011) do not use external linguistic 
+information; they are fast to compute (except 
+TER).  
+? METEOR (Banerjee and Lavie, 2005), 
+METEOR-NEXT (Denkowski and Lavie 
+2010), TER-Plus (Snover et al, 2009), 
+MaxSim (Chan and Ng, 2008), TESLA (Liu 
+et al, 2010), AMBER (Chen and Kuhn, 2011) 
+and MTeRater (Parton et al, 2011) exploit 
+some limited linguistic resources, such as 
+synonym dictionaries, part-of-speech tagging, 
+paraphrasing tables or word root lists.  
+? More sophisticated metrics such as RTE 
+(Pado et al, 2009), DCU-LFG (He et al, 
+2010) and MEANT (Lo and Wu, 2011) use 
+higher level syntactic or semantic analysis to 
+score translations. 
+Among these metrics, BLEU is the most widely 
+used for both evaluation and tuning. Many of the 
+metrics correlate better with human judgments of 
+translation quality than BLEU, as shown in recent 
+WMT Evaluation Task reports (Callison-Burch et 
+930
+al., 2010; Callison-Burch et al, 2011). However, 
+BLEU remains the de facto standard tuning metric, 
+for two reasons. First, there is no evidence that any 
+other tuning metric yields better MT systems. Cer 
+et al (2010) showed that BLEU tuning is more 
+robust than tuning with other metrics (METEOR, 
+TER, etc.), as gauged by both automatic and 
+human evaluation. Second, though a tuning metric 
+should correlate strongly with human judgment, 
+MERT (and similar algorithms) invoke the chosen 
+metric so often that it must be computed quickly.  
+Liu et al (2011) claimed that TESLA tuning 
+performed better than BLEU tuning according to 
+human judgment. However, in the WMT 2011 
+?tunable metrics? shared pilot task, this did not 
+hold (Callison-Burch et al, 2011). In (Birch and 
+Osborne, 2011), humans preferred the output from 
+LRscore-tuned systems 52.5% of the time, versus 
+BLEU-tuned system outputs 43.9% of the time. 
+In this work, our goal is to devise a metric that, 
+like BLEU, is computationally cheap and 
+language-independent, but that yields better MT 
+systems than BLEU when used for tuning. We 
+tried out different combinations of statistics before 
+settling on the final definition of our metric.  The 
+final version, PORT, combines precision, recall, 
+strict brevity penalty (Chiang et al, 2008) and 
+strict redundancy penalty (Chen and Kuhn, 2011) 
+in a quadratic mean expression. This expression is 
+then further combined with a new measure of word 
+ordering, v, designed to reflect long-distance as 
+well as short-distance word reordering (BLEU only 
+reflects short-distance reordering). In a later 
+section, 3.3, we describe experiments that vary 
+parts of the definition of PORT.  
+Results given below show that PORT correlates 
+better with human judgments of translation quality 
+than BLEU does, and sometimes outperforms 
+METEOR in this respect, based on data from 
+WMT (2008-2010). However, since PORT is 
+designed for tuning, the most important results are 
+those showing that PORT tuning yields systems 
+with better translations than those produced by 
+BLEU tuning ? both as determined by automatic 
+metrics (including BLEU), and according to 
+human judgment, as applied to five data conditions 
+involving four language pairs. 
+2 BLEU and PORT 
+First, define n-gram precision p(n) and recall r(n): 
+)(grams-n#
+)(grams-n#)(
+T
+RT
+np ?=                 (1) 
+)(grams-n#
+)(grams-n#)(
+R
+RT
+nr
+?
+=              (2) 
+where T = translation, R = reference. Both BLEU 
+and PORT are defined on the document-level, i.e. 
+T and R are whole texts. If there are multiple 
+references, we use closest reference length for each 
+translation hypothesis to compute the numbers of 
+the reference n-grams. 
+2.1 BLEU 
+BLEU is composed of precision Pg(N) and brevity 
+penalty BP: 
+BPNPBLEU g ?= )(                 (3)  
+where Pg(N) is the geometric average of n-gram 
+precisions 
+NN
+n
+g npNP
+1
+1
+)()( ???
+?
+???
+?
+= ?
+=
+               (4) 
+The BLEU brevity penalty punishes the score if 
+the translation length len(T) is shorter than the 
+reference length len(R); it is: ( ))(/)(1,0.1min TlenRleneBP ?=         (5) 
+2.2 PORT 
+PORT has five components: precision, recall, strict 
+brevity penalty (Chiang et al, 2008), strict 
+redundancy penalty (Chen and Kuhn, 2011) and an 
+ordering measure v. The design of PORT is based 
+on exhaustive experiments on a development data 
+set. We do not have room here to give a rationale 
+for all the choices we made when we designed 
+PORT. However, a later section (3.3) reconsiders 
+some of these design decisions.  
+2.2.1 Precision and Recall 
+The average precision and average recall used in 
+PORT (unlike those used in BLEU) are the 
+arithmetic average of n-gram precisions Pa(N) and 
+recalls Ra(N): 
+?
+=
+=
+N
+n
+a npN
+NP
+1
+)(1)(                 (6) 
+?
+=
+=
+N
+n
+a nrN
+NR
+1
+)(1)(                   (7) 
+931
+We use two penalties to avoid too long or too 
+short MT outputs. The first, the strict brevity 
+penalty (SBP), is proposed in (Chiang et al, 2008). 
+Let ti be the translation of input sentence i, and let 
+ri be its reference. Set 
+???
+?
+???
+?
+?= ?
+?
+i ii
+i i
+rt
+r
+SBP |}||,min{|
+||
+1exp         (8) 
+The second is the strict redundancy penalty (SRP), 
+proposed in (Chen and Kuhn, 2011): 
+???
+?
+???
+?
+?= ?
+?
+i i
+i ii
+r
+rt
+SRP ||
+|}||,max{|
+1exp         (9) 
+To combine precision and recall, we tried four 
+averaging methods: arithmetic (A), geometric (G), 
+harmonic (H), and quadratic (Q) mean. If all of the 
+values to be averaged are positive, the order is 
+maxQAGHmin ????? , with equality 
+holding if and only if all the values being averaged 
+are equal. We chose the quadratic mean to 
+combine precision and recall, as follows: 
+2
+))(())(()(
+22 SRPNRSBPNPNQmean aa ?+?=   (10)  
+2.2.2 Ordering Measure 
+Word ordering measures for MT compare two 
+permutations of the original source-language word 
+sequence: the permutation represented by the 
+sequence of corresponding words in the MT 
+output, and the permutation in the reference. 
+Several ordering measures have been integrated 
+into MT evaluation metrics recently. Birch and 
+Osborne (2011) use either Hamming Distance or 
+Kendall?s ? Distance (Kendall, 1938) in their 
+metric LRscore, thus obtaining two versions of 
+LRscore. Similarly, Isozaki et al (2011) adopt 
+either Kendall?s ? Distance or Spearman?s ? 
+(Spearman, 1904) distance in their metrics.  
+Our measure, v, is different from all of these. 
+We use word alignment to compute the two 
+permutations (LRscore also uses word alignment). 
+The word alignment between the source input and 
+reference is computed using GIZA++ (Och and 
+Ney, 2003) beforehand with the default settings, 
+then is refined with the heuristic grow-diag-final-
+and; the word alignment between the source input 
+and the translation is generated by the decoder with 
+the help of word alignment inside each phrase pair. 
+PORT uses permutations. These encode one-to-
+one relations but not one-to-many, many-to-one, 
+many-to-many or null relations, all of which can 
+occur in word alignments. We constrain the 
+forbidden types of relation to become one-to-one, 
+as in (Birch and Osborne, 2011). Thus, in a one-to-
+many alignment, the single source word is forced 
+to align with the first target word; in a many-to-one 
+alignment, monotone order is assumed for the 
+target words; and source words originally aligned 
+to null are aligned to the target word position just 
+after the previous source word?s target position.  
+After the normalization above, suppose we have 
+two permutations for the same source n-word 
+input. E.g., let P1 = reference, P2 = hypothesis: 
+P1: 11p  
+2
+1p  
+3
+1p  
+4
+1p  ? 
+ip1  ? 
+np1  
+ P2: 12p  
+2
+2p  
+3
+2p  
+4
+2p  ? 
+ip2  ? 
+np2
+ 
+Here, each jip is an integer denoting position in the 
+original source (e.g., 11p = 7 means that the first 
+word in P1 is the 7th source word). 
+The ordering metric v is computed from two 
+distance measures. The first is absolute 
+permutation distance: 
+?
+=
+?=
+n
+i
+ii ppPPDIST
+1
+21211 ||),(               (11) 
+Let       
+2/)1(
+),(1 2111 +?= nn
+PPDIST
+?                     (12)                  
+v1 ranges from 0 to 1; a larger value means more 
+similarity between the two permutations. This 
+metric is similar to Spearman?s ? (Spearman, 
+1904). However, we have found that ? punishes 
+long-distance reorderings too heavily. For instance, 
+1? is more tolerant than ? of the movement of 
+?recently? in this example:  
+Ref: Recently, I visited Paris 
+Hyp: I visited Paris recently  
+Inspired by HMM word alignment (Vogel et al, 
+1996), our second distance measure is based on 
+jump width. This punishes a sequence of words 
+that moves a long distance with its internal order 
+conserved, only once rather than on every word. In 
+the following, only two groups of words have 
+moved, so the jump width punishment is light: 
+Ref: In the winter of 2010, I visited Paris 
+Hyp: I visited Paris in the winter of 2010  
+So the second distance measure is 
+932
+?
+=
+??
+???=
+n
+i
+iiii ppppPPDIST
+1
+1
+22
+1
+11212 |)()(|),(   (13) 
+where we set 001 =p  and 0
+0
+2 =p . Let 
+1
+),(1 2 2122
+?
+?=
+n
+PPDIST
+v                     (14) 
+As with v1, v2 is also from 0 to 1, and larger values 
+indicate more similar permutations. The ordering 
+measure vs is the harmonic mean of v1 and v2:  
+)/1/1/(2 21 vvvs +=
+ 
+.                     (15) 
+ vs in (15) is computed at segment level. For 
+multiple references, we compute vs for each, and 
+then choose the biggest one as the segment level 
+ordering similarity. We compute document level 
+ordering with a weighted arithmetic mean:  
+?
+?
+=
+=
+?
+= l
+s s
+l
+s ss
+Rlen
+Rlenv
+v
+1
+1
+)(
+)(
+                    (16) 
+where l is the number of segments of the 
+document, and len(R) is the length of the reference. 
+2.2.3 Combined Metric 
+Finally, Qmean(N) (Eq. (10) and the word ordering 
+measure v are combined in a harmonic mean: 
+?vNQmeanPORT /1)(/1
+2
++
+=           (17) 
+Here ?  is a free parameter that is tuned on held-
+out data. As it increases, the importance of the 
+ordering measure v goes up. For our experiments, 
+we tuned ?  on Chinese-English data, setting it to 
+0.25 and keeping this value for the other language 
+pairs. The use of v means that unlike BLEU, PORT 
+requires word alignment information. 
+ 
+3 Experiments 
+3.1 PORT as an Evaluation Metric 
+We studied PORT as an evaluation metric on 
+WMT data; test sets include WMT 2008, WMT 
+2009, and WMT 2010 all-to-English, plus 2009, 
+2010 English-to-all submissions. The languages 
+?all? (?xx? in Table 1) include French, Spanish, 
+German and Czech. Table 1 summarizes the test 
+set statistics. In order to compute the v part of 
+PORT, we require source-target word alignments 
+for the references and MT outputs. These aren?t 
+included in WMT data, so we compute them with 
+GIZA++. 
+We used Spearman?s rank correlation coefficient 
+? to measure correlation of the metric with system-
+level human judgments of translation. The human 
+judgment score is based on the ?Rank? only, i.e., 
+how often the translations of the system were rated 
+as better than those from other systems (Callison-
+Burch et al, 2008). Thus, BLEU, METEOR, and 
+PORT were evaluated on how well their rankings 
+correlated with the human ones. For the segment 
+level, we follow (Callison-Burch et al, 2010) in 
+using Kendall?s rank correlation coefficient ?.  
+As shown in Table 2, we compared PORT with 
+smoothed BLEU (mteval-v13a), and METEOR 
+v1.0. Both BLEU and PORT perform matching of 
+n-grams up to n = 4. 
+ 
+Set Year Lang. #system #sent-pair 
+Test1 2008 xx-en 43 7,804 
+Test2 2009 xx-en 45 15,087 
+Test3 2009 en-xx 40 14,563 
+Test4 2010 xx-en 53 15,964 
+Test5 2010 en-xx 32 18,508 
+Table 1: Statistics of the WMT dev and test sets. 
+ 
+ 
+ 
+Metric 
+Into-En Out-of-En 
+sys.  seg. sys.  seg. 
+BLEU 0.792 0.215 0.777 0.240 
+METEOR 0.834 0.231 0.835 0.225 
+PORT 0.801 0.236 0.804 0.242 
+Table 2: Correlations with human judgment on WMT 
+ 
+PORT achieved the best segment level 
+correlation with human judgment on both the ?into 
+English? and ?out of English? tasks. At the system 
+level, PORT is better than BLEU, but not as good 
+as METEOR.  This is because we designed PORT 
+to carry out tuning; we did not optimize its 
+performance as an evaluation metric, but rather, to 
+optimize system tuning performance. There are 
+some other possible reasons why PORT did not 
+outperform METEOR v1.0 at system level. Most 
+WMT submissions involve language pairs with 
+similar word order, so the ordering factor v in 
+PORT won?t play a big role. Also, v depends on 
+source-target word alignments for reference and 
+test sets. These alignments were performed by 
+GIZA++ models trained on the test data only.  
+933
+3.2 PORT as a Metric for Tuning 
+3.2.1 Experimental details 
+The first set of experiments to study PORT as a 
+tuning metric involved Chinese-to-English (zh-en); 
+there were two data conditions. The first is the 
+small data condition where FBIS2 is used to train 
+the translation and reordering models. It contains 
+10.5M target word tokens. We trained two 
+language models (LMs), which were combined 
+loglinearly. The first is a 4-gram LM which is 
+estimated on the target side of the texts used in the 
+large data condition (below). The second is a 5-
+gram LM estimated on English Gigaword.  
+The large data condition uses training data from 
+NIST3 2009 (Chinese-English track). All allowed 
+bilingual corpora except UN, Hong Kong Laws and 
+Hong Kong Hansard were used to train the 
+translation model and reordering models. There are 
+about 62.6M target word tokens. The same two 
+LMs are used for large data as for small data, and 
+the same development (?dev?) and test sets are also 
+used. The dev set comprised mainly data from the 
+NIST 2005 test set, and also some balanced-genre 
+web-text from NIST. Evaluation was performed on 
+NIST 2006 and 2008. Four references were 
+provided for all dev and test sets. 
+The third data condition is a French-to-English 
+(fr-en). The parallel training data is from Canadian 
+Hansard data, containing 59.3M word tokens. We 
+used two LMs in loglinear combination: a 4-gram 
+LM trained on the target side of the parallel 
+training data, and the English Gigaword 5-gram 
+LM. The dev set has 1992 sentences; the two test 
+sets have 2140 and 2164 sentences respectively. 
+There is one reference for all dev and test sets.  
+The fourth and fifth conditions involve German-
+-English Europarl data. This parallel corpus 
+contains 48.5M German tokens and 50.8M English 
+tokens. We translate both German-to-English (de-
+en) and English-to-German (en-de). The two 
+conditions both use an LM trained on the target 
+side of the parallel training data, and de-en also 
+uses the English Gigaword 5-gram LM. News test 
+2008 set is used as dev set; News test 2009, 2010, 
+2011 are used as test sets. One reference is 
+provided for all dev and test sets. 
+                                                           
+2
+ LDC2003E14 
+3
+ http://www.nist.gov/speech/tests/mt 
+All experiments were carried out with ?  in Eq. 
+(17) set to 0.25, and involved only lowercase 
+European-language text. They were performed 
+with MOSES (Koehn et al, 2007), whose decoder 
+includes lexicalized reordering, translation models, 
+language models, and word and phrase penalties.  
+Tuning was done with n-best MERT, which is 
+available in MOSES. In all tuning experiments, 
+both BLEU and PORT performed lower case 
+matching of n-grams up to n = 4. We also 
+conducted experiments with tuning on a version of 
+BLEU that incorporates SBP (Chiang et al, 2008) 
+as a baseline. The results of original IBM BLEU 
+and BLEU with SBP were tied; to save space, we 
+only report results for original IBM BLEU here. 
+3.2.2 Comparisons with automatic metrics 
+First, let us see if BLEU-tuning and PORT-tuning 
+yield systems with different translations for the 
+same input. The first row of Table 3 shows the 
+percentage of identical sentence outputs for the 
+two tuning types on test data. The second row 
+shows the similarity of the two outputs at word-
+level (as measured by 1-TER): e.g., for the two zh-
+en tasks, the two tuning types give systems whose 
+outputs are about 25-30% different at the word 
+level. By contrast, only about 10% of output words 
+for fr-en differ for BLEU vs. PORT tuning.  
+ 
+ zh-en 
+small 
+zh-en 
+large 
+fr-en 
+Hans 
+de-en 
+WMT 
+en-de 
+WMT 
+Same sent.  17.7% 13.5% 56.6% 23.7% 26.1% 
+1-TER 74.2 70.9 91.6 87.1 86.6 
+Table 3: Similarity of BLEU-tuned and PORT-tuned 
+system outputs on test data. 
+ 
+ 
+Task 
+ 
+Tune 
+Evaluation metrics (%) 
+BLEU MTR 1-TER PORT 
+zh-en 
+small 
+BLEU 
+PORT 
+26.8  
+27.2* 
+55.2 
+55.7 
+38.0 
+38.0 
+49.7 
+50.0 
+zh-en 
+large 
+BLEU 
+PORT 
+29.9  
+30.3*  
+58.4 
+59.0 
+41.2 
+42.0 
+53.0 
+53.2 
+fr-en 
+Hans 
+BLEU 
+PORT 
+38.8  
+38.8  
+69.8 
+69.6 
+54.2 
+54.6 
+57.1 
+57.1 
+de-en 
+WMT 
+BLEU 
+PORT 
+20.1  
+20.3 
+55.6 
+56.0 
+38.4 
+38.4 
+39.6 
+39.7 
+en-de 
+WMT 
+BLEU 
+PORT 
+13.6 
+13.6 
+43.3 
+43.3 
+30.1 
+30.7 
+31.7 
+31.7 
+Table 4: Automatic evaluation scores on test data. 
+ * indicates the results are significantly better than the 
+baseline (p<0.05). 
+ 
+934
+Table 4 shows translation quality for BLEU- and 
+PORT-tuned systems, as assessed by automatic 
+metrics. We employed BLEU4, METEOR (v1.0), 
+TER (v0.7.25), and the new metric PORT. In the 
+table, TER scores are presented as 1-TER to ensure 
+that for all metrics, higher scores mean higher 
+quality. All scores are averages over the relevant 
+test sets. There are twenty comparisons in the 
+table. Among these, there is one case (French-
+English assessed with METEOR) where BLEU 
+outperforms PORT, there are seven ties, and there 
+are twelve cases where PORT is better. Table 3 
+shows that fr-en outputs are very similar for both 
+tuning types, so the fr-en results are perhaps less 
+informative than the others. Overall, PORT tuning 
+has a striking advantage over BLEU tuning.  
+Both (Liu et al, 2011) and (Cer et al, 2011) 
+showed that with MERT, if you want the best 
+possible score for a system?s translations according 
+to metric M, then you should tune with M. This 
+doesn?t appear to be true when PORT and BLEU 
+tuning are compared in Table 4. For the two 
+Chinese-to-English tasks in the table, PORT tuning 
+yields a better BLEU score than BLEU tuning, 
+with significance at p < 0.05. We are currently 
+investigating why PORT tuning gives higher 
+BLEU scores than BLEU tuning for Chinese-
+English and German-English. In internal tests we 
+have found no systematic difference in dev-set 
+BLEUs, so we speculate that PORT?s emphasis on 
+reordering yields models that generalize better for 
+these two language pairs. 
+3.2.3 Human Evaluation 
+We conducted a human evaluation on outputs from 
+BLEU- and PORT-tuned systems. The examples 
+are randomly picked from all ?to-English? 
+conditions shown in Tables 3 & 4 (i.e., all 
+conditions except English-to-German).  
+We performed pairwise comparison of the 
+translations produced by the system types as in 
+(Callison-Burch et al, 2010; Callison-Burch et al, 
+2011). First, we eliminated examples where the 
+reference had fewer than 10 words or more than 50 
+words, or where outputs of the BLEU-tuned and 
+PORT-tuned systems were identical. The 
+evaluators (colleagues not involved with this 
+paper) objected to comparing two bad translations, 
+so we then selected for human evaluation only 
+translations that had high sentence-level (1-TER) 
+scores. To be fair to both metrics, for each 
+condition, we took the union of examples whose 
+BLEU-tuned output was in the top n% of BLEU 
+outputs and those whose PORT-tuned output was 
+in the top n% of PORT outputs (based on (1-
+TER)). The value of n varied by condition: we 
+chose the top 20% of zh-en small, top 20% of en-
+de, top 50% of fr-en and top 40% of zh-en large. 
+We then randomly picked 450 of these examples to 
+form the manual evaluation set. This set was split 
+into 15 subsets, each containing 30 sentences. The 
+first subset was used as a common set; each of the 
+other 14 subsets was put in a separate file, to which 
+the common set is added.  Each of the 14 
+evaluators received one of these files, containing 
+60 examples (30 unique examples and 30 examples 
+shared with the other evaluators). Within each 
+example, BLEU-tuned and PORT-tuned outputs 
+were presented in random order. 
+After receiving the 14 annotated files, we 
+computed Fleiss?s Kappa (Fleiss, 1971) on the 
+common set to measure inter-annotator agreement, 
+all? . Then, we excluded annotators one at a time 
+to compute i? (Kappa score without i-th annotator, 
+i.e., from the other 13). Finally, we filtered out the 
+files from the 4 annotators whose answers were 
+most different from everybody else?s: i.e., 
+annotators with the biggest iall ?? ?  values. 
+This left 10 files from 10 evaluators. We threw 
+away the common set in each file, leaving 300 
+pairwise comparisons. Table 5 shows that the 
+evaluators preferred the output from the PORT-
+tuned system 136 times, the output from the 
+BLEU-tuned one 98 times, and had no preference 
+the other 66 times. This indicates that there is a 
+human preference for outputs from the PORT-
+tuned system over those from the BLEU-tuned 
+system at the p<0.01 significance level (in cases 
+where people prefer one of them). 
+PORT tuning seems to have a bigger advantage 
+over BLEU tuning when the translation task is 
+hard. Of the Table 5 language pairs, the one where 
+PORT tuning helps most has the lowest BLEU in 
+Table 4 (German-English); the one where it helps 
+least in Table 5 has the highest BLEU in Table 4 
+(French-English). (Table 5 does not prove BLEU is 
+superior to PORT for French-English tuning: 
+statistically, the difference between 14 and 17 here 
+is a tie). Maybe by picking examples for each 
+condition that were the easiest for the system to 
+translate (to make human evaluation easier), we 
+935
+mildly biased the results in Table 5 against PORT 
+tuning. Another possible factor is reordering. 
+PORT differs from BLEU partly in modeling long-
+distance reordering more accurately; English and 
+French have similar word order, but the other two 
+language pairs don?t. The results in section 3.3 
+(below) for Qmean, a version of PORT without 
+word ordering factor v, suggest v may be defined 
+suboptimally for French-English.  
+ 
+ PORT win BLEU win equal total 
+zh-en 
+small 
+19 
+38.8% 
+18 
+36.7% 
+12 
+24.5% 
+49 
+zh-en 
+large 
+69 
+45.7% 
+46 
+30.5% 
+36 
+23.8% 
+151 
+fr-en 
+Hans 
+14 
+32.6% 
+17 
+39.5% 
+12 
+27.9% 
+43 
+de-en 
+WMT 
+34 
+59.7% 
+17 
+29.8% 
+6 
+10.5% 
+57 
+All 136 
+45.3% 
+98 
+32.7% 
+66 
+22.0% 
+300 
+Table 5: Human preference for outputs from PORT-
+tuned vs. BLEU-tuned system. 
+3.2.4 Computation time  
+A good tuning metric should run very fast; this is 
+one of the advantages of BLEU. Table 6 shows the 
+time required to score the 100-best hypotheses for 
+the dev set for each data condition during MERT 
+for BLEU and PORT in similar implementations. 
+The average time of each iteration, including 
+model loading, decoding, scoring and running 
+MERT4, is in brackets. PORT takes roughly 1.5 ? 
+2.5 as long to compute as BLEU, which is 
+reasonable for a tuning metric.  
+ 
+ zh-en 
+small 
+zh-en 
+large 
+fr-en 
+Hans 
+de-en 
+WMT 
+en-de 
+WMT 
+BLEU 3 (13)  3 (17) 2 (19) 2 (20) 2 (11) 
+PORT 5 (21) 5 (24) 4 (28) 5 (28) 4 (15) 
+Table 6: Time to score 100-best hypotheses (average 
+time per iteration) in minutes.  
+3.2.5 Robustness to word alignment errors 
+PORT, unlike BLEU, depends on word 
+alignments. How does quality of word alignment 
+between source and reference affect PORT tuning? 
+We created a dev set from Chinese Tree Bank 
+                                                           
+4
+ Our experiments are run on a cluster. The average time for 
+an iteration includes queuing, and the speed of each node is 
+slightly different, so bracketed times are only for reference. 
+(CTB) hand-aligned data. It contains 588 sentences 
+(13K target words), with one reference. We also 
+ran GIZA++ to obtain its automatic word 
+alignment, computed on CTB and FBIS.  The AER 
+of the GIZA++ word alignment on CTB is 0.32.  
+In Table 7, CTB is the dev set. The table shows 
+tuning with BLEU, PORT with human word 
+alignment (PORT + HWA), and PORT with 
+GIZA++ word alignment (PORT + GWA); the 
+condition is zh-en small. Despite the AER of 0.32 
+for automatic word alignment, PORT tuning works 
+about as well with this alignment as for the gold 
+standard CTB one. (The BLEU baseline in Table 7 
+differs from the Table 4 BLEU baseline because 
+the dev sets differ).  
+ 
+Tune BLEU MTR 1-TER PORT 
+BLEU 25.1 53.7 36.4 47.8 
+PORT + HWA 25.3 54.4 37.0 48.2 
+PORT + GWA 25.3 54.6 36.4 48.1 
+Table 7: PORT tuning - human & GIZA++ alignment 
+ 
+Task Tune BLEU MTR 1-TER PORT 
+zh-en 
+small 
+BLEU 
+PORT 
+Qmean 
+26.8 
+27.2 
+26.8 
+55.2 
+55.7 
+55.3 
+38.0 
+38.0 
+38.2 
+49.7 
+50.0 
+49.8 
+zh-en 
+large 
+BLEU 
+PORT 
+Qmean 
+29.9 
+30.3 
+30.2 
+58.4 
+59.0 
+58.5 
+41.2 
+42.0 
+41.8 
+53.0 
+53.2 
+53.1 
+fr-en 
+Hans 
+BLEU 
+PORT 
+Qmean 
+38.8 
+38.8 
+38.8 
+69.8 
+69.6 
+69.8 
+54.2 
+54.6 
+54.6 
+57.1 
+57.1 
+57.1 
+de-en 
+WMT 
+BLEU 
+PORT 
+Qmean 
+20.1 
+20.3 
+20.3 
+55.6 
+56.0 
+56.3 
+38.4 
+38.4 
+38.1 
+39.6 
+39.7 
+39.7 
+en-de 
+WMT 
+BLEU 
+PORT 
+Qmean 
+13.6 
+13.6 
+13.6 
+43.3 
+43.3 
+43.4 
+30.1 
+30.7 
+30.3 
+31.7 
+31.7 
+31.7 
+Table 8: Impact of ordering measure v on PORT 
+3.3 Analysis 
+Now, we look at the details of PORT to see which 
+of them are the most important. We do not have 
+space here to describe all the details we studied, 
+but we can describe some of them. E.g., does the 
+ordering measure v help tuning performance? To 
+answer this, we introduce an intermediate metric. 
+This is Qmean as in Eq. (10): PORT without the 
+ordering measure. Table 8 compares tuning with 
+BLEU, PORT, and Qmean.  PORT outperforms 
+Qmean on seven of the eight automatic scores 
+shown for small and large Chinese-English. 
+936
+However, for the European language pairs, PORT 
+and Qmean seem to be tied. This may be because 
+we optimized ?  in Eq. (18) for Chinese-English, 
+making the influence of word ordering measure v 
+in PORT too strong for the European pairs, which 
+have similar word order.  
+Measure v seems to help Chinese-English 
+tuning. What would results be on that language 
+pair if we were to replace v in PORT with another 
+ordering measure? Table 9 gives a partial answer, 
+with Spearman?s ? and Kendall?s ? replacing v 
+with ? or ? in PORT for the zh-en small condition 
+(CTB with human word alignment is the dev set). 
+The original definition of PORT seems preferable. 
+ 
+Tune BLEU METEOR 1-TER 
+BLEU 25.1 53.7 36.4 
+PORT(v) 25.3 54.4 37.0 
+PORT(?) 25.1 54.2 36.3 
+PORT(?) 25.1 54.0 36.0 
+Table 9: Comparison of the ordering measure: replacing 
+? with ? or ? in PORT. 
+ 
+ 
+Task 
+ 
+Tune 
+ordering measures 
+? ? v 
+NIST06 BLEU 
+PORT 
+0.979 
+0.979 
+0.926 
+0.928 
+0.915 
+0.917 
+NIST08 BLEU 
+PORT 
+0.980 
+0.981 
+0.926 
+0.929 
+0.916 
+0.918 
+CTB BLEU 
+PORT 
+0.973 
+0.975 
+0.860 
+0.866 
+0.847 
+0.853 
+Table 10: Ordering scores (?, ? and v) for test sets NIST 
+2006, 2008 and CTB. 
+ 
+A related question is how much word ordering 
+improvement we obtained from tuning with PORT. 
+We evaluate Chinese-English word ordering with 
+three measures: Spearman?s ?, Kendall?s ? distance  
+as applied to two permutations (see section 2.2.2) 
+and our own measure v. Table 10 shows the effects 
+of BLEU and PORT tuning on these three 
+measures, for three test sets in the zh-en large 
+condition. Reference alignments for CTB were 
+created by humans, while the NIST06 and NIST08 
+reference alignments were produced with GIZA++. 
+A large value of ?, ?, or v implies outputs have 
+ordering similar to that in the reference. From the 
+table, we see that the PORT-tuned system yielded 
+better word order than the BLEU-tuned system in 
+all nine combinations of test sets and ordering 
+measures. The advantage of PORT tuning is 
+particularly noticeable on the most reliable test set: 
+the hand-aligned CTB data.  
+What is the impact of the strict redundancy 
+penalty on PORT? Note that in Table 8, even 
+though Qmean has no ordering measure, it 
+outperforms BLEU. Table 11 shows the BLEU 
+brevity penalty (BP) and (number of matching 1- 
+& 4- grams)/(number of total 1- & 4- grams) for 
+the translations. The BLEU-tuned and Qmean-
+tuned systems generate similar numbers of 
+matching n-grams, but Qmean-tuned systems 
+produce fewer n-grams (thus, shorter translations). 
+E.g., for zh-en small, the BLEU-tuned system 
+produced 44,677 1-grams (words), while the 
+Qmean-trained system one produced 43,555 1-
+grams; both have about 32,000 1-grams matching 
+the references. Thus, the Qmean translations have 
+higher precision. We believe this is because of the 
+strict redundancy penalty in Qmean. As usual, 
+French-English is the outlier: the two outputs here 
+are typically so similar that BLEU and Qmean 
+tuning yield very similar n-gram statistics. 
+ 
+Task Tune 1-gram 4-gram BP 
+zh-en 
+small 
+BLEU 
+Qmean 
+32055/44677 
+31996/43555 
+4603/39716 
+4617/38595 
+0.967 
+0.962 
+zh-en 
+large 
+BLEU 
+Qmean 
+34583/45370 
+34369/44229 
+5954/40410 
+5987/39271 
+0.972 
+0.959 
+fr-en 
+Hans 
+BLEU 
+Qmean 
+28141/40525 
+28167/40798 
+8654/34224 
+8695/34495 
+0.983 
+0.990 
+de-en 
+WMT 
+BLEU 
+Qmean 
+42380/75428 
+42173/72403 
+5151/66425 
+5203/63401 
+1.000 
+0.968 
+en-de 
+WMT 
+BLEU 
+Qmean 
+30326/62367 
+30343/62092 
+2261/54812 
+2298/54537 
+1.000 
+0.997 
+Table 11: #matching-ngram/#total-ngram and BP score  
+4 Conclusions 
+In this paper, we have proposed a new tuning 
+metric for SMT systems.  PORT incorporates 
+precision, recall, strict brevity penalty and strict 
+redundancy penalty, plus a new word ordering 
+measure v.  As an evaluation metric, PORT 
+performed better than BLEU at the system level 
+and the segment level, and it was competitive with 
+or slightly superior to METEOR at the segment 
+level. Most important, our results show that PORT-
+tuned MT systems yield better translations  than  
+BLEU-tuned systems on several language pairs, 
+according both to automatic metrics and human 
+evaluations. In future work, we plan to tune the 
+free parameter ? for each language pair. 
+937
+References 
+S. Banerjee and A. Lavie. 2005. METEOR: An 
+automatic metric for MT evaluation with improved 
+correlation with human judgments. In Proceedings of 
+ACL Workshop on Intrinsic & Extrinsic Evaluation 
+Measures for Machine Translation and/or 
+Summarization. 
+A. Birch and M. Osborne. 2011. Reordering Metrics for 
+MT. In Proceedings of ACL.  
+C. Callison-Burch, C. Fordyce, P. Koehn, C. Monz and 
+J. Schroeder. 2008. Further Meta-Evaluation of 
+Machine Translation. In Proceedings of WMT. 
+C. Callison-Burch, M. Osborne, and P. Koehn. 2006. 
+Re-evaluating the role of BLEU in machine 
+translation research. In Proceedings of EACL. 
+C. Callison-Burch, P. Koehn, C. Monz, K. Peterson, M. 
+Przybocki and O. Zaidan. 2010. Findings of the 2010 
+Joint Workshop on Statistical Machine Translation 
+and Metrics for Machine Translation. In Proceedings 
+of WMT. 
+C. Callison-Burch, P. Koehn, C. Monz and O. Zaidan. 
+2011. Findings of the 2011 Workshop on Statistical 
+Machine Translation. In Proceedings of WMT. 
+D. Cer, D. Jurafsky and C. Manning. 2010. The Best 
+Lexical Metric for Phrase-Based Statistical MT 
+System Optimization. In Proceedings of NAACL. 
+Y. S. Chan and H. T. Ng. 2008. MAXSIM: A maximum 
+similarity metric for machine translation evaluation. 
+In Proceedings of ACL. 
+B. Chen and R. Kuhn. 2011. AMBER: A Modified 
+BLEU, Enhanced Ranking Metric. In: Proceedings of 
+WMT. Edinburgh, UK. July. 
+D. Chiang, S. DeNeefe, Y. S. Chan, and H. T. Ng. 2008. 
+Decomposability of translation metrics for improved 
+evaluation and efficient algorithms. In Proceedings of 
+EMNLP, pages 610?619. 
+M. Denkowski and A. Lavie. 2010. Meteor-next and the 
+meteor paraphrase tables: Improved evaluation 
+support for five target languages. In Proceedings of 
+the Joint Fifth Workshop on SMT and 
+MetricsMATR, pages 314?317. 
+G. Doddington. 2002. Automatic evaluation of machine 
+translation quality using n-gram co-occurrence 
+statistics. In Proceedings of HLT. 
+J. L. Fleiss. 1971. Measuring nominal scale agreement 
+among many raters. In Psychological Bulletin, Vol. 
+76, No. 5 pp. 378?382. 
+Y. He, J. Du, A. Way and J. van Genabith. 2010. The 
+DCU dependency-based metric in WMT-
+MetricsMATR 2010. In Proceedings of the Joint 
+Fifth Workshop on Statistical Machine Translation 
+and MetricsMATR, pages 324?328.  
+H. Isozaki, T. Hirao, K. Duh, K. Sudoh, H. Tsukada. 
+2010. Automatic Evaluation of Translation Quality 
+for Distant Language Pairs. In Proceedings of 
+EMNLP.  
+M. Kendall. 1938. A New Measure of Rank Correlation. 
+In Biometrika, 30 (1?2), pp. 81?89. 
+P. Koehn, H. Hoang, A. Birch, C. Callison-Burch, M. 
+Federico, N. Bertoldi, B. Cowan, W. Shen, C. Moran, 
+R. Zens, C. Dyer, O. Bojar, A. Constantin and E. 
+Herbst. 2007. Moses: Open Source Toolkit for Statis-
+tical Machine Translation. In Proceedings of ACL, 
+pp. 177-180, Prague, Czech Republic. 
+A. Lavie and M. J. Denkowski. 2009. The METEOR 
+metric for automatic evaluation of machine 
+translation. Machine Translation, 23. 
+C. Liu, D. Dahlmeier, and H. T. Ng. 2010. TESLA: 
+Translation evaluation of sentences with linear-
+programming-based analysis. In Proceedings of the 
+Joint Fifth Workshop on Statistical Machine 
+Translation and MetricsMATR, pages 329?334. 
+C. Liu, D. Dahlmeier, and H. T. Ng. 2011. Better 
+evaluation metrics lead to better machine translation. 
+In Proceedings of EMNLP. 
+C. Lo and D. Wu. 2011. MEANT: An inexpensive, 
+high-accuracy, semi-automatic metric for evaluating 
+translation utility based on semantic roles. In 
+Proceedings of ACL. 
+F. J. Och. 2003. Minimum error rate training in 
+statistical machine translation. In Proceedings of 
+ACL-2003. Sapporo, Japan. 
+F. J. Och and H. Ney. 2003. A Systematic Comparison 
+of Various Statistical Alignment Models. In 
+Computational Linguistics, 29, pp. 19?51. 
+S. Pado, M. Galley, D. Jurafsky, and C.D. Manning. 
+2009. Robust machine translation evaluation with 
+entailment features. In Proceedings of ACL-IJCNLP. 
+K. Papineni, S. Roukos, T. Ward, and W.-J. Zhu. 2002. 
+BLEU: a method for automatic evaluation of 
+machine translation. In Proceedings of ACL. 
+K. Parton, J. Tetreault, N. Madnani and M. Chodorow. 
+2011.  E-rating Machine Translation. In Proceedings 
+of WMT. 
+M. Snover, B. Dorr, R. Schwartz, L. Micciulla, and J. 
+Makhoul. 2006. A Study of Translation Edit Rate 
+938
+with Targeted Human Annotation. In Proceedings of 
+Association for Machine Translation in the Americas. 
+M. Snover, N. Madnani, B. Dorr, and R. Schwartz. 
+2009. Fluency, Adequacy, or HTER? Exploring 
+Different Human Judgments with a Tunable MT 
+Metric. In Proceedings of the Fourth Workshop on 
+Statistical Machine Translation, Athens, Greece. 
+C. Spearman. 1904. The proof and measurement of 
+association between two things. In American Journal 
+of Psychology, 15, pp. 72?101. 
+S. Vogel, H. Ney, and C. Tillmann. 1996. HMM based 
+word alignment in statistical translation. In 
+Proceedings of COLING. 
+939
+Proceedings of the Joint 5th Workshop on Statistical Machine Translation and MetricsMATR, pages 127?132,
+Uppsala, Sweden, 15-16 July 2010. c?2010 Association for Computational Linguistics
+Lessons from NRC?s Portage System at WMT 2010 
+ 
+ 
+Samuel Larkin, Boxing Chen, George Foster, Ulrich Germann, Eric Joanis, 
+Howard Johnson, and Roland Kuhn  
+National Research Council of Canada (NRC) 
+Gatineau, Qu?bec, Canada. 
+Firstname.Lastname@cnrc-nrc.gc.ca 
+ 
+  
+ 
+Abstract 
+ 
+NRC?s Portage system participated in the Eng-
+lish-French (E-F) and French-English (F-E) 
+translation tasks of the ACL WMT 2010 eval-
+uation. The most notable improvement over 
+earlier versions of Portage is an efficient im-
+plementation of lattice MERT. While Portage 
+has typically performed well in Chinese to 
+English MT evaluations, most recently in the 
+NIST09 evaluation, our participation in WMT 
+2010 revealed some interesting differences be-
+tween Chinese-English and E-F/F-E transla-
+tion, and alerted us to certain weak spots in 
+our system. Most of this paper discusses the 
+problems we found in our system and ways of 
+fixing them. We learned several lessons that 
+we think will be of general interest.  
+1 Introduction 
+Portage, the statistical machine translation sys-
+tem of the National Research Council of Canada 
+(NRC), is a two-pass phrase-based system. The 
+translation tasks to which it is most often applied 
+are Chinese to English, English to French (hen-
+ceforth ?E-F?), and French to English (hence-
+forth ?F-E?): in recent years we worked on Chi-
+nese-English translation for the GALE project 
+and for NIST evaluations, and English and 
+French are Canada?s two official languages. In 
+WMT 2010, Portage scored 28.5 BLEU (un-
+cased) for F-E, but only 27.0 BLEU (uncased) 
+for E-F. For both language pairs, Portage tru-
+ecasing caused a loss of 1.4 BLEU; other WMT 
+systems typically lost around 1.0 BLEU after 
+truecasing. In Canada, about 80% of translations 
+between English and French are from English to 
+French, so we would have preferred better results 
+for that direction. This paper first describes the 
+version of Portage that participated in WMT 
+2010. It then analyzes problems with the system 
+and describes the solutions we found for some of 
+them.  
+2 Portage system description 
+2.1 Core engine and training data 
+The NRC system uses a standard two-pass 
+phrase-based approach. Major features in the 
+first-pass loglinear model include phrase tables 
+derived from symmetrized IBM2 alignments and 
+symmetrized HMM alignments, a distance-based 
+distortion model, a lexicalized distortion model, 
+and language models (LMs) that can be either 
+static or else dynamic mixtures. Each phrase ta-
+ble used was a merged one, created by separately 
+training an IBM2-based and an HMM-based 
+joint count table on the same data and then add-
+ing the counts. Each includes relative frequency 
+estimates and lexical estimates (based on Zens 
+and Ney, 2004) of forward and backward condi-
+tional probabilities. The lexicalized distortion 
+probabilities are also obtained by adding IBM2 
+and HMM counts. They involve 6 features (mo-
+notone, swap and discontinuous features for fol-
+lowing and preceding phrase) and are condi-
+tioned on phrase pairs in a model similar to that 
+of Moses (Koehn et al, 2005); a MAP-based 
+backoff smoothing scheme is used to combat 
+data sparseness when estimating these probabili-
+ties. Dynamic mixture LMs are linear mixtures 
+of ngram models trained on parallel sub-corpora 
+with weights set to minimize perplexity of the 
+current source text as described in (Foster and 
+Kuhn, 2007); henceforth, we?ll call them ?dy-
+namic LMs?.  
+Decoding uses the cube-pruning algorithm of 
+(Huang and Chiang, 2007) with a 7-word distor-
+tion limit. Contrary to the usual implementation 
+of distortion limits, we allow a new phrase to end 
+127
+more than 7 words past the first non-covered 
+word, as long as the new phrase starts within 7 
+words from the first non-covered word. Notwith-
+standing the distortion limit, contiguous phrases 
+can always be swapped. Out-of-vocabulary 
+(OOV) source words are passed through un-
+changed to the target. Loglinear weights are 
+tuned with Och's max-BLEU algorithm over lat-
+tices (Macherey et al, 2008); more details about 
+lattice MERT are given in the next section. The 
+second pass rescores 1000-best lists produced by 
+the first pass, with additional features including 
+various LM and IBM-model probabilities; ngram, 
+length, and reordering posterior probabilities and 
+frequencies; and quote and parenthesis mismatch 
+indicators. To improve the quality of the maxima 
+found by MERT when using large sets of partial-
+ly-overlapping rescoring features, we use greedy 
+feature selection, first expanding from a baseline 
+set, then pruning. 
+We restricted our training data to data that was 
+directly available through the workshop's web-
+site; we didn?t use the LDC resources mentioned 
+on the website (e.g., French Gigaword, English 
+Gigaword). Below, ?mono? refers to all mono-
+lingual data (Europarl, news-commentary, and 
+shuffle); ?mono? English is roughly three times 
+bigger than ?mono? French (50.6 M lines in 
+?mono? English, 17.7 M lines in ?mono? French). 
+?Domain? refers to all WMT parallel training 
+data except GigaFrEn (i.e., Europarl, news-
+commentary, and UN).   
+2.2 Preprocessing and postprocessing 
+We used our own English and French pre- and 
+post-processing tools, rather than those available 
+from the WMT web site. For training, all English 
+and French text is tokenized with a language-
+specific tokenizer and then mapped to lowercase. 
+Truecasing uses an HMM approach, with lexical 
+probabilities derived from ?mono? and transition 
+probabilities from a 3-gram LM trained on tru-
+ecase ?mono?. A subsequent rule-based pass ca-
+pitalizes sentence-initial words. A final detokeni-
+zation step undoes the tokenization. 
+2.3 System configurations for WMT 2010 
+In the weeks preceding the evaluation, we tried 
+several ways of arranging the resources available 
+to us. We picked the configurations that gave the 
+highest BLEU scores on WMT2009 Newstest. 
+We found that tuning with lattice MERT rather 
+than N-best MERT allowed us to employ more 
+parameters and obtain better results.  
+E-F system components: 
+1. Phrase table trained on ?domain?;  
+2. Phrase table trained on GigaFrEn;  
+3. Lexicalized distortion model trained on 
+?domain?;  
+4. Distance-based distortion model; 
+5. 5-gram French LM trained on ?mono?;  
+6. 4-gram LM trained on French half of 
+GigaFrEn;  
+7. Dynamic LM composed of 4 LMs, each 
+trained on the French half of a parallel 
+corpus (5-gram LM trained on ?domain?, 
+4-gram LM on GigaFrEn, 5-gram LM on 
+news-commentary and 5-gram LM on 
+UN). 
+ 
+The F-E system is a mirror image of the E-F sys-
+tem.  
+3 Details of lattice MERT (LMERT) 
+Our system?s implementation of LMERT (Ma-
+cherey et al, 2008) is the most notable recent 
+change in our system. As more and more features 
+are included in the loglinear model, especially if 
+they are correlated, N-best MERT (Och, 2003) 
+shows more and more instability, because of 
+convergence to local optima (Foster and Kuhn, 
+2009). We had been looking for methods that 
+promise more stability and better convergence. 
+LMERT seemed to fit the bill. It optimizes over 
+the complete lattice of candidate translations af-
+ter a decoding run. This avoids some of the prob-
+lems of N-best lists, which lack variety, leading 
+to poor local optima and the need for many de-
+coder runs. 
+Though the algorithm is straightforward and is 
+highly parallelizable, attention must be paid to 
+space and time resource issues during implemen-
+tation. Lattices output by our decoder were large 
+and needed to be shrunk dramatically for the al-
+gorithm to function well. Fortunately, this could 
+be achieved via the finite state equivalence algo-
+rithm for minimizing deterministic finite state 
+machines. The second helpful idea was to sepa-
+rate out the features that were a function of the 
+phrase associated with an arc (e.g., translation 
+length and translation model probability fea-
+tures). These features could then be stored in a 
+smaller phrase-feature table. Features associated 
+with language or distortion models could be han-
+dled in a larger transition-feature table. 
+The above ideas, plus careful coding of data 
+structures, brought the memory footprint down 
+sufficiently to allow us to use complete lattices 
+from the decoder and optimize over the complete 
+128
+development set for NIST09 Chinese-English. 
+However, combining lattices between decoder 
+runs again resulted in excessive memory re-
+quirements. We achieved acceptable perfor-
+mance by searching only the lattice from the lat-
+est decoder run; perhaps information from earlier 
+runs, though critical for convergence in N-best 
+MERT, isn?t as important for LMERT.  
+Until a reviewer suggested it, we had not 
+thought of pruning lattices to a specified graph 
+density as a solution for our memory problems. 
+This is referred to in a single sentence in (Ma-
+cherey et al, 2008), which does not specify its 
+implementation or its impact on performance, 
+and is an option of OpenFst (we didn?t use 
+OpenFst). We will certainly experiment with lat-
+tice pruning in future.  
+Powell's algorithm (PA), which is at the core 
+of MERT, has good convergence when features 
+are mostly independent and do not depart much 
+from a simple coordinate search; it can run into 
+problems when there are many correlated fea-
+tures (as with multiple translation and language 
+models). Figure 1 shows the kind of case where 
+PA works well. The contours of the function be-
+ing optimized are relatively smooth, facilitating 
+learning of new search directions from gradients. 
+Figure 2 shows a more difficult case: there is 
+a single optimum, but noise dominates and PA 
+has difficulty finding new directions. Search of-
+ten iterates over the original co-ordinates, miss-
+ing optima that are nearby but in directions not 
+discoverable from local gradients. Probes in ran-
+dom directions can do better than iteration over 
+the same directions (this is similar to the method 
+proposed for N-best MERT by Cer et al, 2008). 
+Each 1-dimensional MERT optimization is exact, 
+so if our probe stabs a region with better scores, 
+it will be discovered. Figures 1 and 2 only hint 
+at the problem: in reality, 2-dimensional search 
+isn?t a problem. The difficulties occur as the di-
+mension grows: in high dimensions, it is more 
+important to get good directions and they are 
+harder to find. 
+For WMT 2010, we crafted a compromise 
+with the best properties of PA, yet alowing for a 
+more aggressive search in more directions. We 
+start with PA. As long as PA is adding new di-
+rection vectors, it is continued. When PA stops 
+adding new directions, random rotation (ortho-
+gonal transformation) of the coordinates is per-
+formed and PA is restarted in the new space. PA 
+almost always fails to introduce new directions 
+within the new coordinates, then fails again, so 
+another set of random coordinates is chosen. This 
+process repeats until convergence. In future 
+work, we will look at incorporating random res-
+tarts into the algorithm as additional insurance 
+against premature convergence.  
+Our LMERT implementation has room for 
+improvement: it may still run into over-fitting 
+problems with many correlated features. Howev-
+er, during preparation for the evaluation, we no-
+ticed that LMERT converged better than N-best 
+MERT, allowing models with more features and 
+higher BLEU to be chosen.  
+After the WMT submission, we discovered 
+that our LMERT implementation had a bug; our 
+submission was tuned with this buggy LMERT. 
+Comparison between our E-F submission tuned 
+with N-best MERT and the same system tuned 
+with bug-fixed LMERT shows BLEU gains of 
++1.5-3.5 for LMERT (on dev, WMT2009, and 
+WMT2010, with no rescoring). However, N-best 
+MERT performed very poorly in this particular 
+case; we usually obtain a gain due to LMERT of 
++0.2-1.0 (e.g., for the submitted F-E system).  
+ 
+ 
+Figure 1: Convergence for PA (Smooth Feature 
+Space)  
+ 
+ 
+Figure 2: Convergence for PA with Random Rotation 
+(Rough Feature Space) 
+129
+4 Problems and Solutions 
+4.1 Fixing LMERT  
+Just after the evaluation, we noticed a discrepan-
+cy for E-F between BLEU scores computed dur-
+ing LMERT optimization and scores from the 1-
+best list immediately after decoding. Our 
+LMERT code had a bug that garbled any ac-
+cented word in the version of the French refer-
+ence in memory; previous LMERT experiments 
+had English as target language, so the bug hadn?t 
+showed up. The bug didn?t affect characters in 
+the 7-bit ASCII set, such as English ones, only 
+accented characters. Words in candidate transla-
+tions were not garbled, so correct translations 
+with accents received a lower BLEU score than 
+they should have. As Table 1 shows, this bug 
+cost us about 0.5 BLEU for WMT 2010 E-F after 
+rescoring (according to NRC?s internal version 
+of BLEU, which differs slightly from WMT?s 
+BLEU). Despite this bug, the system tuned with 
+buggy LMERT (and submitted) was still better 
+than the best system we obtained with N-best 
+MERT. The bug didn?t affect F-E scores.  
+ 
+ Dev WMT2009 WMT2010 
+LMERT (bug) 25.26 26.85 27.55 
+LMERT 
+ (no bug) 
+25.43 26.89 28.07 
+ 
+Table 1: LMERT bug fix (E-F BLEU after rescoring) 
+4.2 Fixing odd translations 
+After the evaluation, we carefully studied the 
+system outputs on the WMT 2010 test data, par-
+ticularly for E-F. Apart from truecasing errors, 
+we noticed two kinds of bad behaviour: transla-
+tions of proper names and apparent passthrough 
+of English words to the French side.  
+Examples of E-F translations of proper names 
+from our WMT 2010 submission (each from a 
+different sentence): 
+ 
+Mr. Onderka ? M. Roman, Luk?? Marvan ? G. 
+Luk??, Janey ? The, Janette Tozer ? Janette, 
+Aysel Tugluk ? joints tugluk, Tawa Hallae ? 
+Ottawa, Oleson ?  production,  Alcobendas ?  ; 
+ 
+When the LMERT bug was fixed, some but 
+not all of these bad translations were corrected 
+(e.g., 3 of the 8 examples above were corrected). 
+Our system passes OOV words through un-
+changed. Thus, the names above aren?t OOVs, 
+but words that occur rarely in the training data, 
+and for which bad alignments have a dispropor-
+tionate effect. We realized that when a source 
+word begins with a capital, that may be a signal 
+that it should be passed through. We thus de-
+signed a passthrough feature function that applies 
+to all capitalized forms not at the start of a sen-
+tence (and also to forms at the sentence start if 
+they?re capitalized elsewhere). Sequences of one 
+or more capitalized forms are grouped into a 
+phrase suggestion (e.g., Barack Obama ? bar-
+rack obama) which competes with phrase table 
+entries and is assigned a weight by MERT. 
+The passthrough feature function yields a tiny 
+improvement over the E-F system with the bug-
+fixed LMERT on the dev corpus (WMT2008): 
++0.06 BLEU (without rescoring). It yields a larg-
+er improvement on our test corpus: +0.27 BLEU 
+(without rescoring). Furthermore, it corrects all 
+the examples from the WMT 2010 test shown 
+above (after the LMERT bug fix 5 of the 8 ex-
+amples above still had problems, but when the 
+passthrough function is incorporated all of them 
+go away). Though the BLEU gain is small, we 
+are happy to have almost eradicated this type of 
+error, which human beings find very annoying.  
+The opposite type of error is apparent pass-
+through. For instance, ?we?re? appeared 12 times 
+in the WMT 2010 test data, and was translated 6 
+times into French as ?we?re? - even though better 
+translations had higher forward probabilities. The 
+source of the problem is the backward probabili-
+ty P(E=?we?re?|F=?we?re?), which is 1.0; the 
+backward probabilities for valid French transla-
+tions of ?we?re? are lower. Because of the high 
+probability P(E=?we?re?|F=?we?re?) within the 
+loglinear combination, the decoder often chooses 
+?we?re? as the French translation of ?we?re?. 
+The (E=?we?re?, F=?we?re?) pair in WMT 
+2010 phrase tables arose from two sentence pairs 
+where the ?French? translation of an English sen-
+tence is a copy of that English sentence. In both, 
+the original English sentence contains ?we?re?. 
+Naturally, the English words on the ?French? 
+side are word-aligned with their identical twins 
+on the English side. Generally, if the training 
+data has sentence pairs where the ?French? sen-
+tence contains words from the English sentence, 
+those words will get high backward probabilities 
+of being translated as themselves. This problem 
+may not show up as an apparent passthrough; 
+instead, it may cause MERT to lower the weight 
+of the backward probability component, thus 
+hurting performance.  
+We estimated English contamination of the 
+French side of the parallel training data by ma-
+130
+nually inspecting a random sample of ?French? 
+sentences containing common English function 
+words. Manual inspection is needed for accurate 
+estimation: a legitimate French sentence might 
+contain mostly English words if, e.g., it is short 
+and cites the title of an English work (this 
+wouldn?t count as contamination). The degree of 
+contamination is roughly 0.05% for Europarl, 
+0.5% for news-commentary, 0.5% for UN, and 
+1% for GigaFrEn (in these corpora the French is 
+also contaminated by other languages, particular-
+ly German). Foreign contamination of English 
+for these corpora appears to be much less fre-
+quent.  
+Contamination can take strange forms. We ex-
+pected to see English sentences copied over in-
+tact to the French side, and we did, but we did 
+not expect to see so many ?French? sentences 
+that interleaved short English word sequences 
+with short French word sequences, apparently 
+because text with an English and a French col-
+umn had been copied by taking lines from alter-
+nate columns. We found many of these inter-
+leaved ?French? sentences, and found some of 
+them in exactly this form on the Web (i.e., the 
+corruption didn?t occur during WMT data collec-
+tion). The details may not matter: whenever the 
+?French? training sentence contains words from 
+its English twin, there can be serious damage via 
+backward probabilities. 
+To test this hypothesis, we filtered all parallel 
+and monolingual training data for the E-F system 
+with a language guessing tool called text_cat 
+(Cavnar and Trenkle, 1994). From parallel data, 
+we filtered out sentence pairs whose French side 
+had a high probability of not being French; from 
+LM training data, sentences with a high non-
+French probability. We set the filtering level by 
+inspecting the guesser?s assessment of news-
+commentary sentences, choosing a rather aggres-
+sive level that eliminated 0.7% of news-
+commentary sentence pairs. We used the same 
+level to filter Europarl (0.8% of sentence pairs 
+removed), UN (3.4%), GigaFrEn (4.7%), and 
+?mono? (4.3% of sentences).  
+ 
+ Dev WMT2009 WMT2010 
+Baseline 25.23 26.47 27.72 
+Filtered 25.45 26.66 27.98 
+ 
+Table 2: Data filtering (E-F BLEU, no rescoring) 
+ 
+Table 2 shows the results: a small but consis-
+tent gain (about +0.2 BLEU without rescoring). 
+We have not yet confirmed the hypothesis that 
+copies of source-language words in the paired 
+target sentence within training data can damage 
+system performance via backward probabilities.  
+4.3 Fixing problems with LM training   
+Post-evaluation, we realized that our arrange-
+ment of the training data for the LMs for both 
+language directions was flawed. The grouping 
+together of disparate corpora in ?mono? and 
+?domain? didn?t allow higher-quality, truly in-
+domain corpora to be weighted more heavily 
+(e.g., the news corpora should have higher 
+weights than Europarl, but they are lumped to-
+gether in ?mono?). There are also potentially 
+harmful overlaps between LMs (e.g., GigaFrEn 
+is used both inside and outside the dynamic LM).  
+We trained a new set of French LMs for the E-
+F system, which replaced all the French LMs 
+(#5-7) described in section 2.3 in the E-F system: 
+1. 5-gram LM trained on news-commentary 
+and shuffle;  
+2. Dynamic LM based on 4 5-gram LMs 
+trained on French side of parallel data 
+(LM trained on GigaFrEn, LM on UN, 
+LM on Europarl, and LM on news-
+commentary). 
+We did not apply the passthrough function or 
+language filtering (section 4.2) to any of the 
+training data for any component (LMs, TMs, dis-
+tortion models) of this system; we did use the 
+bug-fixed version of LMERT (section 4.1). 
+The experiments with these new French LMs 
+for the E-F system yielded a small decrease of 
+NRC BLEU on dev (-0.15) and small increases 
+on WMT Newstest 2009 and Newstest 2010 
+(+0.2 and +0.4 respectively without rescoring). 
+We didn?t do F-E experiments of this type.  
+4.4 Pooling improvements   
+The improvements above were (individual un-
+cased E-F BLEU gains without rescoring in 
+brackets): LMERT bug fix (about +0.5); pass-
+through feature function (+0.1-0.3); language 
+filtering for French (+0.2). There was also a 
+small gain on test data by rearranging E-F LM 
+training data, though the loss on ?dev? suggests 
+this may be a statistical fluctuation. We built 
+these four improvements into the evaluation E-F 
+system, along with quote normalization: in all 
+training and test data, diverse single quotes were 
+mapped onto the ascii single quote, and diverse 
+double quotes were mapped onto the ascii double 
+quote. The average result on WMT2009 and 
+WMT2010 was +1.7 BLEU points compared to 
+the original system, so there may be synergy be-
+131
+tween the improvements. The original system 
+had gained +0.3 from rescoring, while the final 
+improved system only gained +0.1 from rescor-
+ing: a post-evaluation rescored gain of +1.5.  
+An experiment in which we dropped lexica-
+lized distortion from the improved system 
+showed that this component yields about +0.2 
+BLEU. Much earlier, when we were still training 
+systems with N-best MERT, incorporation of the 
+6-feature lexicalized distortion often caused 
+scores to go down (by as much as 2.8 BLEU). 
+This illustrates how LMERT can make incorpo-
+ration of many more features worthwhile.  
+4.5 Fixing truecasing  
+Our truecaser doesn?t work as well as truecasers 
+of other WMT groups: we lost 1.4 BLEU by tru-
+ecasing in both language directions, while others 
+lost 1.0 or less. To improve our truecaser, we 
+tried: 1. Training it on all relevant data and 2. 
+Collecting 3-gram case-pattern statistics instead 
+of unigrams. Neither of these helped significant-
+ly. One way of improving the truecaser would be 
+to let case information from source words influ-
+ence the case of the corresponding target words. 
+Alternatively, one of the reviewers stated that 
+several labs involved in WMT have no separate 
+truecaser and simply train on truecase text. We 
+had previously tried this approach for NIST Chi-
+nese-English and discarded it because of its poor 
+performance. We are currently re-trying it on 
+WMT data; if it works better than having a sepa-
+rate truecaser, this was yet another area where 
+lessons from Chinese-English were misleading. 
+5 Lessons  
+LMERT is an improvement over N-best MERT. 
+The submitted system was one for which N-best 
+MERT happened to work very badly, so we got 
+ridiculously large gains of +1.5-3.5 BLEU for 
+non-buggy LMERT over N-best MERT. These 
+results are outliers: in experiments with similar 
+configurations, we typically get +0.2-1.0 for 
+LMERT over N-best MERT. Post-evaluation, 
+four minor improvements ? a case-based pass-
+through function, language filtering, LM rear-
+rangement, and quote normalization ? collective-
+ly gave a nice improvement. Nothing we tried 
+helped truecaser performance significantly, 
+though we have some ideas on how to proceed. 
+We learned some lessons from WMT 2010. 
+Always test your system on the relevant lan-
+guage pair. Our original version of LMERT was 
+developed on Chinese-English and worked well 
+there, but had a bug that surfaced only when the 
+target language had accents.  
+European language pairs are more porous to 
+information than Chinese-English. Our WMT 
+system reflected design decisions for Chinese-
+English, and thus didn?t exploit case information 
+in the source: it passed through OOVs to the tar-
+get, but didn?t pass through upper-case words 
+that are likely to be proper nouns.  
+It is beneficial to remove foreign-language 
+contamination from the training data.  
+When entering an evaluation one hasn?t parti-
+cipated in for several years, always read system 
+papers from the previous year. Some of the 
+WMT 2008 system papers mention passthrough 
+of some non-OOVs, filtering out of noisy train-
+ing data, and using the case of a source word to 
+predict the case of the corresponding target word. 
+References  
+William Cavnar and John Trenkle. 1994. N-Gram-
+Based Text Categorization. Proc. Symposium on 
+Document Analysis and Information Retrieval, 
+UNLV Publications/Reprographics, pp. 161-175. 
+Daniel Cer, Daniel Jurafsky, and Christopher D. 
+Manning. 2008. Regularization and search for min-
+imum error rate training. Proc. Workshop on 
+SMT, pp. 26-34. 
+George Foster and Roland Kuhn. 2009. Stabilizing 
+Minimum Error Rate Training. Proc. Workshop 
+on SMT, pp. 242-249. 
+George Foster and Roland Kuhn. 2007. Mixture-
+Model Adaptation for SMT. Proc. Workshop on 
+SMT, pp. 128-135. 
+Liang Huang and David Chiang. 2007. Forest Rescor-
+ing: Faster Decoding with Integrated Language 
+Models.  Proc. ACL, pp.  144-151. 
+Philipp Koehn, Amittai Axelrod, Alexandra Birch 
+Mayne, Chris Callison-Burch, Miles Osborne, and 
+David Talbot. 2005. Edinburgh System Description 
+for the 2005 IWSLT Speech Transcription Evalua-
+tion. MT Eval. Workshop. 
+Wolfgang Macherey, Franz Josef Och, Ignacio Thay-
+er, and Jakob Uszkoreit. 2008. Lattice-based Min-
+imum Error Rate Training for Statistical Machine-
+Translation. Conf. EMNLP, pp. 725-734. 
+Franz Josef Och. 2003. Minimum Error Rate Training 
+in Statistical Machine Translation.  Proc. ACL, 
+pp. 160-167.  
+Richard Zens and Hermann Ney. 2004. Improvements 
+in Phrase-Based Statistical Machine Translation. 
+Proc. HLT/NAACL, pp. 257-264. 
+132

@@ -1,0 +1,1866 @@
+Proceedings of the 8th International Workshop on Semantic Evaluation (SemEval 2014), pages 356?360,
+Dublin, Ireland, August 23-24, 2014.
+IUCL: Combining Information Sources for SemEval Task 5
+Alex Rudnick, Levi King, Can Liu, Markus Dickinson, Sandra K?ubler
+Indiana University
+Bloomington, IN, USA
+{alexr,leviking,liucan,md7,skuebler}@indiana.edu
+Abstract
+We describe the Indiana University sys-
+tem for SemEval Task 5, the L2 writ-
+ing assistant task, as well as some exten-
+sions to the system that were completed
+after the main evaluation. Our team sub-
+mitted translations for all four language
+pairs in the evaluation, yielding the top
+scores for English-German. The system
+is based on combining several information
+sources to arrive at a final L2 translation
+for a given L1 text fragment, incorporating
+phrase tables extracted from bitexts, an L2
+language model, a multilingual dictionary,
+and dependency-based collocational mod-
+els derived from large samples of target-
+language text.
+1 Introduction
+In the L2 writing assistant task, we must translate
+an L1 fragment in the midst of an existing, nearly
+complete, L2 sentence. With the presence of this
+rich target-language context, the task is rather dif-
+ferent from a standard machine translation setting,
+and our goal with our design was to make effec-
+tive use of the L2 context, exploiting collocational
+relationships between tokens anywhere in the L2
+context and the proposed fragment translations.
+Our system proceeds in several stages: (1) look-
+ing up or constructing candidate translations for
+the L1 fragment, (2) scoring candidate transla-
+tions via a language model of the L2, (3) scoring
+candidate translations with a dependency-driven
+word similarity measure (Lin, 1998) (which we
+call SIM), and (4) combining the previous scores
+in a log-linear model to arrive at a final n-best
+list. Step 1 models transfer knowledge between
+This work is licenced under a Creative Commons Attribution
+4.0 International License. Page numbers and proceedings
+footer are added by the organizers. License details: http:
+//creativecommons.org/licenses/by/4.0/
+the L1 and L2; step 2 models facts about the L2
+syntax, i.e., which translations fit well into the lo-
+cal context; step 3 models collocational and se-
+mantic tendencies of the L2; and step 4 gives dif-
+ferent weights to each of the three sources of in-
+formation. Although we did not finish step 3 in
+time for the official results, we discuss it here, as
+it represents the most novel aspect of the system ?
+namely, steps towards the exploitation of the rich
+L2 context. In general, our approach is language-
+independent, with accuracy varying due to the size
+of data sources and quality of input technology
+(e.g., syntactic parse accuracy). More features
+could easily be added to the log-linear model, and
+further explorations of ways to make use of target-
+language knowledge could be promising.
+2 Data Sources
+The data sources serve two major purposes for our
+system: For L2 candidate generation, we use Eu-
+roparl and BabelNet; and for candidate ranking
+based on L2 context, we use Wikipedia and the
+Google Books Syntactic N-grams.
+Europarl The Europarl Parallel Corpus (Eu-
+roparl, v7) (Koehn, 2005) is a corpus of pro-
+ceedings of the European Parliament, contain-
+ing 21 European languages with sentence align-
+ments. From this corpus, we build phrase tables
+for English-Spanish, English-German, French-
+English, Dutch-English.
+BabelNet In the cases where the constructed
+phrase tables do not contain a translation for a
+source phrase, we need to back off to smaller
+phrases and find candidate translations for these
+components. To better handle sparsity, we extend
+look-up using the multilingual dictionary Babel-
+Net, v2.0 (Navigli and Ponzetto, 2012) as a way to
+find translation candidates.
+356
+Wikipedia For German and Spanish, we use re-
+cent Wikipedia dumps, which were converted to
+plain text with the Wikipedia Extractor tool.
+1
+To
+save time during parsing, sentences longer than 25
+words are removed. The remaining sentences are
+POS-tagged and dependency parsed using Mate
+Parser with its pre-trained models (Bohnet, 2010;
+Bohnet and Kuhn, 2012; Seeker and Kuhn, 2013).
+To keep our English Wikipedia dataset to a man-
+ageable size, we choose an older (2006), smaller
+dump. Long sentences are removed, and the re-
+maining sentences are POS-tagged and depen-
+dency parsed using the pre-trained Stanford Parser
+(Klein and Manning, 2003; de Marneffe et al.,
+2006). The resulting sizes of the datasets are
+(roughly): German: 389M words, 28M sentences;
+Spanish: 147M words, 12M sentences; English:
+253M words, 15M sentences. Dependencies ex-
+tracted from these parsed datasets serve as training
+for the SIM system described in section 3.3.
+Google Books Syntactic N-grams For English,
+we also obtained dependency relationships for our
+word similarity statistics using the arcs dataset of
+the Google Books Syntactic N-Grams (Goldberg
+and Orwant, 2013), which has 919M items, each
+of which is a small ?syntactic n-gram?, a term
+Goldberg and Orwant use to describe short de-
+pendency chains, each of which may contain sev-
+eral tokens. This data set does not contain the ac-
+tual parses of books from the Google Books cor-
+pus, but counts of these dependency chains. We
+converted the longer chains into their component
+(head, dependent, label) triples and then collated
+these triples into counts, also for use in the SIM
+system.
+3 System Design
+As previously mentioned, at run-time, our system
+decomposes the fragment translation task into two
+parts: generating many possible candidate transla-
+tions, then scoring and ranking them in the target-
+language context.
+3.1 Constructing Candidate Translations
+As a starting point, we use phrase tables con-
+structed in typical SMT fashion, built with the
+training scripts packaged with Moses (Koehn et
+al., 2007). These scripts preprocess the bitext, es-
+timate word alignments with GIZA++ (Och and
+1
+http://medialab.di.unipi.it/wiki/
+Wikipedia_Extractor
+Ney, 2000) and then extract phrases with the
+grow-diag-final-and heuristic.
+At translation time, we look for the given
+source-language phrase in the phrase table, and if
+it is found, we take all translations of that phrase
+as our candidates.
+When translating a phrase that is not found in
+the phrase table, we try to construct a ?synthetic
+phrase? out of the available components. This
+is done by listing, combinatorially, all ways to
+decompose the L1 phrase into sub-phrases of at
+least one token long. Then for each decomposi-
+tion of the input phrase, such that all of its compo-
+nents can be found in the phrase table, we gen-
+erate a translation by concatenating their target-
+language sides. This approach naively assumes
+that generating valid L2 text requires no reorder-
+ing of the components. Also, since there are 2
+n?1
+possible ways to split an n-token phrase into sub-
+sequences (i.e., each token is either the first token
+in a new sub-sequence, or it is not), we perform
+some heuristic pruning at this step, taking only
+the first 100 decompositions, preferring those built
+from longer phrase-table entries. Every phrase in
+the phrase table, including these synthetic phrases,
+has both a ?direct? and ?inverse? probability score;
+for synthetic phrases, we estimate these scores by
+taking the product of the corresponding probabili-
+ties for the individual components.
+In the case that an individual word cannot be
+found in the phrase table, the system attempts to
+look up the word in BabelNet, estimating the prob-
+abilities as uniformly distributed over the available
+BabelNet entries. Thus, synthetic phrase table
+entries can be constructed by combining phrases
+found in the training data and words available in
+BabelNet.
+For the evaluation, in cases where an L1 phrase
+contained words that were neither in our train-
+ing data nor BabelNet (and thus were simply out-
+of-vocabulary for our system), we took the first
+translation for that phrase, without regard to con-
+text, from Google Translate, through the semi-
+automated Google Docs interface. This approach
+is not particularly scalable or reproducible, but
+simulates what a user might do in such a situation.
+3.2 Scoring Candidate Translations via a L2
+Language Model
+To model how well a phrase fits into the L2 con-
+text, we score candidates with an n-gram lan-
+357
+guage model (LM) trained on a large sample of
+target-language text. Constructing and querying
+a large language model is potentially computa-
+tionally expensive, so here we use the KenLM
+Language Model Toolkit and its Python interface
+(Heafield, 2011). Here our models were trained
+on the Wikipedia text mentioned previously (with-
+out filtering long sentences), with KenLM set to
+5-grams and the default settings.
+3.3 Scoring Candidate Translations via
+Dependency-Based Word Similarity
+The candidate ranking based on the n-gram lan-
+guage model ? while quite useful ? is based on
+very shallow information. We can also rank the
+candidate phrases based on how well each of the
+components fits into the L2 context using syntactic
+information. In this case, the fitness is measured in
+terms of dependency-based word similarity com-
+puted from dependency triples consisting of the
+the head, the dependent, and the dependency la-
+bel. We slightly adapted the word similarity mea-
+sure by Lin (1998):
+SIM(w
+1
+, w
+2
+) =
+2 ? c(h, d, l)
+c(h,?, l) + c(?, d, l)
+(1)
+where h = w
+1
+and d = w
+2
+and c(h, d, l)
+is the frequency with which a particular
+(head, dependent, label) dependency triple
+occurs in the L2 corpus. c(h,?, l) is the fre-
+quency with which a word occurs as a head
+in a dependency labeled l with any dependent.
+c(?, d, l) is the frequency with which a word
+occurs as a dependent in a dependency labeled
+l with any head. In the measure by Lin (1998),
+the numerator is defined as the information of all
+dependency features that w
+1
+and w
+2
+share, com-
+puted as the negative sum of the log probability of
+each dependency feature. Similarly, the denom-
+inator is computed as the sum of information of
+dependency features for w
+1
+and w
+2
+.
+To compute the fitness of a word w
+i
+for its
+context, we consider a set D of all words that are
+directly dependency-related to w
+i
+. The fitness of
+w
+i
+is thus computed as:
+FIT (w
+i
+) =
+?
+D
+w
+j
+SIM(w
+i
+, w
+j
+)
+|D|
+(2)
+The fitness of a phrase is the average word sim-
+ilarity over all its components. For example, the
+fitness of the phrase ?eat with chopsticks? would
+be computed as:
+FIT (eat with chopsticks) =
+FIT (eat) + FIT (with) + FIT (chopsticks)
+3
+(3)
+Since we consider the heads and dependents
+of a target phrase component, these may be situ-
+ated inside or outside the phrase. Both cases are
+included in our calculation, thus enabling us to
+consider a broader, syntactically determined local
+context of the phrase. By basing the calculation on
+a single word?s head and dependents, we attempt
+to avoid data sparseness issues that we might get
+from rare n-gram contexts.
+Back-Off Lexical-based dependency triples suf-
+fer from data sparsity, so in addition to computing
+the lexical fitness of a phrase, we also calculate the
+POS fitness. For example, the POS fitness of ?eat
+with chopsticks? would be computed as follows:
+FIT (eat/VBG with/IN chopsticks/NNS) =
+FIT (VBG) + FIT (IN) + FIT (NNS)
+3
+(4)
+Storing and Caching The large vocabulary
+and huge number of combinations of our
+(head, dependent, label) triples poses an effi-
+ciency problem when querying the dependency-
+based word similarity values. Thus, we stored
+the dependency triples in a database with a
+Python programming interface (SQLite3) and
+built database indices on the frequent query types.
+However, for frequently searched dependency
+triples, re-querying the database is still inefficient.
+Thus, we built a query cache to store the recently-
+queried triples. Using the database and cache sig-
+nificantly speeds up our system.
+This database only stores dependency triples
+and their corresponding counts; the dependency-
+based similarity value is calculated as needed, for
+each particular context. Then, these FIT scores
+are combined with the scores from the phrase ta-
+ble and language model, using weights tuned by
+MERT.
+358
+system acc wordacc oofacc oofwordacc
+run2 0.665 0.722 0.806 0.857
+SIM 0.647 0.706 0.800 0.852
+nb 0.657 0.717 0.834 0.868
+Figure 1: Scores on the test set for English-
+German; here next-best is CNRC-run1.
+system acc wordacc oofacc oofwordacc
+run2 0.633 0.72 0.781 0.847
+SIM 0.359 0.482 0.462 0.607
+best 0.755 0.827 0.920 0.944
+Figure 2: Scores on the test set for English-
+Spanish; here best is UEdin-run2.
+3.4 Tuning Weights with MERT
+In order to rank the various candidate translations,
+we must combine the different sources of infor-
+mation in some way. Here we use a familiar log-
+linear model, taking the log of each score ? the di-
+rect and inverse translation probabilities, the LM
+probability, and the surface and POS SIM scores ?
+and producing a weighted sum. Since the original
+scores are either probabilities or probability-like
+(in the range [0, 1]), their logs are negative num-
+bers, and at translation time we return the trans-
+lation (or n-best) with the highest (least negative)
+score.
+This leaves us with the question of how to
+set the weights for the log-linear model; in this
+work, we use the ZMERT package (Zaidan, 2009),
+which implements the MERT optimization algo-
+rithm (Och, 2003), iteratively tuning the feature
+weights by repeatedly requesting n-best lists from
+the system. We used ZMERT with its default
+settings, optimizing our system?s BLEU scores
+on the provided development set. We chose, for
+convenience, BLEU as a stand-in for the word-
+level accuracy score, as BLEU scores are maxi-
+mized when the system output matches the refer-
+ence translations.
+4 Experiments
+In figures 1-4, we show the scores on this year?s
+test set for running the two variations of our sys-
+tem: run2, the version without the SIM exten-
+sions, which we submitted for the evaluation, and
+SIM, with the extensions enabled. For compar-
+ison, we also include the best (or for English-
+German, next-best) submitted system. We see here
+system acc wordacc oofacc oofwordacc
+run2 0.545 0.682 0.691 0.800
+SIM 0.549 0.687 0.693 0.800
+best 0.733 0.824 0.905 0.938
+Figure 3: Scores on the test set for French-English;
+here best is UEdin-run1.
+system acc wordacc oofacc oofwordacc
+run2 0.544 0.679 0.634 0.753
+SIM 0.540 0.676 0.635 0.753
+best 0.575 0.692 0.733 0.811
+Figure 4: Scores on the test set for Dutch-English;
+here best is UEdin-run1.
+that the use of the SIM features did not improve
+the performance of the base system, and in the
+case of English-Spanish caused significant degra-
+dation, which is as of yet unexplained, though we
+suspect difficulties parsing the Spanish test set, as
+for all of the other language pairs, the effects of
+adding SIM features were small.
+5 Conclusion
+We have described our entry for the initial run-
+ning of the ?L2 Writing Assistant? task and ex-
+plained some possible extensions to our base log-
+linear model system.
+In developing the SIM extensions, we faced
+some interesting software engineering challenges,
+and we can now produce large databases of depen-
+dency relationship counts for various languages.
+Unfortunately, these extensions have not yet led
+to improvements in performance on this particu-
+lar task. The databases themselves seem at least
+intuitively promising, capturing interesting infor-
+mation about common usage patterns of the tar-
+get language. Finding a good way to make use
+of this information may involve computing some
+measure that we have not yet considered, or per-
+haps the insights captured by SIM are covered ef-
+fectively by the language model.
+We look forward to future developments around
+this task and associated applications in helping
+language learners communicate effectively.
+359
+References
+Bernd Bohnet and Jonas Kuhn. 2012. The best of
+both worlds ? A graph-based completion model for
+transition-based parsers. In Proceedings of the 13th
+Conference of the European Chapter of the Associ-
+ation for Computational Linguistics (EACL), pages
+77?87, Avignon, France.
+Bernd Bohnet. 2010. Top accuracy and fast depen-
+dency parsing is not a contradiction. In Proceedings
+of the 23rd International Conference on Computa-
+tional Linguistics (COLING), pages 89?97, Beijing,
+China.
+Marie-Catherine de Marneffe, Bill MacCartney, and
+Christopher Manning. 2006. Generating typed de-
+pendency parses from phrase structure parses. In
+Proceedings of LREC-06, Genoa, Italy.
+Yoav Goldberg and Jon Orwant. 2013. A dataset of
+syntactic-ngrams over time from a very large cor-
+pus of English books. In Second Joint Conference
+on Lexical and Computational Semantics (*SEM),
+pages 241?247, Atlanta, GA.
+Kenneth Heafield. 2011. KenLM: faster and smaller
+language model queries. In Proceedings of the
+EMNLP 2011 Sixth Workshop on Statistical Ma-
+chine Translation, pages 187?197, Edinburgh, Scot-
+land, United Kingdom, July.
+Dan Klein and Christopher Manning. 2003. Accurate
+unlexicalized parsing. In Proceedings of ACL-2003,
+pages 423?430, Sapporo, Japan.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran,
+Richard Zens, Chris Dyer, Ondrej Bojar, Alexan-
+dra Constantin, and Evan Herbst. 2007. Moses:
+Open source toolkit for statistical machine transla-
+tion. In Proceedings of the 45th Annual Meeting of
+the Association for Computational Linguistics Com-
+panion Volume Proceedings of the Demo and Poster
+Sessions, Prague, Czech Republic.
+Philipp Koehn. 2005. Europarl: A parallel corpus for
+statistical machine translation. In MT Summit.
+Dekang Lin. 1998. An information-theoretic defini-
+tion of similarity. In International Conference on
+Machine Learning (ICML), volume 98, pages 296?
+304.
+Roberto Navigli and Simone Paolo Ponzetto. 2012.
+BabelNet: The automatic construction, evaluation
+and application of a wide-coverage multilingual se-
+mantic network. Artificial Intelligence, 193:217?
+250.
+Franz Josef Och and Hermann Ney. 2000. Improved
+statistical alignment models. In Proceedings of the
+38th Annual Meeting of the Association for Com-
+putational Linguistics (ACL), pages 440?447, Hong
+Kong.
+Franz Josef Och. 2003. Minimum error rate train-
+ing in statistical machine translation. In Proceed-
+ings of the 41st Annual Meeting of the Association
+for Computational Linguistics, pages 160?167, Sap-
+poro, Japan, July.
+Wolfgang Seeker and Jonas Kuhn. 2013. Morphologi-
+cal and syntactic case in statistical dependency pars-
+ing. Computational Linguistics, 39(1):23?55.
+Omar F. Zaidan. 2009. Z-MERT: A fully configurable
+open source tool for minimum error rate training of
+machine translation systems. The Prague Bulletin of
+Mathematical Linguistics, 91:79?88.
+360
+Proceedings of the Eighth Workshop on Innovative Use of NLP for Building Educational Applications, pages 11?21,
+Atlanta, Georgia, June 13 2013. c?2013 Association for Computational Linguistics
+Shallow Semantic Analysis of Interactive Learner Sentences
+Levi King
+Indiana University
+Bloomington, IN USA
+leviking@indiana.edu
+Markus Dickinson
+Indiana University
+Bloomington, IN USA
+md7@indiana.edu
+Abstract
+Focusing on applications for analyzing learner
+language which evaluate semantic appropri-
+ateness and accuracy, we collect data from a
+task which models some aspects of interac-
+tion, namely a picture description task (PDT).
+We parse responses to the PDT into depen-
+dency graphs with an an off-the-shelf parser,
+then use a decision tree to classify sentences
+into syntactic types and extract the logical sub-
+ject, verb, and object, finding 92% accuracy in
+such extraction. The specific goal in this paper
+is to examine the challenges involved in ex-
+tracting these simple semantic representations
+from interactive learner sentences.
+1 Motivation
+While there is much current work on analyzing
+learner language, it usually focuses on grammati-
+cal error detection and correction (e.g., Dale et al,
+2012) and less on semantic analysis. At the
+same time, Intelligent Computer-Assisted Language
+Learning (ICALL) and Intelligent Language Tutor-
+ing (ILT) systems (e.g., Heift and Schulze, 2007;
+Meurers, 2012) also tend to focus more on gram-
+matical feedback. An exception to this rule is Herr
+Komissar, an ILT for German learners that includes
+rather robust content analysis and sentence genera-
+tion (DeSmedt, 1995), but this involves a great deal
+of hand-built tools and does not connect to modern
+NLP. Some work addresses content assessment for
+short answer tasks (Meurers et al, 2011), but this is
+still far from naturalistic, more conversational inter-
+actions (though, see Petersen, 2010).
+Our overarching goal is to facilitate ILTs and lan-
+guage assessment tools that maximize free interac-
+tion, building as much as possible from existing
+NLP resources. While that goal is in the distant
+future, the more immediate goal in this paper is
+to pinpoint the precise challenges which interactive
+learner sentences present to constructing semantic
+analyses, even when greatly constrained. We ap-
+proximate this by collecting data from a task which
+models some aspects of interaction, namely a picture
+description task (PDT), parsing it with an off-the-
+shelf parser, extracting semantic forms, and noting
+the challenges throughout.
+The focus towards interaction is in accord with
+contemporary theory and research in Second Lan-
+guage Acquisition (SLA) and best practices in sec-
+ond language instruction, which emphasize the lim-
+iting of explicit grammar instruction and feedback in
+favor of an approach that subtly integrates the teach-
+ing of form with conversation and task-based learn-
+ing (Celce-Murcia, 1991, 2002; Larsen-Freeman,
+2002). Indeed, Ellis (2006) states, ?a traditional ap-
+proach to teaching grammar based on explicit expla-
+nations and drill-like practice is unlikely to result in
+the acquisition of the implicit knowledge needed for
+fluent and accurate communication.? For our pur-
+poses, this means shifting the primary task of an
+ICALL application from analyzing grammar to eval-
+uating semantic appropriateness and accuracy.
+The data for error detection work is ideal for de-
+veloping systems which provide feedback on essays,
+but not necessarily for more interactive communica-
+tion. Thus, our first step is to collect data similar to
+what we envision processing in something like an
+11
+ILT game, data which?as far as we know?does
+not exist. While we desire relatively free produc-
+tion, there are still constraints; for games, for exam-
+ple, this comes in the form of contextual knowledge
+(pictures, rules, previous interactions). To get a han-
+dle on variability under a set of known constraints
+and to systematically monitor deviations from tar-
+get meanings, we select a PDT as a constrained task
+that still promotes interactive communication. Col-
+lecting and analyzing this data is our first major con-
+tribution, as described in section 3.
+Once we have the data, we can begin to extract se-
+mantic forms, and our second major contribution is
+to outline successes and pitfalls in obtaining shal-
+low semantic forms in interactive learner data, as
+described in section 4, working from existing tools.
+Although we observe a lot of grammatical variation,
+we will demonstrate in section 5 how careful se-
+lection of output representations (e.g., the treatment
+of prepositions) from an off-the-shelf parser and a
+handful of syntax-to-semantics rules allow us to de-
+rive accurate semantic forms for most types of tran-
+sitive verb constructions in our data. At the same
+time, we will discuss the difficulties in defining a
+true gold standard of meanings for such a task. This
+work paves the way for increasing the range of con-
+structions and further exploring the space between
+free and constrained productions (see also the dis-
+cussion in Amaral and Meurers, 2011).
+2 Related Work
+In terms of our overarching goals of developing
+an interactive ILT, a number of systems exist (e.g.,
+TAGARELA (Amaral et al, 2011), e-Tutor (Heift
+and Nicholson, 2001)), but few focus on matching
+semantic forms. Herr Komissar (DeSmedt (1995))
+is one counter-example; in this game, learners take
+on the role of a detective tasked with interviewing
+suspects and witnesses. The system relies largely on
+a custom-built database of verb classes and related
+lexical items. Likewise, Petersen (2010) designed
+a system to provide feedback on questions in En-
+glish, extracting meanings from the Collins parser
+(Collins, 1999). Our work is is in the spirit of his,
+though our starting point is to collect data of the type
+of task we aim to analyze, thereby pinpointing how
+one should begin to build a system.
+The basic semantic analysis in this paper paral-
+lels work on content assessment (e.g., ETS?s c-rater
+system (Leacock and Chodorow, 2003)). Different
+from our task, these systems are mostly focused on
+essay and short answer scoring, though many fo-
+cus on semantic analysis under restricted conditions.
+As one example, Meurers et al (2011) evaluate En-
+glish language learners? short answers to reading
+comprehension questions, constrained by the topic
+at hand. Their approach performs multiple levels of
+annotation on the reading prompt, including depen-
+dency parsing and lexical analysis from WordNet
+(Fellbaum, 1998), then attempts to align elements of
+the sentence with those of the (similarly annotated)
+reading prompt, the question, and target answers to
+determine whether a response is adequate or what it
+might be missing. Our scenario is based on images,
+not text, but our future processing will most likely
+need to include similar elements, e.g., determining
+lexical relations from WordNet.
+3 Data Collection
+The data involved in this study shares much in com-
+mon with other investigations into semantic anal-
+ysis of descriptions of images and video, such
+as the Microsoft Research Video Description Cor-
+pus (MSRvid; Chen and Dolan (2011)) and the
+SemEval-2012 Semantic Textual Similarity (STS)
+task utilizing MSRvid as training data for assigning
+similarity scores to pairs of sentences (Agirre et al,
+2012). However, because our approach requires
+both native speaker (NS) and non-native speaker
+(NNS) responses and necessitates constraining both
+the form and content of responses, we assembled
+our own small corpus of NS and NNS responses to
+a PDT. Research in SLA often relies on the ability
+of task design to induce particular linguistic behav-
+ior (Skehan et al, 1998), and the PDT should in-
+duce more interactive behavior. Moreover, the use
+of the PDT as a reliable language research tool is
+well-established in areas of study ranging from SLA
+to Alzheimer?s disease (Ellis, 2000; Forbes-McKay
+and Venneri, 2005).
+The NNSs were intermediate and upper-level
+adult English learners in an intensive English as
+a Second Language program at Indiana University.
+We rely on visual stimuli here for a number of rea-
+12
+sons. Firstly, computer games tend to be highly
+visual, so collecting responses to visual prompts is
+in keeping with the nature of our desired ILT. Sec-
+ondly, by using images, the information the response
+should contain is limited to the information con-
+tained in the image. Relatedly, particularly simple
+images should restrict elicited responses to a tight
+range of expected contents. For this initial experi-
+ment, we chose or developed each of the visual stim-
+uli because it presents an event that we believe to be
+transitive in nature and likely to elicit responses with
+an unambiguous subject, verb and object, thereby re-
+stricting form in addition to content. Finally, this
+format allows us to investigate pure interlanguage
+without the influence of verbal prompts and shows
+learner language in a functional context, modeling
+real language use.
+Response (L1)
+He is droning his wife pitcher. (Arabic)
+The artist is drawing a pretty women. (Chinese)
+The artist is painting a portrait of a lady. (English)
+The painter is painting a woman?s paint. (Spanish)
+Figure 1: Example item and responses
+The PDT consists of 10 items (8 line drawings
+and 2 photographs) intended to elicit a single sen-
+tence each; an example is given in Figure 1. Par-
+ticipants were asked to view the image and describe
+the action, and care was taken to explain to partici-
+pants that either past or present tense (and simple or
+progressive aspect) was acceptable. Responses were
+typed by the participants themselves (without auto-
+matic spell checking). To date, we have collected
+responses from 53 informants (14 NSs, 39 NNSs),
+for a total of 530 sentences. The distribution of first
+languages (L1s) is as follows: 14 English, 16 Ara-
+bic, 7 Chinese, 2 Japanese, 4 Korean, 1 Kurdish, 1
+Polish, 2 Portuguese, and 6 Spanish.
+4 Method
+We parse a sentence into a dependency representa-
+tion (section 4.1) and then extract a simple seman-
+tic form from this parse (section 4.2), to compare to
+gold standard semantic forms.
+4.1 Obtaining a syntactic form
+We start analysis with a dependency parse. Because
+dependency parsing focuses on labeling dependency
+relations, rather than constituents or phrase struc-
+ture, it easily finds the subject, verb and object of
+a sentence, which can then map to a semantic form
+(Ku?bler et al, 2009). Our approach must eventually
+account for other relations, such as negation and ad-
+verbial modification, but at this point, since we fo-
+cus on transitive verbs, we take an na??ve approach in
+which subject, verb and object are considered suffi-
+cient for deciding whether or not a response accu-
+rately describes the visual prompt.
+We use the Stanford Parser for this task, trained on
+the Penn Treebank (de Marneffe et al, 2006; Klein
+and Manning, 2003).1 Using the parser?s options,
+we set the output to be Stanford typed dependencies,
+a set of labels for dependency relations. The Stan-
+ford parser has a variety of options to choose from
+for the specific parser ouput, e.g., how one wishes to
+treat prepositions (de Marneffe and Manning, 2012).
+We use the CCPropagatedDependencies /
+CCprocessed option to accomplish two things:2
+1) omit prepositions and conjunctions from the sen-
+tence text and instead add the word to the depen-
+dency label between content words; and 2) propa-
+gate relations across any conjunctions. These deci-
+sions are important to consider for any semantically-
+informed processing of learner language.
+1http://nlp.stanford.edu/software/
+lex-parser.shtml
+2http://nlp.stanford.edu/software/
+dependencies_manual.pdf
+13
+To see the impetus for removing prepositions,
+consider the learner response (1), where the prepo-
+sition with is relatively unimportant to collecting the
+meaning. Additionally, learners often omit, insert,
+or otherwise use the wrong preposition (Chodorow
+et al, 2007). The default parser would present a
+prep relation between played and with, obscuring
+what the object is; with the options set as above,
+however, the dependency representation folds the
+preposition into the label (prep with), instead of
+keeping it in the parsed string, as shown in Figure 2.
+(1) The boy played with a ball.
+vroot The boy played with a ball
+nsubj
+root
+prep with
+detdet
+Figure 2: The dependency parse of (1)
+This is a very lenient approach to prepositions,
+as prepositions certainly carry semantic meaning?
+e.g., the boy played in a ball means something quite
+different than what (1) means. However, because
+we ultimately compare the meaning to an expected
+semantic form (e.g., play(boy,ball)), it is easier to
+give the benefit of the doubt. In the future, one may
+want to consider using a semantic role labeler (e.g.,
+SENNA (Collobert et al, 2011)).
+As for propagating relations across conjunctions,
+this ensures that each main verb connects to its argu-
+ments, as needed for a semantic form. For example,
+in (2), the default parser returns the relation between
+the first verb of the conjunction structure, setting and
+its subject, man, but not between reading and man.
+The options we select, however, return an nsubj
+relation between setting and man and also between
+reading and man (similarly for the object, paper).
+(2) The man is setting and reading the paper.
+In addition to these options, many dependency re-
+lations are irrelevant for the next step of obtaining
+a semantic form. For example, we can essentially
+ignore determiner (det) relations between a noun
+and its determiner, allowing for variability in how a
+learner produces or does not produce determiners.
+4.2 Obtaining a semantic form
+4.2.1 Sentence types
+We categorized the sentences in the corpus into
+12 types, shown in Table 1. We established these
+types because each type corresponds to a basic sen-
+tence structure and thus has consistent syntactic fea-
+tures, leading to predictable patterns in the depen-
+dency parses. We discuss the distribution of sen-
+tence types in section 5.1.
+4.2.2 Rules for sentence types
+A sentence type indicates that the logical (i.e., se-
+mantic) subject, verb, and object can be found in a
+particular place in the parse, e.g., under a particular
+dependency label. For example, for simple transi-
+tive sentences of type A, the words labeled nsubj,
+root, and dobj exactly pinpoint the information
+we require. Thus, the patterns for extracting se-
+mantic information?in the form of verb(subj,obj)
+triples?reference particular Stanford typed depen-
+dency labels, part-of-speech (POS) tags, and inter-
+actions with word indices.
+More complicated sentences or those containing
+common learner errors (e.g., omission of the cop-
+ula be) require slightly more complicated extraction
+rules, but, since we examine only transitive verbs at
+this juncture, these still boil down to identifying the
+sentence type and extracting the appropriate triple.
+We do this by arranging a small set of binary fea-
+tures into a decision tree to determine the sentence
+type, as shown in Figure 3.
+To illustrate this process, consider (3). We pass
+this sentence through the parser to obtain the depen-
+dency parse shown in Figure 4. The parsed sentence
+then moves to the decision tree shown in Figure 3.
+At the top of the tree, the sentence is checked for an
+expl (expletive) label; having none, it moves right-
+ward to the nsubjpass (noun subject, passive)
+node. Because we find an nsubjpass label, the
+sentence moves leftward to the agent node. This
+label is also found, thereby reaching a terminal node
+and being labeled as a type F2 sentence.
+(3) A bird is shot by a man.
+With the sentence now typed as F2, we apply
+specific F2 extraction rules. The logical subject is
+taken from under the agent label, the verb from
+14
+Type Description Example NS NNS
+A Simple declarative transitive The boy is kicking the ball. 117 286
+B Simple + preposition The boy played with a ball. 5 23
+C Missing tensed verb Girl driving bicycle. 10 44
+D Missing tensed verb + preposition Boy playing with a ball. 0 1
+E Intransitive (No object) A woman is cycling. 2 21
+F1 Passive An apple is being cut. 4 2
+F2 Passive with agent A bird is shot by a man. 0 6
+Ax Existential version of A or C There is a boy kicking a ball. 0 0
+Bx Existential version of B or D There was a boy playing with a ball. 0 0
+Ex Existential version of E There is a woman cycling. 0 0
+F1x Existential version of F1 There is an apple being cut. 0 1
+F2x Existential version of F2 There is a bird being shot by a man. 0 0
+Z All other forms The man is trying to hunt a bird. 2 6
+Table 1: Sentence type examples, with distributions of types for native speakers (NS) and non-native speakers (NNS)
+expl?
+nsubjpass?
+dobj?
+nsubj?
+Dprep ??
+EB
+Y N
+Y N
+nsubj?
+CA
+Y N
+Y N
+agent?
+F1F2
+Y N
+Y N
+auxpass?
+dobj?
+prep ??
+ExBx
+Y N
+Ax
+Y N
+agent?
+F1xF2x
+Y N
+Y N
+Y N
+Figure 3: Decision tree for determining sentence type and extracting semantic information
+vroot A bird is shot by a man
+root
+det
+nsubjpass
+auxpass
+agent
+det
+Figure 4: The dependency parse of (3)
+root, and the logical object from nsubjpass,
+to obtain shot(man,bird), which can be lemmatized
+to shoot(man,bird). Very little effort goes into this
+process: the parser is pre-built; the decision tree is
+small; and the extraction rules are minimal.
+We are able to use little effort in part due to the
+constraints in the pictures. For figure 1, for exam-
+ple, the artist, the man in the beret, and the man are
+all acceptable subjects, whereas if there were multi-
+ple men in the picture, the man would not be specific
+enough. In future work, we expect to relax such con-
+straints on image contents by including rules to han-
+dle relative clauses, adjectives and other modifiers
+in order to distinguish between references to simi-
+15
+lar elements, e.g., a man shooting a bird vs. a man
+reading the newspaper.
+5 Evaluation
+To evaluate this work, we need to address two major
+questions. First, how accurately do we extract se-
+mantic information from potentially innovative sen-
+tences (section 5.2)? Due to the simple structures
+of the sentences (section 5.1), we find high accu-
+racy with our simple system. Secondly, how many
+semantic forms does one need in order to capture
+the variability in meaning in learner sentences (sec-
+tion 5.3)? We operationalize this second question
+by asking how well the set of native speaker seman-
+tic forms models a gold standard, with the intuition
+that a language is defined by native speaker usage,
+so their answers can serve as targets. As we will
+see, this is a na??ve view.
+5.1 Basic distribution of sentences
+Before a more thorough analysis, we look at the dis-
+tribution of sentence types, shown in Table 1, broken
+down between native speakers (NSs) and non-native
+speakers (NNSs). A few sentence types clearly dom-
+inate here: if one looks only at simple declaratives,
+with or without a main verb (types A and C), one
+accounts for 90.7% of the NS forms and 84.6% of
+the NNS ones, slightly less. Adding prepositional
+forms (types B and D) brings the total to 94.3% and
+90.8%, respectively. Although there will always be
+variability and novel forms (cf. type Z), this shows
+that, for situations with basic transitive actions, de-
+veloping a system (by hand) for a few sentence types
+is manageable. More broadly, we see that clear and
+simple images nicely constrain the task to the point
+where shallow processing is feasible.
+5.2 Semantic extraction
+For the purpose of evaluating our extraction system,
+we define two major classes of errors. The first are
+triple errors, responses for which our system fails to
+extract one or more of the desired subject, verb, or
+object, based on the sentence at hand and without re-
+gard to the target content. Second are content errors,
+responses for which our system extracts the desired
+subject, verb and object, but the resulting triple does
+not accurately describe the image (i.e., is an error of
+the participant?s). We are of course concerned with
+reducing the triple errors. Examples are in Table 2.
+Triple errors are subcategorized as speaker,
+parser, or extraction errors, based on the earliest
+part of the process that led to the error. Speaker
+errors typically involve misspellings in the original
+sentence, leading to an incorrect POS tag and parse.
+Parser errors involve a correct sentence parsed in-
+correctly or in such a way as to indicate a different
+meaning from the one intended; an example is given
+in Figure 5. Extraction errors involve a failure of the
+extraction script to find one or more of the desired
+subject, verb or object in a correct sentence. These
+typically involve more complex sentence structures
+such as conjoined or embedded clauses.
+vroot Two boys boat
+CD NNS NN
+num
+root
+dep
+NONE(boys,NONE)
+vroot Two boys boat
+CD NNS VBP
+num
+root
+nsubj
+boat(boys,NONE)
+Figure 5: A parser error leading to a triple error (top), and
+the desired parse and triple (bottom).
+As shown in table 2, we obtain 92.3% accuracy on
+extraction for NNS data and roughly the same for
+NS data, 92.9%. However, many of the errors for
+NNSs involve misspellings, while for NSs a higher
+percentage of the extraction errors stem only from
+our hand-written extractor, due to native speakers
+using more complex structures. For a system inter-
+acting with learners, spelling errors are thus more of
+a priority (cf. Hovermale, 2008).
+Content errors are subcategorized as spelling or
+meaning errors. Spelling errors involve one or more
+of the extracted subject, verb or object being mis-
+spelled severely enough that the intended spelling
+cannot be discerned. A spelling error here is un-
+like those included in speaker errors above in that it
+does not result in downstream errors and is a well-
+16
+Error Example
+type Sentence Triple Count (%)
+T
+ri
+pl
+e
+er
+ro
+r N
+N
+S
+Speaker A man swipped leaves. leaves(swipped,man) 16 (4.1%)
+Parser Two boys boat. NONE(boys,NONE) 5 (1.3%)
+Extraction A man is gathering lots of leafs. gathering(man,lots) 9 (2.3%)
+Total (390) 30 (7.7%)
+N
+S
+Speaker (None) 0 (0%)
+Parser An old man raking leaves on a path. leaves(man,path) 2 (1.4%)
+Extraction A man has shot a bird that is falling from the sky. shot(bird,sky) 8 (5.7%)
+Total (140) 10 (7.1%)
+C
+on
+te
+nt
+er
+ro
+r
+N
+N
+S Spelling The artiest is drawing a portret. drawing(artiest,portret) 36 (9.2%)
+Meaning The woman is making her laundry. making(woman,laundry) 23 (5.9%)
+Total (390) 59 (15.1%)
+N
+S
+Spelling (None) 0 (0%)
+Meaning A picture is being taken of a girl on a bike. taken(NONE,picture) 3 (2.1%)
+Total (140) 3 (2.1%)
+Table 2: Triple errors and content errors by subcategory, with error rates reported (e.g., 7.7% error = 92.3% accuracy)
+formed triple except for a misspelled target word.
+Meaning errors involve an inaccurate word within
+the triple. This includes misspellings that result in a
+real but unintended word (e.g., shout(man,bird) in-
+stead of shoot(man,bird)).
+The goal of a system is to identify the 15.1% of
+NNS sentences which are content errors, in order
+to provide feedback. Currently, the 7.7% triple er-
+rors would also be grouped into this set, showing
+the need for further extraction improvements. Also
+notable is that three content errors were encountered
+among the NS responses. All three were meaning
+errors involving some meta-description of the image
+prompt rather than a direct description of the image
+contents, e.g., A picture is being taken of a girl on a
+bike vs. A girl is riding a bike.
+5.3 Semantic coverage
+Given a fairly accurate extraction system, as re-
+ported above, we now turn to evaluating how well
+a gold standard represents unseen data, in terms of
+semantic matching. To measure coverage, we take
+the intuition that a language is defined by native
+speaker usage, so their answers can serve as targets,
+and use NS triples as our gold standard. The set
+of NS responses was manually arbitrated to remove
+any unacceptable triples (both triple and content er-
+rors), and the remaining set of lemmatized triples
+was taken as a gold standard set for each item.
+Similarly, with the focus on coverage, the NNS
+triples were amended to remove any triple errors.
+From the remaining NNS triples, we call an appro-
+priate NNS triple found in the gold standard set a
+true positive (TP) (i.e., a correct match), and an
+appropriate NNS triple not found in the gold stan-
+dard set a false negative (FN) (i.e., an incorrect non-
+match), as shown in Table 4. We adopt standard ter-
+minology here (TP, FN), but note that we are inves-
+tigating what should be in the gold standard, mak-
+ing these false negatives and not false positives. To
+address the question of how many (NS) sentences
+we need to obtain good coverage, we define cover-
+age (=recall) as TP/(TP+FN), and report, in Table 3,
+23.5% coverage for unique triple types and 50.8%
+coverage for triple tokens.
+NNS
++ ?
+NS
+Y TP FP
+N FN TN
+Table 4: Contingency table comparing presence of NS
+forms (Y/N) with correctness (+/?) of NNS forms
+We define an inappropriate NNS triple (i.e., a con-
+tent error) not found in the gold standard set as a true
+17
+Coverage Accuracy
+Item NS NNS TP TN FN Ty. Tok. Ty. Tok.
+1 5 14 3 2 9 3/12 23/38 5/14 25/39
+2 6 14 3 5 6 3/9 15/28 8/14 20/32
+3 6 19 5 7 7 5/12 23/30 12/19 30/36
+4 4 8 2 2 4 2/6 32/37 4/8 34/39
+5 4 24 1 8 15 1/16 3/25 9/24 11/33
+6 8 22 3 5 14 3/17 16/31 8/22 21/36
+7 7 23 5 4 14 5/19 14/35 9/23 18/39
+8 6 23 5 6 11 5/16 10/30 11/22 17/36
+9 7 33 3 12 18 3/21 3/23 15/33 15/35
+10 5 21 2 13 6 2/8 14/24 15/21 27/35
+Total 58 201 32 64 104 32/136 153/301 96/200 218/360
+23.5% 50.8% 48.0% 60.6%
+Table 3: Matching of semantic triples: NS/NNS: number of unique triples for NSs/NNSs. Comparing NNS types to NS
+triples, TP: number of true positives (types); TN: number of true negatives; FN: number of false negatives. Coverage
+for Types and Tokens = TPTP+FN ; Accuracy for Types and Tokens =
+TP+TN
+TP+TN+FN
+negative (TN) (i.e., a correct non-match). Accu-
+racy based on this gold standard?assuming perfect
+extraction?is defined as (TP+TN)/(TP+TN+FN).3
+We report 48.0% accuracy for types and 60.6% ac-
+curacy for tokens.
+The immediate lesson here is: NS data alone may
+not make a sufficient gold standard, in that many cor-
+rect NNS answers are not counted as correct. How-
+ever, there are a couple of issues to consider here.
+First, we require exact matching of triples. If
+maximizing coverage is desired, extracting indi-
+vidual subjects, verbs and objects from NS triples
+and recombining them into the various possible
+verb(subj,obj) combinations would lead to a sizable
+improvement. An example of triples distribution and
+coverage for a single item, along with this recombi-
+nation approach is presented in Table 5.
+It should be noted, however, that automat-
+ing this recombination without lexical knowledge
+could lead to the presence of unwanted triples
+in the gold standard set. Consider, for exam-
+ple, do(woman,shirt)?an incorrect triple derived
+from the correct NS triples, wash(woman,shirt) and
+do(woman,laundry). In addition to handling pro-
+3Accuracy is typically defined as
+(TP+TN)/(TP+TN+FN+FP), but false positives (FPs) are
+cases where an incorrect learner response was in the gold
+standard, and we have already removed such cases (i.e., FP=0).
+Type NNS NS Coverage
+cut(woman,apple) 5 0 (5)
+cut(someone,apple) 4 2 4
+cut(somebody,apple) 3 0
+cut(she,apple) 3 0
+slice(someone,apple) 2 5 2
+cut(person,apple) 2 1 2
+cut(NONE,apple) 2 0 (2)
+slice(woman,apple) 1 1 1
+slice(person,apple) 1 1 1
+slice(man,apple) 1 0
+cut(person,fruit) 1 0
+cut(people,apple) 1 0
+cut(man,apple) 1 0
+cut(knife,apple) 1 0
+chop(woman,apple) 1 0
+chop(person,apple) 1 0
+slice(NONE,apple) 0 2
+Total 30 12 10 (17)
+Table 5: Distribution of valid tokens across types for a
+single PDT item. Types in italics do not occur in the NS
+sample, but could be inferred to expand coverage by re-
+combining elements of NS types that do occur.
+nouns (e.g., cut(she,apple)) and lexical relations
+(e.g., apple as a type of fruit), one approach might be
+18
+to prompt NSs to give multiple alternative descrip-
+tions of each PDT item.
+A second issue to consider is that, even when only
+examining cases where the meaning is literally cor-
+rect, NNSs produce a wider range of forms to de-
+scribe the prompts than NSs. For example, for a pic-
+ture showing what NSs overwhelmingly described
+as a raking action, many NNSs referred to a man
+cleaning an area. Literally, this may be true, but it is
+not native-like. This behavior is somewhat expected,
+given that learners are encouraged to use words they
+know to compensate for gaps in their vocabularies
+(Agust??n Llach, 2010). This also parallels the obser-
+vation in SLA research that while second language
+learners may attain native-like grammar, their abil-
+ity to use pragmatically native-like language is often
+much lower (Bardovi-Harlig and Do?rnyei, 1998).
+The answer to what counts as a correct meaning
+will most likely lie in the purpose of an application,
+reflecting whether one is developing native-ness or
+whether the facts of a situation are expressed cor-
+rectly. In other words, rather than rejecting all non-
+native-like responses, an ILT may need to consider
+whether a sentence is native-like or non-native-like
+as well as whether it is semantically appropriate.
+6 Summary and Outlook
+We have begun the process of examining appro-
+priate ways to analyze the semantics of language
+learner constructions for interactive situations by
+describing data collected for a picture description
+task. We parsed this data using an off-the-shelf
+parser with settings geared towards obtaining appro-
+priate semantic forms, wrote a small set of seman-
+tic extraction rules, and obtained 92?93% extrac-
+tion accuracy. This shows promise at using images
+to constrain the syntactic form of a ?free? learner
+text and thus be able to use pre-built software. At
+the same time, we discussed how learners give re-
+sponses which are literally correct, but are non-
+native-like. These results can help guide the de-
+velopment of ILTs which aim to process the mean-
+ing of interactive statements: there is much to be
+gained with a small amount of computational effort,
+but much work needs to go into delineating a proper
+set of gold standard forms.
+There are several ways to take this work. First,
+given the preponderance of spelling errors in NNS
+data and its effect on downstream processing, the ef-
+fect of automatic spelling correction must be taken
+into account. Secondly, we only investigated tran-
+sitive verbs, and much needs to be done to investi-
+gate interactions with other types of constructions,
+including the definition of more elaborate semantic
+forms (Hahn and Meurers, 2012). Finally, to bet-
+ter model ILTs and the interactions found in activ-
+ities and games, one can begin by modeling more
+complex visual prompts. By using video description
+tasks or story retell tasks, we can elicit more com-
+plex narrative responses. This would allow us to
+investigate the possibility of extending our current
+approach to tasks that involve greater learner inter-
+action.
+Acknowledgments
+We would like to thank the task participants, David
+Stringer for assistance in developing the task, Kath-
+leen Bardovi-Harlig, Marlin Howard and Jayson
+Deese for recruitment help, and Ross Israel for eval-
+uation discussion. For their helpful feedback, we
+would also like to thank the three anonymous re-
+viewers and the attendees of the Indiana University
+Linguistics Department Graduate Student Confer-
+ence.
+References
+Eneko Agirre, Mona Diab, Daniel Cer, and Aitor
+Gonzalez-Agirre. 2012. Semeval-2012 task 6: a
+pilot on semantic textual similarity. In Proceed-
+ings of the First Joint Conference on Lexical and
+Computational Semantics - Volume 1: Proceed-
+ings of the main conference and the shared task,
+and Volume 2: Proceedings of the Sixth Inter-
+national Workshop on Semantic Evaluation, Se-
+mEval ?12, pages 385?393. Association for Com-
+putational Linguistics, Stroudsburg, PA, USA.
+Maria Pilar Agust??n Llach. 2010. Lexical gap-filling
+mechanisms in foreign language writing. System,
+38(4):529 ? 538.
+Luiz Amaral and Detmar Meurers. 2011. On using
+intelligent computer-assisted language learning in
+real-life foreign language teaching and learning.
+ReCALL, 23(1):4?24.
+19
+Luiz Amaral, Detmar Meurers, and Ramon Ziai.
+2011. Analyzing learner language: Towards a
+flexible NLP architecture for intelligent language
+tutors. Computer Assisted Language Learning,
+24(1):1?16.
+Kathleen Bardovi-Harlig and Zolta?n Do?rnyei. 1998.
+Do language learners recognize pragmatic vio-
+lations? Pragmatic versus grammatical aware-
+ness in instructed L2 learning. TESOL Quarterly,
+32(2):233?259.
+Marianne Celce-Murcia. 1991. Grammar pedagogy
+in second and foreign language teaching. TESOL
+Quarterly, 25:459?480.
+Marianne Celce-Murcia. 2002. Why it makes sense
+to teach grammar through context and through
+discourse. In Eli Hinkel and Sandra Fotos, editors,
+New perspectives on grammar teaching in second
+language classrooms, pages 119?134. Lawrence
+Erlbaum, Mahwah, NJ.
+David L. Chen and William B. Dolan. 2011. Collect-
+ing highly parallel data for paraphrase evaluation.
+In Proceedings of the 49th Annual Meeting of the
+Association for Computational Linguistics (ACL-
+2011). Portland, OR.
+Martin Chodorow, Joel Tetreault, and Na-Rae Han.
+2007. Detection of grammatical errors involv-
+ing prepositions. In Proceedings of the 4th ACL-
+SIGSEM Workshop on Prepositions, pages 25?30.
+Prague.
+Michael Collins. 1999. Head-Driven Statistical
+Models for Natural Language Parsing. Ph.D. the-
+sis, University of Pennsylvania, Philadelphia, PA.
+Ronan Collobert, Jason Weston, Le?on Bottou,
+Michael Karlen, Koray Kavukcuoglu, and Pavel
+Kuksa. 2011. Natural language processing (al-
+most) from scratch. Journal of Machine Learning
+Research (JMLR), 12:2461?2505.
+Robert Dale, Ilya Anisimoff, and George Narroway.
+2012. HOO 2012: A report on the preposition
+and determiner error correction shared task. In
+Proceedings of the Seventh Workshop on Building
+Educational Applications Using NLP, pages 54?
+62. Montre?al.
+Marie-Catherine de Marneffe, Bill MacCartney, and
+Christopher D. Manning. 2006. Generating typed
+dependency parses from phrase structure parses.
+In Proceedings of LREC 2006. Genoa, Italy.
+Marie-Catherine de Marneffe and Christopher D.
+Manning. 2012. Stanford typed dependencies
+manual. Originally published in September 2008;
+Revised for Stanford Parser v. 2.0.4 in November
+2012.
+William DeSmedt. 1995. Herr Kommissar: An
+ICALL conversation simulator for intermedi-
+ate german. In V. Holland, J. Kaplan, and
+M. Sams, editors, Intelligent Language Tutors.
+Theory Shaping Technology, pages 153?174.
+Lawrence Erlbaum Associates, Inc., New Jersey.
+Rod Ellis. 2000. Task-based research and lan-
+guage pedagogy. Language teaching research,
+4(3):193?220.
+Rod Ellis. 2006. Current issues in the teaching of
+grammar: An SLA perspective. TESOL Quar-
+terly, 40:83?107.
+Christiane Fellbaum, editor. 1998. WordNet: An
+Electronic Lexical Database. The MIT Press,
+Cambridge, MA.
+Katrina Forbes-McKay and Annalena Venneri.
+2005. Detecting subtle spontaneous language de-
+cline in early Alzheimer?s disease with a pic-
+ture description task. Neurological sciences,
+26(4):243?254.
+Michael Hahn and Detmar Meurers. 2012. Evalu-
+ating the meaning of answers to reading compre-
+hension questions: A semantics-based approach.
+In Proceedings of the 7th Workshop on Innova-
+tive Use of NLP for Building Educational Appli-
+cations (BEA7), pages 326?336. Association for
+Computational Linguistics, Montreal, Canada.
+Trude Heift and Devlan Nicholson. 2001. Web de-
+livery of adaptive and interactive language tutor-
+ing. International Journal of Artificial Intelli-
+gence in Education, 12(4):310?325.
+Trude Heift and Mathias Schulze. 2007. Errors
+and Intelligence in Computer-Assisted Language
+Learning: Parsers and Pedagogues. Routledge.
+DJ Hovermale. 2008. Scale: Spelling correction
+adapted for learners of English. Pre-CALICO
+Workshop on ?Automatic Analysis of Learner
+20
+Language: Bridging Foreign Language Teach-
+ing Needs and NLP Possibilities?. March 18-19,
+2008. San Francisco, CA.
+Dan Klein and Christopher D. Manning. 2003. Ac-
+curate unlexicalized parsing. In Proceedings of
+ACL-03. Sapporo, Japan.
+Sandra Ku?bler, Ryan McDonald, and Joakim Nivre.
+2009. Dependency Parsing. Morgan & Claypool
+Publishers.
+Diane Larsen-Freeman. 2002. Teaching grammar.
+In Diane Celce-Murcia, editor, Teaching English
+as a second or foreign language, pages 251?266.
+Heinle & Heinle, Boston, third edition.
+Claudia Leacock and Martin Chodorow. 2003. C-
+rater: Automated scoring of short-answer ques-
+tions. Computers and Humanities, pages 389?
+405.
+Detmar Meurers. 2012. Natural language processing
+and language learning. In Carol A. Chapelle, ed-
+itor, Encyclopedia of Applied Linguistics. Black-
+well. to appear.
+Detmar Meurers, Ramon Ziai, Niels Ott, and Stacey
+Bailey. 2011. Integrating parallel analysis mod-
+ules to evaluate the meaning of answers to reading
+comprehension questions. Special Issue on Free-
+text Automatic Evaluation. International Journal
+of Continuing Engineering Education and Life-
+Long Learning (IJCEELL), 21(4):355?369.
+Kenneth A. Petersen. 2010. Implicit Corrective
+Feedback in Computer-Guided Interaction: Does
+Mode Matter? Ph.D. thesis, Georgetown Univer-
+sity, Washington, DC.
+Peter Skehan, Pauline Foster, and Uta Mehnert.
+1998. Assessing and using tasks. In Willy Re-
+nandya and George Jacobs, editors, Learners and
+language learning, pages 227?248. Seameo Re-
+gional Language Centre.
+21
+Proceedings of The First Workshop on Computational Approaches to Code Switching, pages 102?106,
+October 25, 2014, Doha, Qatar.
+c?2014 Association for Computational Linguistics
+The IUCL+ System: Word-Level Language Identification via Extended
+Markov Models
+Levi King, Eric Baucom, Timur Gilmanov, Sandra K
+?
+ubler, Daniel Whyatt
+Indiana University
+{leviking,eabaucom,timugilm,skuebler,dwhyatt}@indiana.edu
+Wolfgang Maier
+Universita?t Du?sseldorf
+maierw@hhu.de
+Paul Rodrigues
+University of Maryland
+prr@umd.edu
+Abstract
+We describe the IUCL+ system for the shared
+task of the First Workshop on Computational
+Approaches to Code Switching (Solorio et al.,
+2014), in which participants were challenged
+to label each word in Twitter texts as a named
+entity or one of two candidate languages. Our
+system combines character n-gram probabili-
+ties, lexical probabilities, word label transition
+probabilities and existing named entity recog-
+nition tools within a Markovmodel framework
+that weights these components and assigns a
+label. Our approach is language-independent,
+and we submitted results for all data sets
+(five test sets and three ?surprise? sets, cov-
+ering four language pairs), earning the high-
+est accuracy score on the tweet level on two
+language pairs (Mandarin-English, Arabic-
+dialects 1 & 2) and one of the surprise sets
+(Arabic-dialects).
+1 Introduction
+This shared task challenged participants to perform
+word level analysis on short, potentially bilingual Twit-
+ter and blog texts covering four language pairs: Nepali-
+English, Spanish-English,Mandarin-English andMod-
+ern Standard Arabic-Arabic dialects. Training sets
+ranging from 1,000 to roughly 11,000 tweets were pro-
+vided for the language pairs, where the content of the
+tweets was tokenized and labeled with one of six la-
+bels. The goal of the task is to accurately replicate
+this annotation automatically on pre-tokenized texts.
+With an inventory of six labels, however, the task is
+more than a simple binary classification task. In gen-
+eral, the most common labels observed in the train-
+ing data are lang1 and lang2, with other (mainly
+covering punctuation and emoticons) also common.
+Named entities (ne) are also frequent, and accounting
+for them adds a significant complication to the task.
+Less common are mixed (to account for words that
+may e.g., apply L1 morphology to an L2 word), and
+ambiguous (to cover a word that could exist in either
+language, e.g., no in the Spanish-English data).
+Traditionally, language identification is performed
+on the document level, i.e., on longer segments of
+text than what is available in tweets. These methods
+are based on variants of character n-grams. Seminal
+work in this area is by Beesley (1988) and Grefenstette
+(1995). Lui and Baldwin (2014) showed that character
+n-grams also perform on Twitter messages. One of a
+few recent approaches working on individual words is
+by King et al. (2014), who worked on historical data;
+see also work by Nguyen and Dogruz (2013) and King
+and Abney (2013).
+Our system is an adaptation of a Markov model,
+which integrates lexical, character n-gram, and la-
+bel transition probabilities (all trained on the provided
+data) in addition to the output of pre-existing NER
+tools. All the information sources are weighted in the
+Markov model.
+One advantage of our approach is that it is language-
+independent. We use the exact same architecture for
+all language pairs, and the only difference for the indi-
+vidual language pairs lies in a manual, non-exhaustive
+search for the best weights. Our results show that the
+approachworks well for the one language pair with dif-
+ferent writing systems (Mandarin-English) as well as
+for the most complex language pair, the Arabic set. In
+the latter data set, the major difficulty consists in the
+extreme skewing with an overwhelming dominance of
+words in Modern Standard Arabic.
+2 Method
+Our system uses an extension of a Markov model to
+perform the task of word level language identification.
+The system consists of three main components, which
+produce named entity probabilities, emission probabil-
+ities and label transition probabilities. The outputs of
+these three components are weighted and combined in-
+side the extended Markov model (eMM), where the
+best tag sequence for a given tweet (or sentence) is de-
+termined via the Viterbi algorithm.
+In the following sections, we will describe these
+components in more detail.
+2.1 Named Entity Recognition
+We regard named entity recognition (NER) as a stand-
+alone task, independent of language identification. For
+this reason, NER is performed first in our system.
+In order to classify named entities in the tweets, we
+employ two external tools, Stanford-NER and Twit-
+terNLP. Both systems are used in a black box approach,
+102
+without any attempt at optimization. I.e., we use the
+default parameters where applicable.
+Stanford NER (Finkel et al., 2005) is a state-of-the-
+art named entity recognizer based on conditional ran-
+dom fields (CRF), which can easily be trained on cus-
+tom data.
+1
+For all of the four language pairs, we train a
+NER model on a modified version of the training data
+in which we have kept the label ?ne? as our target la-
+bel, but replaced all others with the label ?O?. Thus, we
+create a binary classification problem of distinguishing
+named entities from all other words. This method is
+applicable for all data sets.
+For the Arabic data, we additionally employ a
+gazetteer, namely ANERgazet (Benajiba and Rosso,
+2008).
+2
+However, we do not use the three classes (per-
+son, location, organization) available in this resource.
+The second NER tool used in our system is the Twit-
+terNLP package.
+3
+This system was designed specifi-
+cally for Twitter data. It deals with the particular dif-
+ficulties that Twitter-specific language (due to spelling,
+etc.) poses to named entity recognition. The system has
+been shown to be very successful: Ritter et al. (2011,
+table 6) achieve an improvement of 52% on segmen-
+tation F-score in comparison with Stanford NER on
+hand-annotated Twitter data, which is mainly due to a
+considerably increased recall.
+The drawback of using TwitterNLP for our task is
+that it was developed for English, and adapting it to
+other languages would involve a major redesign and
+adaptation of the system. For this reason, we decided
+to use it exclusively on the language pairs that include
+English. An inspection of the training data showed that
+for all language pairs involving English, a majority of
+the NEs are written in English and should thus be rec-
+ognizable by the system.
+TwitterNLP is an IOB tagger. Since we do not dis-
+tinguish between the beginning and the rest of a named
+entity, we change all corresponding labels to ?ne? in
+the output of the NER system.
+In testing mode, the NER tools both label each word
+in a tweet as either ?O? or ?ne?. We combine the output
+such that ?ne? overrides ?O? in case of any disagree-
+ments, and pass this information to the eMM. This out-
+put is weighted with optimized weights unique to each
+language pair that were obtained through 10-fold cross
+validation, as discussed below. Thus, the decisions of
+the NER systems is not final, but they rather provide
+evidence that can be overruled by other system compo-
+nents.
+2.2 Label Transition Models
+The label transition probability component models lan-
+guage switches on the sequence of words. It is also
+1
+See http://nlp.stanford.edu/software/
+CRF-NER.shtml.
+2
+As available from http://users.dsic.upv.es/
+grupos/nle/.
+3
+See https://github.com/aritter/
+twitter_nlp.
+trained on the provided training data. In effect, this
+component consists of unigram, bigram, and trigram
+probability models of the sequences of labels found
+in the training data. Our MM is second order, thus
+the transition probabilities are linear interpolations of
+the uni-, bi-, and trigram label transition probabili-
+ties that were observed in the training data. We add
+two beginning-of-sentence buffer labels and one end-
+of-sentence buffer label to assist in deriving the start-
+ing and ending probabilities of each label during the
+training.
+2.3 Emission Probabilities
+The emission probability component is comprised of
+two subcomponents: a lexical probability component
+and a character n-gram probability component. Both
+are trained on the provided training data.
+Lexical probabilities: The lexical probability com-
+ponent consists of a dictionary for each label contain-
+ing the words found under that label and their rel-
+ative frequencies. Each word type and its count of
+tokens are added to the total for each respective la-
+bel. After training, the probability of a given label
+emitting a word (i.e., P (word|label)) is derived from
+these counts. To handle out-of-vocabulary words, we
+use Chen-Goodman ?one-count? smoothing, which ap-
+proximates the probabilities of unknownwords as com-
+pared to the occurrence of singletons (Chen and Good-
+man, 1996).
+Character n-gram probabilities: The character-
+based n-grammodel serves mostly as a back-off in case
+a word is out-of-vocabulary, in which case the lexi-
+cal probability may not be reliable. However, it also
+provides important information in the case of mixed
+words, which may use morphology from one language
+added to a stem from the other one. In this setting, un-
+igrams are not informative. For this reason, we select
+longer n-grams, with n ranging between 2 and 5.
+Character n-gram probabilities are calculated as fol-
+lows: For each training set, the words in that training
+set are sorted into lists according to their labels. In
+training models for each value of n, n ? 1 buffer char-
+acters are added to the beginning and end of each word.
+For example, in creating a trigram character model
+for the lang1 (English) words in the Nepali-English
+training set, we encounter the word star. We first gen-
+erate the form $$star##, then derive the trigrams. The
+trigrams from all training words are counted and sorted
+into types, and the counts are converted to relative fre-
+quencies.Thus, using four values of n for a data set
+containing six labels, we obtain 24 character n-gram
+models for that language pair. Note that because this
+component operates on individual words, character n-
+grams never cross a word boundary.
+In testing mode, for each word and for each value of
+n, the component generates a probability that the word
+occurred under each of the six labels. These values
+103
+are passed to the eMM, which uses manually optimized
+weights for each value of n to combine the four n-gram
+scores for each label into a single n-gram score for each
+label. In cases where an n-gram from the test word
+was not present in the training data, we use a primitive
+variant of LaPlace smoothing, which returns a fixed,
+extremely low non-zero probability for that n-gram.
+2.4 The Extended Markov Model
+Our approach is basically a trigram Markov model
+(MM), in which the observations are the words in
+the tweet (or blog sentence) and the underlying states
+correspond to the sequence of codeswitching labels
+(lang1, lang2, ne, mixed, ambiguous,
+other). The MM, as usual, also uses starting
+and ending probabilities (in our case, derived from
+standard training of the label transition model, due
+to our beginning- and end-of-sentence buffer labels),
+label/state transition probabilities, and probabilities
+that the state labels will emit particular observations.
+The only difference is that we modify the standard
+HMM emission probabilities. We call this resulting
+Markov model extended (eMM).
+First, for every possible state/label in the sequence,
+we linearly interpolate ?lexical (emission) probabil-
+ities? P
+lex
+(the standard emission probabilities for
+HMMs) with character n-gram probabilities P
+char
+.
+That is, we choose 0 ? ?
+lex
+? 1 and 0 ? ?
+char
+? 1
+such that ?
+lex
++ ?
+char
+= 1. We use them to derive
+a new emission probability P
+combined
+= ?
+lex
+? P
+lex
++
+?
+char
+?P
+char
+. This probability represents the likelihood
+that the given label in the hidden layer will emit the lex-
+ical observation, along with its corresponding character
+n-gram sequence.
+Second, only for ne labels in the hidden layer, we
+modify the probabilities that they will emit the ob-
+served word if that word has been judged by our NER
+module to be a named entity. Since the NER compo-
+nent exhibits high precision but comparatively low re-
+call, we boost the P
+combined
+(label = ne|word) if the
+observedword is judged to be a named entity, but we do
+not penalize the regular P
+combined
+if not. This boosting
+is accomplished via linear interpolation and another set
+of parameters, 0 ? ?
+ne
+? 1 and 0 ? ?
+combined
+? 1
+such that ?
+ne
++ ?
+combined
+= 1. Given a positive de-
+cision from the NER module, the new probability for
+the ne label emitting the observed word is derived as
+P
+ne+combined
+= ?
+ne
+? 0.80 + ?
+combined
+? P
+combined
+,
+i.e., we simply interpolate the original probability with
+a high probability. All lambda values, as well as the
+weights for the character n-gram probabilities, were set
+via 10-fold cross-validation, discussed below.
+2.5 Cross Validation & Optimization
+In total, the system uses 11 weights, each of which is
+optimized for each language pair. In labeling named
+entities, the output of the NER component is given one
+weight and the named entity probabilities of the other
+sources (emission and label transition components) is
+given another weight, with these weights summing to
+one. For the label transition component, the uni-, bi-
+and trigram scores receive weights that sum to one.
+Likewise, the emission probability component is com-
+prised of the lexical probability and the character n-
+gram probability, with weights that sum to one. The
+character n-gram component is itself comprised of the
+bi-, tri-, four- and five-gram scores, again with weights
+that sum to one.
+For each language pair, these weights were opti-
+mized using a 10-fold cross validation script that splits
+the original training data into a training file and a test
+file, runs the split files through the system and averages
+the output. As time did not allow an exhaustive search
+for optimal weights in this multi-dimensional space, we
+narrowed the space by first manually optimizing each
+subset of weights independently, then exploring com-
+binations of weights in the resulting neighborhood.
+3 Results
+3.1 Main Results
+The results presented in this section are the official re-
+sults provided by the organizers. The evaluation is split
+into two parts: a tweet level evaluation and a token level
+evaluation. On the tweet level, the evaluation concen-
+trates on the capability of systems to distinguish mono-
+lingual from multilingual tweets. The token level eval-
+uation is concerned with the classification of individ-
+ual words into the different classes: lang1, lang2,
+ambiguous, mixed, ne, and other.
+Our results for the tweet level evaluation, in com-
+parison to the best or next-best performing system are
+shown in table 1. They show that our system is ca-
+pable of discriminating monolingual from multilingual
+tweets with very high precision. This resulted in the
+best results in the evaluation with regard to accuracy
+for Mandarin-English and for both Arabic-dialects set-
+tings. We note that for the latter setting, reaching good
+results is exceedingly difficult without any Arabic re-
+sources. This task is traditionally approached by us-
+ing a morphological analyzer, but we decided to use
+a knowledge poor approach. This resulted in a rather
+high accuracy but in low precision and recall, espe-
+cially for the first Arabic test set, which was extremely
+skewed, with only 32 out of 2332 tweets displaying
+codeswitching.
+Our results for the token level evaluation, in com-
+parison to the best performing system per language,
+are shown in table 2. They show that our system sur-
+passed the baseline for both language pairs for which
+the organizers provided baselines. In terms of accu-
+racy, our system is very close to the best performing
+system for the pairs Spanish-English andMandarin En-
+glish. For the other language pairs, we partially suffer
+from a weak NER component. This is especially obvi-
+ous for the Arabic dialect sets. However, this is also a
+problem that can be easily fixed by using a more com-
+104
+lang. pair system Acc. Recall Precision F-score
+Nep.-Eng. IUCL+ 91.2 95.6 94.9 95.2
+dcu-uvt 95.8 99.4 96.1 97.7
+Span.-Eng. IUCL+ 83.8 51.4 87.7 64.8
+TAU 86.8 72.0 80.3 75.9
+Man.-Eng. IUCL+ 82.4 94.3 85.0 89.4
+MSR-India 81.8 95.5 83.7 89.2
+Arab. dia. IUCL+ 97.4 12.5 11.1 11.8
+MSR-India 94.7 34.4 9.7 15.2
+Arab. dia. 2 IUCL+ 76.6 24.9 27.1 26.0
+MSR-India 71.4 21.2 18.3 19.6
+Table 1: Tweet level results in comparison to the system with (next-)highest accuracy.
+lang1 lang2 mixed ne
+lang. pair system Acc. R P F R P F R P F R P F
+Nep.-Eng. IUCL+ 75.2 85.1 89.1 87.1 68.9 97.6 80.8 1.7 100 3.3 55.1 48.7 51.7
+dcu-uvt 96.3 97.9 95.2 96.5 98.8 96.1 97.4 3.3 50.0 6.3 45.6 80.4 58.2
+base 70.0 57.1 76.5 65.4 92.3 62.8 74.7 0.0 100 0.0 0.0 100 0.0
+Span.-Eng. IUCL+ 84.4 88.9 82.3 85.5 85.1 89.9 87.4 0.0 100 0.0 30.4 48.5 37.4
+TAU 85.8 90.0 83.0 86.4 86.9 91.4 89.1 0.0 100 0.0 31.3 54.1 39.6
+base 70.3 85.1 67.6 75.4 78.1 72.8 75.4 0.0 100 0.0 0.0 100 0.0
+Man.-Eng. IUCL+ 89.5 98.3 97.8 98.1 83.9 66.6 74.2 0.0 100 0.0 70.1 50.3 58.6
+MSR-India 90.4 98.4 97.6 98.0 89.1 66.6 76.2 0.0 100 0.0 67.7 65.2 66.4
+Arab. dia. IUCL+ 78.8 96.1 81.6 88.2 34.8 8.9 14.2 ? ? ? 3.3 23.4 5.8
+CMU 91.0 92.2 97.0 94.6 57.4 4.9 9.0 ? ? ? 77.8 70.6 74.0
+Arab. dia. 2 IUCL+ 51.9 90.7 43.8 59.0 47.7 78.3 59.3 0.0 0.0 0.0 8.5 28.6 13.1
+CMU 79.8 85.4 69.0 76.3 76.1 87.3 81.3 0.0 100 0.0 68.7 78.8 73.4
+Table 2: Token level results in comparison to the system with highest accuracy (results for ambiguous and
+other are not reported).
+lang1 lang2 ne
+lang. pair system Acc. R P F R P F R P F
+Nep.-Eng. IUCL+ 80.5 86.1 78.8 82.3 97.6 80.9 88.5 29.9 80.9 43.7
+JustAnEagerStudent 86.5 91.3 80.2 85.4 93.6 91.1 92.3 39.4 83.3 53.5
+Span.-Eng. IUCL+ 91.8 87.4 81.9 84.5 84.5 87.4 85.9 28.5 47.4 35.6
+dcu-uvt 94.4 87.9 80.5 84.0 84.1 86.7 85.4 22.4 55.2 31.9
+Arab. dia. IUCL+ 48.9 91.7 33.3 48.8 48.4 81.9 60.9 3.3 17.6 5.5
+CMU 77.5 87.6 55.5 68.0 75.6 89.8 82.1 52.3 73.8 61.2
+Table 3: Token level results for the out-of-domain data.
+petitive, language dependent system. Another problem
+constitutes the mixed cases, which cannot be reliably
+annotated.
+3.2 Out-Of-Domain Results
+The shared task organizers provided ?surprise? data,
+from domains different from the training data. Our re-
+sults on those data sets are shown in table 3. For space
+reasons, we concentrate on the token level results only.
+The results show that our system is very robust with
+regard to out-of-domain settings. For Nepali-English
+and Spanish-English, we reach higher results than on
+the original test sets, and for the Arabic dialects, the re-
+sults are only slightly lower. These results need further
+analysis for us to understand how our system performs
+in such situations.
+4 Conclusions
+We have presented the IUCL+ system for word level
+language identification. Our system is based on a
+Markov model, which integrates different types of in-
+formation, including the named entity analyses, lexical
+and character n-gram probabilities as well as transition
+probabilities. One strength of the system is that it is
+completely language independent. The results of the
+shared task have shown that the system generally pro-
+vides reliable results, and it is fairly robust in an out-
+of-domain setting.
+105
+References
+Kenneth R. Beesley. 1988. Language identifier: A
+computer program for automatic natural-language
+identification of on-line text. In Proceedings of the
+29th Annual Conference of the American Translators
+Association, volume 47, page 54.
+Yassine Benajiba and Paolo Rosso. 2008. Arabic
+named entity recognition using conditional random
+fields. In Proceedings of Workshop on HLT & NLP
+within the Arabic World, LREC 2008, Marakech,
+Morroco.
+Stanley F. Chen and Joshua Goodman. 1996. An em-
+pirical study of smoothing techniques for language
+modeling. In Proceedings of the 34th annual meet-
+ing on Association for Computational Linguistics,
+pages 310?318.
+Jenny Rose Finkel, Trond Grenager, and Christopher
+Manning. 2005. Incorporating non-local informa-
+tion into information extraction systems by gibbs
+sampling. In Proceedings of the 43rd Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL?05), pages 363?370.
+Gregory Grefenstette. 1995. Comparing two language
+identification schemes. In Proceedings of the Third
+International Conference on Statistical Analysis of
+Textual Data (JADT), volume 2.
+Ben King and Steven Abney. 2013. Labeling the lan-
+guages of words in mixed-languagedocuments using
+weakly supervised methods. In Proceedings of the
+2013 Conference of the North American Chapter of
+the Association for Computational Linguistics: Hu-
+man Language Technologies, pages 1110?1119. As-
+sociation for Computational Linguistics.
+Levi King, Sandra Ku?bler, and Wallace Hooper. 2014.
+Word-level language identification in The Chymistry
+of Isaac Newton. Literary and Linguistic Comput-
+ing.
+Marco Lui and Timothy Baldwin. 2014. Accurate lan-
+guage identification of Twitter messages. In Pro-
+ceedings of the 5th Workshop on Language Analysis
+for Social Media (LASM), pages 17?25, Gothenburg,
+Sweden.
+Dong Nguyen and A. Seza Dogruz. 2013. Word level
+language identification in online multilingual com-
+munication. In Proceedings of the 2013 Conference
+on Empirical Methods in Natural LanguageProcess-
+ing, pages 857?862.
+Alan Ritter, Sam Clark, Mausam, and Oren Etzioni.
+2011. Named entity recognition in tweets: An ex-
+perimental study. In Proceedings of the 2011 Con-
+ference on Empirical Methods in Natural Language
+Processing, pages 1524?1534, Edinburgh, Scotland,
+UK., July. Association for Computational Linguis-
+tics.
+Thamar Solorio, Elizabeth Blair, Suraj Maharjan, Steve
+Bethard, Mona Diab, Mahmoud Gonheim, Abdelati
+Hawwari, Julia Hirshberg, Alison Chang, and Pas-
+cale Fung. 2014. Overview for the first shared
+task on language identification in code-switched
+data. In Proceedings of the First Workshop on Com-
+putational Approaches to Code-Switching. EMNLP
+2014, Conference on Empirical Methods in Natural
+Language Processing, Doha, Qatar.
+106

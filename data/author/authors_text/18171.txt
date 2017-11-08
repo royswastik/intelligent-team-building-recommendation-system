@@ -1,0 +1,2963 @@
+Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 1089?1099,
+Seattle, Washington, USA, 18-21 October 2013. c?2013 Association for Computational Linguistics
+Efficient Left-to-Right Hierarchical Phrase-based Translation with
+Improved Reordering
+Maryam Siahbani, Baskaran Sankaran, Anoop Sarkar
+Simon Fraser University
+Burnaby BC. CANADA
+{msiahban,baskaran,anoop}@cs.sfu.ca
+Abstract
+Left-to-right (LR) decoding (Watanabe et al,
+2006b) is a promising decoding algorithm for
+hierarchical phrase-based translation (Hiero).
+It generates the target sentence by extending
+the hypotheses only on the right edge. LR de-
+coding has complexity O(n2b) for input of n
+words and beam size b, compared toO(n3) for
+the CKY algorithm. It requires a single lan-
+guage model (LM) history for each target hy-
+pothesis rather than two LM histories per hy-
+pothesis as in CKY. In this paper we present an
+augmented LR decoding algorithm that builds
+on the original algorithm in (Watanabe et al,
+2006b). Unlike that algorithm, using experi-
+ments over multiple language pairs we show
+two new results: our LR decoding algorithm
+provides demonstrably more efficient decod-
+ing than CKY Hiero, four times faster; and by
+introducing new distortion and reordering fea-
+tures for LR decoding, it maintains the same
+translation quality (as in BLEU scores) ob-
+tained phrase-based and CKY Hiero with the
+same translation model.
+1 Introduction
+Hiero (Chiang, 2007) models translation using a lex-
+icalized synchronous context-free grammar (SCFG)
+extracted from word aligned bitexts. Typically,
+CKY-style decoding is used for Hiero with time
+complexity O(n3) for source input with n words.
+Scoring the target language output using a lan-
+guage model within CKY-style decoding requires
+two histories per hypothesis, one on the left edge
+of each span and one on the right, due to the fact
+that the target side is not generated in left to right
+order, but rather built bottom-up from sub-spans.
+This leads to complex problems in efficient lan-
+guage model integration and requires state reduc-
+tion techniques (Heafield et al, 2011; Heafield et
+al., 2013). The size of a Hiero SCFG grammar is
+typically larger than phrase-based models extracted
+from the same data creating challenges in rule ex-
+traction and decoding time especially for larger
+datasets (Sankaran et al, 2012).
+In contrast, the LR-decoding algorithm could
+avoid these shortcomings such as faster time com-
+plexity, reduction in the grammar size and the sim-
+plified left-to-right language model scoring. It
+means LR decoding has the potential to replace
+CKY decoding for Hiero. Despite these attractive
+properties, we show that the original LR-Hiero de-
+coding proposed by (Watanabe et al, 2006b) does
+not perform to the same level of the standard CKY
+Hiero with cube pruning (see Table 3). In addition,
+the current LR decoding algorithm does not obtain
+BLEU scores comparable to phrase-based or CKY-
+based Hiero models for different language pairs (see
+Table 4). In this paper we propose modifications to
+the LR decoding algorithm that addresses these limi-
+tations and provides, for the first time, a true alterna-
+tive to the standard CKY Hiero algorithm that uses
+left-to-right decoding.
+We introduce a new extended version of the LR
+decoding algorithm presented in (Watanabe et al,
+2006b) which is demonstrably more efficient than
+the CKY Hiero algorithm. We measure the effi-
+ciency of the LR Hiero decoder in a way that is
+independent of the choice of system and program-
+ming language by measuring the number of lan-
+guage model queries. Although more efficient, the
+new LR decoding algorithm suffered from lower
+BLEU scores compared to CKY Hiero. Our anal-
+ysis of left to right decoding showed that it has more
+potential for search errors due to early pruning of
+good hypotheses. This is unlike bottom-up decoding
+(CKY) which keeps best hypotheses for each span.
+To address this issue, we introduce two novel fea-
+tures into the Hiero SMT model that deal with re-
+ordering and distortion. Our experiments show that
+LR decoding with these features using prefix lexi-
+1089
+calized target side rules equals the scores obtained
+by CKY decoding with prefix lexicalized target side
+rules and phrase-based translation system. It per-
+forms four times fewer language model queries on
+average, compare to CKY Hiero decoding with un-
+restricted Hiero rules: 6466.7 LM queries for CKY
+Hiero (with cube pruning) compared to 1500.45 LM
+queries in LR Hiero (with cube pruning). While
+translation quality suffers by only about 0.67 in
+BLEU score on average, across two different lan-
+guage pairs.
+2 Left-to-Right Decoding for Hiero
+Hierarchical phrase-based SMT (Chiang, 2005; Chi-
+ang, 2007) uses a synchronous context free gram-
+mar (SCFG), where the rules are of the form X ?
+??, ??, where X is a non-terminal, ? and ? are
+strings of terminals and non-terminals.
+Chiang (2007) places certain constraints on the
+extracted rules in order to simplify decoding. This
+includes limiting the maximum number of non-
+terminals (rule arity) to two and disallowing any rule
+with consecutive non-terminals on the foreign lan-
+guage side. It further limits the length of the initial
+phrase-pair as well as the number of terminals and
+non-terminals in the rule. For translating sentences
+longer than the maximum phrase-pair length, the de-
+coder relies on additional glue rules S ? ?X,X?
+and S ? ?SX,SX? that allows monotone combi-
+nation of phrases. The glue rules are used when no
+rules could match or the span length is larger than
+the maximum phrase-pair length.
+2.1 Rule Extraction for LR Decoding
+Left-to-right Hiero (Watanabe et al, 2006b) gener-
+ates the target hypotheses left to right, but for syn-
+chronous context-free grammar (SCFG) as used in
+Hiero. The target-side rules are constrained to be
+prefix lexicalized. These constrained SCFG rules
+are defined as:
+X ? ??,
+?
+b ?? (1)
+where ? is a mixed string of terminals and non-
+terminals. ?b is a terminal sequence prefixed to the
+possibly empty non-terminal sequence ?. For the
+sake of simplicity, We refer to these type of rules as
+their work
+students
+X1
+X2
+X6
+X4 X5
+X3have
+not yet
+done
+.
+schuler ihre noch nicht gemacht haben .arbeit
+students have done their workyet .not
+(b)
+(a)
+gemacht
+schuler
+X1
+X2
+X6
+X5 X4
+X3 haben
+noch nicht
+ihre arbeit
+.
+1
+2
+3 6
+45
+Figure 1: (a): A word-aligned German-English sentence
+pair. The bars above the source words indicate phrase-
+pairs having at least two words. (b): its corresponding
+left-to-right target derivation tree. Superscripts on the
+source non-terminals show the indices of the rules (see
+Fig 2) used in derivation.
+GNF rules1 in this paper.
+Rule extraction is similar to Hiero, except any
+rules violating GNF form on the target side are
+excluded. Rule extraction considers each smaller
+source-target phrase pair within a larger phrase pair
+and replaces the spans with non-terminal X , yield-
+ing hierarchical rules. Figure 1(a) shows a word-
+aligned German-English sentence with a phrase
+pair ?ihre arbeit noch nicht gemacht haben,
+have not yet done their work? that will lead to a
+SCFG rule. Given other smaller phrases (marked by
+bars above the source side), we extract a GNF rule2:
+X ?
+?X
+1
+noch nicht X
+2
+haben, have not yet X
+2
+X
+1
+?
+(2)
+In order to avoid data sparsity and for better gen-
+eralization, Watanabe et al (2006b) adds four glue
+rules for each lexical rule ? ?f, e?? which are analo-
+gous to the glue rules defined in (Chiang, 2007) (see
+above) except that these glue rules for LR decoding
+1Griebach Normal Form (GNF), although the synchronous
+grammar is not in this normal form, rather only the target side
+is prefix lexicalized as if it were in GNF form.
+2 LR-Hiero rule extraction excludes non-GNF rules such as
+X ? ?X1 noch nicht gemacht X2, X2 not yet done X1?.
+1090
+allow reordering as well.
+X ? ?
+?
+fX1, e?X1? X ? ?X1
+?
+fX2, e?X1X2?
+X ? ?X1
+?
+f, e?X1? X ? ?X1
+?
+fX2, e?X2X1?
+(3)
+It might appear that the restriction that target-side
+rules be GNF is a severe restriction on the cover-
+age of possible hypotheses compared to the full set
+of rules permitted by the Hiero extraction heuris-
+tic. However there is some evidence in the liter-
+ature that discontinuous spans on the source side
+in translation rules is a lot more useful than dis-
+continuous spans in the target side (which is disal-
+lowed in the GNF). For instance, (Galley and Man-
+ning, 2010) do an extensive study of discontinuous
+spans on source and target side and show that source
+side discontinuous spans are very useful but remov-
+ing discontinuous spans on the target side only low-
+ers the BLEU score by 0.2 points (using the Joshua
+SMT system on Chinese-English). Removing dis-
+continuous spans means that the target side rules
+have the form: uX,Xu,XuX,XXu, or uXX of
+which we disallow Xu,XuX,XXu. Zhang and
+Zong (2012) also conduct a study on discontinuous
+spans on source and target side of Hiero rules and
+conclude that source discontinuous spans are always
+more useful than discontinuities on the target side
+with experiments on four language pairs (zh-en, fr-
+en, de-en and es-en). As we shall also see in our
+experimental results (see Table 4) we can get close
+to the BLEU scores obtained using the full set of Hi-
+ero rules by using only target lexicalized rules in our
+LR decoder.
+2.2 LR-Hiero Decoding
+LR-Hiero decoding uses a top-down depth-first
+search, which strictly grows the hypotheses in target
+surface ordering. Search on the source side follows
+an Earley-style search (Earley, 1970), the dot jumps
+around on the source side of the rules based on the
+order of nonterminals on the target side. This search
+is integrated with beam search or cube pruning to
+efficiently find the k-best translations.
+Several important details about the algorithm of
+LR-Hiero decoding are implicit and unexplained
+in (Watanabe et al, 2006b). In this section we de-
+scribe the LR-Hiero decoding algorithm in more de-
+tail than the original description in (Watanabe et al,
+Algorithm 1: LR-Hiero Decoding
+1: Input sentence: f = f
+0
+f
+1
+. . . fn
+2: F = FutureCost(f) (Precompute future cost for
+spans)
+3: for i = 0, . . . , n do
+4: Si = {} (Create empty stacks)
+5: h
+0
+= (?s?, [[0, n]], ?,F
+[0,n]) (Initial hypothesis
+4-tuple)
+6: Add h
+0
+to S
+0
+(Push initial hyp into first Stack)
+7: for i = 0, . . . , n? 1 do
+8: for each h in Si do
+9: [u, v] = pop(hs) (Pop first uncovered span
+from list)
+10: R = GetSpanRules([u, v]) (Extract rules
+matching the entire span [u, v])
+11: for r ? R do
+12: h? = GrowHypothesis(h, r, [u, v],F) (New
+hypothesis)
+13: Add h? to Sl, where l = |h?cov| (Add new
+hyp to stack)
+14: return arg max(Sn)
+15: GrowHypothesis(h, r, [u, v],F)
+16: h? = (h?t = ?, h
+?
+s = hs, h
+?
+cov = ?, h
+?
+c = 0)
+17: rX = {Xj , Xk, . . . |j C k C . . .} (Get NTs in
+surface order)
+18: for each X in reverse(rX) do
+19: push(h?s, span(X)) (Push uncovered spans to
+LIFO list)
+20: h?t = Concatenate(ht, rt)
+21: h?cov = UpdateCoverage(hcov, rs)
+22: h?c = ComputeCost(g(h
+?
+),F?h?cov )
+23: return h?
+2006b). We explain our own modified algorithm for
+LR decoding with cube pruning in Section 2.3.
+Algorithm 1 shows the pseudocode for LR de-
+coding. Decoding the example in Figure 1(b)
+is explained using a walk-through shown in Fig-
+ure 2. Each partial hypothesis h is a 4-tuple
+(ht, hs, hcov, hc): consisting of a translation prefix
+ht, a (LIFO-ordered) list hs of uncovered spans,
+source words coverage set hcov and the hypothesis
+cost hc. The initial hypothesis is a null string with
+just a sentence-initial marker ?s? and the list hs con-
+taining a span of the whole sentence, [0, n]. The hy-
+potheses are stored in stacks S0, . . . , Sn, where each
+stack corresponds to a coverage vector of same size,
+covering same number of source words (Koehn et
+al., 2003).
+At the beginning of beam search the initial hy-
+1091
+? X ? schuler ihre arbeit nochnicht gemacht haben .?schuler ? X11?ihrearbeit nochnicht gemacht haben .?schuler ? X12?ihre arbeit nochnicht gemacht ? haben X 22?.?schuler X 13?ihrearbeit ? nochnicht ? X23?gemacht? haben X 22?.?schuler ? X13 ?ihre arbeit? nochnicht gemacht haben X 22?.?schuler ihre arbeit nochnicht gemacht haben ?X 22?.?schuler ihre arbeit nochnicht gemacht haben .
+1) X??schuler X1/ students X1?2) X??X1heban X 2/have X 1X 2?3 )X??X 1nochnicht X2/not yet X 2X 1?4 ) X??gemacht /done ?5 )X?? ihre arbeit / their work ?6 )X?? ./ . ?
+[0,8]students [1,8 ]students have [1,6 ][7,8]students have not yet [5,6] [1,3 ][7,8]students have not yet done [1,3 ][7,8]students have not yet done their work [7,8]students have not yet done their work .
+rules source side coverage hypothesis
+GG <s><s><s><s><s><s>
+<s>
+</s>
+Figure 2: Illustration of the LR-Hiero decoding process in Figure 1. (a) Rules pane show the rules used in the derivation
+(glue rules are marked byG) (b) Decoder state using Earley dot notation (superscripts show rule#) (c) Hypotheses pane
+showing translation prefix and ordered list of yet-to-be-covered spans.
+pothesis h0 is added to the decoder stack S0 (line 6
+in Algoorithm 1). Hypotheses in each decoder stack
+are expanded iteratively, generating new hypotheses,
+which are added to the latter stacks corresponding to
+the number of source words covered. In each step it
+pops from the LIFO list hs, the span [u, v] of the
+next hypothesis h to be processed.
+All rules that match the entire span [u, v] are then
+obtained efficiently via pattern matching (Lopez,
+2007). GetSpanRules addresses possible ambigui-
+ties in matched rules to the given span [u, v]. For
+example, given a rule r, with source side rs :
+?X1 the X2? and source phrase p : ?ok, the more
+the better?. There is ambiguity in matching r to
+p. GetSpanRules returns a distinct matched rule for
+each possible matching.
+The GrowHypothesis routine creates a new can-
+didate by expanding given hypothesis h using rule
+r and computes the complete hypothesis score in-
+cluding language model score. Since the target-side
+rules are in GNF, the translation prefix of the new
+hypothesis is obtained by simply concatenating the
+terminal prefixes of h and r in same order (line 20).
+UpdateCoverage updates source word coverage set
+using the source side of r. The hs list is built by
+pushing the non-terminal spans of rule r in a reverse
+order (lines 17 and 18). The reverse ordering main-
+tains the left-to-right generation of the target side.
+In the walk-through in Figure 2, the derivation
+process starts by expanding the initial hypothesis h0
+(first item in the right pane of Fig 2) with the rule
+(rule #1 in left pane) to generate a new partial candi-
+date having a terminal prefix of ?s? students (second
+item in right pane). The second item in the middle
+pane shows the current position of the parser em-
+ploying Earley?s dot notation, indicating that the first
+word has already been translated. Now the decoder
+considers the second hypothesis and pops the span
+[1, 8]. It then matches the rule (#2) and pushes the
+spans [1, 6] and [7, 8] into the list hs in the reverse
+order of their appearance in the target-side rule. At
+each step the new hypothesis is added to the decoder
+stack Sl depending on the number of covered words
+in the new hypothesis (line 13 in Algorithm 1).
+For pruning we use an estimate of the future cost3
+of the spans uncovered by current hypothesis to-
+gether with the hypothesis cost. The future cost is
+precomputed (line 2 Algorithm 1) in a way simi-
+lar to the phrase-based models (Koehn et al, 2007)
+using only the terminal rules of the grammar. The
+ComputeCost method (line 22 in Algorithm 1) uses
+the usual log-linear model and scores a hypothesis
+based on its different feature scores g(h?) and the
+future cost of the yet to be covered spans (F?h?cov ).
+Time complexity of left to right Hiero decoding with
+beam search is O(n2b) in practice where n is the
+length of source sentence and b is the size of beam
+(Huang and Mi, 2010).
+2.3 LR-Hiero Decoding with Cube Pruning
+The Algorithm 1 presented earlier does an ex-
+haustive search as it generates all possible partial
+translations for a given stack that are reachable from
+the hypotheses in previous stacks. However only a
+few of these hypotheses are retained, while majority
+of them are pruned away. The cube pruning tech-
+nique (Chiang, 2007) avoids the wasteful generation
+of poor hypotheses that are likely to be pruned away
+by efficiently restricting the generation to only high
+scoring partial translations.
+We modify the cube pruning for LR-decoding
+that takes into account the next uncovered span to
+3 Watanabe et al (2006b) also use a similar future cost, even
+though it is not discussed in the paper (p.c.).
+1092
+Algorithm 2: LR-Hiero Decoding with Cube Pruning
+1: Input sentence: f = f
+0
+f
+1
+. . . fn
+2: F = FutureCost(f) (Precompute future cost for
+spans)
+3: S
+0
+= {} (Create empty initial stack)
+4: h
+0
+= (?s?, [[0, n]], ?,F
+[0,n]) (Initial hypothesis
+4-tuple)
+5: Add h
+0
+to S
+0
+(Push initial hyp into first Stack)
+6: for i = 1, . . . , n do
+7: cubeList = {} (MRL is max rule length)
+8: for p = max(i? MRL, 0), . . . , i? 1 do
+9: {G} = Grouped(Sp) (Group based on the first
+uncovered span)
+10: for g ? {G} do
+11: [u, v] = gspan
+12: R = GetSpanRules([u, v])
+13: for Rs ? R do
+14: cube = [ghyps, Rs]
+15: Add cube to cubeList
+16: Si = Merge(cubeList,F) (Create stack Si and
+add new hypotheses to it, see Figure 3)
+17: return arg max(Sn)
+18: Merge(CubeList,F)
+19: heapQ = {}
+20: for each (H,R) in cubeList do
+21: [u, v] = span of rule R
+22: h? = GrowHypothesis(h
+1
+, r
+1
+, [u, v],F) (from
+Algorithm 1)
+23: push(heapQ, (h?c, h
+?
+, [H,R])
+24: hypList = {}
+25: while |heapQ| > 0 and |hypList| < K do
+26: (h?c, h
+?
+, [H,R]) = pop(heapQ)
+27: push(heapQ,GetNeighbours([H,R])
+28: Add h? to hypList
+29: return hypList
+be translated indicated by the Earley?s dot nota-
+tion. The Algorithm 2 shows the pseudocode for
+LR-decoding using cube pruning. The structure of
+stacks and hypotheses and computing the future cost
+is similar to Algorithm 1 (lines 1-5). To fill stack
+Si, it iterates over previous stacks (line 8 in Algo-
+rithm 2) 4. All hypotheses in each stack Sp (cov-
+ering p words on the source-side) are first parti-
+tioned into a set of groups, {G}, based on their
+first uncovered span (line 9) 5. Each group g is a
+4As the length of rules are limited (at most MRL), we can
+ignore stacks with index less than i? MRL
+5The beam search decoder in Phrase-based system (Huang
+and Chiang, 2007; Koehn et al, 2007; Sankaran et al, 2010)
+2-tuple (gspan, ghyps), where ghyps is a list of hy-
+potheses which share the same first uncovered span
+gspan. Rules matching the span gspan are obtained
+from routine GetSpanRules, which are then grouped
+based on unique source side rules (i.e. each Rs con-
+tains rules that share the same source side s but have
+different target sides). Each ghyps and possible Rs6
+create a cube which is added to cubeList.
+In LR-Hiero, each hypothesis is developed with
+only one uncovered span, therefore each cube al-
+ways has just two dimensions: (1) hypotheses with
+the same number of covered words and similar first
+uncovered span, (2) rules sharing the same source
+side. In Figure 3(a), each group of hypotheses,
+ghyps, is shown in a green box (in stacks), and each
+rectangle on the top is a cube. Figure 3 is using the
+example in Figure 2.
+The Merge routine is the core function of cube
+pruning which generates the best hypotheses from
+all cubes (Chiang, 2007). For each possible cube,
+(H,R), the best hypothesis is generated by calling
+GrowHypothesis(h1, r1, span,F) where h1 and
+r1 are the best hypothesis and rule in H and R re-
+spectively (line 22). Figure 3 (b) shows a more de-
+tailed view of a cube (shaded cube in Figure 3(a)).
+Rows are hypotheses and columns are rules which
+are sorted based on their scores.
+The first best hypotheses, h?, along with their
+score, h?c and corresponding cube, (H,R) are
+placed in a priority queue, heapQ (triangle in Fig-
+ure 3). Iteratively the best hypothesis is popped
+from the queue (line 26) and its neighbours in
+the cube are added to the priority queue (using
+GetNeighbours([H,Q])). It continues to generate
+all K best hypotheses. Using cube pruning tech-
+nique, each stack is filled with K best hypotheses
+without generating all possible hypotheses in each
+cube.
+groups the hypotheses in a given stack based on their coverage
+vector. But this idea does not work in LRHiero decoding in
+which the expansion of each hypothesis is restricted to its first
+uncovered span. We have also tried another way of grouping
+hypotheses: group by all uncovered spans, hs. Our experiments
+did not show any significant difference between the final results
+(BLEU score), therefore we decided to stick to the simpler idea:
+using first uncovered span for grouping.
+6Note that, just rules whose number of terminals in their
+source side is equal to i? p can be used.
+1093
+...
+1 2 3 4 5
+[1,8][1,8][0,3][0,3][5,8]
+[1,6][1,6][1,6][0,3][0,3]
+[5,6][5,6][1,4][6,8][6,8]
+[5,6][5,6][5,6][1,3][7,8]
+[1,3]
+thei
+trer
+the thew
+theo tier
+tiek
+toeitreo
+rehtetseudnX126nd453a246vn4y2n4.ocwl4tseh
+dnX126n453d46vn43gm231y4.ocwl4thek
+bXb(gd453a246vn4y2n4.ocwl4tt o
+)312 1v62 1v
+trer
+the thew
+theo tier
+tiek
+toeitreo
+thei
+(a) (b)
+Figure 3: Example of generating hypotheses in cube pruning using Figure 2: (a) Hypotheses in previous stacks are
+grouped based on their first uncovered span, and build cubes (grids on top). Cubes are in different sizes because
+of different number of rules and group sizes. Cubes are fed to a priority queue (triangle) and new hypotheses are
+iteratively popped from the queue and added to the current stack, S
+5
+. (b) Generating hypotheses from a cube. The top
+side of the grid denotes the target side of rules sharing the same source side (Rs) along with their scores. Left side of
+the grid shows the hypotheses in a same group, their first uncovered span and their scores. Hypothesis generated from
+row 1 and column 1 is added to the queue at first. Once it is popped from the queue, its neighbours (in the grid) are
+subsequently added to the queue.
+Figure 3 (b) shows the derivation of the two best
+hypotheses from the cube. The best hypothesis of
+this cube which is likely created from the best hy-
+pothesis and rule (left top most entry) is popped
+at first step. Then, GetNeighbours calls GrowHy-
+pothesis to generate next potential best hypotheses
+of this cube (neighbours of the popped entry which
+are shaded in Figure 3(b)). These hypotheses are
+added to the priority queue. In the next iteration, the
+best hypothesis is popped from all candidates in the
+queue and algorithm continues.
+3 Features
+We use the following standard SMT features for the
+log-linear model of LR-Hiero: relative-frequency
+translation probabilities p(f |e) and p(e|f), lexical
+translation probabilities pl(f |e) and pl(e|f), a lan-
+guage model probability, word count and phrase
+count. In addition we also use the glue rule count
+and the two reordering penalty features employed
+by Watanabe et al (2006b; 2006a). These features
+compute the height and width (span size of the en-
+tire subtree) of all subtrees which are backtraced in
+the derivation of a hypothesis. A non-terminal Xi
+is pushed into the LIFO list of a partial hypothesis;
+it?s backtrace refers to the set of NTs that must be
+popped before Xi.
+In Figure 1(b), X2 has two subtrees X3 and X6,
+where X3 should be processed before X6. The sub-
+tree rooted atX3 in Figure 1(b) has a height of 2 and
+span [1, 6] having a width of 5. Similarly, X4 should
+be backtraced beforeX5 and has height and width of
+1. Backtracing applies only for rules having at least
+two non-terminals. Thus the total height and width
+penalty for this derivation are 3 and 6 respectively.
+However, the height and width features do not
+distinguish between a rule that reorders the non-
+terminals in source and target from one that pre-
+serves the ordering. Rules #2 and #3 in Figure 2
+are treated equally although they have different or-
+derings. The decoder is thus agnostic to this dif-
+ference and would not be able to exploit this ef-
+fectively to control reordering and instead would
+rely on the partial LM score. This issue is exac-
+erbated for glue rules, where the decoder has to
+choose from different possibilities without any way
+to favour one over the others. Instead of the rule
+#2, the decoder could use its reordered version
+?X1 haben X2, have X2 X1? leading to a poor
+translation.
+1094
+The features we introduce can be used to learn
+if the model should favour monotone translations at
+the cost of re-orderings or vice versa and hence can
+easily adapt to different language pairs. Further, our
+experiments (see Section 4) suggest that the features
+h andw are not sufficient by themselves to model re-
+ordering for language pairs exhibiting very different
+syntactic structure.
+3.1 Distortion Features
+Our distortion features are inspired by their name-
+sake in phrase-based system, with some modifica-
+tions to adapt the idea for the discontiguous phrases
+in LR-Hiero grammar.
+r : hf
+1
+X
+1
+f
+2
+X
+2
+f
+3
+, tX
+2
+X
+1
+i I = [`, f
+1
+, f
+2
+, f
+3
+, X
+2
+, X
+1
+,a]
+f2 f3 X1 f1 X2 (a)
+r : ? X1noch nicht X 2/not yet X2 X1?
+I=[(1,1) ,(3,5) ,(5,6) ,(1,3) ,(6,6)]
+.1ihre2arbeit3noch4nicht5gemacht 6 (b)
+Figure 4: (a) Distortion feature computation using a rule
+r. (b) Example of distortion computation for applying r
+3
+on phrase ?ihre arbeit noch nicht gemacht haben?. sub-
+scripts between words show the indices which are used to
+build I . Distortion would be: d = 2 + 0 + 5 + 3.
+Consider a rule r = ??,?b ??, with the source
+term ? being a mixed string of terminals and non-
+terminals. Representing the non-terminal spans and
+each sequence of terminals in ? as distinct items, our
+distortion feature counts the total length of jumps be-
+tween the items during Earley parsing.
+Figure 4 (a) explains the computation of our dis-
+tortion feature for an example rule r. Let I =
+[I0, . . . , Ik] be the items denoting the terminal se-
+quences and non-terminal spans with I0 and Ik be-
+ing dummy items (` and a in Fig) marking the left
+and right indices of the rule r in input sentence f .
+Other items are arranged by their realization order
+on the target-side with the terminal sequences pre-
+ceding non-terminal spans. The items for the exam-
+ple rule are shown in Figure 4 (a). The distortion
+feature is computed as follows:
+d(r) =
+k?
+j=1
+|I
+L
+j ? I
+R
+j?1| (4)
+where superscripts refer to position of left (L) and
+right (R) edge of each item in the source sentence
+f . These are then aggregated across the rules of a
+derivation D as: d =
+?
+r?D d(r). For each item
+Ij , we count the jump from the end of previous item
+to the beginning of the current. In Figure 4 (a) the
+jumps are indicated by the arrows above the rule.
+Figure 4 (b) shows an example of distortion com-
+putation for r3 and phrase ?ihre arbeit noch nicht
+gemacht haben? from Figure 2.
+Since the glue rules are likely to be used in the top
+levels (possibly with large distortion) of the deriva-
+tion, we would want the decoder to learn the distor-
+tion for regular and glue rules separately. We thus
+use two distortion features for the two rule types and
+we call them dp and dg.
+These features do not directly model the source-
+target reordering, but only capture the source-side
+jumps. Furthermore they apply for both monotone
+and reordering rules. We now introduce a new fea-
+ture for exclusively modelling the reordering.
+3.2 Reordering Feature
+This feature simply counts the number of reordering
+rules, where the non-terminals in source and target
+sides are reordered. Thus r?? = rule(D, ??), where
+rule(D, ??) is the number of reordering rules in D.
+Similar to width and height, this feature is applied
+for rule having at least two non-terminals. This fea-
+ture is applied to regular and glue rules.
+4 Experiments
+We conduct different types of experiments to evalu-
+ate LR-Hiero decoding developed by cube pruning
+and integrating new features into LR-Hiero system
+for two language pairs: German-English (de-en) and
+Czech-English (cs-en).Table 1 shows the dataset de-
+tails.
+4.1 System Setup
+In our experiments we use four baselines as well
+as our implementation of LR-Hiero (written in
+Python):
+1095
+Corpus Train/Dev/Test
+cs-en Europarl(v7), CzEng(v0.9);
+News commentary
+7.95M/3000/3003
+de-en Europarl(v7); News
+commentary
+1.5M/2000/2000
+Table 1: Corpus statistics in number of sentences
+Model cs-en de-en
+Phrase-based 233.0 77.2
+Hiero 1,961.6 858.5
+LR-Hiero 230.5 101.3
+Table 2: Model sizes (millions of rules). We do not count
+glue rules for LR-Hiero which are created at runtime as
+needed.
+? Hiero: we used Kriya, our open-source im-
+plementation of Hiero in Python, which per-
+forms comparably to other open-source Hiero
+systems (Sankaran et al, 2012). Kriya can
+obtain statistically significantly equal BLEU
+scores when compared with Moses (Koehn et
+al., 2007) for several language pairs (Razmara
+et al, 2012; Callison-Burch et al, 2012).
+? Hiero-GNF: where we use Hiero decoder with
+the restricted LR-Hiero grammar (GNF rules).
+? LR-Hiero: our implementation of LR-Hiero
+(Watanabe et al, 2006b) in Python.
+? phrase-based: Moses (Koehn et al, 2007)
+? LR-Hiero+CP: LR-Hiero decoding with cube
+pruning.
+We use a 5-gram LM trained on the Gigaword cor-
+pus and use KenLM (Heafield, 2011) for LM scor-
+ing during decoding. We tune weights by minimiz-
+ing BLEU loss on the dev set through MERT (Och,
+2003) and report BLEU scores on the test set. We
+use comparable pop limits in each of the decoders:
+1000 for Moses and LR-Hiero and 500 with cube
+pruning for CKY Hiero and LR-Hiero+CP. Other
+extraction and decoder settings such as maximum
+phrase length, etc. were identical across settings so
+that the results are comparable.
+Table 2 shows how the LR-Hiero grammar is
+much smaller than CKY-based Hiero.
+Model cs-en de-en
+#queries / time(ms) #queries / time(ms)
+Hiero 5,679.7 / 16.12 7,231.62 / 20.33
+Hiero-GNF 4,952.5 / 14.71 5,858.74 / 18.23
+LR-Hiero (1000) 46,333.21 / 163.6 83,518.63 / 328.11
+LR-Hiero (500) 24,141.03 / 97.61 42,783.12 / 192.23
+LR-Hiero+CP 1,303.2 / 4.2 1,697.7 / 5.67
+Table 3: Comparing average number and time of lan-
+guage model queries.
+4.2 Time Efficiency Comparison
+To evaluate the performance of LR-Hiero decod-
+ing with cube pruning (LR-Hiero+CP), we compare
+it with three baselines: (i) CKY Hiero, (ii) CKY
+Hiero-GNF, and (iii) LR-Hiero (without cube prun-
+ing) with two different beam size 500 and 1000.
+When it comes to instrument timing results, there are
+lots of system level details that we wish to abstract
+away from, and focus only on the number of ?edges?
+processed by the decoder. In comparison of parsing
+algorithms, the common practice is to measure the
+number of edges processed by different algorithms
+for the same reason (Moore and Dowding, 1991).
+By analogy to parsing algorithm comparisons, we
+compare the different decoding algorithms with re-
+spect to the number of calls made to the language
+model (LM) since that directly corresponds to the
+number of hypotheses considered by the decoder.
+A decoder is more time efficient if it can consider
+fewer translation hypotheses while maintaining the
+same BLEU score. All of the baselines use the same
+wrapper to query the language model, and we have
+instrumented the wrapper to count the statistics we
+need and thus we can say this is a fair comparison.
+For this experiment we use a sample set of 50 sen-
+tences taken from the test sets.
+Table 3 shows the results in terms of average num-
+ber of language model queries and times in millisec-
+onds.
+4.3 Reordering Features
+To evaluate the new reordering features proposed
+to LR-Hiero (Section 3.2), LR-Hiero+CP with new
+features is compared to all baselines. Table 4 shows
+the BLEU scores of different models in two lan-
+guage pairs. The baseline (Watanabe et al, 2006b)
+model uses all the features mentioned therein but is
+1096
+Model cs-en de-en
+Phrase-based 20.32 24.71
+CKY Hiero 20.64 25.52
+CKY Hiero-GNF 20.04 24.84
+LR-Hiero 18.30 23.47
+LR-Hiero + reordering feats 20.20 24.90
+LR-Hiero + CP + reordering feats 20.15 24.83
+CKY Hiero-GNF + reordering feats 20.52 25.09
+CKY Hiero + reordering feats 20.77 25.72
+Table 4: BLEU scores. The rows are grouped such that
+each group use the same model. The last row in part 2 of
+table shows LR-Hiero+CP using our new features in ad-
+dition to the baseline Watanabe features (line LR-Hiero
+baseline). The last part shows CKY Hiero using new re-
+ordering features. The reordering features used are dp, dg
+and r??. LR-Hiero+CP has a beam size of 500 while LR-
+Hiero has a beam size of 1000, c.f. with the LM calls
+shown in Table 3.
+worse than both phrase-based and CKY-Hiero base-
+lines by up to 2.3 BLEU points.
+All the reported results are obtained from a single
+optimizer run. However we observed insignificant
+changes in different tuning runs in our experiments.
+We find a gain of about 1 BLEU point when we add
+a single distortion feature d and a further gain of
+0.3 BLEU (not shown due to lack of space) when
+we split the distortion feature for the two rule types
+(dp and dg). The last line in part two of Table 4
+shows a consistent gain of 1.6 BLEU over the LR-
+Hiero baseline for both language pairs. It shows that
+LR-Hiero maintains the BLEU scores obtained by
+?phrase-based? and ?CKY Hiero-GNF?.
+We performed statistical significance tests us-
+ing two different tools: Moses bootstrap resam-
+pling and MultEval (Clark et al, 2011). The dif-
+ference between ?LR-Hiero+CP+reordering feat?
+and three baselines: ?phrase-based?, ?CKY Hiero-
+GNF?, ?LR-Hiero+reordering feat? are not statis-
+tically significant even for p-value of 0.1 for both
+tools.
+To investigate the impact of proposed reordering
+features with other decoder or models. We add these
+features to both Hiero and Hiero-GNF7. The last
+part of Table 4 shows the performance CKY decoder
+7Feature r?? is defined for SCFG rules and cannot be
+adopted to phrase-based translation systems; and Moses uses
+distortion feature therefore we omit Moses from this experi-
+ment.
+with different models (full Hiero and GNF) with the
+new reordering features in terms of BLEU score.
+The results show that these features are helpful in
+both models. Although, they do not make a big dif-
+ference in Hiero with full model, they can alleviate
+the lack of non-GNF rules in Hiero-GNF.
+Nguyen and Vogel (2013) integrate traditional
+phrase-based features: distortion and lexicalized re-
+ordering into Hiero as well. They show that such
+features can be useful to boost the translation quality
+of CKY Hiero with the full rule set. Nguyen and Vo-
+gel (2013) compute the distortion feature in a differ-
+ent way, only applicable to CKY. The distortion for
+each cell is computed after the translation for non-
+terminal sub-spans is complete. In LR-decoding,
+we compute distortion for rules even though we are
+yet to translate some of the sub-spans. Thus our ap-
+proach computes the distortion incrementally for the
+untranslated sub-spans which are later added. Un-
+like (Nguyen and Vogel, 2013), our distortion fea-
+ture can be applied to both LR and CKY-decoding
+(Table 4). We have also introduced another reorder-
+ing feature (Section 3.2) not proposed previously.
+5 Conclusion and Future Work
+We provided a detailed description of left-to-right
+Hiero decoding, many details of which were only
+implicit in (Watanabe et al, 2006b). We presented
+an augmented LR decoding algorithm that builds on
+the original algorithm in (Watanabe et al, 2006b)
+but unlike that algorithm, using experiments over
+multiple language pairs we showed two new results:
+(i) Our LR decoding algorithm provides demonstra-
+bly more efficient decoding than CKY Hiero and the
+original LR decoding algorithm in (Watanabe et al,
+2006b). And, (ii) by introducing new distortion and
+reordering features for LR decoding we show that
+it maintains the BLEU scores obtained by phrase-
+based and CKY Hiero-GNF.
+CKY Hiero uses standard Hiero-style translation
+rules capturing better reordering model than prefix
+lexicalized target-side translation rules used in LR-
+Hiero. Our LR-decoding algorithm is 4 times faster
+in terms of LM calls while translation quality suffers
+by about 0.67 in BLEU score on average.
+Unlike Watanabe et al (2006b), our new features
+can easily adapt to the reordering requirements of
+different language pairs. We also introduce the use
+1097
+of future cost in decoding algorithm which is an es-
+sential part in decoding. We have shown in this pa-
+per that left-to-right (LR) decoding can be consid-
+ered as a potential faster alternative to CKY decod-
+ing for Hiero-style machine translation systems.
+In future work, we plan to apply lexicalized re-
+ordering models to LR-Hiero. It has been shown to
+be useful for Hiero in some languages therefore it
+is promising to improve translation quality in LR-
+Hiero which suffers from lack of modeling power
+of non-GNF target side rules. We also plan to ex-
+tend the glue rules in LR-Hiero to provide a bet-
+ter reordering model. We believe such an exten-
+sion would be very effective in reducing search er-
+rors and capturing better reordering models in lan-
+guage pairs involving complex reordering require-
+ments like Chinese-English.
+Acknowledgments
+This research was partially supported by an NSERC,
+Canada (RGPIN: 264905) grant and a Google Fac-
+ulty Award to the third author. The authors wish
+to thank Taro Watanabe and Marzieh Razavi for
+their valuable discussions and suggestions, and the
+anonymous reviewers for their helpful comments.
+References
+Chris Callison-Burch, Philipp Koehn, Christof Monz,
+Matt Post, Radu Soricut, and Lucia Specia. 2012.
+Findings of the 2012 workshop on statistical machine
+translation. In Proceedings of the Seventh Work-
+shop on Statistical Machine Translation, pages 10?
+51, Montre?al, Canada, June. Association for Compu-
+tational Linguistics.
+David Chiang. 2005. A hierarchical phrase-based model
+for statistical machine translation. In In ACL, pages
+263?270.
+David Chiang. 2007. Hierarchical phrase-based transla-
+tion. Computational Linguistics, 33.
+Jonathan H. Clark, Chris Dyer, Alon Lavie, and Noah A.
+Smith. 2011. Better hypothesis testing for statisti-
+cal machine translation: controlling for optimizer in-
+stability. In Proceedings of the 49th Annual Meeting
+of the Association for Computational Linguistics: Hu-
+man Language Technologies: short papers - Volume
+2, HLT ?11, pages 176?181, Stroudsburg, PA, USA.
+Association for Computational Linguistics.
+Jay Earley. 1970. An efficient context-free parsing algo-
+rithm. Commun. ACM, 13(2):94?102, February.
+Michel Galley and Christopher D. Manning. 2010. Ac-
+curate non-hierarchical phrase-based translation. In
+Human Language Technologies: The 2010 Annual
+Conference of the North American Chapter of the As-
+sociation for Computational Linguistics, pages 966?
+974, Los Angeles, California, June. Association for
+Computational Linguistics.
+Kenneth Heafield, Hieu Hoang, Philipp Koehn, Tetsuo
+Kiso, and Marcello Federico. 2011. Left language
+model state for syntactic machine translation. In Pro-
+ceedings of the International Workshop on Spoken
+Language Translation, pages 183?190, San Francisco,
+California, USA, 12.
+Kenneth Heafield, Philipp Koehn, and Alon Lavie. 2013.
+Grouping language model boundary words to speed K-
+Best extraction from hypergraphs. In Proceedings of
+the 2013 Conference of the North American Chapter
+of the Association for Computational Linguistics: Hu-
+man Language Technologies, Atlanta, Georgia, USA,
+6.
+Kenneth Heafield. 2011. KenLM: Faster and smaller
+language model queries. In In Proc. of the Sixth Work-
+shop on Statistical Machine Translation.
+Liang Huang and David Chiang. 2007. Forest rescoring:
+Faster decoding with integrated language models. In
+In ACL 07.
+Liang Huang and Haitao Mi. 2010. Efficient incremental
+decoding for tree-to-string translation. In Proceedings
+of the 2010 Conference on Empirical Methods in Natu-
+ral Language Processing, pages 273?283, Cambridge,
+MA, October. Association for Computational Linguis-
+tics.
+Philipp Koehn, Franz Josef Och, and Daniel Marcu.
+2003. Statistical phrase-based translation. In Proc.
+of NAACL.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran, Richard
+Zens, Chris Dyer, Ondr?ej Bojar, Alexandra Con-
+stantin, and Evan Herbst. 2007. Moses: open source
+toolkit for statistical machine translation. In Proceed-
+ings of the 45th Annual Meeting of the ACL on Inter-
+active Poster and Demonstration Sessions, ACL ?07,
+pages 177?180, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+Adam Lopez. 2007. Hierarchical phrase-based trans-
+lation with suffix arrays. In EMNLP-CoNLL, pages
+976?985.
+Robert C. Moore and John Dowding. 1991. Efficient
+bottom-up parsing. In HLT. Morgan Kaufmann.
+Thuylinh Nguyen and Stephan Vogel. 2013. Integrat-
+ing phrase-based reordering features into chart-based
+decoder for machine translation. In Proc. of ACL.
+1098
+Franz Josef Och. 2003. Minimum error rate training
+in statistical machine translation. In Proceedings of
+the 41st Annual Meeting on Association for Compu-
+tational Linguistics - Volume 1, ACL ?03, pages 160?
+167, Stroudsburg, PA, USA. Association for Compu-
+tational Linguistics.
+Majid Razmara, Baskaran Sankaran, Ann Clifton, and
+Anoop Sarkar. 2012. Kriya - the sfu system for trans-
+lation task at wmt-12. In Proceedings of the Seventh
+Workshop on Statistical Machine Translation, WMT
+?12, pages 356?361, Stroudsburg, PA, USA. Associa-
+tion for Computational Linguistics.
+Baskaran Sankaran, Ajeet Grewal, and Anoop Sarkar.
+2010. Incremental decoding for phrase-based statis-
+tical machine translation. In Proceedings of the Joint
+Fifth Workshop on Statistical Machine Translation and
+MetricsMATR, WMT ?10, pages 216?223, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Baskaran Sankaran, Majid Razmara, and Anoop Sarkar.
+2012. Kriya - an end-to-end hierarchical phrase-based
+mt system. The Prague Bulletin of Mathematical Lin-
+guistics (PBML), (97):83?98, apr.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2006a. NTT statistical machine translation
+for iwslt 2006. In Proceedings of IWSLT 2006, pages
+95?102.
+Taro Watanabe, Hajime Tsukada, and Hideki Isozaki.
+2006b. Left-to-right target generation for hierarchical
+phrase-based translation. In Proc. of ACL.
+Jiajun Zhang and Chenqqing Zong. 2012. A Compar-
+ative Study on Discontinuous Phrase Translation. In
+NLPCC 2012, pages 164?175.
+1099
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 221?226,
+October 25-29, 2014, Doha, Qatar.
+c
+?2014 Association for Computational Linguistics
+Two Improvements to Left-to-Right Decoding for Hierarchical
+Phrase-based Machine Translation
+Maryam Siahbani and Anoop Sarkar
+School of Computing Science
+Simon Fraser University
+Burnaby BC. Canada
+msiahban,anoop@cs.sfu.ca
+Abstract
+Left-to-right (LR) decoding (Watanabe et
+al., 2006) is promising decoding algorithm
+for hierarchical phrase-based translation
+(Hiero) that visits input spans in arbitrary
+order producing the output translation in
+left to right order. This leads to far fewer
+language model calls, but while LR decod-
+ing is more efficient than CKY decoding,
+it is unable to capture some hierarchical
+phrase alignments reachable using CKY
+decoding and suffers from lower transla-
+tion quality as a result. This paper in-
+troduces two improvements to LR decod-
+ing that make it comparable in translation
+quality to CKY-based Hiero.
+1 Introduction
+Hierarchical phrase-based translation (Hi-
+ero) (Chiang, 2007) uses a lexicalized syn-
+chronous context-free grammar (SCFG) extracted
+from word and phrase alignments of a bitext. De-
+coding for Hiero is typically done with CKY-style
+decoding with time complexity O(n
+3
+) for source
+input with n words. Computing the language
+model score for each hypothesis within CKY de-
+coding requires two histories, the left and the right
+edge of each span, due to the fact that the target
+side is built inside-out from sub-spans (Heafield
+et al., 2011; Heafield et al., 2013).
+LR-decoding algorithms exist for phrase-
+based (Koehn, 2004; Galley and Manning, 2010)
+and syntax-based (Huang and Mi, 2010; Feng et
+al., 2012) models and also for hierarchical phrase-
+based models (Watanabe et al., 2006; Siahbani et
+al., 2013), which is our focus in this paper.
+Watanabe et al. (2006) first proposed left-to-
+right (LR) decoding for Hiero (LR-Hiero hence-
+forth) which uses beam search and runs in O(n
+2
+b)
+in practice where n is the length of source sentence
+and b is the size of beam (Huang and Mi, 2010).
+To simplify target generation, SCFG rules are con-
+strained to be prefix-lexicalized on target side aka
+Griebach Normal Form (GNF). Throughout this
+paper we abuse the notation for simplicity and use
+the term GNF grammars for such SCFGs. This
+constraint drastically reduces the size of gram-
+mar for LR-Hiero in comparison to Hiero gram-
+mar (Siahbani et al., 2013). However, the orig-
+inal LR-Hiero decoding algorithm does not per-
+form well in comparison to current state-of-the-art
+Hiero and phrase-based translation systems. Siah-
+bani et al. (2013) propose an augmented version
+of LR decoding to address some limitations in the
+original LR-Hiero algorithm in terms of transla-
+tion quality and time efficiency.
+Although, LR-Hiero performs much faster than
+Hiero in decoding and obtains BLEU scores com-
+parable to phrase-based translation system on
+some language pairs, there is still a notable gap be-
+tween CKY-Hiero and LR-Hiero (Siahbani et al.,
+2013). We show in this paper using instructive ex-
+amples that CKY-Hiero can capture some complex
+phrasal re-orderings that are observed in language
+pairs such as Chinese-English that LR-Hiero can-
+not (c.f. Sec.3).
+We introduce two improvements to LR decod-
+ing of GNF grammars: (1) We add queue diversity
+to the cube pruning algorithm for LR-Hiero, and
+(2) We extend the LR-Hiero decoder to capture all
+the hierarchical phrasal alignments that are reach-
+able in CKY-Hiero (restricted to using GNF gram-
+mars). We evaluate our modifications on three
+language pairs and show that LR-Hiero can reach
+the translation scores comparable to CKY-Hiero in
+two language pairs, and reduce the gap between
+Hiero and LR-Hiero on the third one.
+2 LR Decoding with Queue Diversity
+LR-Hiero uses a constrained lexicalized SCFG
+which we call a GNF grammar: X ? ??,
+?
+b ??
+where ? is a string of non-terminal and terminal
+symbols,
+?
+b is a string of terminal symbols and ? is
+a possibly empty sequence of non-terminals. This
+ensures that as each rule is used in a derivation,
+221
+Algorithm 1: LR-Hiero Decoding
+1: Input sentence: f = f
+0
+f
+1
+. . . f
+n
+2: F = FutureCost(f) (Precompute future cost
+1
+for spans)
+3: S
+0
+= {} (Create empty initial stack)
+4: h
+0
+= (?s?, [[0, n]], ?,F
+[0,n]
+) (Initial hypothesis 4-tuple)
+5: Add h
+0
+to S
+0
+(Push initial hyp into first Stack)
+6: for i = 1, . . . , n do
+7: cubeList = {} (MRL is max rule length)
+8: for p = max(i? MRL, 0), . . . , i? 1 do
+9: {G} = Grouped(S
+p
+) (based on the first uncovered
+span)
+10: for g ? {G} do
+11: [u, v] = g
+span
+12: R = GetSpanRules([u, v])
+13: for R
+s
+? R do
+14: cube = [g
+hyps
+, R
+s
+]
+15: Add cube to cubeList
+16: S
+i
+= Merge(cubeList,F) (Create stack S
+i
+and add
+new hypotheses to it, see Figure 1)
+17: return argmax(S
+n
+)
+18: Merge(CubeList,F)
+19: heapQ = {}
+20: for each (H,R) in cubeList do
+21: hypList = getBestHypotheses((H,R),F , d) (d
+best hypotheses of each cube)
+22: for each h
+?
+in hypList do
+23: push(heapQ, (h
+?
+c
+, h
+?
+, [H,R]) (Push new hyp
+in queue)
+24: hypList = {}
+25: while |heapQ| > 0 and |hypList| < K do
+26: (h
+?
+c
+, h
+?
+, [H,R]) = pop(heapQ) (pop the best
+hypothesis)
+27: push(heapQ,GetNeighbours([H,R]) (Push
+neighbours to queue)
+28: Add h
+?
+to hypList
+29: return hypList
+the target string is generated from left to right.
+The rules are obtained from a word and phrase
+aligned bitext using the rule extraction algorithm
+in (Watanabe et al., 2006).
+LR-Hiero decoding uses a top-down depth-first
+search, which strictly grows the hypotheses in tar-
+get surface ordering. Search on the source side
+follows an Earley-style search (Earley, 1970), the
+dot jumps around on the source side of the rules
+based on the order of nonterminals on the target
+side. This search is integrated with beam search
+or cube pruning to find the k-best translations.
+Algorithm 1 shows the pseudocode for LR-
+Hiero decoding with cube pruning (Chiang, 2007)
+(CP). LR-Hiero with CP was introduced in (Siah-
+bani et al., 2013). In this pseudocode, we have in-
+troduced the notion of queue diversity (explained
+below). However to understand our change we
+need to understand the algorithm in more detail.
+1
+The future cost is precomputed in a way similar to the
+phrase-based models (Koehn et al., 2007) using only the ter-
+minal rules of the grammar.
+9.18.2
+8.3 8.58.05
+8.1 8.48.68.88.9
+3.21.30.9 6.66.76.9
+8.9
+7.1 8.58.7
+9.39.08.17.2
+1.51.31.26.76.86.9
+...
+S i
+Figure 1: Cubes (grids) are fed to a priority queue (trian-
+gle) and generated hypotheses are iteratively popped from the
+queue and added to stack S
+i
+. Lower scores are better. Scores
+of rules and hypotheses appear on the top and left side of the
+grids respectively. Shaded entries are hypotheses in the queue
+and black ones are popped from the queue and added to S
+i
+.
+Each source side non-terminal is instantiated with
+the legal spans given the input source string, e.g.
+if there is a Hiero rule ?aX
+1
+, a
+?
+X
+1
+? and if a only
+occurs at position 3 in the input then this rule can
+be applied to span [3, i] for all i, 4 < i ? n for in-
+put of length n and source side X
+1
+is instantiated
+to span [4, i]. A worked out example of how the
+decoder works is shown in Figure 2. Each partial
+hypothesis h is a 4-tuple (h
+t
+, h
+s
+, h
+cov
+, h
+c
+): con-
+sisting of a translation prefix h
+t
+, a (LIFO-ordered)
+list h
+s
+of uncovered spans, source words coverage
+set h
+cov
+and the hypothesis cost h
+c
+. The initial hy-
+pothesis is a null string with just a sentence-initial
+marker ?s? and the list h
+s
+containing a span of the
+whole sentence, [0, n]. The hypotheses are stored
+in stacks S
+0
+, . . . , S
+n
+, where S
+p
+contains hypothe-
+ses covering p source words just like in stack de-
+coding for phrase-based SMT (Koehn et al., 2003).
+To fill stack S
+i
+we consider hypotheses in each
+stack S
+p
+2
+, which are first partitioned into a set of
+groups {G}, based on their first uncovered span
+(line 9). Each group g is a 2-tuple (g
+span
+, g
+hyps
+),
+where g
+hyps
+is a list of hypotheses which share the
+same first uncovered span g
+span
+. Rules matching
+the span g
+span
+are obtained from routine GetSpan-
+Rules. Each g
+hyps
+and possible R
+s
+create a cube
+which is added to cubeList.
+The Merge routine gets the best hypotheses
+from all cubes (see Fig.1). Hypotheses (rows) and
+columns (rules) are sorted based on their scores.
+GetBestHypotheses((H,R),F , d) uses current
+hypothesis H and rule R to produce new hypothe-
+ses. The first best hypothesis, h
+?
+along with its
+score h
+?
+c
+and corresponding cube (H,R) is placed
+in a priority queue heapQ (triangle in Figure 1
+and line 23 in Algorithm 1). Iteratively the K best
+2
+As the length of rules are limited (at most MRL), we can
+ignore stacks with index less than i? MRL
+222
+rules
+hypotheses
+?s?[0, 15]
+G 1)?Taiguo shi X
+1
+/Thailand X
+1
+? ?s? Thailand [2,15]
+G 2)?yao X
+1
+/wants X
+1
+?
+G 3)?liyong X
+1
+/to utilize X
+1
+?
+4)?zhe bi qian X
+1
+/this money X
+1
+?
+5)?X
+1
+zhuru geng duo X
+2
+/to inject more X
+2
+X
+1
+?
+6)?liudong X
+1
+/circulating X
+1
+?
+G 7)?zijin X
+1
+/capital X
+1
+?
+8)?./.?
+9)?xiang jingji/to the economy?
+?s?Thailand wants [3,15]
+?s?Thailand wants to utilize [4,15]
+?s?Thailand wants to utilize this money [7,15]
+?s?Thailand wants to utilize this money to inject more [12,15][7,9]
+?s?Thailand wants to utilize this money to inject more circulating [13,15][7,9]
+?s?Thailand wants to utilize this money to inject more circulating capital [14,15][7,9]
+?s?Thailand wants to utilize this money to inject more circulating capital . [7,9]
+?s?Thailand wants to utilize this money to inject more circulating capital . to the economy?/s?
+Figure 2: The process of translating the Chinese sentence in Figure 3(b) in LR-Hiero. Left side shows the rules used in the
+derivation (G indicates glue rules as defined in (Watanabe et al., 2006)). The hypotheses column shows the translation prefix
+and the ordered list of yet-to-be-covered spans.
+T? b ch ng shu  ,? ? ? li?nh? zh?ngf? , b?ngqi? y u n?ngl?? gu?nch? .m?qi?n
+He added that the coalition government carrying out the economic reform plancapable ofand
+j?ngj? g ig?  j?hu??
+is now in stable .
+X1
+condition
+zhu?ngku?ng w?nd?ng 0      1                   2            3   4               5                    6                      7                                  8                         9   10                11        12              13                     14             15             16            17      18
+(a)
+T?igu? sh?  y?o zh? b? qi?n xi?ng j?ngj? zh?r? g?ng du? .l?y?ng
+Thailand wants to circulating capital to the economyinject morethis money to
+li?d?ng z?j?n
+utilize .
+S 1 S 20               1          2              3                  4            5     6            7                 8             9               10           11         12                    13           14      15
+(b)
+Figure 3: Two Chinese-English sentence pairs from devset data in experiments. (a) Correct rule cannot be matched to [6,18],
+our modifications match the rule to the first subspan [6,9] (b) LR-Hiero detects a wrong span for X
+2
+[12,15], we modify the
+rule matching match X
+2
+to all subspans [12,13], [12,14] and [12,15], corresponding to 3 hypotheses.
+hypotheses in the queue are popped (line 26) and
+for each hypothesis its neighbours in the cube are
+added to the priority queue (line 27). Decoding
+finishes when stack S
+n
+has been filled.
+The language model (LM) score violates the
+hypotheses generation assumption of CP and can
+cause search errors. In Figure 1, the topmost
+and leftmost entry of the right cube has a score
+worse than many hypotheses in the left cube due
+to the LM score. This means the right cube
+has hypotheses that are ignored. This type of
+search error hurts LR-Hiero more than CKY-
+Hiero, due to the fact that hypotheses scores in
+LR-Hiero rely on a future cost, while CKY-Hiero
+uses the inside score for each hypothesis. To
+solve this issue for LR-Hiero we introduce the no-
+tion of queue diversity which is the parameter d
+in GetBestHypotheses((H,R),F , d). This pa-
+rameter guarantees that each cube will produce at
+least d candidate hypotheses for the priority queue.
+d=1 in standard cube pruning for LR-Hiero (Siah-
+bani et al., 2013). We apply the idea of diver-
+sity at queue level, before generating K best hy-
+pothesis, such that the GetBestHypotheses rou-
+tine generates d best hypotheses from each cube
+and all these hypotheses are pushed to the prior-
+ity queue (line 22-23). We fill each stack differ-
+ently from CKY-Hiero and so queue diversity is
+different from lazy cube pruning (Pust and Knight,
+2009) or cube growing (Huang and Chiang, 2007;
+Vilar and Ney, 2009; Xu and Koehn, 2012).
+3 Capturing Missing Alignments
+Figure 3(a) and Figure 3(b) show two examples of
+a common problem in LR-Hiero decoding. The
+decoder steps for Figure 3(b) are shown in Fig-
+ure 2. The problem occurs in Step 5 of Figure 2
+where rule #5 is matched to span [7, 15]. Dur-
+ing decoding LR-Hiero maintains a stack (last-
+in-first-out) of yet-to-be-covered spans and tries
+to translate the first uncovered span (span [7, 15]
+in Step 5). LR-Hiero should match rule #5 to
+span [7, 15], therefore X
+2
+is forced to match span
+[12, 15] which leads to the translation of span [7, 9]
+(corresponding to X
+1
+) being reordered around it
+223
+Corpus Train/Dev/Test
+Cs-En Europarl(v7) + CzEng(v0.9); News
+commentary(nc) 2008&2009; nc 2011
+7.95M/3000/3003
+De-En Europarl(v7); WMT2006; WMT2006 1.5M/2000/2000
+Zh-En HK + GALE phase-1; MTC part 1&3;
+MTC part 4
+2.3M/1928/919
+Table 1: Corpus statistics in number of sentences. Tuning and test sets for Chinese-English has 4 references.
+Model Cs-En De-En Zh-En
+Hiero 20.77 25.72 27.65
+LR-Hiero (Watanabe et al., 2006) 20.72 25.10 25.99
+LR-Hiero+CP (Siahbani et al., 2013) 20.15 24.83 -
+LR-Hiero+CP (QD=1) 20.68 25.14 24.44
+LR-Hiero+CP (QD=15) - - 26.10
+LR-Hiero+CP+(ab) 20.88 25.22 26.55
+LR-Hiero+CP+(abc) 20.89 25.22 26.52
+(a) BLEU scores for different baselines and modifications of this paper.
+QD=15 for Zh-En in last three rows. (b) Average number of language model queries.
+Table 2: (a) BLEU (b) LM calls
+causing the incorrect translation in Step 9. If we
+use the same set of rules for translation in Hi-
+ero (CKY-based decoder), the decoder is able to
+generate the correct translation for span [7, 14] (it
+works bottom-up and generate best translation for
+each source span). Then it combines translation of
+[7, 14] with translation of spans [0, 7] and [14, 15]
+using glue rules (monotonic combination).
+In Figure 3(a) monotonic translations after span
+[6, 9] are out of reach of the LR-Hiero decoder
+which has to use the non-terminals to support
+the reordering within span [6, 9]. In this exam-
+ple the first few phrases are translated monoton-
+ically, then for span [6, 18] we have to apply rule
+?muqian X
+1
+wending, is now in stable X
+1
+? to ob-
+tain the correct translation. But this rule cannot
+be matched to span [6, 18] and the decoder fails
+to generate the correct translation. While CKY-
+Hiero can apply this rule to span [6, 9], generate
+correct translation for this span and monotonically
+combine it with translation of other spans ([0, 6],
+[9, 18]).
+In both these cases, CKY-Hiero has no diffi-
+culty in reaching the target sentence with the same
+GNF rules. The fact that we have to process spans
+as they appear in the stack in LR-Hiero means
+that we cannot combine arbitrary adjacent spans
+to deal with such cases. So purely bottom-up de-
+coders such as CKY-Hiero can capture the align-
+ments in Figure 3 but LR-Hiero cannot.
+We extend the LR-Hiero decoder to handle such
+cases by making the GNF grammar more expres-
+sive. Rules are partitioned to three types based on
+the right boundary in the source and target side.
+The rhs after the? shows the new rules we create
+within the decoder using a new non-terminal X
+r
+to match the right boundary.
+(a) ??a?,
+?
+b?? ? ??a?X
+r
+,
+?
+b?X
+r
+?
+(b) ??X
+n
+,
+?
+b?X
+n
+? ? ??X
+n
+X
+r
+,
+?
+b?X
+n
+X
+r
+?
+(c) ??X
+n
+,
+?
+b?X
+m
+? ? ??X
+n
+X
+r
+,
+?
+b?X
+m
+X
+r
+?
+(1)
+where ? is a string of terminals and non-terminals,
+a? and
+?
+b are terminal sequences of source and tar-
+get respectively, ? is a possibly empty sequence
+of non-terminals and X
+n
+and X
+m
+are different
+non-terminals distinct from X
+r
+3
+. The extra non-
+terminal X
+r
+lets us add a new yet-to-be-covered
+span to the bottom of the stack at each rule appli-
+cation which lets us match any two adjacent spans
+just as in CKY-Hiero. This captures the missing
+alignments that could not be previously captured
+in the LR-Hiero decoder
+4
+.
+In Table 4 we translated devset sentences using
+forced decoding to show that our modifications to
+LR-Hiero in this section improves the alignment
+coverage when compared to CKY-Hiero.
+4 Experiments
+We evaluate our modifications to LR-Hiero de-
+coder on three language pairs (Table 1): German-
+English (De-En), Czech-English (Cs-En) and
+Chinese-English (Zh-En).
+3
+In rule type (c) X
+n
+will be in ? and X
+m
+will be in ?.
+4
+For the sake of simplicity, in rule type (b) we can merge
+X
+n
+and X
+r
+as they are in the same order on both source and
+target side.
+224
+We use a 5-gram LM trained on the Gigaword
+corpus and use KenLM (Heafield, 2011). We
+tune weights by minimizing BLEU loss on the dev
+set through MERT (Och, 2003) and report BLEU
+scores on the test set. Pop limit for Hiero and LR-
+Hiero+CP is 500 and beam size LR-Hiero is 500.
+Other extraction and decoder settings such as max-
+imum phrase length, etc. were identical across set-
+tings. To make the results comparable we use the
+same feature set for all baselines, Hiero as well
+(including new features proposed by (Siahbani et
+al., 2013)).
+We use 3 baselines: (i) our implementation of
+(Watanabe et al., 2006): LR-Hiero with beam
+search (LR-Hiero) and (ii) LR-Hiero with cube
+pruning (Siahbani et al., 2013): (LR-Hiero+CP);
+and (iii) Kriya, an open-source implementation of
+Hiero in Python, which performs comparably to
+other open-source Hiero systems (Sankaran et al.,
+2012).
+Table 3 shows model sizes for LR-Hiero (GNF)
+and Hiero (SCFG). Typical Hiero rule extraction
+excludes phrase-pairs with unaligned words on
+boundaries (loose phrases). We use similar rule
+extraction as Hiero, except that exclude non-GNF
+rules and include loose phrase-pairs as terminal
+rules.
+Table 2a shows the translation quality of dif-
+ferent systems in terms of BLEU score. Row
+3 is from (Siahbani et al., 2013)
+5
+. As we dis-
+cussed in Section 2, LR-Hiero+CP suffers from
+severe search errors on Zh-En (1.5 BLEU) but us-
+ing queue diversity (QD=15) we fill this gap. We
+use the same QD(=15) in next rows for Zh-en.
+For Cs-En and De-En we use regular cube prun-
+ing (QD=1), as it works as well as beam search
+(compare rows 4 and 2).
+We measure the benefit of the new modified
+rules from Section 3: (ab): adding modifications
+for rules type (a) and (b); (abc): modification
+of all rules. We can see that for all language
+pairs (ab) constantly improves performance of LR-
+Hiero, significantly better than LR-Hiero+CP and
+LR-Hiero (p-value<0.05) on Cs-En and Zh-En,
+evaluated by MultEval (Clark et al., 2011). But
+modifying rule type (c) does not show any im-
+provement due to spurious ambiguity created by
+5
+We report results on Cs-En and De-En in (Siahbani et
+al., 2013). Row 4 is the same translation system as row 3
+(LR-Hiero+CP). We achieve better results than our previous
+work (Siahbani et al., 2013) (row 4 vs. row 3) due to bug
+corrections and adding loose phrases as terminal rules.
+Model Cs-En De-En Zh-En
+Hiero 1,961.6 858.5 471.9
+LR-Hiero 266.5 116.0 100.9
+Table 3: Model sizes (millions of rules).
+Model Cs-En De-En Zh-En
+Hiero 318 351 187
+LR-Hiero 278 300 132
+LR-Hiero+(abc) 338 361 174
+Table 4: No. of sentence covered in forced decoding of a sam-
+ple of sentences from the devset. We improve the coverage
+by 31% for Chinese-English and more than 20% for the other
+two language pairs.
+type (c) rules.
+Figure 2b shows the results in terms of average
+number of language model queries on a sample set
+of 50 sentences from test sets. All of the base-
+lines use the same wrapper to KenLM (Heafield,
+2011) to query the language model, and we have
+instrumented the wrapper to count the statistics.
+In (Siahbani et al., 2013) we discuss that LR-Hiero
+with beam search (Watanabe et al., 2006) does not
+perform at the same level of state-of-the-art Hi-
+ero (more LM calls and less translation quality).
+As we can see in this figure, adding new mod-
+ified rules slightly increases the number of lan-
+guage model queries on Cs-En and De-En so that
+LR-Hiero+CP still works 2 to 3 times faster than
+Hiero. On Zh-En, LR-Hiero+CP applies queue
+diversity (QD=15) which reduces search errors
+and improves translation quality but increases the
+number of hypothesis generation as well. LR-
+Hiero+CP with our modifications works substan-
+tially faster than LR-Hiero while obtain signifi-
+cantly better translation quality on Zh-En.
+Comparing Table 2a with Figure 2b we can see
+that overall our modifications to LR-Hiero decoder
+significantly improves the BLEU scores compared
+to previous LR decoders for Hiero. We obtain
+comparable results to CKY-Hiero for Cs-En and
+De-En and remarkably improve results on Zh-En,
+while at the same time making 2 to 3 times less
+LM calls on Cs-En and De-En compared to CKY-
+Hiero.
+Acknowledgments
+This research was partially supported by NSERC,
+Canada RGPIN: 262313 and RGPAS: 446348
+grants to the second author. The authors wish to
+thank Baskaran Sankaran for his valuable discus-
+sions and the anonymous reviewers for their help-
+ful comments.
+225
+References
+David Chiang. 2007. Hierarchical phrase-based trans-
+lation. Computational Linguistics, 33.
+Jonathan H. Clark, Chris Dyer, Alon Lavie, and
+Noah A. Smith. 2011. Better hypothesis testing for
+statistical machine translation: controlling for opti-
+mizer instability. In Proceedings of the 49th Annual
+Meeting of the Association for Computational Lin-
+guistics: Human Language Technologies: short pa-
+pers - Volume 2, HLT ?11, pages 176?181, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Jay Earley. 1970. An efficient context-free parsing al-
+gorithm. Commun. ACM, 13(2):94?102, February.
+Yang Feng, Yang Liu, Qun Liu, and Trevor Cohn.
+2012. Left-to-right tree-to-string decoding with pre-
+diction. In Proceedings of the 2012 Joint Confer-
+ence on Empirical Methods in Natural Language
+Processing and Computational Natural Language
+Learning, EMNLP-CoNLL ?12, pages 1191?1200,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+Michel Galley and Christopher D. Manning. 2010.
+Accurate non-hierarchical phrase-based translation.
+In Human Language Technologies: The 2010 An-
+nual Conference of the North American Chapter
+of the Association for Computational Linguistics,
+pages 966?974, Los Angeles, California, June. As-
+sociation for Computational Linguistics.
+Kenneth Heafield, Hieu Hoang, Philipp Koehn, Tet-
+suo Kiso, and Marcello Federico. 2011. Left lan-
+guage model state for syntactic machine translation.
+In Proceedings of the International Workshop on
+Spoken Language Translation, pages 183?190, San
+Francisco, California, USA, 12.
+Kenneth Heafield, Philipp Koehn, and Alon Lavie.
+2013. Grouping language model boundary words
+to speed K-Best extraction from hypergraphs. In
+Proceedings of the 2013 Conference of the North
+American Chapter of the Association for Computa-
+tional Linguistics: Human Language Technologies,
+Atlanta, Georgia, USA, 6.
+Kenneth Heafield. 2011. KenLM: Faster and smaller
+language model queries. In In Proc. of the Sixth
+Workshop on Statistical Machine Translation.
+Liang Huang and David Chiang. 2007. Forest rescor-
+ing: Faster decoding with integrated language mod-
+els. In In ACL 07.
+Liang Huang and Haitao Mi. 2010. Efficient incre-
+mental decoding for tree-to-string translation. In
+Proceedings of the 2010 Conference on Empirical
+Methods in Natural Language Processing, pages
+273?283, Cambridge, MA, October. Association for
+Computational Linguistics.
+Philipp Koehn, Franz Josef Och, and Daniel Marcu.
+2003. Statistical phrase-based translation. In Proc.
+of NAACL.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran,
+Richard Zens, Chris Dyer, Ond?rej Bojar, Alexandra
+Constantin, and Evan Herbst. 2007. Moses: open
+source toolkit for statistical machine translation. In
+Proceedings of the 45th Annual Meeting of the ACL
+on Interactive Poster and Demonstration Sessions,
+ACL ?07, pages 177?180, Stroudsburg, PA, USA.
+Association for Computational Linguistics.
+Philipp Koehn. 2004. Pharaoh: A beam search de-
+coder for phrase-based statistical machine transla-
+tion models. In AMTA, pages 115?124.
+Franz Josef Och. 2003. Minimum error rate training in
+statistical machine translation. In Proceedings of the
+41st Annual Meeting on Association for Computa-
+tional Linguistics - Volume 1, ACL ?03, pages 160?
+167, Stroudsburg, PA, USA. Association for Com-
+putational Linguistics.
+Michael Pust and Kevin Knight. 2009. Faster mt
+decoding through pervasive laziness. In Proceed-
+ings of Human Language Technologies: The 2009
+Annual Conference of the North American Chap-
+ter of the Association for Computational Linguistics,
+Companion Volume: Short Papers, pages 141?144,
+Boulder, Colorado, June. Association for Computa-
+tional Linguistics.
+Baskaran Sankaran, Majid Razmara, and Anoop
+Sarkar. 2012. Kriya - an end-to-end hierarchi-
+cal phrase-based mt system. The Prague Bulletin
+of Mathematical Linguistics (PBML), 97(97):83?98,
+apr.
+Maryam Siahbani, Baskaran Sankaran, and Anoop
+Sarkar. 2013. Efficient left-to-right hierarchical
+phrase-based translation with improved reordering.
+In Proceedings of the 2013 Conference on Empirical
+Methods in Natural Language Processing, Seattle,
+USA, October. Association for Computational Lin-
+guistics.
+David Vilar and Hermann Ney. 2009. On lm heuris-
+tics for the cube growing algorithm. In Annual Con-
+ference of the European Association for Machine
+Translation, pages 242?249, Barcelona, Spain, may.
+Taro Watanabe, Hajime Tsukada, and Hideki Isozaki.
+2006. Left-to-right target generation for hierarchical
+phrase-based translation. In Proc. of ACL.
+Wenduan Xu and Philipp Koehn. 2012. Extending hi-
+ero decoding in moses with cube growing. Prague
+Bull. Math. Linguistics, 98:133?.
+226
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 1105?1115,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+Graph Propagation for Paraphrasing Out-of-Vocabulary Words in
+Statistical Machine Translation?
+Majid Razmara1 Maryam Siahbani1 Gholamreza Haffari2 Anoop Sarkar1
+1 Simon Fraser University, Burnaby, BC, Canada
+{razmara,msiahban,anoop}@sfu.ca
+2 Monash University, Clayton, VIC, Australia
+reza@monash.edu
+Abstract
+Out-of-vocabulary (oov) words or phrases
+still remain a challenge in statistical machine
+translation especially when a limited amount of
+parallel text is available for training or when
+there is a domain shift from training data to
+test data. In this paper, we propose a novel
+approach to finding translations for oov words.
+We induce a lexicon by constructing a graph on
+source language monolingual text and employ
+a graph propagation technique in order to find
+translations for all the source language phrases.
+Our method differs from previous approaches
+by adopting a graph propagation approach that
+takes into account not only one-step (from oov
+directly to a source language phrase that has a
+translation) but multi-step paraphrases from oov
+source language words to other source language
+phrases and eventually to target language transla-
+tions. Experimental results show that our graph
+propagation method significantly improves per-
+formance over two strong baselines under intrin-
+sic and extrinsic evaluation metrics.
+1 Introduction
+Out-of-vocabulary (oov) words or phrases still re-
+main a challenge in statistical machine translation.
+SMT systems usually copy unknown words verba-
+tim to the target language output. Although this is
+helpful in translating a small fraction of oovs such
+as named entities for languages with same writ-
+ing systems, it harms the translation in other types
+of oovs and distant language pairs. In general,
+copied-over oovs are a hindrance to fluent, high
+quality translation, and we can see evidence of this
+in automatic measures such as BLEU (Papineni
+et al, 2002) and also in human evaluation scores
+such as HTER. The problem becomes more se-
+vere when only a limited amount of parallel text is
+available for training or when the training and test
+data are from different domains. Even noisy trans-
+lation of oovs can aid the language model to better
+?This research was partially supported by an NSERC,
+Canada (RGPIN: 264905) grant. The third author was sup-
+ported by an early career research award from Monash Uni-
+versity to visit Simon Fraser University.
+re-order the words in the target language (Zhang
+et al, 2012).
+Increasing the size of the parallel data can re-
+duce the number of oovs. However, there will al-
+ways be some words or phrases that are new to the
+system and finding ways to translate such words
+or phrases will be beneficial to the system. Re-
+searchers have applied a number of approaches to
+tackle this problem. Some approaches use pivot
+languages (Callison-Burch et al, 2006) while oth-
+ers use lexicon-induction-based approaches from
+source language monolingual corpora (Koehn and
+Knight, 2002; Garera et al, 2009; Marton et al,
+2009).
+Pivot language techniques tackle this problem
+by taking advantage of available parallel data be-
+tween the source language and a third language.
+Using a pivot language, oovs are translated into a
+third language and back into the source language
+and thereby paraphrases to those oov words are
+extracted (Callison-Burch et al, 2006). For each
+oov, the system can be augmented by aggregating
+the translations of all its paraphrases and assign
+them to the oov. However, these methods require
+parallel corpora between the source language and
+one or multiple pivot languages.
+Another line of work exploits spelling and mor-
+phological variants of oov words. Habash (2008)
+presents techniques for online handling of oov
+words for Arabic to English such as spelling ex-
+pansion and morphological expansion. Huang et
+al. (2011) proposes a method to combine sub-
+lexical/constituent translations of an oov word or
+phrase to generate its translations.
+Several researchers have applied lexicon-
+induction methods to create a bilingual lexicon
+for those oovs. Marton et al (2009) use a mono-
+lingual text on the source side to find paraphrases
+to oov words for which the translations are avail-
+able. The translations for these paraphrases are
+1105
+then used as the translations of the oov word.
+These methods are based on the distributional hy-
+pothesis which states that words appearing in the
+same contexts tend to have similar meaning (Har-
+ris, 1954). Marton et al (2009) showed that this
+method improves over the baseline system where
+oovs are untranslated.
+We propose a graph propagation-based exten-
+sion to the approach of Marton et al (2009) in
+which a graph is constructed from source language
+monolingual text1 and the source-side of the avail-
+able parallel data. Nodes that have related mean-
+ings are connected together and nodes for which
+we have translations in the phrase-table are an-
+notated with target-side translations and their fea-
+ture values. A graph propagation algorithm is then
+used to propagate translations from labeled nodes
+to unlabeled nodes (phrases appearing only in the
+monolingual text and oovs). This provides a gen-
+eral purpose approach to handle several types of
+oovs, including morphological variants, spelling
+variants and synonyms2.
+Constructing such a huge graph and propagat-
+ing messages through it pose severe computational
+challenges. Throughout the paper, we will see how
+these challenges are dealt with using scalable algo-
+rithms.
+2 Collocational Lexicon Induction
+Rapp (1995) introduced the notion of a distribu-
+tional profile in bilingual lexicon induction from
+monolingual data. A distributional profile (DP) of
+a word or phrase type is a co-occurrence vector
+created by combining all co-occurrence vectors of
+the tokens of that phrase type. Each distributional
+profile can be seen as a point in a |V |-dimensional
+space where V is the vocabulary where each word
+type represents a unique axis. Points (i.e. phrase
+types) that are close to one another in this high-
+dimensional space can represent paraphrases. This
+approach has also been used in machine trans-
+lation to find in-vocabulary paraphrases for oov
+words on the source side and find a way to trans-
+late them.
+2.1 Baseline System
+Marton et al (2009) was the first to successfully
+integrate a collocational approach to finding trans-
+1Here on by monolingual data we always mean monolin-
+gual data on the source language
+2Named entity oovs may be handled properly by copying
+or transliteration.
+lations for oov words into an end-to-end SMT sys-
+tem. We explain their method in detail as we will
+compare against this approach. The method re-
+lies on monolingual distributional profiles (DPs)
+which are numerical vectors representing the con-
+text around each word. The goal is to find words or
+phrases that appear in similar contexts as the oovs.
+For each oov a distributional profile is created by
+collecting all words appearing in a fixed distance
+from all occurrences of the oov word in the mono-
+lingual text. These co-occurrence counts are con-
+verted to an association measure (Section 2.2) that
+encodes the relatedness of each pair of words or
+phrases.
+Then, the most similar phrases to each oov are
+found by measuring the similarity of their DPs to
+that of the oov word. Marton et al (2009) uses
+a heuristic to prune the search space for finding
+candidate paraphrases by keeping the surrounding
+context (e.g. L R) of each occurrences of the
+oov word. All phrases that appear in any of such
+contexts are collected as candidate paraphrases.
+For each of these paraphrases, a DP is constructed
+and compared to that of the oov word using a sim-
+ilarity measure (Section 2.2).
+The top-k paraphrases that have translations in
+the phrase-table are used to assign translations and
+scores to each oov word by marginalizing transla-
+tions over paraphrases:
+p(t|o) =
+?
+s
+p(t|s)p(s|o)
+where t is a phrase on the target side, o is the oov
+word or phrase, and s is a paraphrase of o. p(s|o)
+is estimated using a similarity measure over DPs
+and p(t|s) is coming from the phrase-table.
+We reimplemented this collocational approach
+for finding translations for oovs and used it as a
+baseline system.
+Alternative ways of modeling and comparing
+distributional profiles have been proposed (Rapp,
+1999; Fung and Yee, 1998; Terra and Clarke,
+2003; Garera et al, 2009; Marton et al, 2009).
+We review some of them here and compare their
+performance in Section 4.3.
+2.2 Association Measures
+Given a word u, its distributional profile DP (u)
+is constructed by counting surrounding words (in
+a fixed window size) in a monolingual corpus.
+DP (u) = {?A(u,wi)? | wi ? V }
+1106
+The counts can be collected in positional3 (Rapp,
+1999) or non-positional way (count all the word
+occurrences within the sliding window). A(?, ?)
+is an association measure and can simply be de-
+fined as co-occurrence counts within sliding win-
+dows. Stronger association measures can also be
+used such as:
+Conditional probability: the probability for the
+occurrence of each word in DP given the occur-
+rence of u: CP(u,wi) = P (wi|u) (Schu?tze and
+Pedersen, 1997)
+Pointwise Mutual Information: this measure is
+a transformation of the independence assumption
+into a ratio. Positive values indicate that words
+co-occur more than what we expect under the in-
+dependence assumption (Lin, 1998):
+PMI(u,wi) = log2 P (u,wi)P (u)P (wi)
+Likelihood ratio: (Dunning, 1993) uses the like-
+lihood ratio for word similarity:
+?(u,wi) =
+L(P (wi|u); p) ? L(P (wi|?u); p)
+L(P (wi|u); p1) ? L(P (wi|?u); p2)
+where L is likelihood function under the assump-
+tion that word counts in text have binomial distri-
+butions. The numerator represents the likelihood
+of the hypothesis that u and wi are independent
+(P (wi|u) = P (wi|?u) = p) and the denomina-
+tor represents the likelihood of the hypothesis that
+u and wi are dependent (P (wi|u) 6= P (wi|?u) ,
+P (wi|u) = p1, P (wi|?u) = p2 )4.
+Chi-square test: is a statistical hypothesis testing
+method to evaluate independence of two categori-
+cal random variables, e.g. whether the occurrence
+of u and wi (denoted by x and y respectively) are
+independent. The test statistics ?2(u,wi) is the
+deviation of the observed counts fx,y from their
+expected values Ex,y:
+?2(u,wi) :=
+?
+x?{wi,?wi}
+?
+y?{u,?u}
+(fx,y ? Ex,y)2
+Ex,y
+2.3 Similarity Measures
+Various functions have been used to estimate
+the similarity between distributional profiles.
+3e.g., position 1 is the word immediately after, position -1
+is the word immediately before etc.
+4Binomial distribution B(k;n, ?) gives the probability of
+observing k heads in n tosses of a coin where the coin pa-
+rameter is ?. In our context, p, p1 and p2 are parameters of
+Binomial distributions estimated using maximum likelihood.
+Given two distributional profiles DP (u) and
+DP (v), some similarity functions can be defined
+as follows. Note that A(?, ?) stands for the various
+association measures defined in Sec. 2.2.
+Cosine coefficient is the cosine the angle between
+two vectors DP (u) and DP (v):
+cos(DP (u), DP (v)) =?
+wi?V A(u,wi)A(v, wi)??
+wi?V A(u,wi)2
+??
+wi?V A(v, wi)2
+L1-Norm computes the accumulated distance
+between entries of two distributional profiles
+(L1(?, ?)). It has been used as word similarity mea-
+sure in language modeling (Dagan et al, 1999).
+L1(DP (u), DP (v)) =
+?
+wi?V
+|A(u,wi)?A(v, wi)|
+Jensen-Shannon Divergence is a symmetric ver-
+sion of contextual average mutual information
+(KL) which is used by (Dagan et al, 1999) as
+word similarity measure.
+JSD(DP (u), DP (v)) =KL(DP (u), AV GDP (u, v))+
+KL(DP (v), AV GDP (u, v))
+AV GDP (u, v) =
+{
+A(u,wi) +A(v, wi)
+2 | wi ? V
+}
+KL(DP (u), DP (v)) =
+?
+wi?V
+A(u,wi)log
+A(u,wi)
+A(v, wi)
+3 Graph-based Lexicon Induction
+We propose a novel approach to alleviate the oov
+problem. Given a (possibly small amount of) par-
+allel data between the source and target languages,
+and a large monolingual data in the source lan-
+guage, we construct a graph over all phrase types
+in the monolingual text and the source side of the
+parallel corpus and connect phrases that have sim-
+ilar meanings (i.e. appear in similar context) to one
+another. To do so, the distributional profiles of
+all source phrase types are created. Each phrase
+type represents a vertex in the graph and is con-
+nected to other vertices with a weight defined by a
+similarity measure between the two profiles (Sec-
+tion 2.3). There are three types of vertices in the
+graph: i) labeled nodes which appear in the par-
+allel corpus and for which we have the target-side
+1107
+translations5; ii) oov nodes from the dev/test set
+for which we seek labels (translations); and iii) un-
+labeled nodes (words or phrases) from the mono-
+lingual data which appear usually between oov
+nodes and labeled nodes. When a relatively small
+parallel data is used, unlabeled nodes outnumber
+labeled ones and many of them lie on the paths
+between an oov node to labeled ones.
+Marton et al (2009)?s approach ignores these
+bridging nodes and connects each oov node to the
+k-nearest labeled nodes. One may argue that these
+unlabeled nodes do not play a major role in the
+graph and the labels will eventually get to the oov
+nodes from the labeled nodes by directly connect-
+ing them. However based on the definition of the
+similarity measures using context, it is quite possi-
+ble that an oov node and a labeled node which are
+connected to the same unlabeled node do not share
+any context words and hence are not directly con-
+nected. For instance, consider three nodes, u (un-
+labeled), o (oov) and l (labeled) where u has the
+same left context words with o but share the right
+context with l. o and l are not connected since they
+do not share any context word.
+Once a graph is constructed based on simi-
+larities of phrases, graph propagation is used to
+propagate the labels from labeled nodes to unla-
+beled and oov nodes. The approach is based on
+the smoothness assumption (Chapelle et al, 2006)
+which states if two nodes are similar according to
+the graph, then their output labels should also be
+similar.
+The baseline approach (Marton et al, 2009) can
+be formulated as a bipartite graph with two types
+of nodes: labeled nodes (L) and oov nodes (O).
+Each oov node is connected to a number of labeled
+nodes, and vice versa and there is no edge between
+nodes of the same type. In such a graph, the sim-
+ilarity of each pair of nodes is computed using
+one of the similarity measures discussed above.
+The labels are translations and their probabilities
+(more specifically p(e|f)) from the phrase-table
+extracted from the parallel corpus. Translations
+get propagated to oov nodes using a label prop-
+agation technique. However beside the difference
+in the oov label assignment, there is a major differ-
+ence between our bipartite graph and the baseline
+(Marton et al, 2009): we do not use a heuristic to
+5It is possible that a phrase appears in the parallel corpus,
+but not in the phrase-table. This happens when the word-
+alignment module is not able to align the phrase to a target
+side word or words.
+reduce the number of neighbor candidates and we
+consider all possible candidates that share at least
+one context word. This makes a significant differ-
+ence in practice as shown in Section 4.3.1.
+We also take advantage of unlabeled nodes to
+help connect oov nodes to labeled ones. The dis-
+cussed bipartite graph can easily be expanded to a
+tripartite graph by adding unlabeled nodes. Fig-
+ure 1 illustrate a tripartite graph in which unla-
+beled nodes are connected to both labeled and oov
+nodes. Again, there is no edge between nodes
+of the same type. We also created the full graph
+where all nodes can be freely connected to nodes
+of any type including the same type. However,
+constructing such graph and doing graph propa-
+gation on it is computationally very expensive for
+large n-grams.
+3.1 Label Propagation
+Let G = (V,E,W ) be a graph where V is the set
+of vertices,E is the set of edges, andW is the edge
+weight matrix. The vertex set V consists of la-
+beled VL and unlabeled VU nodes, and the goal of
+the labeling propagation algorithm is to compute
+soft labels for unlabeled vertices from the labeled
+vertices. Intuitively, the edge weight W (u, v) en-
+codes the degree of our belief about the similarity
+of the soft labeling for nodes u and v. A soft label
+Y?v ? ?m+1 is a probability vector in (m + 1)-
+dimensional simplex, where m is the number of
+possible labels and the additional dimension ac-
+counts for the undefined ? label6.
+In this paper, we make use of the modified Ad-
+sorption (MAD) algorithm (Talukdar and Cram-
+mer, 2009) which finds soft label vectors Y?v to
+solve the following unconstrained optimization
+problem:
+min
+Y?
+?1
+?
+v?VL
+p1,v||Yv ? Y?v||22 + (1)
+?2
+?
+v,u
+p2,vWv,u||Y?v ? Y?u||22 + (2)
+?3
+?
+v
+p3,v||Y?v ?Rv||22 (3)
+where ?i and pi,v are hyper-parameters (?v :?
+i pi,v = 1)7, and Rv ? ?m+1 encodes our prior
+belief about the labeling of a node v. The first
+6Capturing those cases where the given data is not enough
+to reliably compute a soft labeling using the initial m real
+labels.
+7The values of these hyper-parameters are set to their de-
+faults in the Junto toolkit (Talukdar and Crammer, 2009).
+1108
+o1
+o2
+o3
+l1
+l2
+l3
+u1 u2 u3 u4 u5
+t11 : p11
+t12 : p12
+t13 : p13
+t21 : p21
+t22 : p22
+t23 : p23
+t31 : p31
+t32 : p32
+t33 : p33
+O : oov nodes L : labeled nodes
+U : unlabeled nodes
+sim(o1, l1)
+Figure 1: A tripartite graph between oov, labeled and unlabeled nodes. Translations propagate either directly from labeled
+nodes to oov nodes or indirectly via unlabeled nodes.
+term (1) enforces the labeling of the algorithm to
+match the seed labeling Yv with different extent
+for different labeled nodes. The second term (2)
+enforces the smoothness of the labeling according
+to the graph structure and edge weights. The last
+term (3) regularizes the soft labeling for a vertex
+v to match a priori label Rv, e.g. for high-degree
+unlabeled nodes (hubs in the graph) we may be-
+lieve that the neighbors are not going to produce
+reliable label and hence the probability of unde-
+fined label ? should be higher. The optimiza-
+tion problem can be solved with an efficient iter-
+ative algorithm which is parallelized in a MapRe-
+duce framework (Talukdar et al, 2008; Rao and
+Yarowsky, 2009). We used the Junto label prop-
+agation toolkit (Talukdar and Crammer, 2009) for
+label propagation.
+3.2 Efficient Graph Construction
+Graph-based approaches can easily become com-
+putationally very expensive as the number of
+nodes grow. In our case, we use phrases in the
+monolingual text as graph vertices. These phrases
+are n-grams up to a certain value, which can re-
+sult in millions of nodes. For each node a distribu-
+tional profile (DP) needs to be created. The num-
+ber of possible edges can easily explode in size
+as there can be as many as O(n2) edges where n
+is the number of nodes. A common practice to
+control the number of edges is to connect each
+node to at most k other nodes (k-nearest neigh-
+bor). However, finding the top-k nearest nodes to
+each node requires considering its similarity to all
+the other nodes which requires O(n2) computa-
+tions and since n is usually very large, doing such
+is practically intractable. Therefore, researchers
+usually resort to an approximate k-NN algorithms
+such as locality-sensitive hashing (?; Goyal et al,
+2012).
+Fortunately, since we use context words as cues
+for relating their meaning and since the similar-
+ity measures are defined based on these cues, the
+number of neighbors we need to consider for each
+node is reduced by several orders of magnitude.
+We incorporate an inverted-index-style data struc-
+ture which indicates what nodes are neighbors
+based on each context word. Therefore, the set
+of neighbors of a node consists of union of all the
+neighbors bridged by each context word in the DP
+of the node. However, the number of neighbors to
+be considered for each node even after this dras-
+tic reduction is still large (in order of a few thou-
+sands).
+In order to deal with the computational chal-
+lenges of such a large graph, we take advantage of
+the Hadoop?s MapReduce functionality to do both
+graph construction and label propagation steps.
+4 Experiments & Results
+4.1 Experimental Setup
+We experimented with two different domains for
+the bilingual data: Europarl corpus (v7) (Koehn,
+1109
+Dataset Domain Sents TokensFr En
+Bitext Europarl 10K 298K 268KEMEA 1M 16M 14M
+Monotext Europarl 2M 60M ?
+Dev-set WMT05 2K 67K 58K
+Test-set WMT05 2K 66K 58K
+Table 1: Statistics of training sets in different domains.
+2005), and European Medicines Agency docu-
+ments (EMEA) (Tiedemann, 2009) from French
+to English. For the monolingual data, we used
+French side of the Europarl corpus and we used
+ACL/WMT 20058 data for dev/test sets. Table 1
+summarizes statistics of the datasets used.
+From the dev and test sets, we extract all source
+words that do not appear in the phrase-table con-
+structed from the parallel data. From the oovs, we
+exclude numbers as well as named entities. We
+apply a simple heuristic to detect named entities:
+basically words that are capitalized in the original
+dev/test set that do not appear at the beginning of
+a sentence are named entities. Table 2 shows the
+number of oov types and tokens for Europarl and
+EMEA systems in both dev and test sets.
+Dataset Dev Testtypes tokens types tokens
+Europarl 1893 2229 1830 2163
+EMEA 2325 4317 2294 4190
+Table 2: number of oovs in dev and test sets for Europarl and
+EMEA systems.
+For the end-to-end MT pipeline, we used
+Moses (Koehn et al, 2007) with these stan-
+dard features: relative-frequency and lexical trans-
+lation model (TM) probabilities in both direc-
+tions; distortion model; language model (LM)
+and word count. Word alignment is done using
+GIZA++ (Och and Ney, 2003). We used distortion
+limit of 6 and max-phrase-length of 10 in all the
+experiments. For the language model, we used the
+KenLM toolkit (Heafield, 2011) to create a 5-gram
+language model on the target side of the Europarl
+corpus (v7) with approximately 54M tokens with
+Kneser-Ney smoothing.
+4.1.1 Phrase-table Integration
+Once the translations and their probabilities for
+each oov are extracted, they are added to the
+8http://www.statmt.org/wpt05/mt-shared-task/
+phrase-table that is induced from the parallel text.
+The probability for new entries are added as a
+new feature in the log-linear framework to be
+tuned along with other features. The value of
+this newly introduced feature for original entries
+in the phrase-table is set to 1. Similarly, the value
+of original four probability features in the phrase-
+table for the new entries are set to 1. The entire
+training pipeline is as follows: (i) a phrase table is
+constructed using parallel data as usual, (ii) oovs
+for dev and test sets are extracted, (iii) oovs are
+translated using graph propagation, (iv) oovs and
+translations are added to the phrase table, intro-
+ducing a new feature type, (v) the new phrase table
+is tuned (with a LM) using MERT (Och, 2003) on
+the dev set.
+4.2 Evaluation
+If we have a list of possible translations for oovs
+with their probabilities, we become able to eval-
+uate different methods we discussed. We word-
+aligned the dev/test sets by concatenating them to
+a large parallel corpus and running GIZA++ on
+the whole set. The resulting word alignments are
+used to extract the translations for each oov. The
+correctness of this gold standard is limited to the
+size of the parallel data used as well as the quality
+of the word alignment software toolkit, and is not
+100% precise. However, it gives a good estimate
+of how each oov should be translated without the
+need for human judgments.
+For evaluating our baseline as well as graph-
+based approaches, we use both intrinsic and
+extrinsic evaluations. Two intrinsic evaluation
+metrics that we use to evaluate the possible
+translations for oovs are Mean Reciprocal Rank
+(MRR) (Voorhees, 1999) and Recall. Intrinsic
+evaluation metrics are faster to apply and are used
+to optimize different hyper-parameters of the ap-
+proach (e.g. window size, phrase length, etc.).
+Once we come up with the optimized values for
+the hyper-parameters, we extrinsically evaluate
+different approaches by adding the new transla-
+tions to the phrase-table and run it through the MT
+pipeline.
+4.2.1 MRR
+MRR is an Information Retrieval metric used to
+evaluate any process that produces a ranked list of
+possible candidates. The reciprocal rank of a list
+is the inverse of the rank of the correct answer in
+the list. Such score is averaged over a set, oov set
+1110
+in our case, to get the mean-reciprocal-rank score.
+MRR = 1|O|
+|O|?
+i=1
+1
+ranki
+O = {oov}
+In a few cases, there are multiple translations for
+an oov word (i.e. appearing more than once in the
+parallel corpus and being assigned to multiple dif-
+ferent phrases), we take the average of reciprocal
+ranks for each of them.
+4.2.2 Recall
+MRR takes the probabilities of oov translations
+into account in sorting the list of candidate trans-
+lations. However, in an MT pipeline, the language
+model is supposed to rerank the hypotheses and
+move more appropriate translations (in terms of
+fluency) to the top of the list. Hence, we also
+evaluate our candidate translation regardless of the
+ranks. Since Moses uses a certain number of trans-
+lations per source phrase (called the translation ta-
+ble limit or ttl which we set to 20 in our experi-
+ments) , we use the recall measure to evaluate the
+top ttl translations in the list. Recall is another In-
+formation Retrieval measure that is the fraction of
+correct answers that are retrieved. For example, it
+assigns score of 1 if the correct translation of the
+oov word is in the top-k list and 0 otherwise. The
+scores are averaged over all oovs to compute re-
+call.
+Recall = |{gold standard} ? {candidate list}||{gold standard}|
+4.3 Intrinsic Results
+In Section 2.2 and 2.3, different types of associa-
+tion measures and similarity measures have been
+explained to build and compare distributional pro-
+files. Table 3 shows the results on Europarl when
+using different similarity combinations. The mea-
+sures are evaluated by fixing the window size to
+4 and maximum candidate paraphrase length to 2
+(e.g. bigram). First column shows the association
+measures used to build DPs. As the results show,
+the combination of PMI as association measure
+and cosine as DP similarity measure outperforms
+the other possible combinations. We use these two
+measures throughout the rest of the experiments.
+Figure 2 illustrates the effects of different win-
+dow sizes and paraphrase lengths on MRR. As the
+figure shows, the best MRR is reached when using
+window size of 4 and trigram nodes. Going from
+trigram to 4-gram results in a drop in MRR. One
+Assoc cosine(%) L1norm(%) JSD(%)MRR RCL MRR RCL MRR RCL
+CP 1.66 4.16 2.18 5.55 2.33 6.32
+LLR 1.79 4.26 0.13 0.37 0.5 1.00
+PMI 3.91 7.75 0.50 1.17 0.59 1.21
+Chi 1.66 4.16 0.26 0.55 0.03 0.05
+Table 3: Results of intrinsic evaluations (MRR and Recall)
+on Europarl, window size 4 and paraphrase length 2
+3.5	 ?
+3.7	 ?
+3.9	 ?
+4.1	 ?
+4.3	 ?
+2	 ? 3	 ? 4	 ? 5	 ? 6	 ? 7	 ?
+MR
+R	 ?(%
+)	 ?
+Window	 ?Size	 ?
+unigram	 ? bigram	 ? trigram	 ? quadgram	 ?
+Figure 2: Effects of different window sizes and paraphrase
+length on the MRR of the dev set.
+reason would be that distributional profiles for 4-
+grams are very sparse and that negatively affects
+the stability of similarity measures.
+Figure 3 illustrates the effect of increasing the
+size of monolingual text on both MRR and recall.
+1? refers to the case of using 125k sentences for
+the monolingual text and the 16? indicates using
+the whole Europarl text on the source side (? 2M
+sentences). As shown, there is a linear correla-
+tion between the logarithm of the data size and
+the MRR and recall ratios. Interestingly, MRR is
+growing faster than recall by increasing the mono-
+lingual text size, which means that the scoring
+function gets better when more data is available.
+The figure also indicates that a much bigger mono-
+lingual text data can be used to further improve the
+quality of the translations, however, at the expense
+of more computational resources.
+MRR	 ?Ra?o	 ?
+Recall	 ?Ra?o	 ?
+0 
+1 
+2 
+3 
+4 
+5 
+0 1x 2x 4x 8x 16x 
+Mono-text Size Ratio 
+Figure 3: Effect of increasing the monolingual text size on
+MRR and Recall.
+1111
+Graph Neighbor MRR % RCL %
+Bipartite 20 5.2 12.5
+Tripartite 15+5 5.9 12.6
+Full 20 5.1 10.9
+Baseline 20 3.7 7.2
+Table 4: Intrinsic results of different types of graphs when
+using unigram nodes on Europarl.
+Type Node MRR % RCL %
+Bipartite unigram 5.2 12.5bigram 6.8 15.7
+Tripartite unigram 5.9 12.6bigram 6.9 15.9
+Baseline bigram 3.9 7.7
+Table 5: Results on using unigram or bigram nodes.
+4.3.1 Graph-based Results
+Table 4 shows the intrinsic results on the Eu-
+roparl corpus when using unigram nodes in each
+of the graphs. The results are evaluated on the
+dev-set based on the gold alignment created us-
+ing GIZA++. Each node is connected to at most
+20 other nodes (same as the max-paraphrase-limit
+in the baseline). For the tripartite graph, each
+node is connected to 15 labeled nodes and 5 un-
+labeled ones. The tripartite graph gets a slight im-
+provement over the bipartite one, however, the full
+graph failed to have the same increase. One rea-
+son is that allowing paths longer than 2 between
+oov and labeled nodes causes more noise to prop-
+agate into the graph. In other words, a paraphrase
+of a paraphrase of a paraphrase is not necessarily
+a useful paraphrase for an oov as the translation
+may no longer be a valid one.
+Table 5 also shows the effect of using bigrams
+instead of unigrams as graph nodes. There is an
+improvement by going from unigrams to bigrams
+in both bipartite and tripartite graphs. We did not
+use trigrams or larger n-grams in our experiments.
+4.4 Extrinsic Results
+The generated candidate translations for the oovs
+can be added to the phrase-table created using
+the parallel corpus to increase the coverage of the
+phrase-table. This aggregated phrase-table is to be
+tuned along with the language model on the dev
+set, and run on the test set. BLEU (Papineni et
+al., 2002) is still the de facto evaluation metric for
+machine translation and we use that to measure
+the quality of our proposed approaches for MT.
+In these experiments, we do not use alignment in-
+formation on dev or test sets unlike the previous
+section.
+Table 6 reports the Bleu scores for different do-
+mains when the oov translations from the graph
+propagation is added to the phrase-table and com-
+pares them with the baseline system (i.e. Moses).
+Results for our approach is based on unigram tri-
+partite graphs and show that we improve over the
+baseline in both the same-domain (Europarl) and
+domain adaptation (EMEA) settings.
+Table 7 shows some translations found by our
+system for oov words.
+oov gold standard candiate list
+spe?cialement
+undone
+particularly
+especially
+special
+particular
+particularly
+specific
+only
+particular
+should
+and
+especially
+assentiment approval
+support
+agreement
+approval
+accession
+will approve
+endorses
+Table 7: Two examples of oov translations found by our
+method.
+5 Related work
+There has been a long line of research on learning
+translation pairs from non-parallel corpora (Rapp,
+1995; Koehn and Knight, 2002; Haghighi et al,
+2008; Garera et al, 2009; Marton et al, 2009;
+Laws et al, 2010). Most have focused on ex-
+tracting a translation lexicon by mining monolin-
+gual resources of data to find clues, using prob-
+abilistic methods to map words, or by exploit-
+ing the cross-language evidence of closely related
+languages. Most of them evaluated only high-
+frequency words of specific types (nouns or con-
+tent words) (Rapp, 1995; Koehn and Knight, 2002;
+Haghighi et al, 2008; Garera et al, 2009; Laws et
+al., 2010) In contrast, we do not consider any con-
+straint on our test data and our data includes many
+low frequency words. It has been shown that trans-
+lation of high-frequency words is easier than low
+frequency words (Tamura et al, 2012).
+Some methods have used a third language(s)
+as pivot or bridge to find translation pairs (Mann
+and Yarowsky, 2001; Schafer and Yarowsky, 2002;
+Callison-Burch et al, 2006).
+1112
+Corpus System MRR Recall Dev Bleu Test Bleu
+Europarl Baseline ? ? 28.53 28.97Our approach 5.9 12.6 28.76 29.40*
+EMEA Baseline ? ? 20.05 20.34Our approach 3.6 7.4 20.54 20.80*
+* Statistically significant with p < 0.02 using the bootstrap resampling significance test (in Moses).
+Table 6: Bleu scores for different domains with or without using oov translations.
+Context similarity has been used effectively in
+bilingual lexicon induction (Rapp, 1995; Koehn
+and Knight, 2002; Haghighi et al, 2008; Gar-
+era et al, 2009; Marton et al, 2009; Laws et al,
+2010). It has been modeled in different ways: in
+terms of adjacent words (Rapp, 1999; Fung and
+Yee, 1998), or dependency relations (Garera et al,
+2009). Laws et al (2010) used linguistic analy-
+sis in the form of graph-based models instead of a
+vector space. But all of these researches used an
+available seed lexicon as the basic source of simi-
+larity between source and target languages unlike
+our method which just needs a monolingual cor-
+pus of source language which is freely available
+for many languages and a small bilingual corpora.
+Some methods tried to alleviate the lack of seed
+lexicon by using orthographic similarity to extract
+a seed lexicon (Koehn and Knight, 2002; Fiser and
+Ljubesic, 2011). But it is not a practical solution
+in case of unrelated languages.
+Haghighi et al (2008) and Daume? and Jagarla-
+mudi (2011) proposed generative models based on
+canonical correlation analysis to extract transla-
+tion lexicons for non-parallel corpora by learning a
+matching between source and target lexicons. Us-
+ing monolingual features to represent words, fea-
+ture vectors are projected from source and target
+words into a canonical space to find the appropri-
+ate matching between them. Their method relies
+on context features which need a seed lexicon and
+orthographic features which only works for phylo-
+genetically related languages.
+Graph-based semi-supervised methods have
+been shown to be useful for domain adaptation in
+MT as well. Alexandrescu and Kirchhoff (2009)
+applied a graph-based method to determine simi-
+larities between sentences and use these similari-
+ties to promote similar translations for similar sen-
+tences. They used a graph-based semi-supervised
+model to re-rank the n-best translation hypothe-
+sis. Liu et al (2012) extended Alexandrescu?s
+model to use translation consensus among simi-
+lar sentences in bilingual training data by devel-
+oping a new structured label propagation method.
+They derived some features to use during decoding
+process that has been shown useful in improving
+translation quality. Our graph propagation method
+connects monolingual source phrases with oovs to
+obtain translation and so is a very different use of
+graph propagation from these previous works.
+Recently label propagation has been used for
+lexicon induction (Tamura et al, 2012). They used
+a graph based on context similarity as well as co-
+occurrence graph in propagation process. Similar
+to our approach they used unlabeled nodes in la-
+bel propagation process. However, they use a seed
+lexicon to define labels and comparable corpora to
+construct graphs unlike our approach.
+6 Conclusion
+We presented a novel approach for inducing oov
+translations from a monolingual corpus on the
+source side and a parallel data using graph prop-
+agation. Our results showed improvement over
+the baselines both in intrinsic evaluations and on
+BLEU. Future work includes studying the effect
+of size of parallel corpus on the induced oov trans-
+lations. Increasing the size of parallel corpus on
+one hand reduces the number of oovs. But, on
+the other hand, there will be more labeled para-
+phrases that increases the chance of finding the
+correct translation for oovs in the test set.
+Currently, we find paraphrases for oov words.
+However, oovs can be considered as n-grams
+(phrases) instead of unigrams. In this scenario,
+we also can look for paraphrases and translations
+for phrases containing oovs and add them to the
+phrase-table as new translations along with the
+translations for unigram oovs.
+We also plan to explore different graph propa-
+gation objective functions. Regularizing these ob-
+jective functions appropriately might let us scale
+to much larger data sets with an order of magni-
+tude more nodes in the graph.
+1113
+References
+Andrei Alexandrescu and Katrin Kirchhoff. 2009.
+Graph-based learning for statistical machine trans-
+lation. In Proceedings of Human Language Tech-
+nologies: The 2009 Annual Conference of the North
+American Chapter of the Association for Compu-
+tational Linguistics, NAACL ?09, pages 119?127,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+C. Callison-Burch, P. Koehn, and M. Osborne. 2006.
+Improved statistical machine translation using para-
+phrases. In Proceedings of the main conference
+on Human Language Technology Conference of the
+North American Chapter of the Association of Com-
+putational Linguistics, pages 17?24. Association for
+Computational Linguistics.
+O. Chapelle, B. Scho?lkopf, and A. Zien, editors. 2006.
+Semi-Supervised Learning. MIT Press, Cambridge,
+MA.
+Ido Dagan, Lillian Lee, and Fernando C. N. Pereira.
+1999. Similarity-based models of word cooccur-
+rence probabilities. Mach. Learn., 34(1-3):43?69,
+February.
+Hal Daume?, III and Jagadeesh Jagarlamudi. 2011. Do-
+main adaptation for machine translation by mining
+unseen words. In Proceedings of the 49th Annual
+Meeting of the Association for Computational Lin-
+guistics: Human Language Technologies: short pa-
+pers - Volume 2, HLT ?11, pages 407?412, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Ted Dunning. 1993. Accurate methods for the statis-
+tics of surprise and coincidence. Comput. Linguist.,
+19(1):61?74, March.
+Darja Fiser and Nikola Ljubesic. 2011. Bilingual lexi-
+con extraction from comparable corpora for closely
+related languages. In RANLP, pages 125?131.
+Pascale Fung and Lo Yuen Yee. 1998. An ir approach
+for translating new words from nonparallel, compa-
+rable texts. In Proceedings of the 36th Annual Meet-
+ing of the Association for Computational Linguis-
+tics and 17th International Conference on Computa-
+tional Linguistics - Volume 1, ACL ?98, pages 414?
+420. Association for Computational Linguistics.
+Nikesh Garera, Chris Callison-Burch, and David
+Yarowsky. 2009. Improving translation lexicon in-
+duction from monolingual corpora via dependency
+contexts and part-of-speech equivalences. In Pro-
+ceedings of the Thirteenth Conference on Compu-
+tational Natural Language Learning, CoNLL ?09,
+pages 129?137, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+Amit Goyal, Hal Daume III, and Raul Guerra. 2012.
+Fast Large-Scale Approximate Graph Construction
+for NLP. In Proceedings of the Conference on Em-
+pirical Methods in Natural Language Processing,
+EMNLP ?12.
+Nizar Habash. 2008. Four techniques for online han-
+dling of out-of-vocabulary words in arabic-english
+statistical machine translation. In Proceedings of the
+46th Annual Meeting of the Association for Compu-
+tational Linguistics on Human Language Technolo-
+gies: Short Papers, pages 57?60. Association for
+Computational Linguistics.
+Aria Haghighi, Percy Liang, Taylor Berg-Kirkpatrick,
+and Dan Klein. 2008. Learning bilingual lexicons
+from monolingual corpora. In ACL, pages 771?779.
+Zellig Harris. 1954. Distributional structure. Word,
+10(23):146?162.
+Kenneth Heafield. 2011. Kenlm: Faster and smaller
+language model queries. In Proceedings of the Sixth
+Workshop on Statistical Machine Translation, pages
+187?197.
+Chung-Chi Huang, Ho-Ching Yen, Ping-Che Yang,
+Shih-Ting Huang, and Jason S Chang. 2011. Us-
+ing sublexical translations to handle the oov prob-
+lem in machine translation. ACM Transactions on
+Asian Language Information Processing (TALIP),
+10(3):16.
+Philipp Koehn and Kevin Knight. 2002. Learning a
+translation lexicon from monolingual corpora. In
+Proceedings of the ACL-02 workshop on Unsuper-
+vised lexical acquisition - Volume 9, ULA ?02, pages
+9?16, Stroudsburg, PA, USA. Association for Com-
+putational Linguistics.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran,
+Richard Zens, Chris Dyer, Ondr?ej Bojar, Alexandra
+Constantin, and Evan Herbst. 2007. Moses: open
+source toolkit for statistical machine translation. In
+Proceedings of the 45th Annual Meeting of the ACL
+on Interactive Poster and Demonstration Sessions,
+ACL ?07, pages 177?180, Stroudsburg, PA, USA.
+ACL.
+P. Koehn. 2005. Europarl: A parallel corpus for statis-
+tical machine translation. In MT summit, volume 5.
+Florian Laws, Lukas Michelbacher, Beate Dorow,
+Christian Scheible, Ulrich Heid, and Hinrich
+Schu?tze. 2010. A linguistically grounded graph
+model for bilingual lexicon extraction. In Proceed-
+ings of the 23rd International Conference on Com-
+putational Linguistics: Posters, COLING ?10, pages
+614?622, Stroudsburg, PA, USA. Association for
+Computational Linguistics.
+Dekang Lin. 1998. Automatic retrieval and clustering
+of similar words. In Proceedings of the 36th Annual
+Meeting of the Association for Computational Lin-
+guistics and 17th International Conference on Com-
+putational Linguistics - Volume 2, ACL ?98, pages
+768?774, Stroudsburg, PA, USA. Association for
+Computational Linguistics.
+1114
+Shujie Liu, Chi-Ho Li, Mu Li, and Ming Zhou. 2012.
+Learning translation consensus with structured la-
+bel propagation. In Proceedings of the 50th Annual
+Meeting of the Association for Computational Lin-
+guistics: Long Papers - Volume 1, ACL ?12, pages
+302?310, Stroudsburg, PA, USA. Association for
+Computational Linguistics.
+Gideon S. Mann and David Yarowsky. 2001. Mul-
+tipath translation lexicon induction via bridge lan-
+guages. In Proceedings of the second meeting of
+the North American Chapter of the Association for
+Computational Linguistics on Language technolo-
+gies, NAACL ?01, pages 1?8, Stroudsburg, PA,
+USA.
+Yuval Marton, Chris Callison-Burch, and Philip
+Resnik. 2009. Improved statistical machine trans-
+lation using monolingually-derived paraphrases. In
+Proceedings of the 2009 Conference on Empirical
+Methods in Natural Language Processing: Volume
+1 - Volume 1, EMNLP ?09, pages 381?390, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Franz Josef Och and Hermann Ney. 2003. A sys-
+tematic comparison of various statistical alignment
+models. Comput. Linguist., 29(1):19?51, March.
+Franz Josef Och. 2003. Minimum error rate training
+for statistical machine translation. In Proceedings of
+the 41th Annual Meeting of the ACL, Sapporo, July.
+ACL.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. In Proceedings of
+the 40th Annual Meeting on Association for Com-
+putational Linguistics, ACL ?02, pages 311?318,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+Delip Rao and David Yarowsky. 2009. Ranking
+and semi-supervised classification on large scale
+graphs using map-reduce. In Proceedings of the
+2009 Workshop on Graph-based Methods for Nat-
+ural Language Processing, TextGraphs-4. Associa-
+tion for Computational Linguistics.
+Reinhard Rapp. 1995. Identifying word translations in
+non-parallel texts. In Proceedings of the 33rd an-
+nual meeting on Association for Computational Lin-
+guistics, ACL ?95, pages 320?322. Association for
+Computational Linguistics.
+Reinhard Rapp. 1999. Automatic identification of
+word translations from unrelated english and german
+corpora. In Proceedings of the 37th annual meet-
+ing of the Association for Computational Linguistics
+on Computational Linguistics, ACL ?99, pages 519?
+526. Association for Computational Linguistics.
+Charles Schafer and David Yarowsky. 2002. Induc-
+ing translation lexicons via diverse similarity mea-
+sures and bridge languages. In proceedings of the
+6th conference on Natural language learning - Vol-
+ume 20, COLING-02, pages 1?7, Stroudsburg, PA,
+USA. Association for Computational Linguistics.
+Hinrich Schu?tze and Jan O. Pedersen. 1997. A
+cooccurrence-based thesaurus and two applications
+to information retrieval. Inf. Process. Manage.,
+33(3):307?318, May.
+Partha Pratim Talukdar and Koby Crammer. 2009.
+New Regularized Algorithms for Transductive
+Learning. In European Conference on Machine
+Learning (ECML-PKDD).
+Partha Pratim Talukdar, Joseph Reisinger, Marius
+Pas?ca, Deepak Ravichandran, Rahul Bhagat, and
+Fernando Pereira. 2008. Weakly-supervised acqui-
+sition of labeled class instances using graph random
+walks. In Proceedings of the Conference on Em-
+pirical Methods in Natural Language Processing,
+EMNLP ?08.
+Akihiro Tamura, Taro Watanabe, and Eiichiro Sumita.
+2012. Bilingual lexicon extraction from compara-
+ble corpora using label propagation. In EMNLP-
+CoNLL, pages 24?36.
+Egidio L. Terra and Charles L. A. Clarke. 2003. Fre-
+quency estimates for statistical word similarity mea-
+sures. In HLT-NAACL.
+Jorg Tiedemann. 2009. News from opus - a collection
+of multilingual parallel corpora with tools and inter-
+faces. In N. Nicolov, K. Bontcheva, G. Angelova,
+and R. Mitkov, editors, Recent Advances in Natu-
+ral Language Processing, volume V, pages 237?248.
+John Benjamins, Amsterdam/Philadelphia.
+Ellen M. Voorhees. 1999. TREC-8 Question Answer-
+ing Track Report. In Proceedings of the 8th Text
+Retrieval Conference, pages 77?82.
+Jiajun Zhang, Feifei Zhai, and Chengqing Zong. 2012.
+Handling unknown words in statistical machine
+translation from a new perspective. In Natural Lan-
+guage Processing and Chinese Computing, pages
+176?187. Springer.
+1115

@@ -1,0 +1,3549 @@
+Proceedings of NAACL-HLT 2013, pages 248?258,
+Atlanta, Georgia, 9?14 June 2013. c?2013 Association for Computational Linguistics
+Large-Scale Discriminative Training for Statistical Machine Translation
+Using Held-Out Line Search
+Jeffrey Flanigan Chris Dyer Jaime Carbonell
+Language Technologies Institute
+Carnegie Mellon University
+Pittsburgh, PA 15213, USA
+{jflanigan,cdyer,jgc}@cs.cmu.edu
+Abstract
+We introduce a new large-scale discrimina-
+tive learning algorithm for machine translation
+that is capable of learning parameters in mod-
+els with extremely sparse features. To ensure
+their reliable estimation and to prevent over-
+fitting, we use a two-phase learning algorithm.
+First, the contribution of individual sparse fea-
+tures is estimated using large amounts of par-
+allel data. Second, a small development cor-
+pus is used to determine the relative contri-
+butions of the sparse features and standard
+dense features. Not only does this two-phase
+learning approach prevent overfitting, the sec-
+ond pass optimizes corpus-level BLEU of the
+Viterbi translation of the decoder. We demon-
+strate significant improvements using sparse
+rule indicator features in three different trans-
+lation tasks. To our knowledge, this is the
+first large-scale discriminative training algo-
+rithm capable of showing improvements over
+the MERT baseline with only rule indicator
+features in addition to the standard MERT fea-
+tures.
+1 Introduction
+This paper is about large scale discriminative
+training of machine translation systems. Like
+MERT (Och, 2003), our procedure directly optimizes
+the cost of the Viterbi output on corpus-level met-
+rics, but does so while scaling to millions of features.
+The training procedure, which we call the Held-Out
+Line Search algorithm (HOLS), is a two-phase iter-
+ative batch optimization procedure consisting of (1)
+a gradient calculation on a differentiable approxima-
+tion to the loss on a large amount of parallel training
+data and (2) a line search (using the standard MERT
+algorithm) to search in a subspace defined by the
+gradient for the weights that minimize the true cost.
+While sparse features are successfully used in
+many NLP systems, such parameterizations pose a
+number of learning challenges. First, since any one
+feature is likely to occur infrequently, a large amount
+of training data is necessary to reliably estimate their
+weights. Therefore, we use the full parallel train-
+ing data (rather than a small development set) to
+estimate the contribution of the sparse features in
+phase 1. Second, sparse features can lead to overfit-
+ting. To prevent this from hurting our model?s ability
+to generalize to new data, we do two things. First,
+we use ?grammar and language model folds? (trans-
+lation grammars and language models built from
+other portions of the training data than are being
+used for discriminative training), and second, we
+run the phase 2 line search on a held-out develop-
+ment set. Finally, since our algorithm requires de-
+coding the entire training corpus, it is desirable (on
+computational grounds) to only require one or two
+passes through the training data. To get the most out
+of these passes, we rescale features by their inverse
+frequency which improves the scaling of the opti-
+mization problem. In addition to learning with few
+passes through the training data, the HOLS algorithm
+has the advantage that it is easily parallelizable.
+After reviewing related work in the next section,
+we analyze two obstacles to effective discriminative
+learning for machine translation: overfitting (since
+both rules and their weights must be learned, if they
+are learned together degenerate solutions that fail to
+generalize are possible) and poor scaling (since MT
+248
+decoding is so expensive, it is not feasible to make
+many passes through large amounts of training data,
+so optimization must be efficient). We then present
+the details of our algorithm that addresses these is-
+sues, give results on three language pairs, and con-
+clude.
+2 Related Work
+Discriminative training of machine translation sys-
+tems has been a widely studied problem for the
+last ten years. The pattern of using small, high-
+quality development sets to tune a relatively small
+number of weights was established early (Och and
+Ney, 2002; Och, 2003). More recently, standard
+structured prediction algorithms that target linearly
+decomposable approximations of translation qual-
+ity metrics have been thoroughly explored (Liang et
+al., 2006; Smith and Eisner, 2006; Watanabe et al,
+2007; Rosti et al, 2010; Hopkins and May, 2011;
+Chiang, 2012; Gimpel and Smith, 2012; Cherry and
+Foster, 2012; Saluja et al, 2012). These have with-
+out exception used sentence-level approximations of
+BLEU to determine oracles and update weights using
+a variety of criteria and with a variety of different
+theoretical justifications.
+Despite advancements in discriminative training
+for machine translation, large-scale discriminative
+training with rule indicator features has remained
+notoriously difficult. Rule indicator features are an
+extremely sparse and expressive parameterization of
+the translation model: every rule has a feature, each
+of which has its own separately tuned weight, which
+count how often a specific rule is used in a trans-
+lation. Early experiments (Liang et al, 2006) used
+the structured perceptron to tune a phrase-based sys-
+tem on a large subset of the training data, show-
+ing improvements when using rule indicator fea-
+tures, word alignment features, and POS tag fea-
+tures. Another early attempt (Tillmann and Zhang,
+2006) used phrase pair and word features in a block
+SMT system trained using stochastic gradient de-
+scent for a convex loss function, but did not compare
+to MERT. Problems of overfitting and degenerate
+derivations were tackled with a probabilistic latent
+variable model (Blunsom et al, 2008) which used
+rule indicator features yet failed to improve upon
+the MERT baseline for the standard Hiero features.
+Techniques for distributed learning and feature se-
+lection for the perceptron loss using rule indicator,
+rule shape, and source side-bigram features have re-
+cently been proposed (Simianer et al, 2012), but no
+comparison to MERT was made.
+3 Difficulties in Large-Scale Training
+Discriminative training for machine translation is
+complicated by several factors. First, both transla-
+tion rules and feature weights are learned from par-
+allel data. If the same data is used for both tasks,
+overfitting of the weights is very possible.1 Second,
+the standard MT cost function, BLEU (Papineni et
+al., 2002), does not decompose additively over train-
+ing instances (because of the ?brevity penalty?) and
+so approximations are used?these often have prob-
+lems with the length (Nakov et al, 2012). Finally,
+state-of-the-art MT systems make extensive good
+use of ?dense? features, such as the log probabil-
+ity of translation decisions under a simpler gener-
+ative translation model. Our goal is to begin to
+use much sparser features without abandoning the
+proven dense features; however, extremely sparse
+features leads to problems of scaling in the optimiza-
+tion problem as we will show.
+3.1 Training Data and Overfitting
+One of the big questions in discriminative train-
+ing of machine translation systems is why standard
+machine learning techniques can perform so poorly
+when applied to large-scale learning on the train-
+ing data. Figure 1 shows a good example of this.
+The structured SVM (Tsochantaridis et al, 2004;
+Cherry and Foster, 2012) was used to learn the
+weights for a Chinese-English Hiero system (Chi-
+ang, 2005) with just eight features, using stochastic
+gradient descent (SGD) for online learning (Bottou,
+1998; Bottou, 2010). The weights were initialized
+from MERT values tuned on a 2k-sentence dev set
+(MT06), and the figure shows the progress of the on-
+line method during a single pass through the 300k-
+sentence Chinese-English FBIS training set.
+As the training progresses in Figure 1, BLEU
+scores on the training data go up, but scores on the
+1Previous work has attempted to mitigate the risk of overfit-
+ting through careful regularization (Blunsom et al, 2008; Simi-
+aner et al, 2012).
+249
+0 50000 150000 2500002
+6
+30
+34
+BLE
+U
+Figure 1: Progress of the online SVM training
+method after each training instance on FBIS dataset.
+The solid line is BLEU on the test set, training set is
+the dashed line, and the dev set is dotted.
+dev and test sets go down. If we hope to apply dis-
+criminative training techniques for not eight but mil-
+lions of features on the training data, we must find a
+way to prevent this overfitting.
+We suggest that an important reason why overfit-
+ting occurs is that the training data is used not only to
+tune the system but also to extract the grammar, and
+the target side is included in the data used to build
+the language model. To test this hypothesis, we
+compare tuning using three different dev sets: 1000
+sentences from the standard 4-reference MT06 dev
+set (Dev1000), a random selection of 1000 sentences
+that overlap with the corpus used to extract transla-
+tion rules (In1000), and 1000 sentences that came
+from the training data but were then excluded from
+rule extraction (Out1000). We run MERT on each of
+these and evaluate. For evaluation we compare three
+different sets: a random 1000 sentences from the
+training corpus that was used to create the grammars
+but which do not overlap with In1000 (Train1000),
+the 1000 sentence dev set (Dev1000), and the stan-
+dard 4-reference MT02-03 test set (Test). The en-
+tire experiment (including selection of the 1000 sen-
+tences) was replicated 5 times.
+Table 1 shows the results, averaging over repli-
+cations. Out1000 gives much higher scores on the
+testing data, validating our hypothesis that tuning on
+data used to build the LM and grammar can lead to
+overfitting. However, the results also show that tun-
+ing on the training data, even when it is held-out, can
+still lead to a small reduction in translation quality.
+One possible reason is that, unlike the training data
+which may come from various domains, the dev data
+is in the same domain as the test data and is typically
+of higher quality (e.g., it has multiple references).
+Table 1: MERT on Zh-En FBIS
+Tuning Set Train1000 Dev1000 Test
+Dev1000 32.2?1.1 30.2?.1 34.1?.3
+In1000 37.0?1.2 25.7?.7 30.1?.6
+Out1000 34.9?.8 29.0?.4 33.6?.5
+3.2 Poor Scaling
+When features occur with different frequencies,
+changing the weights of more frequent features has
+a larger effect than changing the weights of less fre-
+quent features.2 An example of frequent features
+that have a large impact on the translation quality are
+the language model and translation model features.
+These features are non-zero for every sentence, and
+changing their weights slightly has a large impact on
+translation output. In contrast, changing the weight
+drastically for a feature that is non-zero for only one
+out of a million sentences has very little effect on
+translation metrics. The sensitivity of the translation
+output to some feature weights over others was also
+pointed out in a recent paper (Chiang, 2012).
+When the objective function is more sensitive
+in some dimensions than others, the optimization
+problem is said to be poorly scaled (Nocedal and
+Wright, 2000), and can slow down the convergence
+rate for some optimizers. A typical fix is to rescale
+the dimensions, as we will do in Section 5.2.
+To verify that BLEU is poorly scaled with respect
+to weights of rule indicator features, we look at the
+effect of changing the weights for individual rules.
+We vary the feature weights for four randomly cho-
+sen frequent rules and four randomly chosen infre-
+quent rules on our FBIS dev set (Figure 2). One
+can think of this plot as a ?cross-section? of the
+BLEU score in the direction of the feature weight.
+The dense features are set to MERT-tuned values
+which are normalized to one. All other rule indi-
+cator features are set to zero, except the rule fea-
+ture weight that is varied. The frequent features
+2By the ?frequency of a feature? we mean this: given a set of
+input instances, how many input instances the feature is nonzero
+in the space of possible outputs for that input.
+250
+were selected randomly from the 20 most common
+rule indictor features in the n-best lists on the dev
+set, and the infrequent features were selected from
+the features that only occurred once in these n-best
+lists. The plots indicate that the BLEU score is
+?2 ?1 0 1 22
+7.0
+28.0
+29.0
+30.0
+Weight
+BLE
+U
+(a) Four representative frequent sparse features.
+?10 ?5 0 5 1030
+.100
+30.1
+05
+30.1
+10
+30.1
+15
+30.1
+20
+Weight
+BLE
+U
+(b) Four representative infrequent sparse features
+Figure 2: The effect of varying weights for rule indicator
+features on the BLEU score. Note the difference of scale
+on the y axis.
+poorly scaled for rule feature weights. Changing the
+weights for one of the common features changes the
+BLEU score by almost 2.5 BLEU points, while for
+the infrequent features the BLEU score changes by
+at most .02 BLEU points. We take this as a sign that
+gradient descent based optimizers for machine trans-
+lation with rule features could be slow to converge
+due to poor scaling, and that rescaling will improve
+convergence.
+3.3 Sentence Level Approximations to BLEU
+Finally, we note that discriminative training methods
+often use a sentence level approximation to BLEU. It
+has been shown that optimizing corpus level BLEU
+versus sentence level BLEU can lead to improve-
+ments of up to nearly .4 BLEU points on the test
+set (Nakov et al, 2012). Possible fixes to this prob-
+lem include using a proper sentence level metric
+such a METEOR (Denkowski and Lavie, 2011) or a
+pseudo-corpus from the last few updates (Chiang et
+al., 2008). However, in light of the result from sec-
+tion 3.1 that tuning on the dev set is still better than
+tuning on a held-out portion of the training data, we
+observe that tuning a corpus level metric on a high-
+quality dev set from the same domain as the test set
+probably leads to the best translation quality. At-
+tempts to improve upon this strong baseline lead us
+to the development of the HOLS algorithm which we
+describe next.
+4 Held-Out Line Search Algorithm
+In this section we give the details of the learning al-
+gorithm that we developed for use in large-scale dis-
+criminative training for machine translation, which
+we call the Held-Out Line Search algorithm (abbre-
+viated HOLS). It optimizes millions of features using
+evidence from the full set of parallel training data
+to obtain optimal predictive performance on a sec-
+ondary development set.
+The learning algorithm is a batch optimizer where
+each iteration has two phases: a gradient calcula-
+tion phase and a line search phase. In the gradient
+calculation phase, a surrogate loss function is used
+to compute a gradient for the feature weights. The
+gradient is computed over a subset of the training
+data. In the line search phase, a separate optimizer
+(MERT) is used to search along this gradient to opti-
+251
+mize the evaluation score of the one-best prediction
+of a translation system on a secondary development
+set.3 The secondary dev set is a crucial aspect of
+the algorithm that helps reduce overfitting (we will
+demonstrate this in the experiments section).
+During the line search phase we allow some of
+the feature weights to be adjusted independently of
+the line search. We will call the features we opti-
+mize independently the dense features, and the fea-
+tures we include in the line search the sparse fea-
+tures.4 The feature vector space V is the direct sum
+V = Vd ? Vs, where Vd is the vector space of
+the dense features and Vs is the vector space of the
+sparse features. The feature and weight vectors de-
+compose as ~f = ~fd + ~fs and ~w = ~wd + ~ws. ~fd and
+~wd are in the dense vector space, and the ~fs and ~ws
+are in the sparse vector space.
+In the gradient phase, we calculate a gradient of
+the surrogate loss function and project it onto the
+subspace of the sparse features. Let Ps be the pro-
+jection operator onto Vs. Then the gradient projected
+onto the sparse feature space is
+~g = Ps?~wL?(~w,Dg)
+where Dg is the subset of the training data used to
+calculate this gradient, and L? is the surrogate loss
+function. This just sets the dense components of the
+gradient of L? to zero.
+In the line search phase, we use a separate opti-
+mizer to optimize the weights for the dense features
+and the stepsize ?. Let L be the loss function we
+wish to minimize, then
+(~w?d, ?
+?) = arg min
+~wd,?
+L(~wd + ~ws + ?~g,Dl)
+Note ~ws is held fixed from the previous iteration. Dl
+is the portion of the training data which is used in
+the line search phase, and must not overlap with Dg
+used in the gradient calculation phase.5
+After the line search, the dense weights are up-
+dated to ~w?d, and the sparse weights are updated with
+~ws ? ~ws + ??~g. The process repeats for another
+iteration as desired (or until convergence).
+3While we use BLEU any loss function whose sufficient
+statistics decompose over training instances could be used.
+4The split over the features does not have to be done this
+way in practice.
+5L(~w?d, ?
+?,Dl) can be thought of as unbiased or more accu-
+rately less biased estimator of expected loss when Dl?Dg = ?.
+5 Procedure for Large-Scale Training
+Now that we have described the HOLS algorithm in
+general, we next describe how to apply it to large-
+scale training of machine translation systems with
+millions of features. We find that it is necessary to
+use disjoint sets of training instances for grammar
+extraction and gradient estimation (?5.1) and to deal
+with the poor scaling of the optimization problem
+(?5.2).
+5.1 Grammar and Language Model Folds
+To address the problem of overfitting on the train-
+ing data, we split the training data into n-folds, and
+extract grammars for each fold using the data from
+the other n? 1 folds. Similarly, we build a language
+model for each fold using a target language mono-
+lingual corpus and the target side of the training data
+from the other n ? 1 folds. Whenever we decode a
+sentence from the training data, we use the gram-
+mar and language model for the appropriate fold.
+This ensures that a sentence is never decoded using a
+grammar or language model it helped build, thereby
+reducing the overfitting effect demonstrated in ?3.1.
+To perform the training, the HOLS algorithm is
+used on the training data. In our experiments, only
+1-2 passes over the training data are necessary for
+significant gains. Data from one of the grammar
+folds is used for the line search, and the rest of the
+training data is used to calculate the gradient.
+The procedure is iterative, first decoding training
+data to obtain a gradient, and then performing a line
+search with data from a held-out grammar fold. In-
+stead of decoding the whole set of sentences used for
+the gradient updates at once, one can also decode a
+portion of the data, do a gradient update, and then
+continue the next iteration of HOLS on the remain-
+ing data before repeating.
+The last line search of the HOLS algorithm is done
+using dev data, rather than training data. This is be-
+cause the dev data is higher quality, and from Table
+1 we can see that tuning on dev data produces bet-
+ter results than tuning on training data (even if the
+training data has been held out from the grammar
+process). The initial weights are obtained by run-
+ning MERT on a subset of the one of the grammar
+folds.
+If one has an existing implementation of an op-
+252
+timizer for the loss function used during the line
+search (in our case MERT), it can be used to perform
+the line search. This is done simply by calling MERT
+with two extra features in addition to the dense fea-
+tures and omitting the sparse features.
+To see how, notice that the feature weights
+during the line search are decomposed as ~w =
+~wdense + ~wsparse + ?~g where ~g is in the sparse
+feature subspace, so the model score decomposes
+as score(x, y) = ~wd ? ~fd(x, y) + ~ws ? ~fs(x, y) +
+?~g ? ~fs(x, y) where x is the input translation, y is
+the output translation and derivation. If we cre-
+ate two new features f1(x, y) = ~ws ? ~fs(x, y) and
+f2(x, y) = ~g ? ~fs(x, y) then the score can be written
+score(x, y) = ~wd ? ~fd(x, y)
++f1(x, y) + ?f2(x, y)
+= (~wd, 1, ?) ? (~fd, f1, f2)
+Thus we can do the line search simply by calling
+MERT with the features (~fd, f1, f2). 6
+In summary our training algorithm is as follows:
+1) split the training data into n-folds (we use n = 5),
+2) initialize the dense weights to MERT values, 3)
+decode some or all the data in 4 of the 5 folds to get
+a gradient, 4) condition as in ?5.2 (see below), 5) run
+MERT on a 10k subset of the remaining fold to do the
+line search, 6) repeat steps 3-4 until convergence or
+stop as desired, and 7) run MERT on the normal dev
+set as a final step. We only run MERT on a 10k subset
+of one of the folds so it does not require running
+MERT on an entire fold.
+In the special case where just one iteration of
+HOLS is performed, the procedure is very simple:
+decode the training data to get a gradient, include
+the components of the gradient as an extra feature
+f2 in addition to the dense features, and tune on a
+dev set using MERT.
+5.2 Conditioning
+To address the problem of poor scaling, we use a
+simple strategy of rescaling each component of the
+gradient based on how frequent the feature is. We
+call this process ?conditioning.? For each feature,
+we simply divide the corresponding dimension of
+6We could constrain the weight for f1 to be 1, but this is not
+necessary since since MERT is invariant to the overall scale of
+the weights.
+the gradient by the number of n-best lists in which
+the feature was non-zero in.
+The necessity for conditioning is evident when we
+run the HOLS algorithm as detailed so far on the
+training data without conditioning. On subsequent
+iterations, we observe that the features with the high-
+est component of the gradient oscillate between iter-
+ations, but the rest of the feature gradients stay the
+same.
+Based on our knowledge that the optimization
+problem was poorly scaled, we divided by the fre-
+quency of the feature. We can give the following
+heuristic justification for our method of condition-
+ing. For the ith feature weight, we will take a step
+?wi. Assume that we want to take the step ?wi pro-
+portional to the average gradient g?i calculated from
+n-best lists in which the feature is non-zero. In other
+words, we want ?wi = ?g?i. Let gi be the total
+gradient calculated by adding the gradients over all
+n-best lists (i.e. summing over training examples
+in the corpus). For a feature that is nonzero in ex-
+actly ni n-best lists, the gradient from each example
+will have been added up ni times, so the total gra-
+dient gi = nig?i. Therefore we should take the step
+?wi = ?gi/ni. In other words, we rescale each
+component gi of the gradient by 1/ni before taking
+the gradient step.
+We can relate this argument back to the oscillation
+we observed of the rule feature weights. For rules
+that are used a thousand times more often than the
+average rule, the corresponding component of the
+gradient is roughly a thousand times larger. But that
+does not indicate that the adjustment ?wi to the rule
+weight should be a thousand times larger in each it-
+eration.
+6 Experiments
+We evaluate and analyze the performance of our
+training method with three sets of experiments. The
+first set of experiments compares HOLS to other
+tuning algorithms used in machine translation in a
+medium-scale discriminative setting. The second set
+looks in detail at HOLS for large scale discriminative
+training for a Chinese-English task. The third set
+looks at two other languages.
+All the experiments use a Hiero MT system with
+rule indicator features for the sparse features and the
+253
+Table 2: Corpora
+Language Corpus Sentences Tokens
+Source Target
+En Gigaword 24M 594M
+Ar-En Train 1M 7M 31M
+Dev (MT06) 1797 13K 236K
+MT05 1,056 7K 144K
+MT08nw 813 5K 116K
+MT05wb 547 5K 89K
+Mg-En Train 89K 2.1M 1.7M
+Dev 1,359 34K 28K
+Test 1,133 29K 24K
+Zh-En Train (FBIS) 302K 1M 9.3M
+Dev (MT06) 1,664 4K 192K
+Test (MT02-03) 1,797 5K 223K
+MT08 1,357 4K 167K
+following 8 dense features: LM, phrasal and lexi-
+cal p(e|f) and p(f |e), phrase and word penalties,
+and glue rule. The total number of features is 2.2M
+(Mg-En), 28.8M (Ar-En), and 10.8M (Zh-En). The
+same features are used for all tuning methods, ex-
+cept MERT baseline which uses only dense features.
+Although we extract different grammars from vari-
+ous subsets of the training corpus, word alignments
+were done using the entire training corpus. We use
+GIZA++ for word alignments (Och and Ney, 2003),
+Thrax (Weese et al, 2011) to extract the grammars,
+our decoder is cdec (Dyer et al, 2010) which uses
+KenLM (Heafield, 2011), and we used a 4-gram LM
+built using SRILM (Stolcke, 2002). Our optimizer
+uses code implemented in the pycdec python inter-
+face to cdec (Chahuneau et al, 2012). To speed up
+decoding, for each source RHS we filtered the gram-
+mars to the top 15 rules ranked by p(e | f). Statistics
+about the datasets we used are listed in Table 2.
+We use the ?soft ramp 3? loss function (Gimpel,
+2012; Gimpel and Smith, 2012) as the surrogate loss
+function for calculating the gradient in HOLS. It is
+defined as
+L? =
+n?
+i=1
+[
+? log
+?
+y?Gen(xi)
+e~w?
+~f(xi,y)?cost(yi,y)
++ log
+?
+y?Gen(xi)
+e~w?
+~f(xi,y)+cost(yi,y)
+]
+where the sum over i ranges over training exam-
+ples, Gen(x) is the space of possible outputs and
+derivations for the input x, and cost(yi, y) is add one
+smoothing sentence level BLEU.7
+Except where noted, all experiments are repeated
+5 times and results are averaged, initial weights for
+the dense features are drawn from a standard nor-
+mal, and initial weights for the sparse features are
+set to zero. We evaluate using MultEval (Clark et
+al., 2011) and report standard deviations across opti-
+mizer runs and significance at p = .05 using MultE-
+val?s built-in permutation test. In the large-scale ex-
+periments for HOLS, we only run the full optimizer
+once, and report standard deviations using multiple
+runs of the last MERT run (i.e. the last line search on
+the dev data).
+6.1 Comparison Experiments for ZH-EN
+Our first set of experiments compares the perfor-
+mance of the proposed HOLS algorithm to learn-
+ing algorithms popularly used in machine transla-
+tion on a Chinese-English task. We also compare to
+a close relative of the HOLS algorithm: optimizing
+the soft ramp 3 loss directly with online stochastic
+gradient descent and with conditioning. As we will
+see, SGD SOFTRAMP3 performs significantly worse
+than HOLS, despite both algorithms optimizing sim-
+ilar loss functions.
+In the experiments in this section, we do not use
+the full version of the training setup described in
+?5 since we wish to compare to algorithms that do
+not necessarily scale to large amounts of training
+data. We therefore use only one fifth of the train-
+ing data for learning the weights for both the dense
+and sparse features.
+In this section we refer to the subset of the train-
+ing data used to learn the weights as the tuning set
+(Tune). The grammar and LM are built using the
+training data that is not in the tuning set (the LM also
+includes the English monolingual corpus), and the
+weights for the features are tuned using the tuning
+set. This is similar to the typical train-dev-test split
+commonly used to tune machine translation systems,
+except that the tuning set is much larger (60k sen-
+tence pairs versus the usual 1k-2k) and comes from
+a random subset of the training data rather than a
+7We found this loss function to work well, but other ?soft?
+loss functions (Gimpel, 2012; Gimpel and Smith, 2012) also
+work. Gen(x) is restricted to a k-best size of 1000. Following
+(Gimpel, 2012) cost(yi, y) is multiplied by a factor of 20.
+254
+Table 3: Comparison Experiments for Zh-En
+Algorithm Tune MT08 Runtime
+MERT 22.1?.1 23.1?.1 6 hours
+PRO 23.8?.05 23.6?.1 2 weeks
+MIRA 21.7?.1 22.5?.1 19 hours
+SOFTRAMP3 21.5?.3 22.3?.3 29 hours
+HOLS 22.3?.1 23.4?.1 10 hours
+HILS 24.3?.2 22.4?.1 10 hours
+specialized development set.
+We compare MERT, PRO (Hopkins and May,
+2011), MIRA (Chiang, 2012), SOFTRAMP3, HOLS,
+and a variant of HOLS which we call HILS (discussed
+below). For HOLS, we used 10k of the 60k tun-
+ing set for the line search, and the rest of the tun-
+ing set was used for calculating the gradient. For
+HILS (?Held-In? Line Search), the full 60k tuning
+set was used to calculate the gradient, but the line
+search was on a 10k subset of that set. For MERT,
+we used a 10k subset of the tuning data because it
+takes a long time to run on large datasets, and it only
+has the eight dense features and so does not need the
+entire 60k tuning set. All the subsets are drawn ran-
+domly. Conditioning was performed only for HOLS,
+HILS, and SOFTRAMP3 because conditioning would
+affect the regularizer for PRO and require modifica-
+tions to the MIRA algorithm. To do the condition-
+ing for SOFTRAMP3 we used rule count during ex-
+traction of the grammar and not the frequency in
+the n-best lists because the online nature of SOFT-
+RAMP3 prevents us from knowing how frequent a
+rule will be (and the dense features are conditioned
+using the corpus size). We chose MIRA?s best learn-
+ing rate (? = .001) from {.1, .01, .001}, used de-
+fault settings for PRO in cdec, and for SOFTRAMP3
+we used the same loss function as HOLS but included
+an L2 regularizer of strength .001 and used a step-
+size of 1 (which was scaled because of condition-
+ing). To remedy problems of length bias for sentence
+level BLEU, we used brevity penalty smoothed and
+grounded BLEU+1 for sentence level scores (Nakov
+et al, 2012). Tuning was repeated four times with
+different initial weights, except for PRO which we
+only ran three times (due to training costs). The ini-
+tial weights for MERT were drawn from a standard
+normal distribution, and final MERT weights were
+used as the initial weights for the dense features for
+the other algorithms. Initial weights for the sparse
+features were set to zero. For HOLS, and HILS, tun-
+ing set BLEU scores were evaluated on the set that
+the line search was run on. We also report run times
+for 8 threads on an Opteron 6220 processor.8
+The results are shown in Table 3. PRO and HOLS
+are a statistically significant improvement upon the
+MERT baseline on the MT08 test data, but MIRA,
+SOFTRAMP3, and HILS are not.
+HILS dramatically overfits the tuning set, while
+HOLS does not, justifying the use of a held-out
+dataset for the line search. SOFTRAMP3 performs
+significantly worse than HOLS on the test set. PRO is
+a promising training algorithm, but does not scale to
+the full FBIS corpus because it requires many itera-
+tions.
+6.2 Full ZH-EN and Ablation Experiments
+This set of experiments evaluates the performance
+of the full HOLS algorithm described in ?5 for
+large-scale discriminative training on the full FBIS
+Chinese-English dataset. Since this is a relatively
+small and widely studied dataset, we also investigate
+what happens if different aspects of the procedure
+are omitted.
+Table 4 gives the results. The number of updates
+is the number of times the HOLS line search opti-
+mizer is run (gradient updates). For 2 passes, 4 up-
+dates, a line search is performed after a half pass
+through the training data, which is repeated four
+times for a total of two passes.
+Using just one pass through the training data and
+8Standard MIRA and SGD SOFTRAMP3 are not paralleliz-
+able and only use a single thread. All of these algorithms were
+run for one iteration, except for MERT which ran for at least
+seven iterations, and PRO which we stopped after 20 iterations.
+Table 4: Full-scale Chinese-English and Ablation
+Experiments
+Configuration Dev Test
+MERT Baseline 29.9?.3 34.0?.8
+2 Pass, 4 updates 31.1?.2 35.1?.4
+1 Pass, 1 update 30.7?.1 34.6?.5
+?Folds 30.0?.2 34.0?.4
+?Conditioning 30.1?.1 34.2?.2
+255
+Table 5: Arabic-English
+System Dev (MT06) MT05 MT08(nw) MT08(wb)
+MERT Baseline 39.2?.4 50.3?.4 45.2?.2 29.4?.14
+HOLS 1 Pass, 2 updates 39.9?.9 51.2?.4 45.8?.4 30.0?.4
+?BLEU +.7 +.9 +.6 +.6
+Table 6: Malagasy-English
+System Dev Test
+MERT Baseline 19.8?.3 17.7?.2
+HOLS 1 Pass, 1 update 20.5?.1 18.4?.2
+?BLEU +.7 +.7
+one gradient update, HOLS improves upon the MERT
+baseline by .6 BLEU points, which is a statistically
+significant improvement. With 2 passes through the
+training data and 4 gradient updates, HOLS performs
+even better, obtaining a 1.1 BLEU point improve-
+ment over the baseline and is also statistically signif-
+icant. With 16 threads, 1 pass, 1 update completed
+in 9 hours, and 2 pass, 4 updates, completed in 40
+hours. The medium-scale PRO setup in ?6.1 obtains
+a result of 34.4? .1 on this test set, which is a statis-
+tically significant improvement of .4 BLEU points
+over the MERT baseline but does not beat the large-
+scale HOLS results.
+Is folding and conditioning necessary? We ex-
+periment with what happens if grammar and LM
+folds are not used and if conditioning is not done.
+?Folds denotes 1 pass 1 update without folds, and
+?Conditioning denotes 1 pass 1 update without con-
+ditioning. We can see that both these steps are im-
+portant for the training procedure to work well.
+The decrease in performance of the training pro-
+cedure without folds or conditioning is dramatic but
+not too surprising. With just one gradient update,
+one would expect conditioning to be very important.
+And from the lessons learned in section 3.1, one
+would also expect the procedure to perform poorly
+or even worse than the MERT baseline without gram-
+mar or LM folds. But because HOLS runs MERT on
+the dev data for the last line search, it is almost im-
+possible for HOLS to be worse than the MERT base-
+line. (This, in fact, was part of our motivation when
+we originally attempted the HOLS algorithm.)
+6.3 Other Language Pairs
+The last set of experiments looks at the performance
+of the learning algorithm for two other languages
+and data scenarios for one pass through the training
+data. Using the same setup for large-scale discrimi-
+native training as before, we apply the training pro-
+cedure to a large data scenario Arabic-English task
+and a small data scenario Malagasy-English task
+(Tables 5 and 6). The training procedure gives statis-
+tically significant improvements over the baseline by
+.6 to .9 BLEU for Arabic, and a statistically signif-
+icant improvement of .7 BLEU for Malagasy. With
+16 threads, the runtime was 44 hours for Arabic and
+5 hours for Malagasy.
+7 Conclusion
+We have explored the difficulties encountered
+in large-scale discriminative training for machine
+translation, and introduced a learning procedure de-
+signed to overcome them and scale to large corpora.
+We leave to future work to experiment with feature
+sets designed for the large-scale discriminative set-
+ting. In particular, we hope this framework will fa-
+cilitate incorporation of richer linguistic knowledge
+into machine translation.
+Acknowledgments
+This work was sponsored by the U. S. Army Research
+Laboratory and the U. S. Army Research Office un-
+der contract/grant number W911NF-10-1-0533. Jeffrey
+Flanigan would like to thank his co-advisor Lori Levin
+for support and encouragement during this work.
+References
+Phil Blunsom, Trevor Cohn, and Miles Osborne. 2008.
+A discriminative latent variable model for statistical
+machine translation. In Proc. ACL-HLT.
+Le?on Bottou. 1998. Online algorithms and stochastic ap-
+proximations. In David Saad, editor, Online Learning
+256
+and Neural Networks. Cambridge University Press,
+Cambridge, UK. revised, oct 2012.
+Le?on Bottou. 2010. Large-scale machine learning with
+stochastic gradient descent. In Yves Lechevallier and
+Gilbert Saporta, editors, Proceedings of the 19th In-
+ternational Conference on Computational Statistics
+(COMPSTAT?2010), pages 177?187, Paris, France,
+August. Springer.
+V. Chahuneau, N. A. Smith, and C. Dyer. 2012. pycdec:
+A python interface to cdec. The Prague Bulletin of
+Mathematical Linguistics, 98:51?61.
+Colin Cherry and George Foster. 2012. Batch tuning
+strategies for statistical machine translation. In Proc.
+of NAACL.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of the Con-
+ference on Empirical Methods in Natural Language
+Processing, EMNLP ?08, pages 224?233, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+David Chiang. 2005. A hierarchical phrase-based model
+for statistical machine translation. In In ACL, pages
+263?270.
+David Chiang. 2012. Hope and fear for discriminative
+training of statistical translation models. Journal of
+Machine Learning Research, pages 1159?1187.
+Jonathan H. Clark, Chris Dyer, Alon Lavie, and Noah A.
+Smith. 2011. Better hypothesis testing for statisti-
+cal machine translation: controlling for optimizer in-
+stability. In Proceedings of the 49th Annual Meeting
+of the Association for Computational Linguistics: Hu-
+man Language Technologies: short papers - Volume
+2, HLT ?11, pages 176?181, Stroudsburg, PA, USA.
+Association for Computational Linguistics.
+Michael Denkowski and Alon Lavie. 2011. Meteor 1.3:
+Automatic Metric for Reliable Optimization and Eval-
+uation of Machine Translation Systems. In Proceed-
+ings of the EMNLP 2011 Workshop on Statistical Ma-
+chine Translation.
+Chris Dyer, Adam Lopez, Juri Ganitkevitch, Johnathan
+Weese, Ferhan Ture, Phil Blunsom, Hendra Setiawan,
+Vladimir Eidelman, and Philip Resnik. 2010. cdec: A
+decoder, alignment, and learning framework for finite-
+state and context-free translation models. In Proceed-
+ings of ACL.
+Kevin Gimpel and Noah A. Smith. 2012. Structured
+ramp loss minimization for machine translation. In
+Proc. of NAACL.
+K. Gimpel. 2012. Discriminative Feature-Rich Modeling
+for Syntax-Based Machine Translation. Ph.D. thesis,
+Carnegie Mellon University.
+Kenneth Heafield. 2011. KenLM: Faster and smaller
+language model queries. In Proceedings of the Sixth
+Workshop on Statistical Machine Translation, Edin-
+burgh, UK, July. Association for Computational Lin-
+guistics.
+Mark Hopkins and Jonathan May. 2011. Tuning as rank-
+ing. In Proc. of EMNLP.
+Percy Liang, Alexandre Bouchard-co?te?, Dan Klein, and
+Ben Taskar. 2006. An end-to-end discriminative ap-
+proach to machine translation. In In Proceedings of
+the Joint International Conference on Computational
+Linguistics and Association of Computational Linguis-
+tics (COLING/ACL, pages 761?768.
+Preslav Nakov, Francisco Guzma?n, and Stephan Vogel.
+2012. Optimizing for sentence-level bleu+1 yields
+short translations. In Martin Kay and Christian Boitet,
+editors, COLING, pages 1979?1994. Indian Institute
+of Technology Bombay.
+Jorge Nocedal and Stephen J. Wright. 2000. Numerical
+Optimization. Springer.
+Franz Josef Och and Hermann Ney. 2002. Discrimina-
+tive training and maximum entropy models for statis-
+tical machine translation. In Proc. of ACL.
+Franz Josef Och and Hermann Ney. 2003. A system-
+atic comparison of various statistical alignment mod-
+els. Comput. Linguist., 29(1):19?51, March.
+Franz Josef Och. 2003. Minimum error rate training in
+statistical machine translation. In Proc. of ACL.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. In Proceedings of the
+40th Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?02, pages 311?318, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Antti-Veiko Rosti, Bing Zhang, Spyros Matsoukas, and
+Richard Schwartz. 2010. BBN system description for
+WMT10 system combination task. In Proc. WMT.
+Avneesh Saluja, Ian Lane, and Joy Zhang. 2012. Ma-
+chine Translation with Binary Feedback: a large-
+margin approach. In Proceedings of The Tenth Bien-
+nial Conference of the Association for Machine Trans-
+lation in the Americas, San Diego, CA, July.
+Patrick Simianer, Chris Dyer, and Stefan Riezler. 2012.
+Joint feature selection in distributed stochastic learn-
+ing for large-scale discriminative training in SMT. In
+Proc. ACL.
+David A. Smith and Jason Eisner. 2006. Minimum risk
+annealing for training log-linear models. In Proc. of
+ACL.
+Andreas Stolcke. 2002. Srilm - an extensible language
+modeling toolkit. pages 901?904.
+Christoph Tillmann and Tong Zhang. 2006. A discrim-
+inative global training algorithm for statistical mt. In
+Proceedings of the 21st International Conference on
+257
+Computational Linguistics and the 44th annual meet-
+ing of the Association for Computational Linguistics,
+ACL-44, pages 721?728, Stroudsburg, PA, USA. As-
+sociation for Computational Linguistics.
+Ioannis Tsochantaridis, Thomas Hofmann, Thorsten
+Joachims, and Yasemin Altun. 2004. Support vec-
+tor machine learning for interdependent and structured
+output spaces. In Proceedings of the twenty-first inter-
+national conference on Machine learning, ICML ?04,
+pages 104?, New York, NY, USA. ACM.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2007. Online large-margin training for statis-
+tical machine translation. In Proc. EMNLP-CoNLL.
+Jonathan Weese, Juri Ganitkevitch, Chris Callison-
+Burch, Matt Post, and Adam Lopez. 2011. Joshua
+3.0: syntax-based machine translation with the thrax
+grammar extractor. In Proceedings of the Sixth Work-
+shop on Statistical Machine Translation, WMT ?11,
+pages 478?484, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+258
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 765?770,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+The Effects of Lexical Resource Quality on Preference Violation Detection
+Jesse Dunietz
+Computer Science Department
+Carnegie Mellon University
+Pittsburgh, PA, 15213, USA
+jdunietz@cs.cmu.edu
+Lori Levin and Jaime Carbonell
+Language Technologies Institute
+Carnegie Mellon University
+Pittsburgh, PA, 15213, USA
+{lsl,jgc}@cs.cmu.edu
+Abstract
+Lexical resources such as WordNet and
+VerbNet are widely used in a multitude
+of NLP tasks, as are annotated corpora
+such as treebanks. Often, the resources
+are used as-is, without question or exam-
+ination. This practice risks missing sig-
+nificant performance gains and even entire
+techniques.
+This paper addresses the importance of
+resource quality through the lens of a
+challenging NLP task: detecting selec-
+tional preference violations. We present
+DAVID, a simple, lexical resource-based
+preference violation detector. With as-
+is lexical resources, DAVID achieves an
+F1-measure of just 28.27%. When the
+resource entries and parser outputs for
+a small sample are corrected, however,
+the F1-measure on that sample jumps
+from 40% to 61.54%, and performance
+on other examples rises, suggesting that
+the algorithm becomes practical given re-
+fined resources. More broadly, this pa-
+per shows that resource quality matters
+tremendously, sometimes even more than
+algorithmic improvements.
+1 Introduction
+A variety of NLP tasks have been addressed
+using selectional preferences or restrictions, in-
+cluding word sense disambiguation (see Navigli
+(2009)), semantic parsing (e.g., Shi and Mihalcea
+(2005)), and metaphor processing (see Shutova
+(2010)). These semantic problems are quite chal-
+lenging; metaphor analysis, for instance, has long
+been recognized as requiring considerable seman-
+tic knowledge (Wilks, 1978; Carbonell, 1980).
+The advent of extensive lexical resources, an-
+notated corpora, and a spectrum of NLP tools
+presents an opportunity to revisit such challenges
+from the perspective of selectional preference vio-
+lations. Detecting these violations, however, con-
+stitutes a severe stress-test for resources designed
+for other tasks. As such, it can highlight shortcom-
+ings and allow quantifying the potential benefits of
+improving resources such as WordNet (Fellbaum,
+1998) and VerbNet (Schuler, 2005).
+In this paper, we present DAVID (Detector of
+Arguments of Verbs with Incompatible Denota-
+tions), a resource-based system for detecting pref-
+erence violations. DAVID is one component of
+METAL (Metaphor Extraction via Targeted Anal-
+ysis of Language), a new system for identifying,
+interpreting, and cataloguing metaphors. One pur-
+pose of DAVID was to explore how far lexical
+resource-based techniques can take us. Though
+our initial results suggested that the answer is ?not
+very,? further analysis revealed that the problem
+lies less in the technique than in the state of exist-
+ing resources and tools.
+Often, it is assumed that the frontier of perfor-
+mance on NLP tasks is shaped entirely by algo-
+rithms. Manning (2011) showed that this may not
+hold for POS tagging ? that further improvements
+may require resource cleanup. In the same spirit,
+we argue that for some semantic tasks, exemplified
+by preference violation detection, resource qual-
+ity may be at least as essential as algorithmic en-
+hancements.
+2 The Preference Violation Detection
+Task
+DAVID builds on the insight of Wilks (1978) that
+the strongest indicator of metaphoricity is the vi-
+olation of selectional preferences. For example,
+only plants can literally be pruned. If laws is
+the object of pruned, the verb is likely metaphori-
+cal. Flagging such semantic mismatches between
+verbs and arguments is the task of preference vio-
+lation detection.
+765
+We base our definition of preferences on the
+Pragglejaz guidelines (Pragglejaz Group, 2007)
+for identifying the most basic sense of a word as
+the most concrete, embodied, or precise one. Sim-
+ilarly, we define selectional preferences as the se-
+mantic constraints imposed by a verb?s most basic
+sense. Dictionaries may list figurative senses of
+prune, but we take the basic sense to be cutting
+plant growth.
+Several types of verbs were excluded from the
+task because they have very lax preferences. These
+include verbs of becoming or seeming (e.g., trans-
+form, appear), light verbs, auxiliaries, and aspec-
+tual verbs. For the sake of simplifying implemen-
+tation, phrasal verbs were also ignored.
+3 Algorithm Design
+To identify violations, DAVID employs a simple
+algorithm based on several existing tools and re-
+sources: SENNA (Collobert et al, 2011), a seman-
+tic role labeling (SRL) system; VerbNet, a com-
+putational verb lexicon; SemLink (Loper et al,
+2007), which includes mappings between Prop-
+Bank (Palmer et al, 2005) and VerbNet; and
+WordNet. As one metaphor detection component
+of METAL?s several, DAVID is designed to favor
+precision over recall. The algorithm is as follows:
+1. Run the Stanford CoreNLP POS tagger
+(Toutanova et al, 2003) and the TurboParser
+dependency parser (Martins et al, 2011).
+2. Run SENNA to identify the semantic argu-
+ments of each verb in the sentence using the
+PropBank argument annotation scheme (Arg0,
+Arg1, etc.). See Table 1 for example output.
+3. For each verb V , find all VerbNet entries for
+V . Using SemLink, map each PropBank argu-
+ment name to the corresponding VerbNet the-
+matic roles in these entries (Agent, Patient,
+etc.). For example, the VerbNet class for prune
+is carve-21.2-2. SemLink maps Arg0 to
+the Agent of carve-21.2-2 and Arg1 to
+the Patient.
+4. Retrieve from VerbNet the selectional restric-
+tions of each thematic role. In our running
+example, VerbNet specifies +int control
+and +concrete for the Agent and Patient of
+carve-21.2-2, respectively.
+5. If the head of any argument cannot be inter-
+preted to meet V ?s preferences, flag V as a vi-
+olation.
+?The politician pruned laws regulating plastic
+bags, and created new fees for inspecting dairy
+farms.?
+Verb Arg0 Arg1
+pruned The politician laws . . . bags
+regulating laws plastic bags
+created The politician new fees
+inspecting - - dairy farms
+Table 1: SENNA?s SRL output for the example
+sentence above. Though this example demon-
+strates only two arguments, SENNA is capable of
+labeling up to six.
+Restriction WordNet Synsets
+animate animate being.n.01
+people.n.01
+person.n.01
+concrete physical object.n.01
+matter.n.01
+substance.n.01
+organization social group.n.01
+district.n.01
+Table 2: DAVID?s mappings between some
+common VerbNet restriction types and WordNet
+synsets.
+Each VerbNet restriction is interpreted as man-
+dating or forbidding a set of WordNet hypernyms,
+defined by a custom mapping (see Table 2).
+For example, VerbNet requires both the Patient
+of a verb in carve-21.2-2 and the Theme
+of a verb in wipe manner-10.4.1-1 to
+be concrete. By empirical inspection, concrete
+nouns are hyponyms of the WordNet synsets
+physical object.n.01, matter.n.03,
+or substance.n.04. Laws (the Patient of
+prune) is a hyponym of none of these, so prune
+would be flagged as a violation.
+4 Corpus Annotation
+To evaluate our system, we assembled a corpus
+of 715 sentences from the METAL project?s cor-
+pus of sentences with and without metaphors. The
+corpus was annotated by two annotators follow-
+ing an annotation manual. Each verb was marked
+for whether its arguments violated the selectional
+preferences of the most basic, literal meaning of
+the verb. The annotators resolved conflicts by dis-
+766
+Error source Frequency
+Bad/missing VN entries 4.5 (14.1%)
+Bad/missing VN restrictions 6 (18.8%)
+Bad/missing SL mappings 2 (6.3%)
+Parsing/head-finding errors 3.5 (10.9%)
+SRL errors 8.5 (26.6%)
+VN restriction system too weak 4 (12.5%)
+Confounding WordNet senses 3.5 (10.9%)
+Endemic errors: 7.5 (23.4%)
+Resource errors: 12.5 (39.1%)
+Tool errors: 12 (37.5%)
+Total: 32 (100%)
+Table 3: Sources of error in 90 randomly selected
+sentences. For errors that were due to a combi-
+nation of sources, 1/2 point was awarded to each
+source. (VN stands for VerbNet and SL for Sem-
+Link.)
+cussing until consensus.
+5 Initial Results
+As the first row of Table 4 shows, our initial eval-
+uation left little hope for the technique. With
+such low precision and F1, it seemed a lexical
+resource-based preference violation detector was
+out. When we analyzed the errors in 90 randomly
+selected sentences, however, we found that most
+were not due to systemic problems with the ap-
+proach; rather, they stemmed from SRL and pars-
+ing errors and missing or incorrect resource entries
+(see Table 3). Armed with this information, we de-
+cided to explore how viable our algorithm would
+be absent these problems.
+6 Refining The Data
+To evaluate the effects of correcting DAVID?s in-
+puts, we manually corrected the tool outputs and
+resource entries that affected the aforementioned
+90 sentences. SRL output was corrected for ev-
+ery sentence, while SemLink and VerbNet entries
+were corrected only for each verb that produced an
+error.
+6.1 Corrections to Tool Output (Parser/SRL)
+Guided by the PropBank database and annotation
+guidelines, we corrected all errors in core role
+assignments from SENNA. These corrections in-
+cluded relabeling arguments, adding missed argu-
+ments, fixing argument spans, and deleting anno-
+tations for non-verbs. The only parser-related er-
+ror we corrected was a mislabeled noun.
+6.2 Correcting Corrupted Data in VerbNet
+The VerbNet download is missing several sub-
+classes that are referred to by SemLink or that
+have been updated on the VerbNet website. Some
+roles also have not been updated to the latest ver-
+sion, and some subclasses are listed with incor-
+rect IDs. These problems, which caused SemLink
+mappings to fail, were corrected before reviewing
+errors from the corpus.
+Six subclasses needed to be fixed, all of which
+were easily detected by a simple script that did not
+depend on the 90-sentence subcorpus. We there-
+fore expect that few further changes of this type
+would be needed for a more complete resource re-
+finement effort.
+6.3 Corpus-Based Updates to SemLink
+Our modifications to SemLink?s mappings in-
+cluded adding missing verbs, adding missing roles
+to mappings, and correcting mappings to more ap-
+propriate classes or roles. We also added null map-
+pings in cases where a PropBank argument had no
+corresponding role in VerbNet. This makes the
+system?s strategy for ruling out mappings more re-
+liable.
+No corrections were made purely based on the
+sample. Any time a verb?s mappings were edited,
+VerbNet was scoured for plausible mappings for
+every verb sense in PropBank, and any nonsensi-
+cal mappings were deleted. For example, when
+the phrase go dormant caused an error, we in-
+spected the mappings for go. Arguments of all but
+2 of the 7 available mappings were edited, either
+to add missing arguments or to correct nonsensi-
+cal ones. These changes actually had a net neg-
+ative impact on test set performance because the
+bad mappings had masked parsing and selectional
+preference problems.
+Based on the 90-sentence subcorpus, we mod-
+ified 20 of the existing verb entries in SemLink.
+These changes included correcting 8 role map-
+pings, adding 13 missing role mappings to existing
+senses, deleting 2 incorrect senses, adding 11 verb
+senses, correcting 2 senses, deleting 1 superfluous
+role mapping, and adding 46 null role mappings.
+(Note that although null mappings represented the
+largest set of changes, they also had the least im-
+pact on system behavior.) One entirely new verb
+was added, as well.
+767
+6.4 Corpus-Based Updates to VerbNet
+Nineteen VerbNet classes were modified, and one
+class had to be added. The modifications gener-
+ally involved adding, correcting, or deleting se-
+lectional restrictions, often by introducing or re-
+arranging subclasses. Other changes amounted to
+fixing clerical errors, such as incorrect role names
+or restrictions that had been ANDed instead of
+ORed.
+An especially difficult problem was an inconsis-
+tency in the semantics of VerbNet?s subclass sys-
+tem. In some cases, the restrictions specified on
+a verb in a subclass did not apply to subcatego-
+rization frames inherited from a superclass, but in
+other cases the restrictions clearly applied to all
+frames. The conflict was resolved by duplicating
+subclassed verbs in the top-level class whenever
+different selectional restrictions were needed for
+the two sets of frames.
+As with SemLink, samples determined only
+which classes were modified, not what modifica-
+tions were made. Any non-obvious changes to
+selectional restrictions were verified by examin-
+ing dozens of verb instances from SketchEngine?s
+(Kilgarriff et al, 2004) corpus. For example, the
+Agent of seek was restricted to +animate, but
+the corpus confirmed that organizations are com-
+monly described non-metaphorically as seeking,
+so the restriction was updated to +animate |
++organization.
+7 Results After Resource Refinement
+After making corrections for each set of 10 sen-
+tences, we incrementally recomputed F1 and pre-
+cision, both on the subcorpus corrected so far and
+on a test set of all 625 sentences that were never
+corrected. (The manual nature of the correction ef-
+fort made testing k-fold subsets impractical.) The
+results for 30-sentence increments are shown in
+Table 4.
+The most striking feature of these figures is how
+much performance improves on corrected sen-
+tences: for the full 90 sentences, F1 rose from
+30.43% to 61.54%, and precision rose even more
+dramatically from 31.82% to 80.00%. Interest-
+ingly, resource corrections alone generally made a
+larger difference than tool corrections alone, sug-
+gesting that resources may be the dominant fac-
+tor in resource-intensive tasks such as this one.
+Even more compellingly, the improvement from
+correcting both the tools and the resources was
+nearly double the sum of the improvements from
+each alone: tool and resource improvements inter-
+act synergistically.
+The effects on the test corpus are harder to
+interpret. Due to a combination of SRL prob-
+lems and the small number of sentences cor-
+rected, the scores on the test set improved little
+with resource correction; in fact, they even dipped
+slightly between the 30- and 60-sentence incre-
+ments. Nonetheless, we contend that our results
+testify to the generality of our corrections: after
+each iteration, every altered result was either an
+error fixed or an error that should have appeared
+before but had been masked by another. Note also
+that all results on the test set are without corrected
+tool output; presumably, these sentences would
+also have improved synergistically with more ac-
+curate SRL. How long corrections would continue
+to improve performance is a question that we did
+not have the resources to answer, but our results
+suggest that there is plenty of room to go.
+Some errors, of course, are endemic to the ap-
+proach and cannot be fixed either by improved re-
+sources or by better tools. For example, we con-
+sider every WordNet sense to be plausible, which
+produces false negatives. Additionally, the selec-
+tional restrictions specified by VerbNet are fairly
+loose; a more refined set of categories might cap-
+ture the range of verbs? restrictions more accu-
+rately.
+8 Implications for Future Refinement
+Efforts
+Although improving resources is infamously
+labor-intensive, we believe that similarly refining
+the remainder of VerbNet and SemLink would be
+doable. In our study, it took about 25-35 person-
+hours to examine about 150 verbs and to mod-
+ify 20 VerbNet classes and 25 SemLink verb en-
+tries (excluding time for SENNA corrections, fix-
+ing corrupt VerbNet data, and analysis of DAVID?s
+errors). Extrapolating from our experience, we es-
+timate that it would take roughly 6-8 person-weeks
+to systematically fix this particular set of issues
+with VerbNet.
+Improving SemLink could be more complex,
+as its mappings are automatically generated from
+VerbNet annotations on top of the PropBank cor-
+pus. One possibility is to correct the generated
+mappings directly, as we did in our study, which
+we estimate would take about two person-months.
+768
+With the addition of some metadata from the gen-
+eration process, it would then be possible to follow
+the corrected mappings back to annotations from
+which they were generated and fix those annota-
+tions. One downside of this approach is that if the
+mappings were ever regenerated from the anno-
+tated corpus, any mappings not encountered in the
+corpus would have to be added back afterwards.
+Null role mappings would be particularly thorny
+to implement. To add a null mapping, we must
+know that a role definitely does not belong, and
+is not just incidentally missing from an exam-
+ple. For instance, VerbNet?s defend-85 class
+truly has no equivalent to Arg2 in PropBank?s
+defend.01, but Arg0 or Arg1 may be missing
+for other reasons (e.g., in a passive). It may be best
+to simply omit null mappings, as is currently done.
+Alternatively, full parses from the Penn Treebank,
+on which PropBank is based, might allow distin-
+guishing phenomena such as passives where argu-
+ments are predictably omitted.
+The maintainers of VerbNet and PropBank are
+aware of many of the issues we have raised, and
+we have been in contact with them about possi-
+ble approaches to fixing them. They are particu-
+larly aware of the inconsistent semantics of selec-
+tional restrictions on VerbNet subclasses, and they
+hope to fix this issue within a larger attempt at re-
+tooling VerbNet?s selectional restrictions. In the
+meantime, we are sharing our VerbNet modifica-
+tions with them for them to verify and incorporate.
+We are also sharing our SemLink changes so that
+they can, if they choose, continue manual correc-
+tion efforts or trace SemLink problems back to the
+annotated corpus.
+9 Conclusion
+Our results argue for investing effort in developing
+and fixing resources, in addition to developing bet-
+ter NLP tools. Resource and tool improvements
+interact synergistically: better resources multiply
+the effect of algorithm enhancements. Gains from
+fixing resources may sometimes even exceed what
+the best possible algorithmic improvements can
+provide. We hope the NLP community will take
+up the challenge of investing in its resources to the
+extent that its tools demand.
+Acknowledgments
+Thanks to Eric Nyberg for suggesting building a
+system like DAVID, to Spencer Onuffer for his an-
+Sent. Tools Rsrcs P F1
+715 0 0 27.14% 28.27%
+625 0 0 26.55% 27.98%
+625 0 corr. 26.37% 28.15%
+30 0 0 50.00% 40.00%
+30 30 0 66.67% 44.44%
+30 0 corr.+30 62.50% 50.00%
+30 30 corr.+30 87.50% 70.00%
+625 0 corr.+30 27.07% 28.82%
+60 0 0 35.71% 31.25%
+60 60 0 54.55% 31.38%
+60 0 corr.+60 53.85% 45.16%
+60 60 corr.+60 90.91% 68.97%
+625 0 corr.+60 26.92% 28.74%
+90 0 0 31.82% 30.43%
+90 90 0 44.44% 38.10%
+90 0 corr.+90 47.37% 41.86%
+90 90 corr.+90 80.00% 61.54%
+625 0 corr.+90 27.37% 28.99%
+Table 4: Performance on preference violation de-
+tection task. Column 1 shows the sentence count.
+Columns 2 and 3 show how many sentences?
+SRL/parsing and resource errors, respectively, had
+been fixed (?corr.? indicates corrupted files).
+notation efforts, and to Davida Fromm for curating
+METAL?s corpus of Engish sentences.
+This work was supported by the Intelligence
+Advanced Research Projects Activity (IARPA)
+via Department of Defense US Army Research
+Laboratory contract number W911NF-12-C-0020.
+The U.S. Government is authorized to reproduce
+and distribute reprints for Governmental purposes
+notwithstanding any copyright annotation thereon.
+Disclaimer: The views and conclusions contained
+herein are those of the authors and should not be
+interpreted as necessarily representing the official
+policies or endorsements, either expressed or im-
+plied, of IARPA, DoD/ARL, or the U.S. Govern-
+ment.
+References
+Jaime G. Carbonell. 1980. Metaphor: a key to ex-
+tensible semantic analysis. In Proceedings of the
+18th annual meeting on Association for Computa-
+tional Linguistics, ACL ?80, pages 17?21, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Ronan Collobert, Jason Weston, Le?on Bottou, Michael
+769
+Karlen, Koray Kavukcuoglu, and Pavel P. Kuksa.
+2011. Natural language processing (almost) from
+scratch. J. Mach. Learn. Res., 12:2493?2537,
+November.
+Christiane Fellbaum, editor. 1998. WordNet: An Elec-
+tronic Lexical Database. Bradford Books.
+Adam Kilgarriff, Pavel Rychly, Pavel Smrz, and David
+Tugwell. 2004. The Sketch Engine. In Proceedings
+of EURALEX.
+Edward Loper, Szu-ting Yi, and Martha Palmer. 2007.
+Combining lexical resources: Mapping between
+PropBank and VerbNet. In Proceedings of the 7th
+International Workshop on Computational Linguis-
+tics, Tilburg, the Netherlands.
+Christopher D Manning. 2011. Part-of-speech tag-
+ging from 97% to 100%: is it time for some linguis-
+tics? In Computational Linguistics and Intelligent
+Text Processing, pages 171?189. Springer.
+Andre? F. T. Martins, Noah A. Smith, Pedro M. Q.
+Aguiar, and Ma?rio A. T. Figueiredo. 2011. Dual de-
+composition with many overlapping components. In
+Proceedings of the Conference on Empirical Meth-
+ods in Natural Language Processing, EMNLP ?11,
+pages 238?249, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+Roberto Navigli. 2009. Word sense disambiguation: A
+survey. ACM Computing Surveys (CSUR), 41(2):10.
+Martha Palmer, Daniel Gildea, and Paul Kingsbury.
+2005. The Proposition Bank: An annotated cor-
+pus of semantic roles. Computational Linguistics,
+31(1):71?106.
+Pragglejaz Group. 2007. MIP: A method for iden-
+tifying metaphorically used words in discourse.
+Metaphor and Symbol, 22(1):1?39.
+Karin K. Schuler. 2005. VerbNet: A Broad-
+Coverage, Comprehensive Verb Lexicon. Ph.D. the-
+sis, University of Pennsylvania, Philadelphia, PA.
+AAI3179808.
+Lei Shi and Rada Mihalcea. 2005. Putting pieces to-
+gether: Combining FrameNet, VerbNet and Word-
+Net for robust semantic parsing. In Alexander
+Gelbukh, editor, Computational Linguistics and In-
+telligent Text Processing, volume 3406 of Lec-
+ture Notes in Computer Science, pages 100?111.
+Springer Berlin Heidelberg.
+Ekaterina Shutova. 2010. Models of metaphor in NLP.
+In Proceedings of the 48th Annual Meeting of the As-
+sociation for Computational Linguistics, ACL ?10,
+pages 688?697, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+Kristina Toutanova, Dan Klein, Christopher D. Man-
+ning, and Yoram Singer. 2003. Feature-rich part-of-
+speech tagging with a cyclic dependency network.
+In Proceedings of the 2003 Conference of the North
+American Chapter of the Association for Computa-
+tional Linguistics on Human Language Technology
+- Volume 1, NAACL ?03, pages 173?180, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Yorick Wilks. 1978. Making preferences more active.
+Artificial Intelligence, 11:197?223.
+770
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics, pages 1426?1436,
+Baltimore, Maryland, USA, June 23-25 2014.
+c
+?2014 Association for Computational Linguistics
+A Discriminative Graph-Based Parser
+for the Abstract Meaning Representation
+Jeffrey Flanigan Sam Thomson Jaime Carbonell Chris Dyer Noah A. Smith
+Language Technologies Institute
+Carnegie Mellon University
+Pittsburgh, PA 15213, USA
+{jflanigan,sthomson,jgc,cdyer,nasmith}@cs.cmu.edu
+Abstract
+Abstract Meaning Representation (AMR)
+is a semantic formalism for which a grow-
+ing set of annotated examples is avail-
+able. We introduce the first approach
+to parse sentences into this representa-
+tion, providing a strong baseline for fu-
+ture improvement. The method is based
+on a novel algorithm for finding a maxi-
+mum spanning, connected subgraph, em-
+bedded within a Lagrangian relaxation of
+an optimization problem that imposes lin-
+guistically inspired constraints. Our ap-
+proach is described in the general frame-
+work of structured prediction, allowing fu-
+ture incorporation of additional features
+and constraints, and may extend to other
+formalisms as well. Our open-source sys-
+tem, JAMR, is available at:
+http://github.com/jflanigan/jamr
+1 Introduction
+Semantic parsing is the problem of mapping nat-
+ural language strings into meaning representa-
+tions. Abstract Meaning Representation (AMR)
+(Banarescu et al, 2013; Dorr et al, 1998) is a
+semantic formalism in which the meaning of a
+sentence is encoded as a rooted, directed, acyclic
+graph. Nodes represent concepts, and labeled di-
+rected edges represent the relationships between
+them?see Figure 1 for an example AMR graph.
+The formalism is based on propositional logic and
+neo-Davidsonian event representations (Parsons,
+1990; Davidson, 1967). Although it does not
+encode quantifiers, tense, or modality, the set of
+semantic phenomena included in AMR were se-
+lected with natural language applications?in par-
+ticular, machine translation?in mind.
+In this paper we introduce JAMR, the first pub-
+lished system for automatic AMR parsing. The
+system is based on a statistical model whose pa-
+rameters are trained discriminatively using anno-
+tated sentences in the AMR Bank corpus (Ba-
+narescu et al, 2013). We evaluate using the
+Smatch score (Cai and Knight, 2013), establishing
+a baseline for future work.
+The core of JAMR is a two-part algorithm
+that first identifies concepts using a semi-Markov
+model and then identifies the relations that ob-
+tain between these by searching for the maximum
+spanning connected subgraph (MSCG) from an
+edge-labeled, directed graph representing all pos-
+sible relations between the identified concepts. To
+solve the latter problem, we introduce an appar-
+ently novel O(|V |
+2
+log |V |) algorithm that is sim-
+ilar to the maximum spanning tree (MST) algo-
+rithms that are widely used for dependency pars-
+ing (McDonald et al, 2005). Our MSCG algo-
+rithm returns the connected subgraph with maxi-
+mal sum of its edge weights from among all con-
+nected subgraphs of the input graph. Since AMR
+imposes additional constraints to ensure seman-
+tic well-formedness, we use Lagrangian relaxation
+(Geoffrion, 1974; Fisher, 2004) to augment the
+MSCG algorithm, yielding a tractable iterative al-
+gorithm that finds the optimal solution subject to
+these constraints. In our experiments, we have
+found this algorithm to converge 100% of the time
+for the constraint set we use.
+The approach can be understood as an alterna-
+tive to parsing approaches using graph transduc-
+ers such as (synchronous) hyperedge replacement
+grammars (Chiang et al, 2013; Jones et al, 2012;
+Drewes et al, 1997), in much the same way that
+spanning tree algorithms are an alternative to us-
+ing shift-reduce and dynamic programming algo-
+rithms for dependency parsing.
+1
+While a detailed
+1
+To date, a graph transducer-based semantic
+parser has not been published, although the Bolinas
+toolkit (http://www.isi.edu/publications/
+licensed-sw/bolinas/) contains much of the neces-
+sary infrastructure.
+1426
+want-01
+boy
+visit-01
+city
+name
+?New? ?York?
+?City?
+ARG0
+ARG1
+ARG0
+ARG1
+name
+op1
+op2 op3
+(a) Graph.
+(w / want-01
+:ARG0 (b / boy)
+:ARG1 (g / visit-01
+:ARG0 b
+:ARG1 (c / city
+:name (n / name
+:op1 "New"
+:op2 "York"
+:op3 "City"))))
+(b) AMR annotation.
+Figure 1: Two equivalent ways of representing the AMR
+parse for the sentence, ?The boy wants to visit New York
+City.?
+comparison of these two approaches is beyond the
+scope of this paper, we emphasize that?as has
+been observed with dependency parsing?a diver-
+sity of approaches can shed light on complex prob-
+lems such as semantic parsing.
+2 Notation and Overview
+Our approach to AMR parsing represents an AMR
+parse as a graph G = ?V,E?; vertices and edges
+are given labels from sets L
+V
+and L
+E
+, respec-
+tively. G is constructed in two stages. The first
+stage identifies the concepts evoked by words and
+phrases in an input sentence w = ?w
+1
+, . . . , w
+n
+?,
+each w
+i
+a member of vocabulary W . The second
+stage connects the concepts by adding L
+E
+-labeled
+edges capturing the relations between concepts,
+and selects a root in G corresponding to the focus
+of the sentence w.
+Concept identification (?3) involves segmenting
+w into contiguous spans and assigning to each
+span a graph fragment corresponding to a concept
+from a concept set denoted F (or to ? for words
+that evoke no concept). In ?5 we describe how
+F is constructed. In our formulation, spans are
+contiguous subsequences of w. For example, the
+words ?New York City? can evoke the fragment
+represented by
+(c / city
+:name (n / name
+:op1 "New"
+:op2 "York"
+:op3 "City"))))
+We use a sequence labeling algorithm to identify
+concepts.
+The relation identification stage (?4) is similar
+to a graph-based dependency parser. Instead of
+finding the maximum-scoring tree over words, it
+finds the maximum-scoring connected subgraph
+that preserves concept fragments from the first
+stage, links each pair of vertices by at most one
+edge, and is deterministic
+2
+with respect to a spe-
+cial set of edge labels L
+?
+E
+? L
+E
+. The set L
+?
+E
+consists of the labels ARG0?ARG5, and does not
+include labels such as MOD or MANNER, for ex-
+ample. Linguistically, the determinism constraint
+enforces that predicates have at most one semantic
+argument of each type; this is discussed in more
+detail in ?4.
+To train the parser, spans of words must be la-
+beled with the concept fragments they evoke. Al-
+though AMR Bank does not label concepts with
+the words that evoke them, it is possible to build
+an automatic aligner (?5). The alignments are
+used to construct the concept lexicon and to train
+the concept identification and relation identifica-
+tion stages of the parser (?6). Each stage is a
+discriminatively-trained linear structured predic-
+tor with rich features that make use of part-of-
+speech tagging, named entity tagging, and depen-
+dency parsing.
+In ?7, we evaluate the parser against gold-
+standard annotated sentences from the AMR Bank
+corpus (Banarescu et al, 2013) under the Smatch
+score (Cai and Knight, 2013), presenting the first
+published results on automatic AMR parsing.
+3 Concept Identification
+The concept identification stage maps spans of
+words in the input sentence w to concept graph
+fragments from F , or to the empty graph fragment
+?. These graph fragments often consist of just
+one labeled concept node, but in some cases they
+are larger graphs with multiple nodes and edges.
+3
+2
+By this we mean that, at each node, there is at most one
+outgoing edge with that label type.
+3
+About 20% of invoked concept fragments are multi-
+concept fragments.
+1427
+Concept identification is illustrated in Figure 2 us-
+ing our running example, ?The boy wants to visit
+New York City.?
+Let the concept lexicon be a mapping clex :
+W
+?
+? 2
+F
+that provides candidate graph frag-
+ments for sequences of words. (The construc-
+tion of F and clex is discussed below.) Formally,
+a concept labeling is (i) a segmentation of w
+into contiguous spans represented by boundaries
+b, giving spans ?w
+b
+0
+:b
+1
+,w
+b
+1
+:b
+2
+, . . .w
+b
+k?1
+:b
+k
+?, with
+b
+0
+= 0 and b
+k
+= n, and (ii) an assignment of
+each phrase w
+b
+i?1
+:b
+i
+to a concept graph fragment
+c
+i
+? clex (w
+b
+i?1
+:b
+i
+) ? ?.
+Our approach scores a sequence of spans b and
+a sequence of concept graph fragments c, both of
+arbitrary length k, using the following locally de-
+composed, linearly parameterized function:
+score(b, c;?) =
+?
+k
+i=1
+?
+>
+f(w
+b
+i?1
+:b
+i
+, b
+i?1
+, b
+i
+, c
+i
+)
+(1)
+where f is a feature vector representation of a span
+and one of its concept graph fragments in context.
+The features are:
+? Fragment given words: Relative frequency es-
+timates of the probability of a concept graph
+fragment given the sequence of words in the
+span. This is calculated from the concept-word
+alignments in the training corpus (?5).
+? Length of the matching span (number of to-
+kens).
+? NER: 1 if the named entity tagger marked the
+span as an entity, 0 otherwise.
+? Bias: 1 for any concept graph fragment from F
+and 0 for ?.
+Our approach finds the highest-scoring b and
+c using a dynamic programming algorithm: the
+zeroth-order case of inference under a semi-
+Markov model (Janssen and Limnios, 1999). Let
+S(i) denote the score of the best labeling of the
+first i words of the sentence, w
+0:i
+; it can be calcu-
+lated using the recurrence:
+S(0) = 0
+S(i) = max
+j:0?j<i,
+c?clex(w
+j:i
+)??
+{
+S(j) + ?
+>
+f(w
+j:i
+, j, i, c)
+}
+The best score will be S(n), and the best scor-
+ing concept labeling can be recovered using back-
+pointers, as in typical implementations of the
+Viterbi algorithm. Runtime is O(n
+2
+).
+clex is implemented as follows. When clex is
+called with a sequence of words, it looks up the
+sequence in a table that contains, for every word
+sequence that was labeled with a concept fragment
+in the training data, the set of concept fragments it
+was labeled with. clex also has a set of rules for
+generating concept fragments for named entities
+and time expressions. It generates a concept frag-
+ment for any entity recognized by the named entity
+tagger, as well as for any word sequence matching
+a regular expression for a time expression. clex
+returns the union of all these concept fragments.
+4 Relation Identification
+The relation identification stage adds edges among
+the concept subgraph fragments identified in the
+first stage (?3), creating a graph. We frame the
+task as a constrained combinatorial optimization
+problem.
+Consider the fully dense labeled multigraph
+D = ?V
+D
+, E
+D
+? that includes the union of all la-
+beled vertices and labeled edges in the concept
+graph fragments, as well as every possible labeled
+edge u
+`
+?? v, for all u, v ? V
+D
+and every ` ? L
+E
+.
+4
+We require a subgraph G = ?V
+G
+, E
+G
+? that re-
+spects the following constraints:
+1. Preserving: all graph fragments (including la-
+bels) from the concept identification phase are
+subgraphs of G.
+2. Simple: for any two vertices u and v ? V
+G
+,E
+G
+includes at most one edge between u and v. This
+constraint forbids a small number of perfectly
+valid graphs, for example for sentences such as
+?John hurt himself?; however, we see that< 1%
+of training instances violate the constraint. We
+found in preliminary experiments that including
+the constraint increases overall performance.
+5
+3. Connected: G must be weakly connected (ev-
+ery vertex reachable from every other vertex, ig-
+noring the direction of edges). This constraint
+follows from the formal definition of AMR and
+is never violated in the training data.
+4. Deterministic: For each node u ? V
+G
+, and for
+each label ` ? L
+?
+E
+, there is at most one outgoing
+edge in E
+G
+from u with label `. As discussed in
+?2, this constraint is linguistically motivated.
+4
+To handle numbered OP labels, we pre-process the train-
+ing data to convert OPN to OP, and post-process the output by
+numbering the OP labels sequentially.
+5
+In future work it might be treated as a soft constraint, or
+the constraint might be refined to specific cases.
+1428
+The
+boy
+wants to
+visit New York
+City
+? ?
+boy
+want-01
+visit-01
+city
+name
+?New?
+?York?
+?City?
+name
+op1
+op2
+op3
+Figure 2: A concept labeling for the sentence ?The boy wants to visit New York City.?
+One constraint we do not include is acyclicity,
+which follows from the definition of AMR. In
+practice, graphs with cycles are rarely produced
+by JAMR. In fact, none of the graphs produced on
+the test set violate acyclicity.
+Given the constraints, we seek the maximum-
+scoring subgraph. We define the score to decom-
+pose by edges, and with a linear parameterization:
+score(E
+G
+;?) =
+?
+e?E
+G
+?
+>
+g(e) (2)
+The features are shown in Table 1.
+Our solution to maximizing the score in Eq. 2,
+subject to the constraints, makes use of (i) an al-
+gorithm that ignores constraint 4 but respects the
+others (?4.1); and (ii) a Lagrangian relaxation that
+iteratively adjusts the edge scores supplied to (i)
+so as to enforce constraint 4 (?4.2).
+4.1 Maximum Preserving, Simple, Spanning,
+Connected Subgraph Algorithm
+The steps for constructing a maximum preserving,
+simple, spanning, connected (but not necessar-
+ily deterministic) subgraph are as follows. These
+steps ensure the resulting graph G satisfies the
+constraints: the initialization step ensures the pre-
+serving constraint is satisfied, the pre-processing
+step ensures the graph is simple, and the core al-
+gorithm ensures the graph is connected.
+1. (Initialization) Let E
+(0)
+be the union of the
+concept graph fragments? weighted, labeled, di-
+rected edges. Let V denote its set of vertices.
+Note that ?V,E
+(0)
+? is preserving (constraint 4),
+as is any graph that contains it. It is also sim-
+ple (constraint 4), assuming each concept graph
+fragment is simple.
+2. (Pre-processing) We form the edge set E by in-
+cluding just one edge from E
+D
+between each
+pair of nodes:
+? For any edge e = u
+`
+?? v in E
+(0)
+, include e in
+E, omitting all other edges between u and v.
+? For any two nodes u and v, include only the
+highest scoring edge between u and v.
+Note that without the deterministic constraint,
+we have no constraints that depend on the label
+of an edge, nor its direction. So it is clear that
+the edges omitted in this step could not be part
+of the maximum-scoring solution, as they could
+be replaced by a higher scoring edge without vi-
+olating any constraints.
+Note also that because we have kept exactly one
+edge between every pair of nodes, ?V,E? is sim-
+ple and connected.
+3. (Core algorithm) Run Algorithm 1, MSCG, on
+?V,E? and E
+(0)
+. This algorithm is a (to our
+knowledge novel) modification of the minimum
+spanning tree algorithm of Kruskal (1956).
+Note that the directions of edges do not matter
+for MSCG.
+Steps 1?2 can be accomplished in one pass
+through the edges, with runtime O(|V |
+2
+). MSCG
+can be implemented efficiently in O(|V |
+2
+log |V |)
+time, similarly to Kruskal?s algorithm, using a
+disjoint-set data structure to keep track of con-
+nected components.
+6
+The total asymptotic runtime
+complexity is O(|V |
+2
+log |V |).
+The details of MSCG are given in Algorithm 1.
+In a nutshell, MSCG first adds all positive edges to
+the graph, and then connects the graph by greedily
+adding the least negative edge that connects two
+previously unconnected components.
+Theorem 1. MSCG finds a maximum spanning,
+connected subgraph of ?V,E?
+Proof. We closely follow the original proof of cor-
+rectness of Kruskal?s algorithm. We first show by
+induction that, at every iteration of MSCG, there
+exists some maximum spanning, connected sub-
+graph that contains G
+(i)
+= ?V,E
+(i)
+?:
+6
+For dense graphs, Prim?s algorithm (Prim, 1957) is
+asymptotically faster (O(|V |
+2
+)). We conjecture that using
+Prim?s algorithm instead of Kruskall?s to connect the graph
+could improve the runtime of MSCG.
+1429
+Name Description
+Label For each ` ? L
+E
+, 1 if the edge has that label
+Self edge 1 if the edge is between two nodes in the same fragment
+Tail fragment root 1 if the edge?s tail is the root of its graph fragment
+Head fragment root 1 if the edge?s head is the root of its graph fragment
+Path Dependency edge labels and parts of speech on the shortest syntactic path between any two
+words in the two spans
+Distance Number of tokens (plus one) between the two concepts? spans (zero if the same)
+Distance indicators A feature for each distance value, that is 1 if the spans are of that distance
+Log distance Logarithm of the distance feature plus one.
+Bias 1 for any edge.
+Table 1: Features used in relation identification. In addition to the features above, the following conjunctions are used (Tail and
+Head concepts are elements of L
+V
+): Tail concept ? Label, Head concept ? Label, Path ? Label, Path ? Head concept, Path ?
+Tail concept, Path ? Head concept ? Label, Path ? Tail concept ? Label, Path ? Head word, Path ? Tail word, Path ? Head
+word ? Label, Path ? Tail word ? Label, Distance ? Label, Distance ? Path, and Distance ? Path ? Label. To conjoin the
+distance feature with anything else, we multiply by the distance.
+input : weighted, connected graph ?V,E?
+and set of edges E
+(0)
+? E to be
+preserved
+output: maximum spanning, connected
+subgraph of ?V,E? that preserves
+E
+(0)
+let E
+(1)
+= E
+(0)
+? {e ? E | ?
+>
+g(e) > 0};
+create a priority queue Q containing
+{e ? E | ?
+>
+g(e) ? 0} prioritized by scores;
+i = 1;
+while Q nonempty and ?V,E
+(i)
+? is not yet
+spanning and connected do
+i = i+ 1;
+E
+(i)
+= E
+(i?1)
+;
+e = argmax
+e
+?
+?Q
+?
+>
+g(e
+?
+);
+remove e from Q;
+if e connects two previously unconnected
+components of ?V,E
+(i)
+? then
+add e to E
+(i)
+end
+end
+return G = ?V,E
+(i)
+?;
+Algorithm 1: MSCG algorithm.
+Base case: ConsiderG
+(1)
+, the subgraph contain-
+ing E
+(0)
+and every positive edge. Take any maxi-
+mum preserving spanning connected subgraph M
+of ?V,E?. We know that such an M exists be-
+cause ?V,E? itself is a preserving spanning con-
+nected subgraph. Adding a positive edge to M
+would strictly increase M ?s score without discon-
+necting M , which would contradict the fact that
+M is maximal. Thus M must contain G
+(1)
+.
+Induction step: By the inductive hypothesis,
+there exists some maximum spanning connected
+subgraph M = ?V,E
+M
+? that contains G
+(i)
+.
+Let e be the next edge added to E
+(i)
+by MSCG.
+If e is in E
+M
+, then E
+(i+1)
+= E
+(i)
+? {e} ? E
+M
+,
+and the hypothesis still holds.
+Otherwise, since M is connected and does not
+contain e, E
+M
+? {e} must have a cycle containing
+e. In addition, that cycle must have some edge e
+?
+that is not in E
+(i)
+. Otherwise, E
+(i)
+? {e} would
+contain a cycle, and e would not connect two un-
+connected components of G
+(i)
+, contradicting the
+fact that e was chosen by MSCG.
+Since e
+?
+is in a cycle in E
+M
+? {e}, removing it
+will not disconnect the subgraph, i.e. (E
+M
+?{e})\
+{e
+?
+} is still connected and spanning. The score of
+e is greater than or equal to the score of e
+?
+, oth-
+erwise MSCG would have chosen e
+?
+instead of e.
+Thus, ?V, (E
+M
+?{e}) \ {e
+?
+}? is a maximum span-
+ning connected subgraph that containsE
+(i+1)
+, and
+the hypothesis still holds.
+When the algorithm completes, G = ?V,E
+(i)
+?
+is a spanning connected subgraph. The maximum
+spanning connected subgraph M that contains it
+cannot have a higher score, because G contains
+every positive edge. Hence G is maximal.
+4.2 Lagrangian Relaxation
+If the subgraph resulting from MSCG satisfies con-
+straint 4 (deterministic) then we are done. Oth-
+erwise we resort to Lagrangian relaxation (LR).
+Here we describe the technique as it applies to our
+task, referring the interested reader to Rush and
+Collins (2012) for a more general introduction to
+Lagrangian relaxation in the context of structured
+prediction problems.
+In our case, we begin by encoding a graph G =
+?V
+G
+, E
+G
+? as a binary vector. For each edge e in
+the fully dense multigraph D, we associate a bi-
+1430
+nary variable z
+e
+= 1{e ? E
+G
+}, where 1{P} is
+the indicator function, taking value 1 if the propo-
+sition P is true, 0 otherwise. The collection of z
+e
+form a vector z ? {0, 1}
+|E
+D
+|
+.
+Determinism constraints can be encoded as a
+set of linear inequalities. For example, the con-
+straint that vertex u has no more than one outgoing
+ARG0 can be encoded with the inequality:
+?
+v?V
+1{u
+ARG0
+???? v ? E
+G
+} =
+?
+v?V
+z
+u
+ARG0
+????v
+? 1.
+All of the determinism constraints can collectively
+be encoded as one system of inequalities:
+Az ? b,
+with each row A
+i
+inA and its corresponding entry
+b
+i
+in b together encoding one constraint. For the
+previous example we have a row A
+i
+that has 1s
+in the columns corresponding to edges outgoing
+from u with label ARG0 and 0?s elsewhere, and a
+corresponding element b
+i
+= 1 in b.
+The score of graph G (encoded as z) can be
+written as the objective function ?
+>
+z, where ?
+e
+=
+?
+>
+g(e). To handle the constraint Az ? b, we in-
+troduce multipliers ? ? 0 to get the Lagrangian
+relaxation of the objective function:
+L?(z) = maxz (?
+>
+z+ ?
+>
+(b?Az)),
+z
+?
+? = argmaxz L?(z).
+And the dual objective:
+L(z) = min
+??0
+L?(z),
+z
+?
+= argmax
+z
+L(z).
+Conveniently, L?(z) decomposes over edges:
+L?(z) = maxz (?
+>
+z+ ?
+>
+(b?Az))
+= max
+z
+(?
+>
+z? ?
+>
+Az)
+= max
+z
+((??A
+>
+?)
+>
+z).
+So for any ?, we can find z
+?
+?
+by assigning edges
+the new Lagrangian adjusted weights ? ? A
+>
+?
+and reapplying the algorithm described in ?4.1.
+We can find z
+?
+by projected subgradient descent,
+by starting with ? = 0, and taking steps in the
+direction:
+?
+?L?
+??
+(z
+?
+?) = Az
+?
+?.
+If any components of ? are negative after taking a
+step, they are set to zero.
+L(z) is an upper bound on the unrelaxed ob-
+jective function ?
+>
+z, and is equal to it if and
+only if the constraints Az ? b are satisfied. If
+L(z
+?
+) = ?
+>
+z
+?
+, then z
+?
+is also the optimal solu-
+tion to the constrained solution. Otherwise, there
+exists a duality gap, and Lagrangian relaxation
+has failed. In that case we still return the sub-
+graph encoded by z
+?
+, even though it might vio-
+late one or more constraints. Techniques from in-
+teger programming such as branch-and-bound or
+cutting-planes methods could be used to find an
+optimal solution when LR fails (Das et al, 2012),
+but we do not use these techniques here. In our
+experiments, with a stepsize of 1 and max number
+of steps as 500, Lagrangian relaxation succeeds
+100% of the time in our data.
+4.3 Focus Identification
+In AMR, one node must be marked as the focus of
+the sentence. We notice this can be accomplished
+within the relation identification step: we add a
+special concept node root to the dense graph D,
+and add an edge from root to every other node,
+giving each of these edges the label FOCUS. We
+require that root have at most one outgoing FO-
+CUS edge. Our system has two feature types for
+this edge: the concept it points to, and the shortest
+dependency path from a word in the span to the
+root of the dependency tree.
+5 Automatic Alignments
+In order to train the parser, we need alignments be-
+tween sentences in the training data and their an-
+notated AMR graphs. More specifically, we need
+to know which spans of words invoke which con-
+cept fragments in the graph. To do this, we built
+an automatic aligner and tested its performance on
+a small set of alignments we annotated by hand.
+The automatic aligner uses a set of rules to
+greedily align concepts to spans. The list of rules
+is given in Table 2. The aligner proceeds down
+the list, first aligning named-entities exactly, then
+fuzzy matching named-entities, then date-entities,
+etc. For each rule, an entire pass through the AMR
+graph is done. The pass considers every concept in
+the graph and attempts to align a concept fragment
+rooted at that concept if the rule can apply. Some
+rules only apply to a particular type of concept
+fragment, while others can apply to any concept.
+For example, rule 1 can apply to any NAME con-
+cept and its OP children. It searches the sentence
+1431
+for a sequence of words that exactly matches its
+OP children and aligns them to the NAME and OP
+children fragment.
+Concepts are considered for alignment in the or-
+der they are listed in the AMR annotation (left to
+right, top to bottom). Concepts that are not aligned
+in a particular pass may be aligned in subsequent
+passes. Concepts are aligned to the first match-
+ing span, and alignments are mutually exclusive.
+Once aligned, a concept in a fragment is never re-
+aligned.
+7
+However, more concepts can be attached
+to the fragment by rules 8?14.
+We use WordNet to generate candidate lemmas,
+and we also use a fuzzy match of a concept, de-
+fined to be a word in the sentence that has the
+longest string prefix match with that concept?s la-
+bel, if the match length is ? 4. If the match length
+is < 4, then the concept has no fuzzy match. For
+example the fuzzy match for ACCUSE-01 could be
+?accusations? if it is the best match in the sen-
+tence. WordNet lemmas and fuzzy matches are
+only used if the rule explicitly uses them. All to-
+kens and concepts are lowercased before matches
+or fuzzy matches are done.
+On the 200 sentences of training data we
+aligned by hand, the aligner achieves 92% preci-
+sion, 89% recall, and 90% F
+1
+for the alignments.
+6 Training
+We now describe how to train the two stages of the
+parser. The training data for the concept identifi-
+cation stage consists of (X,Y ) pairs:
+? Input: X , a sentence annotated with named
+entities (person, organization, location, mis-
+ciscellaneous) from the Illinois Named Entity
+Tagger (Ratinov and Roth, 2009), and part-of-
+speech tags and basic dependencies from the
+Stanford Parser (Klein and Manning, 2003; de
+Marneffe et al, 2006).
+? Output: Y , the sentence labeled with concept
+subgraph fragments.
+The training data for the relation identification
+stage consists of (X,Y ) pairs:
+7
+As an example, if ?North Korea? shows up twice in
+the AMR graph and twice in the input sentence, then the
+first ?North Korea? concept fragment listed in the AMR gets
+aligned to the first ?North Korea? mention in the sentence,
+and the second fragment to the second mention (because the
+first span is already aligned when the second ?North Korea?
+concept fragment is considered, so it is aligned to the second
+matching span).
+1. (Named Entity) Applies to name concepts and their
+opn children. Matches a span that exactly matches its
+opn children in numerical order.
+2. (Fuzzy Named Entity) Applies to name concepts and
+their opn children. Matches a span that matches the
+fuzzy match of each child in numerical order.
+3. (Date Entity) Applies to date-entity concepts
+and their day, month, year children (if exist).
+Matches any permutation of day, month, year, (two digit
+or four digit years), with or without spaces.
+4. (Minus Polarity Tokens) Applies to - concepts, and
+matches ?no?, ?not?, ?non.?
+5. (Single Concept) Applies to any concept. Strips
+off trailing ?-[0-9]+? from the concept (for example
+run-01 ? run), and matches any exact matching
+word or WordNet lemma.
+6. (Fuzzy Single Concept) Applies to any concept.
+Strips off trailing ?-[0-9]+?, and matches the fuzzy match
+of the concept.
+7. (U.S.) Applies to name if its op1 child is united
+and its op2 child is states. Matches a word that
+matches ?us?, ?u.s.? (no space), or ?u. s.? (with space).
+8. (Entity Type) Applies to concepts with an outgoing
+name edge whose head is an aligned fragment. Up-
+dates the fragment to include the unaligned concept.
+Ex: continent in (continent :name (name
+:op1 "Asia")) aligned to ?asia.?
+9. (Quantity) Applies to .
+*
+-quantity concepts with
+an outgoing unit edge whose head is aligned. Up-
+dates the fragment to include the unaligned concept. Ex:
+distance-quantity in (distance-quantity
+:unit kilometer) aligned to ?kilometres.?
+10. (Person-Of, Thing-Of) Applies to person and
+thing concepts with an outgoing .
+*
+-of edge whose
+head is aligned. Updates the fragment to include
+the unaligned concept. Ex: person in (person
+:ARG0-of strike-02) aligned to ?strikers.?
+11. (Person) Applies to person concepts with a sin-
+gle outgoing edge whose head is aligned. Updates
+the fragment to include the unaligned concept. Ex:
+person in (person :poss (country :name
+(name :op1 "Korea")))
+12. (Goverment Organization) Applies to concepts
+with an incoming ARG.
+*
+-of edge whose tail is an
+aligned government-organization concept. Up-
+dates the fragment to include the unaligned concept. Ex:
+govern-01 in (government-organization
+:ARG0-of govern-01) aligned to ?government.?
+13. (Minus Polarity Prefixes) Applies to - concepts
+with an incoming polarity edge whose tail is aligned
+to a word beginning with ?un?, ?in?, or ?il.? Up-
+dates the fragment to include the unaligned concept.
+Ex: - in (employ-01 :polarity -) aligned to
+?unemployment.?
+14. (Degree) Applies to concepts with an incoming
+degree edge whose tail is aligned to a word ending
+is ?est.? Updates the fragment to include the unaligned
+concept. Ex: most in (large :degree most)
+aligned to ?largest.?
+Table 2: Rules used in the automatic aligner.
+1432
+? Input: X , the sentence labeled with graph frag-
+ments, as well as named enties, POS tags, and
+basic dependencies as in concept identification.
+? Output: Y , the sentence with a full AMR
+parse.
+8
+Alignments are used to induce the concept label-
+ing for the sentences, so no annotation beyond the
+automatic alignments is necessary.
+We train the parameters of the stages separately
+using AdaGrad (Duchi et al, 2011) with the per-
+ceptron loss function (Rosenblatt, 1957; Collins,
+2002). We give equations for concept identifica-
+tion parameters ? and features f(X,Y ). For a
+sentence of length k, and spans b labeled with a
+sequence of concept fragments c, the features are:
+f(X,Y ) =
+?
+k
+i=1
+f(w
+b
+i?1
+:b
+i
+, b
+i?1
+, b
+i
+, c
+i
+)
+To train with AdaGrad, we process examples in
+the training data ((X
+1
+, Y
+1
+), . . . , (X
+N
+, Y
+N
+)) one
+at a time. At time t, we decode (?3) to get
+?
+Y
+t
+and
+compute the subgradient:
+s
+t
+= f(X
+t
+,
+?
+Y
+t
+)? f(X
+t
+, Y
+t
+)
+We then update the parameters and go to the next
+example. Each component i of the parameter vec-
+tor gets updated like so:
+?
+t+1
+i
+= ?
+t
+i
+?
+?
+?
+?
+t
+t
+?
+=1
+s
+t
+?
+i
+s
+t
+i
+? is the learning rate which we set to 1. For
+relation identification training, we replace ? and
+f(X,Y ) in the above equations with ? and
+g(X,Y ) =
+?
+e?E
+G
+g(e).
+We ran AdaGrad for ten iterations for concept
+identification, and five iterations for relation iden-
+tification. The number of iterations was chosen by
+early stopping on the development set.
+7 Experiments
+We evaluate our parser on the newswire section
+of LDC2013E117 (deft-amr-release-r3-proxy.txt).
+Statistics about this corpus and our train/dev./test
+splits are given in Table 3.
+8
+Because the alignments are automatic, some concepts
+may not be aligned, so we cannot compute their features. We
+remove the unaligned concepts and their edges from the full
+AMR graph for training. Thus some graphs used for training
+may in fact be disconnected.
+Split Document Years Sentences Tokens
+Train 1995-2006 4.0k 79k
+Dev. 2007 2.1k 40k
+Test 2008 2.1k 42k
+Table 3: Train/dev./test split.
+Train Test
+P R F
+1
+P R F
+1
+.92 .90 .91 .90 .79 .84
+Table 4: Concept identification performance.
+For the performance of concept identification,
+we report precision, recall, and F
+1
+of labeled spans
+using the induced labels on the training and test
+data as a gold standard (Table 4). Our concept
+identifier achieves 84% F
+1
+on the test data. Pre-
+cision is roughly the same between train and test,
+but recall is worse on test, implicating unseen con-
+cepts as a significant source of errors on test data.
+We evaluate the performance of the full parser
+using Smatch v1.0 (Cai and Knight, 2013), which
+counts the precision, recall and F
+1
+of the concepts
+and relations together. Using the full pipeline
+(concept identification and relation identification
+stages), our parser achieves 58% F
+1
+on the test
+data (Table 5). Using gold concepts with the re-
+lation identification stage yields a much higher
+Smatch score of 80% F
+1
+. As a comparison, AMR
+Bank annotators have a consensus inter-annotator
+agreement Smatch score of 83% F
+1
+. The runtime
+of our system is given in Figure 3.
+The large drop in performance of 22% F
+1
+when
+moving from gold concepts to system concepts
+suggests that joint inference and training for the
+two stages might be helpful.
+8 Related Work
+Our approach to relation identification is inspired
+by graph-based techniques for non-projective syn-
+tactic dependency parsing. Minimum span-
+ning tree algorithms?specifically, the optimum
+branching algorithm of Chu and Liu (1965) and
+Edmonds (1967)?were first used for dependency
+parsing by McDonald et al (2005). Later ex-
+Train Test
+concepts P R F
+1
+P R F
+1
+gold .85 .95 .90 .76 .84 .80
+automatic .69 .78 .73 .52 .66 .58
+Table 5: Parser performance.
+1433
+0 10 20 30 400.0
+0.1
+0.2
+0.3
+0.4
+0.5
+sentence length (words)
+aver
+age r
+untim
+e (seco
+nds)
+Figure 3: Runtime of JAMR (all stages).
+tensions allow for higher-order (non?edge-local)
+features, often making use of relaxations to solve
+the NP-hard optimization problem. Mcdonald and
+Pereira (2006) incorporated second-order features,
+but resorted to an approximate algorithm. Oth-
+ers have formulated the problem as an integer lin-
+ear program (Riedel and Clarke, 2006; Martins et
+al., 2009). TurboParser (Martins et al, 2013) uses
+AD
+3
+(Martins et al, 2011), a type of augmented
+Lagrangian relaxation, to integrate third-order fea-
+tures into a CLE backbone. Future work might ex-
+tend JAMR to incorporate additional linguistically
+motivated constraints and higher-order features.
+The task of concept identification is similar in
+form to the problem of Chinese word segmenta-
+tion, for which semi-Markov models have success-
+fully been used to incorporate features based on
+entire spans (Andrew, 2006).
+While all semantic parsers aim to transform nat-
+ural language text to a formal representation of
+its meaning, there is wide variation in the mean-
+ing representations and parsing techniques used.
+Space does not permit a complete survey, but we
+note some connections on both fronts.
+Interlinguas (Carbonell et al, 1992) are an im-
+portant precursor to AMR. Both formalisms are
+intended for use in machine translation, but AMR
+has an admitted bias toward the English language.
+First-order logic representations (and exten-
+sions using, e.g., the ?-calculus) allow variable
+quantification, and are therefore more power-
+ful. In recent research, they are often associ-
+ated with combinatory categorial grammar (Steed-
+man, 1996). There has been much work on sta-
+tistical models for CCG parsing (Zettlemoyer and
+Collins, 2005; Zettlemoyer and Collins, 2007;
+Kwiatkowski et al, 2010, inter alia), usually using
+chart-based dynamic programming for inference.
+Natural language interfaces for querying
+databases have served as another driving applica-
+tion (Zelle and Mooney, 1996; Kate et al, 2005;
+Liang et al, 2011, inter alia). The formalisms
+used here are richer in logical expressiveness than
+AMR, but typically use a smaller set of concept
+types?only those found in the database.
+In contrast, semantic dependency parsing?in
+which the vertices in the graph correspond to the
+words in the sentence?is meant to make semantic
+parsing feasible for broader textual domains. Al-
+shawi et al (2011), for example, use shift-reduce
+parsing to map sentences to natural logical form.
+AMR parsing also shares much in common
+with tasks like semantic role labeling and frame-
+semantic parsing (Gildea and Jurafsky, 2002; Pun-
+yakanok et al, 2008; Das et al, 2014, inter alia).
+In these tasks, predicates are often disambiguated
+to a canonical word sense, and roles are filled
+by spans (usually syntactic constituents). They
+consider each predicate separately, and produce
+a disconnected set of shallow predicate-argument
+structures. AMR, on the other hand, canonical-
+izes both predicates and arguments to a common
+concept label space. JAMR reasons about all con-
+cepts jointly to produce a unified representation of
+the meaning of an entire sentence.
+9 Conclusion
+We have presented the first published system for
+automatic AMR parsing, and shown that it pro-
+vides a strong baseline based on the Smatch eval-
+uation metric. We also present an algorithm for
+finding the maximum, spanning, connected sub-
+graph and show how to incorporate extra con-
+straints with Lagrangian relaxation. Our feature-
+based learning setup allows the system to be easily
+extended by incorporating new feature sources.
+Acknowledgments
+The authors gratefully acknowledge helpful cor-
+respondence from Kevin Knight, Ulf Hermjakob,
+and Andr?e Martins, and helpful feedback from
+Nathan Schneider, Brendan O?Connor, Waleed
+Ammar, and the anonymous reviewers. This
+work was sponsored by the U. S. Army Research
+Laboratory and the U. S. Army Research Office
+under contract/grant number W911NF-10-1-0533
+and DARPA grant FA8750-12-2-0342 funded un-
+der the DEFT program.
+1434
+References
+Hiyan Alshawi, Pi-Chuan Chang, and Michael Ring-
+gaard. 2011. Deterministic statistical mapping of
+sentences to underspecified semantics. In Proc. of
+ICWS.
+Galen Andrew. 2006. A hybrid markov/semi-markov
+conditional random field for sequence segmentation.
+In Proc. of EMNLP.
+Laura Banarescu, Claire Bonial, Shu Cai, Madalina
+Georgescu, Kira Griffitt, Ulf Hermjakob, Kevin
+Knight, Philipp Koehn, Martha Palmer, and Nathan
+Schneider. 2013. Abstract meaning representation
+for sembanking. In Proc. of the Linguistic Annota-
+tion Workshop and Interoperability with Discourse.
+Shu Cai and Kevin Knight. 2013. Smatch: an eval-
+uation metric for semantic feature structures. In
+Proc. of ACL.
+Jaime G. Carbonell, Teruko Mitamura, and Eric H. Ny-
+berg. 1992. The KANT perspective: A critique
+of pure transfer (and pure interlingua, pure trans-
+fer, . . . ). In Proc. of the Fourth International Con-
+ference on Theoretical and Methodological Issues
+in Machine Translation: Empiricist vs. Rationalist
+Methods in MT.
+David Chiang, Jacob Andreas, Daniel Bauer,
+Karl Moritz Hermann, Bevan Jones, and Kevin
+Knight. 2013. Parsing graphs with hyperedge
+replacement grammars. In Proc. of ACL.
+Y. J. Chu and T. H. Liu. 1965. On the shortest arbores-
+cence of a directed graph. Science Sinica, 14:1396?
+1400.
+Michael Collins. 2002. Discriminative training meth-
+ods for hidden Markov models: Theory and ex-
+periments with perceptron algorithms. In Proc. of
+EMNLP.
+Dipanjan Das, Andr?e F. T. Martins, and Noah A. Smith.
+2012. An exact dual decomposition algorithm for
+shallow semantic parsing with constraints. In Proc.
+of the Joint Conference on Lexical and Computa-
+tional Semantics.
+Dipanjan Das, Desai Chen, Andr?e F. T. Martins,
+Nathan Schneider, and Noah A. Smith. 2014.
+Frame-semantic parsing. Computational Linguis-
+tics, 40(1):9?56.
+Donald Davidson. 1967. The logical form of action
+sentences. In Nicholas Rescher, editor, The Logic of
+Decision and Action, pages 81?120. Univ. of Pitts-
+burgh Press.
+Marie-Catherine de Marneffe, Bill MacCartney, and
+Christopher D. Manning. 2006. Generating typed
+dependency parses from phrase structure parses. In
+Proc. of LREC.
+Bonnie Dorr, Nizar Habash, and David Traum. 1998.
+A thematic hierarchy for efficient generation from
+lexical-conceptual structure. In David Farwell, Lau-
+rie Gerber, and Eduard Hovy, editors, Machine
+Translation and the Information Soup: Proc. of
+AMTA.
+Frank Drewes, Hans-J?org Kreowski, and Annegret Ha-
+bel. 1997. Hyperedge replacement graph gram-
+mars. In Handbook of Graph Grammars, pages 95?
+162. World Scientific.
+John Duchi, Elad Hazan, and Yoram Singer. 2011.
+Adaptive subgradient methods for online learning
+and stochastic optimization. Journal of Machine
+Learning Research, 12:2121?2159, July.
+Jack Edmonds. 1967. Optimum branchings. National
+Bureau of Standards.
+Marshall L. Fisher. 2004. The Lagrangian relaxation
+method for solving integer programming problems.
+Management Science, 50(12):1861?1871.
+Arthur M Geoffrion. 1974. Lagrangean relaxation for
+integer programming. Springer.
+Daniel Gildea and Daniel Jurafsky. 2002. Automatic
+labeling of semantic roles. Computational Linguis-
+tics, 28(3):245?288.
+Jacques Janssen and Nikolaos Limnios. 1999. Semi-
+Markov Models and Applications. Springer, Octo-
+ber.
+Bevan Jones, Jacob Andreas, Daniel Bauer,
+Karl Moritz Hermann, and Kevin Knight. 2012.
+Semantics-based machine translation with hyper-
+edge replacement grammars. In Proc. of COLING.
+Rohit J. Kate, Yuk Wah Wong, and Raymond J.
+Mooney. 2005. Learning to transform natural to
+formal languages. In Proc. of AAAI.
+Dan Klein and Christopher D. Manning. 2003. Accu-
+rate unlexicalized parsing. In Proc. of ACL.
+Joseph B. Kruskal. 1956. On the shortest spanning
+subtree of a graph and the traveling salesman prob-
+lem. Proc. of the American Mathematical Society,
+7(1):48.
+Tom Kwiatkowski, Luke Zettlemoyer, Sharon Goldwa-
+ter, and Mark Steedman. 2010. Inducing probabilis-
+tic CCG grammars from logical form with higher-
+order unification. In Proc. of EMNLP.
+Percy Liang, Michael I. Jordan, and Dan Klein. 2011.
+Learning dependency-based compositional seman-
+tics. In Proc. of ACL.
+Andr?e F. T. Martins, Noah A. Smith, and Eric P. Xing.
+2009. Concise integer linear programming formula-
+tions for dependency parsing. In Proc. of ACL.
+1435
+Andr?e F. T. Martins, Noah A. Smith, Pedro M. Q.
+Aguiar, and M?ario A. T. Figueiredo. 2011. Dual
+decomposition with many overlapping components.
+In Proc. of EMNLP.
+Andr?e F. T. Martins, Miguel Almeida, and Noah A.
+Smith. 2013. Turning on the turbo: Fast third-order
+non-projective Turbo parsers. In Proc. of ACL.
+Ryan Mcdonald and Fernando Pereira. 2006. Online
+learning of approximate dependency parsing algo-
+rithms. In Proc. of EACL, page 81?88.
+Ryan McDonald, Fernando Pereira, Kiril Ribarov, and
+Jan Haji?c. 2005. Non-projective dependency pars-
+ing using spanning tree algorithms. In Proc. of
+EMNLP.
+Terence Parsons. 1990. Events in the Semantics of En-
+glish: A study in subatomic semantics. MIT Press.
+Robert C. Prim. 1957. Shortest connection networks
+and some generalizations. Bell System Technology
+Journal, 36:1389?1401.
+Vasin Punyakanok, Dan Roth, and Wen-tau Yih. 2008.
+The importance of syntactic parsing and inference in
+semantic role labeling. Computational Linguistics,
+34(2):257?287.
+Lev Ratinov and Dan Roth. 2009. Design challenges
+and misconceptions in named entity recognition. In
+Proc. of CoNLL.
+Sebastian Riedel and James Clarke. 2006. Incremental
+integer linear programming for non-projective de-
+pendency parsing. In Proc. of EMNLP.
+Frank Rosenblatt. 1957. The perceptron?a perceiving
+and recognizing automaton. Technical Report 85-
+460-1, Cornell Aeronautical Laboratory.
+Alexander M. Rush and Michael Collins. 2012. A
+tutorial on dual decomposition and Lagrangian re-
+laxation for inference in natural language process-
+ing. Journal of Artificial Intelligence Research,
+45(1):305?-362.
+Mark Steedman. 1996. Surface structure and interpre-
+tation. Linguistic inquiry monographs. MIT Press.
+John M. Zelle and Raymond J. Mooney. 1996. Learn-
+ing to parse database queries using inductive logic
+programming. In Proc. of AAAI.
+Luke S. Zettlemoyer and Michael Collins. 2005.
+Learning to map sentences to logical form: Struc-
+tured classification with probabilistic categorial
+grammars. In Proc. of UAI.
+Luke S. Zettlemoyer and Michael Collins. 2007. On-
+line learning of relaxed CCG grammars for parsing
+to logical form. In In Proc. of EMNLP-CoNLL.
+1436
+Proceedings of 52nd Annual Meeting of the Association for Computational Linguistics: System Demonstrations, pages 1?6,
+Baltimore, Maryland USA, June 23-24, 2014. c?2014 Association for Computational Linguistics
+Cross-Lingual Information to the Rescue in Keyword Extraction 
+ 
+1Chung-Chi Huang 2Maxine Eskenazi 3Jaime Carbonell 4Lun-Wei Ku 5Ping-Che Yang 
+1,2,3Language Technologies Institute, CMU, United States 
+4Institute of Information Science, Academia Sinica, Taiwan 
+5Institute for Information Industry, Taipei, Taiwan 
+{1u901571,4lunwei.jennifer.ku}@gmail.com 
+{2max+,3jgc}@cs.cmu.edu 5maciaclark@iii.org.tw 
+ 
+  
+  
+Abstract 
+We introduce a method that extracts keywords 
+in a language with the help of the other. In our 
+approach, we bridge and fuse conventionally 
+irrelevant word statistics in languages. The 
+method involves estimating preferences for 
+keywords w.r.t. domain topics and generating 
+cross-lingual bridges for word statistics 
+integration. At run-time, we transform parallel 
+articles into word graphs, build cross-lingual 
+edges, and exploit PageRank with word 
+keyness information for keyword extraction. 
+We present the system, BiKEA, that applies 
+the method to keyword analysis. Experiments 
+show that keyword extraction benefits from 
+PageRank, globally learned keyword 
+preferences, and cross-lingual word statistics 
+interaction which respects language diversity. 
+1 Introduction 
+Recently, an increasing number of Web services 
+target extracting keywords in articles for content 
+understanding, event tracking, or opinion mining. 
+Existing keyword extraction algorithm (KEA) 
+typically looks at articles monolingually and 
+calculate word significance in certain language. 
+However, the calculation in another language 
+may tell the story differently since languages 
+differ in grammar, phrase structure, and word 
+usage, thus word statistics on keyword analysis. 
+Consider the English article in Figure 1. Based 
+on the English content alone, monolingual KEA 
+may not derive the best keyword set. A better set 
+might be obtained by referring to the article and 
+its counterpart in another language (e.g., 
+Chinese). Different word statistics in articles of 
+different languages may help, due to language 
+divergence such as phrasal structure (i.e., word 
+order) and word usage and repetition (resulting 
+from word translation or word sense) and so on. 
+For example, bilingual phrases ?social 
+reintegration? and ?????? in Figure 1 have 
+inverse word orders (?social? translates into ??
+? ? and ?reintegration? into ? ? ? ?), both 
+?prosthesis? and ?artificial limbs? translate into 
+????, and ?physical? can be associated with ??
+? ? and ??? ? in ?physical therapist? and 
+?physical rehabilitation? respectively. Intuitively, 
+using cross-lingual statistics (implicitly 
+leveraging language divergence) can help look at 
+articles from different perspectives and extract 
+keywords more accurately. 
+We present a system, BiKEA, that learns to 
+identify keywords in a language with the help of 
+the other. The cross-language information is 
+expected to reinforce language similarities and 
+value language dissimilarities, and better 
+understand articles in terms of keywords. An 
+example keyword analysis of an English article 
+is shown in Figure 1. BiKEA has aligned the 
+parallel articles at word level and determined the 
+scores of topical keyword preferences for words. 
+BiKEA learns these topic-related scores during 
+training by analyzing a collection of articles. We 
+will describe the BiKEA training process in more 
+detail in Section 3. 
+At run-time, BiKEA transforms an article in a 
+language (e.g., English) into PageRank word 
+graph where vertices are words in the article and 
+edges between vertices indicate the words? co-
+occurrences. To hear another side of the story, 
+BiKEA also constructs graph from its counterpart 
+in another language (e.g., Chinese). These two 
+independent graphs are then bridged over nodes 
+1
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 1. An example BiKEA keyword analysis for an article.
+that are bilingually equivalent or aligned. The 
+bridging is to take language divergence into 
+account and to allow for language-wise 
+interaction over word statistics. BiKEA, then in 
+bilingual context, iterates with learned word 
+keyness scores to find keywords. In our 
+prototype, BiKEA returns keyword candidates of 
+the article for keyword evaluation (see Figure 1); 
+alternatively, the keywords returned by BiKEA 
+can be used as candidates for social tagging the 
+article or used as input to an article 
+recommendation system. 
+2 Related Work 
+Keyword extraction has been an area of active 
+research and applied to NLP tasks such as 
+document categorization (Manning and Schutze, 
+2000), indexing (Li et al., 2004), and text mining 
+on social networking services ((Li et al., 2010); 
+(Zhao et al., 2011); (Wu et al., 2010)). 
+The body of KEA focuses on learning word 
+statistics in document collection. Approaches 
+such as tfidf and entropy, using local document 
+and/or across-document information, pose strong 
+baselines. On the other hand, Mihalcea and 
+Tarau (2004) apply PageRank, connecting words 
+locally, to extract essential words. In our work, 
+we leverage globally learned keyword 
+preferences in PageRank to identify keywords. 
+Recent work has been done on incorporating 
+semantics into PageRank. For example, Liu et al. 
+(2010) construct PageRank synonym graph to 
+accommodate words with similar meaning. And 
+Huang and Ku (2013) weigh PageRank edges 
+based on nodes? degrees of reference. In contrast, 
+we bridge PageRank graphs of parallel articles to 
+facilitate statistics re-distribution or interaction 
+between the involved languages. 
+In studies more closely related to our work, 
+Liu et al. (2010) and Zhao et al. (2011) present 
+PageRank algorithms leveraging article topic 
+information for keyword identification. The main 
+differences from our current work are that the 
+article topics we exploit are specified by humans 
+not by automated systems, and that our 
+PageRank graphs are built and connected 
+bilingually. 
+In contrast to the previous research in keyword 
+extraction, we present a system that 
+automatically learns topical keyword preferences 
+and constructs and inter-connects PageRank 
+graphs in bilingual context, expected to yield 
+better and more accurate keyword lists for 
+articles. To the best of our knowledge, we are the 
+first to exploit cross-lingual information and take 
+advantage of language divergence in keyword 
+extraction. 
+3 The BiKEA System 
+Submitting natural language articles to keyword 
+extraction systems may not work very well. 
+Keyword extractors typically look at articles 
+from monolingual points of view. Unfortunately, 
+word statistics derived based on a language may 
+The English Article: 
+I've been in Afghanistan for 21 years. I work for the Red Cross and I'm a physical therapist. My job is to 
+make arms and legs -- well it's not completely true. We do more than that. We provide the patients, the 
+Afghan disabled, first with the physical rehabilitation then with the social reintegration. It's a very logical 
+plan, but it was not always like this. For many years, we were just providing them with artificial limbs. It 
+took quite many years for the program to become what it is now. ? 
+ 
+Its Chinese Counterpart: ??????? 21 ?? ????????? ?????????? ??????????? -- ?????????? ?????????? ???????? ???????? ???????, ??????? ???????????? ?????????? ??????????? ????? ???????? ?????????????? 
+ 
+Word Alignment Information: 
+physical (??), therapist (???), social (??), reintegration (??), physical (??), rehabilitation  (??), prosthesis (??), ? 
+ 
+Scores of Topical Keyword Preferences for Words: 
+(English)    prosthesis: 0.32; artificial leg: 0.21; physical therapist: 0.15; rehabilitation: 0.08; ? 
+(Chinese)   ??: 0.41; ?????: 0.15; ??:0.10; ???: 0.08, ? 
+ 
+English Keywords from Bilingual Perspectives: 
+prosthesis, artificial, leg, rehabilitation, orthopedic, ? 
+2
+be biased due to the language?s grammar, phrase 
+structure, word usage and repetition and so on. 
+To identify keyword lists from natural language 
+articles, a promising approach is to automatically 
+bridge the original monolingual framework with 
+bilingual parallel information expected to respect 
+language similarities and diversities at the same 
+time.  
+3.1 Problem Statement 
+We focus on the first step of the article 
+recommendation process: identifying a set of 
+words likely to be essential to a given article. 
+These keyword candidates are then returned as 
+the output of the system. The returned keyword 
+list can be examined by human users directly, or 
+passed on to article recommendation systems for 
+article retrieval (in terms of the extracted 
+keywords). Thus, it is crucial that keywords be 
+present in the candidate list and that the list not 
+be too large to overwhelm users or the 
+subsequent (typically computationally expensive) 
+article recommendation systems. Therefore, our 
+goal is to return reasonable-sized set of keyword 
+candidates that, at the same time, must contain 
+essential terms in the article. We now formally 
+state the problem that we are addressing. 
+Problem Statement: We are given a bilingual 
+parallel article collection of various topics from 
+social media (e.g., TED), an article ARTe in 
+language e, and its counterpart ARTc in language 
+c. Our goal is to determine a set of words that are 
+likely to contain important words of ARTe. For 
+this, we bridge language-specific statistics of 
+ARTe and ARTc via bilingual information (e.g., 
+word alignments) and consider word keyness 
+w.r.t. ARTe?s topic such that cross-lingual 
+diversities are valued in extracting keywords in e. 
+In the rest of this section, we describe our 
+solution to this problem. First, we define 
+strategies for estimating keyword preferences for 
+words under different article topics (Section 3.2). 
+These strategies rely on a set of article-topic 
+pairs collected from the Web (Section 4.1), and 
+are monolingual, language-dependent 
+estimations. Finally, we show how BiKEA 
+generates keyword lists for articles leveraging 
+PageRank algorithm with word keyness and 
+cross-lingual information (Section 3.3). 
+3.2 Topical Keyword Preferences 
+We attempt to estimate keyword preferences 
+with respect to a wide range of article topics. 
+Basically, the estimation is to calculate word 
+significance in a domain topic. Our learning 
+process is shown in Figure 2. 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 2. Outline of the process used 
+to train BiKEA. 
+In the first two stages of the learning process, we 
+generate two sets of article and word information. 
+The input to these stages is a set of articles and 
+their domain topics. The output is a set of pairs 
+of article ID and word in the article, e.g., 
+(ARTe=1, we=?prosthesis?) in language e or 
+(ARTc=1, wc=????) in language c, and a set of 
+pairs of article topic and word in the article, e.g., 
+(tpe=?disability?, we=?prosthesis?) in e and 
+(tpe=?disability?, wc=????) in c. Note that the 
+topic information is shared between the involved 
+languages, and that we confine the calculation of 
+such word statistics in their specific language to 
+respect language diversities and the language-
+specific word statistics will later interact in 
+PageRank at run-time (See Section 3.3). 
+The third stage estimates keyword preferences 
+for words across articles and domain topics using 
+aforementioned (ART,w) and (tp,w) sets. In our 
+paper, two popular estimation strategies in 
+Information Retrieval are explored. They are as 
+follows. 
+tfidf. tfidf(w)=freq(ART,w)/appr(ART?,w) where 
+term frequency in an article is divided by its 
+appearance in the article collection to distinguish 
+important words from common words. 
+ent. entropy(w)= -?
+tp?
+Pr(tp?|w)?log(Pr(tp?|w)) 
+where  a word?s uncertainty in topics is used to 
+estimate its associations with domain topics. 
+These strategies take global information (i.e., 
+article collection) into account, and will be used 
+as keyword preference models, bilingually 
+intertwined, in PageRank at run-time which 
+locally connects words (i.e., within articles). 
+3.3 Run-Time Keyword Extraction 
+Once language-specific keyword preference 
+scores for words are automatically learned, they 
+are stored for run-time reference. BiKEA then 
+uses the procedure in Figure 3 to fuse the 
+originally language-independent word statistics 
+(1) Generate article-word pairs in training data 
+(2) Generate topic-word pairs in training data 
+(3) Estimate keyword preferences for words w.r.t.  
+      article topic based on various strategies 
+(4) Output word-and-keyword-preference-score  
+      pairs for various strategies 
+3
+to determine keyword list for a given article. In 
+this procedure a machine translation technique 
+(i.e., IBM word aligner) is exploited to glue 
+statistics in the involved languages and make 
+bilingually motivated random-walk algorithm 
+(i.e., PageRank) possible. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 3. Extracting keywords at run-time. 
+ 
+Once language-specific keyword preference 
+scores for words are automatically learned, they 
+are stored for run-time reference. BiKEA then 
+uses the procedure in Figure 3 to fuse the 
+originally language-independent word statistics 
+to determine keyword list for a given article. In 
+this procedure a machine translation technique 
+(i.e., IBM word aligner) is exploited to glue 
+statistics in the involved languages and make 
+bilingually motivated random-walk algorithm 
+(i.e., PageRank) possible.  
+In Steps (1) and (2) we construct PageRank 
+word graphs for the article ARTe in language e 
+and its counterpart ARTc in language c. They are 
+built individually to respect language properties 
+(such as subject-verb-object or subject-object-
+verb structure). Figure 4 shows the algorithm. In 
+this algorithm, EW stores normalized edge 
+weights for word wi and wj (Step (2)). And EW 
+is a v by v matrix where v is the vocabulary size 
+of ARTe and ARTc. Note that the graph is directed 
+(from words to words that follow) and edge 
+weights are words? co-occurrences within 
+window size WS. Additionally we incorporate 
+edge weight multiplier m>1 to propagate more 
+PageRank scores to content words, with the 
+intuition that content words are more likely to be 
+keywords (Step (2)). 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Figure 4. Constructing PageRank word graph. 
+Step (3) in Figure 3 linearly combines word 
+graphs EWe and EWc using ?. We use ? to 
+balance language properties or statistics, and 
+BiKEA backs off to monolingual KEA if ? is one. 
+In Step (4) of Figure 3 for each word 
+alignment (wic, wje), we construct a link between 
+the word nodes with the weight BiWeight. The 
+inter-language link is to reinforce language 
+similarities and respect language divergence 
+while the weight aims to elevate the cross-
+language statistics interaction. Word alignments 
+are derived using IBM models 1-5 (Och and Ney, 
+2003). The inter-language link is directed from 
+wi
+c
+ to wj
+e
+, basically from language c to e based on 
+the directional word-aligning entry (wic, wje). The 
+bridging is expected to help keyword extraction 
+in language e with the statistics in language c. 
+Although alternative approach can be used for 
+bridging, our approach is intuitive, and most 
+importantly in compliance with the directional 
+spirit of PageRank. 
+Step (6) sets KP of keyword preference model 
+using topical preference scores learned from 
+Section 3.2, while Step (7) initializes KN of 
+PageRank scores or, in our case, word keyness 
+scores. Then we distribute keyness scores until 
+the number of iteration or the average score 
+differences of two consecutive iterations reach 
+their respective limits. In each iteration, a word?s 
+keyness score is the linear combination of its 
+keyword preference score and the sum of the 
+propagation of its inbound words? previous 
+PageRank scores. For the word wje in ARTe, any 
+edge (wie,wje) in ARTe, and any edge (wkc,wje) in 
+WA, its new PageRank score is computed as 
+below. 
+procedure PredictKW(ARTe,ARTc,KeyPrefs,WA,?,N) 
+//Construct language-specific word graph for PageRank 
+(1)  EWe=constructPRwordGraph(ARTe) 
+(2)  EWc=constructPRwordGraph(ARTc) 
+//Construct inter-language bridges 
+(3)  EW=?? EWe+(1-?) ? EWc 
+       for each word alignment (wic, wje) in WA 
+         if IsContWord(wic) and IsContWord(wje) 
+(4a)      EW[i,j]+=1? BiWeightcont 
+         else 
+(4b)      EW[i,j]+=1? BiWeightnoncont 
+(5)  normalize each row of EW to sum to 1 
+//Iterate for PageRank 
+(6)  set KP1 ?v to 
+             [KeyPrefs(w1), KeyPrefs(w2), ?,KeyPrefs(wv)] 
+(7)  initialize KN1 ?v to [1/v,1/ v, ?,1/v] 
+       repeat 
+(8a)  KN?=?? KN? EW+(1-?) ? KP 
+(8b)  normalize KN? to sum to 1 
+(8c)  update KN with KN? after the check of KN and KN? 
+       until maxIter or avgDifference(KN,KN?) ? smallDiff 
+(9)  rankedKeywords=Sort words in decreasing order of KN 
+       return the N rankedKeywords in e with highest 
+scores 
+procedure constructPRwordGraph(ART) 
+(1) EWv ?v=0v ?v 
+      for each sentence st in ART 
+         for each word wi in st 
+            for each word wj in st where i<j and j-i ? WS 
+         if not IsContWord(wi) and IsContWord(wj) 
+(2a)            EW[i,j]+=1? m 
+               elif not IsContWord(wi) and not IsContWord(wj) 
+(2b)            EW[i,j]+=1 ? (1/m) 
+               elif IsContWord(wi) and not IsContWord(wj) 
+(2c)            EW[i,j]+=1? (1/m) 
+               elif IsContWord(wi) and IsContWord(wj) 
+(2d)            EW[i,j]+=1 ? m 
+       return EW 
+4
+???[1, ?] =? ?
+??
+? ? ????[1, ?] ? ???[?, ?] +???(1 ? ?) ????[1, ?] ? ??[?, ?]??? ??
+?
++ (1 ??) ? ??[1, ?] 
+ 
+Once the iterative process stops, we rank 
+words according to their final keyness scores and 
+return top N ranked words in language e as 
+keyword candidates of the given article ARTe. An 
+example keyword analysis for an English article 
+on our working prototype is shown in Figure 1. 
+Note that language similarities and dissimilarities 
+lead to different word statistics in articles of 
+difference languages, and combining such word 
+statistics helps to generate more promising 
+keyword lists. 
+4 Experiments 
+BiKEA was designed to identify words of 
+importance in an article that are likely to cover 
+the keywords of the article. As such, BiKEA will 
+be trained and evaluated over articles. 
+Furthermore, since the goal of BiKEA is to 
+determine a good (representative) set of 
+keywords with the help of cross-lingual 
+information, we evaluate BiKEA on bilingual 
+parallel articles. In this section, we first present 
+the data sets for training BiKEA (Section 4.1). 
+Then, Section 4.2 reports the experimental 
+results under different system settings. 
+4.1 Data Sets 
+We collected approximately 1,500 English 
+transcripts (3.8M word tokens and 63K word 
+types) along with their Chinese counterparts 
+(3.4M and 73K) from TED (www.ted.com) for 
+our experiments. The GENIA tagger (Tsuruoka 
+and Tsujii, 2005) was used to lemmatize and 
+part-of-speech tag the English transcripts while 
+the CKIP segmenter (Ma and Chen, 2003) 
+segment the Chinese. 
+30 parallel articles were randomly chosen and 
+manually annotated for keywords on the English 
+side to examine the effectiveness of BiKEA in 
+English keyword extraction with the help of 
+Chinese. 
+4.2 Experimental Results 
+Table 1 summarizes the performance of the 
+baseline tfidf and our best systems on the test set. 
+The evaluation metrics are nDCG (Jarvelin and 
+Kekalainen, 2002), precision, and mean 
+reciprocal rank. 
+(a) @N=5 nDCG P MRR 
+tfidf .509 .213 .469 
+PR+tfidf .676 .400 .621 
+BiKEA+tfidf .703 .406 .655 
+ 
+(b) @N=7 nDCG P MRR 
+tfidf .517 .180 .475 
+PR+tfidf .688 .323 .626 
+BiKEA+tfidf .720 .338 .660 
+ 
+(c) @N=10 nDCG P MRR 
+tfidf .527 .133 .479 
+PR+tfidf .686 .273 .626 
+BiKEA+tfidf .717 .304 .663 
+Table 1. System performance at 
+(a) N=5 (b) N=7 (c) N=10. 
+As we can see, monolingual PageRank (i.e., 
+PR) and bilingual PageRank (BiKEA), using 
+global information tfidf, outperform tfidf. They 
+relatively boost nDCG by 32% and P by 87%. 
+The MRR scores also indicate their superiority: 
+their top-two candidates are often keywords vs. 
+the 2nd place candidates from tfidf. 
+Encouragingly, BiKEA+tfidf achieves better 
+performance than the strong monolingual 
+PR+tfidf across N?s. Specifically, it further 
+improves nDCG relatively by 4.6% and MRR 
+relatively by 5.4%. 
+Overall, the topical keyword preferences, and 
+the inter-language bridging and the bilingual 
+score propagation in PageRank are simple yet 
+effective. And respecting language statistics and 
+properties helps keyword extraction. 
+5 Summary 
+We have introduced a method for extracting 
+keywords in bilingual context. The method 
+involves estimating keyword preferences, word-
+aligning parallel articles, and bridging language-
+specific word statistics using PageRank. 
+Evaluation has shown that the method can 
+identify more keywords and rank them higher in 
+the candidate list than monolingual KEAs. As for 
+future work, we would like to explore the 
+possibility of incorporating the articles? reader 
+feedback into keyword extraction. We would 
+also like to examine the proposed methodology 
+in a multi-lingual setting.  
+5
+Acknowledgement 
+This study is conducted under the ?Online and 
+Offline integrated Smart Commerce Platform 
+(1/4)? of the Institute for Information Industry 
+which is subsidized by the Ministry of Economy 
+Affairs of the Republic of China. 
+References  
+Scott A. Golder and Bernardo A. Huberman. 
+2006. Usage patterns of collaborative tagging 
+systems. Information Science, 32(2): 198-208. 
+Harry Halpin, Valentin Robu, and Hana 
+Shepherd. 2007. The complex dynamics of 
+collaborative tagging. In Proceedings of the 
+WWW, pages 211-220. 
+Chung-chi Huang and Lun-wei Ku. 2013. 
+Interest analysis using semantic PageRank and 
+social interaction content. In Proceedings of 
+the ICDM Workshop on Sentiment Elicitation 
+from Natural Text for Information Retrieval 
+and Extraction, pages 929-936. 
+Kalervo Jarvelin and Jaana Kekalainen. 2002. 
+Cumulated gain-based evaluation of IR 
+technologies. ACM Transactions on 
+Information Systems, 20(4): 422-446. 
+Philipp Koehn, Franz Josef Och, and Daniel 
+Marcu. 2003. Statistical phrase-based 
+translation. In Proceedings of the North 
+American Chapter of the Association for 
+Computational Linguistics, pages 48-54. 
+Quanzhi Li, Yi-Fang Wu, Razvan Bot, and Xin 
+Chen. 2004. Incorporating document 
+keyphrases in search results. In Proceedings of 
+the Americas Conference on Information 
+Systems. 
+Zhenhui Li, Ging Zhou, Yun-Fang Juan, and 
+Jiawei Han. 2010. Keyword extraction for 
+social snippets. In Proceedings of the WWW, 
+pages 1143-1144. 
+Marina Litvak and Mark Last. 2008. Graph-
+based keyword extraction for single-document 
+summarization. In Proceedings of the ACL 
+Workshop on Multi-Source Multilingual 
+Information Extraction and Summarization, 
+pages 17-24. 
+Zhengyang Liu, Jianyi Liu, Wenbin Yao, Cong 
+Wang. 2010. Keyword extraction using 
+PageRank on synonym networks. In 
+Proceedings of the ICEEE, pages 1-4. 
+Zhiyuan Liu, Wenyi Huang, Yabin Zheng, and 
+Maosong Sun. 2010. Automatic keyphrase 
+extraction via topic decomposition. In 
+Proceedings of the EMNLP, pages 366-376. 
+Wei-Yun Ma and Keh-Jiann Chen. 2003. 
+Introduction to CKIP Chinese word 
+segmentation system for the first international 
+Chinese word segmentation bakeoff. In 
+Proceedings of the ACL Workshop on Chinese 
+Language Processing. 
+Chris D. Manning and Hinrich Schutze. 2000. 
+Foundations of statistical natural language 
+processing. MIT Press. 
+Rada Mihalcea and Paul Tarau. 2004. TextRank: 
+Bringing orders into texts. In Proceedings of 
+the EMNLP, pages 404-411. 
+Franz Josef Och and Hermann Ney. 2003. A 
+systematic comparison of various statistical 
+alignment models. Computational Linguistics, 
+29(1): 19-51. 
+Yoshimasa Tsuruoka and Jun?ichi Tsujii. 2005. 
+Bidirectional inference with the easiest-first 
+strategy for tagging sequence data. In 
+Proceedings of the EMNLP, pages 467-474. 
+Peter D. Turney. 2000. Learning algorithms for 
+keyphrase extraction. Information Retrieval, 
+2(4): 303-336. 
+Wei Wu, Bin Zhang, and Mari Ostendorf. 2010. 
+Automatic generation of personalized 
+annotation tags for Twitter users. In 
+Proceedings of the NAACL, pages 689-692. 
+Wayne Xin Zhao, Jing Jiang, Jing He, Yang 
+Song, Palakorn Achananuparp, Ee-Peng Lim, 
+and Xiaoming Li. 2011. Topical keyword 
+extraction from Twitter. In Proceedings of the 
+ACL, pages 379-388. 
+ 
+6

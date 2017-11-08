@@ -1,0 +1,1651 @@
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 1374?1383,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+Dirt Cheap Web-Scale Parallel Text from the Common Crawl
+Jason R. Smith1,2
+jsmith@cs.jhu.edu
+Philipp Koehn3
+pkoehn@inf.ed.ac.uk
+Herve Saint-Amand3
+herve@saintamh.org
+Chris Callison-Burch1,2,5
+ccb@cs.jhu.edu ?
+Magdalena Plamada4
+plamada@cl.uzh.ch
+Adam Lopez1,2
+alopez@cs.jhu.edu
+1Department of Computer Science, Johns Hopkins University
+2Human Language Technology Center of Excellence, Johns Hopkins University
+3School of Informatics, University of Edinburgh
+4Institute of Computational Linguistics, University of Zurich
+5Computer and Information Science Department, University of Pennsylvania
+Abstract
+Parallel text is the fuel that drives modern
+machine translation systems. The Web is a
+comprehensive source of preexisting par-
+allel text, but crawling the entire web is
+impossible for all but the largest compa-
+nies. We bring web-scale parallel text to
+the masses by mining the Common Crawl,
+a public Web crawl hosted on Amazon?s
+Elastic Cloud. Starting from nothing more
+than a set of common two-letter language
+codes, our open-source extension of the
+STRAND algorithm mined 32 terabytes of
+the crawl in just under a day, at a cost of
+about $500. Our large-scale experiment
+uncovers large amounts of parallel text in
+dozens of language pairs across a variety
+of domains and genres, some previously
+unavailable in curated datasets. Even with
+minimal cleaning and filtering, the result-
+ing data boosts translation performance
+across the board for five different language
+pairs in the news domain, and on open do-
+main test sets we see improvements of up
+to 5 BLEU. We make our code and data
+available for other researchers seeking to
+mine this rich new data resource.1
+1 Introduction
+A key bottleneck in porting statistical machine
+translation (SMT) technology to new languages
+and domains is the lack of readily available paral-
+lel corpora beyond curated datasets. For a handful
+of language pairs, large amounts of parallel data
+?This research was conducted while Chris Callison-
+Burch was at Johns Hopkins University.
+1github.com/jrs026/CommonCrawlMiner
+are readily available, ordering in the hundreds of
+millions of words for Chinese-English and Arabic-
+English, and in tens of millions of words for many
+European languages (Koehn, 2005). In each case,
+much of this data consists of government and news
+text. However, for most language pairs and do-
+mains there is little to no curated parallel data
+available. Hence discovery of parallel data is an
+important first step for translation between most
+of the world?s languages.
+The Web is an important source of parallel
+text. Many websites are available in multiple
+languages, and unlike other potential sources?
+such as multilingual news feeds (Munteanu and
+Marcu, 2005) or Wikipedia (Smith et al, 2010)?
+it is common to find document pairs that are di-
+rect translations of one another. This natural par-
+allelism simplifies the mining task, since few re-
+sources or existing corpora are needed at the outset
+to bootstrap the extraction process.
+Parallel text mining from the Web was origi-
+nally explored by individuals or small groups of
+academic researchers using search engines (Nie
+et al, 1999; Chen and Nie, 2000; Resnik, 1999;
+Resnik and Smith, 2003). However, anything
+more sophisticated generally requires direct access
+to web-crawled documents themselves along with
+the computing power to process them. For most
+researchers, this is prohibitively expensive. As a
+consequence, web-mined parallel text has become
+the exclusive purview of large companies with the
+computational resources to crawl, store, and pro-
+cess the entire Web.
+To put web-mined parallel text back in the
+hands of individual researchers, we mine parallel
+text from the Common Crawl, a regularly updated
+81-terabyte snapshot of the public internet hosted
+1374
+on Amazon?s Elastic Cloud (EC2) service.2 Us-
+ing the Common Crawl completely removes the
+bottleneck of web crawling, and makes it possi-
+ble to run algorithms on a substantial portion of
+the web at very low cost. Starting from nothing
+other than a set of language codes, our extension
+of the STRAND algorithm (Resnik and Smith,
+2003) identifies potentially parallel documents us-
+ing cues from URLs and document content (?2).
+We conduct an extensive empirical exploration of
+the web-mined data, demonstrating coverage in
+a wide variety of languages and domains (?3).
+Even without extensive pre-processing, the data
+improves translation performance on strong base-
+line news translation systems in five different lan-
+guage pairs (?4). On general domain and speech
+translation tasks where test conditions substan-
+tially differ from standard government and news
+training text, web-mined training data improves
+performance substantially, resulting in improve-
+ments of up to 1.5 BLEU on standard test sets, and
+5 BLEU on test sets outside of the news domain.
+2 Mining the Common Crawl
+The Common Crawl corpus is hosted on Ama-
+zon?s Simple Storage Service (S3). It can be
+downloaded to a local cluster, but the transfer cost
+is prohibitive at roughly 10 cents per gigabyte,
+making the total over $8000 for the full dataset.3
+However, it is unnecessary to obtain a copy of the
+data since it can be accessed freely from Amazon?s
+Elastic Compute Cloud (EC2) or Elastic MapRe-
+duce (EMR) services. In our pipeline, we per-
+form the first step of identifying candidate docu-
+ment pairs using Amazon EMR, download the re-
+sulting document pairs, and perform the remain-
+ing steps on our local cluster. We chose EMR be-
+cause our candidate matching strategy fit naturally
+into the Map-Reduce framework (Dean and Ghe-
+mawat, 2004).
+Our system is based on the STRAND algorithm
+(Resnik and Smith, 2003):
+1. Candidate pair selection: Retrieve candidate
+document pairs from the CommonCrawl cor-
+pus.
+2. Structural Filtering:
+(a) Convert the HTML of each document
+2commoncrawl.org
+3http://aws.amazon.com/s3/pricing/
+into a sequence of start tags, end tags,
+and text chunks.
+(b) Align the linearized HTML of candidate
+document pairs.
+(c) Decide whether to accept or reject each
+pair based on features of the alignment.
+3. Segmentation: For each text chunk, perform
+sentence and word segmentation.
+4. Sentence Alignment: For each aligned pair of
+text chunks, perform the sentence alignment
+method of Gale and Church (1993).
+5. Sentence Filtering: Remove sentences that
+appear to be boilerplate.
+Candidate Pair Selection We adopt a strategy
+similar to that of Resnik and Smith (2003) for find-
+ing candidate parallel documents, adapted to the
+parallel architecture of Map-Reduce.
+The mapper operates on each website entry in
+the CommonCrawl data. It scans the URL string
+for some indicator of its language. Specifically,
+we check for:
+1. Two/three letter language codes (ISO-639).
+2. Language names in English and in the lan-
+guage of origin.
+If either is present in a URL and surrounded by
+non-alphanumeric characters, the URL is identi-
+fied as a potential match and the mapper outputs
+a key value pair in which the key is the original
+URL with the matching string replaced by *, and
+the value is the original URL, language name, and
+full HTML of the page. For example, if we en-
+counter the URL www.website.com/fr/, we
+output the following.
+? Key: www.website.com/*/
+? Value: www.website.com/fr/, French,
+(full website entry)
+The reducer then receives all websites mapped
+to the same ?language independent? URL. If two
+or more websites are associated with the same key,
+the reducer will output all associated values, as
+long as they are not in the same language, as de-
+termined by the language identifier in the URL.
+This URL-based matching is a simple and in-
+expensive solution to the problem of finding can-
+didate document pairs. The mapper will discard
+1375
+most, and neither the mapper nor the reducer do
+anything with the HTML of the documents aside
+from reading and writing them. This approach is
+very simple and likely misses many good potential
+candidates, but has the advantage that it requires
+no information other than a set of language codes,
+and runs in time roughly linear in the size of the
+dataset.
+Structural Filtering A major component of the
+STRAND system is the alignment of HTML docu-
+ments. This alignment is used to determine which
+document pairs are actually parallel, and if they
+are, to align pairs of text blocks within the docu-
+ments.
+The first step of structural filtering is to lin-
+earize the HTML. This means converting its DOM
+tree into a sequence of start tags, end tags, and
+chunks of text. Some tags (those usually found
+within text, such as ?font? and ?a?) are ignored
+during this step. Next, the tag/chunk sequences
+are aligned using dynamic programming. The ob-
+jective of the alignment is to maximize the number
+of matching items.
+Given this alignment, Resnik and Smith (2003)
+define a small set of features which indicate the
+alignment quality. They annotated a set of docu-
+ment pairs as parallel or non-parallel, and trained
+a classifier on this data. We also annotated 101
+Spanish-English document pairs in this way and
+trained a maximum entropy classifier. However,
+even when using the best performing subset of fea-
+tures, the classifier only performed as well as a
+naive classifier which labeled every document pair
+as parallel, in both accuracy and F1. For this rea-
+son, we excluded the classifier from our pipeline.
+The strong performance of the naive baseline was
+likely due to the unbalanced nature of the anno-
+tated data? 80% of the document pairs that we
+annotated were parallel.
+Segmentation The text chunks from the previ-
+ous step may contain several sentences, so before
+the sentence alignment step we must perform sen-
+tence segmentation. We use the Punkt sentence
+splitter from NLTK (Loper and Bird, 2002) to
+perform both sentence and word segmentation on
+each text chunk.
+Sentence Alignment For each aligned text
+chunk pair, we perform sentence alignment using
+the algorithm of Gale and Church (1993).
+Sentence Filtering Since we do not perform any
+boilerplate removal in earlier steps, there are many
+sentence pairs produced by the pipeline which
+contain menu items or other bits of text which are
+not useful to an SMT system. We avoid perform-
+ing any complex boilerplate removal and only re-
+move segment pairs where either the source and
+target text are identical, or where the source or
+target segments appear more than once in the ex-
+tracted corpus.
+3 Analysis of the Common Crawl Data
+We ran our algorithm on the 2009-2010 version
+of the crawl, consisting of 32.3 terabytes of data.
+Since the full dataset is hosted on EC2, the only
+cost to us is CPU time charged by Amazon, which
+came to a total of about $400, and data stor-
+age/transfer costs for our output, which came to
+roughly $100. For practical reasons we split the
+run into seven subsets, on which the full algo-
+rithm was run independently. This is different
+from running a single Map-Reduce job over the
+entire dataset, since websites in different subsets
+of the data cannot be matched. However, since
+the data is stored as it is crawled, it is likely that
+matching websites will be found in the same split
+of the data. Table 1 shows the amount of raw par-
+allel data obtained for a large selection of language
+pairs.
+As far as we know, ours is the first system built
+to mine parallel text from the Common Crawl.
+Since the resource is new, we wanted to under-
+stand the quantity, quality, and type of data that
+we are likely to obtain from it. To this end, we
+conducted a number of experiments to measure
+these features. Since our mining heuristics are
+very simple, these results can be construed as a
+lower bound on what is actually possible.
+3.1 Recall Estimates
+Our first question is about recall: of all the pos-
+sible parallel text that is actually available on the
+Web, how much does our algorithm actually find
+in the Common Crawl? Although this question
+is difficult to answer precisely, we can estimate
+an answer by comparing our mined URLs against
+a large collection of previously mined URLs that
+were found using targeted techniques: those in the
+French-English Gigaword corpus (Callison-Burch
+et al, 2011).
+We found that 45% of the URL pairs would
+1376
+French German Spanish Russian Japanese Chinese
+Segments 10.2M 7.50M 5.67M 3.58M 1.70M 1.42M
+Source Tokens 128M 79.9M 71.5M 34.7M 9.91M 8.14M
+Target Tokens 118M 87.5M 67.6M 36.7M 19.1M 14.8M
+Arabic Bulgarian Czech Korean Tamil Urdu
+Segments 1.21M 909K 848K 756K 116K 52.1K
+Source Tokens 13.1M 8.48M 7.42M 6.56M 1.01M 734K
+Target Tokens 13.5M 8.61M 8.20M 7.58M 996K 685K
+Bengali Farsi Telugu Somali Kannada Pashto
+Segments 59.9K 44.2K 50.6K 52.6K 34.5K 28.0K
+Source Tokens 573K 477K 336K 318K 305K 208K
+Target Tokens 537K 459K 358K 325K 297K 218K
+Table 1: The amount of parallel data mined from CommonCrawl for each language paired with English.
+Source tokens are counts of the foreign language tokens, and target tokens are counts of the English
+language tokens.
+have been discovered by our heuristics, though we
+actually only find 3.6% of these URLs in our out-
+put.4 If we had included ?f? and ?e? as identi-
+fiers for French and English respectively, coverage
+of the URL pairs would increase to 74%. How-
+ever, we chose not to include single letter identi-
+fiers in our experiments due to the high number of
+false positives they generated in preliminary ex-
+periments.
+3.2 Precision Estimates
+Since our algorithms rely on cues that are mostly
+external to the contents of the extracted data
+and have no knowledge of actual languages, we
+wanted to evaluate the precision of our algorithm:
+how much of the mined data actually consists of
+parallel sentences?
+To measure this, we conducted a manual anal-
+ysis of 200 randomly selected sentence pairs for
+each of three language pairs. The texts are het-
+erogeneous, covering several topical domains like
+tourism, advertising, technical specifications, fi-
+nances, e-commerce and medicine. For German-
+English, 78% of the extracted data represent per-
+fect translations, 4% are paraphrases of each other
+(convey a similar meaning, but cannot be used
+for SMT training) and 18% represent misalign-
+ments. Furthermore, 22% of the true positives
+are potentially machine translations (judging by
+the quality), whereas in 13% of the cases one of
+the sentences contains additional content not ex-
+4The difference is likely due to the coverage of the Com-
+monCrawl corpus.
+pressed in the other. As for the false positives,
+13.5% of them have either the source or target
+sentence in the wrong language, and the remain-
+ing ones representing failures in the alignment
+process. Across three languages, our inspection
+revealed that around 80% of randomly sampled
+data appeared to contain good translations (Table
+2). Although this analysis suggests that language
+identification and SMT output detection (Venu-
+gopal et al, 2011) may be useful additions to the
+pipeline, we regard this as reasonably high preci-
+sion for our simple algorithm.
+Language Precision
+Spanish 82%
+French 81%
+German 78%
+Table 2: Manual evaluation of precision (by sen-
+tence pair) on the extracted parallel data for Span-
+ish, French, and German (paired with English).
+In addition to the manual evaluation of preci-
+sion, we applied language identification to our
+extracted parallel data for several additional lan-
+guages. We used the ?langid.py? tool (Lui and
+Baldwin, 2012) at the segment level, and report the
+percentage of sentence pairs where both sentences
+were recognized as the correct language. Table 3
+shows our results. Comparing against our man-
+ual evaluation from Table 2, it appears that many
+sentence pairs are being incorrectly judged as non-
+parallel. This is likely because language identifi-
+cation tends to perform poorly on short segments.
+1377
+French German Spanish Arabic
+63% 61% 58% 51%
+Chinese Japanese Korean Czech
+50% 48% 48% 47%
+Russian Urdu Bengali Tamil
+44% 31% 14% 12%
+Kannada Telugu Kurdish
+12% 6.3% 2.9%
+Table 3: Automatic evaluation of precision
+through language identification for several lan-
+guages paired with English.
+3.3 Domain Name and Topic Analysis
+Although the above measures tell us something
+about how well our algorithms perform in aggre-
+gate for specific language pairs, we also wondered
+about the actual contents of the data. A major
+difficulty in applying SMT even on languages for
+which we have significant quantities of parallel
+text is that most of that parallel text is in the news
+and government domains. When applied to other
+genres, such systems are notoriously brittle. What
+kind of genres are represented in the Common
+Crawl data?
+We first looked at the domain names which con-
+tributed the most data. Table 4 gives the top five
+domains by the number of tokens. The top two do-
+main names are related to travel, and they account
+for about 10% of the total data.
+We also applied Latent Dirichlet Allocation
+(LDA; Blei et al, 2003) to learn a distribution over
+latent topics in the extracted data, as this is a pop-
+ular exploratory data analysis method. In LDA
+a topic is a unigram distribution over words, and
+each document is modeled as a distribution over
+topics. To create a set of documents from the ex-
+tracted CommonCrawl data, we took the English
+side of the extracted parallel segments for each
+URL in the Spanish-English portion of the data.
+This gave us a total of 444, 022 documents. In
+our first experiment, we used the MALLET toolkit
+(McCallum, 2002) to generate 20 topics, which
+are shown in Table 5.
+Some of the topics that LDA finds cor-
+respond closely with specific domains,
+such as topics 1 (blingee.com) and 2
+(opensubtitles.org). Several of the topics
+correspond to the travel domain. Foreign stop
+words appear in a few of the topics. Since our sys-
+tem does not include any language identification,
+this is not surprising.5 However it does suggest an
+avenue for possible improvement.
+In our second LDA experiment, we compared
+our extracted CommonCrawl data with Europarl.
+We created a set of documents from both Com-
+monCrawl and Europarl, and again used MAL-
+LET to generate 100 topics for this data.6 We then
+labeled each document by its most likely topic (as
+determined by that topic?s mixture weights), and
+counted the number of documents from Europarl
+and CommonCrawl for which each topic was most
+prominent. While this is very rough, it gives some
+idea of where each topic is coming from. Table 6
+shows a sample of these topics.
+In addition to exploring topics in the datasets,
+we also performed additional intrinsic evaluation
+at the domain level, choosing top domains for
+three language pairs. We specifically classified
+sentence pairs as useful or boilerplate (Table 7).
+Among our observations, we find that commer-
+cial websites tend to contain less boilerplate ma-
+terial than encyclopedic websites, and that the ra-
+tios tend to be similar across languages in the same
+domain.
+FR ES DE
+www.booking.com 52% 71% 52%
+www.hotel.info 34% 44% -
+memory-alpha.org 34% 25% 55%
+Table 7: Percentage of useful (non-boilerplate)
+sentences found by domain and language pair.
+hotel.info was not found in our German-
+English data.
+4 Machine Translation Experiments
+For our SMT experiments, we use the Moses
+toolkit (Koehn et al, 2007). In these experiments,
+a baseline system is trained on an existing parallel
+corpus, and the experimental system is trained on
+the baseline corpus plus the mined parallel data.
+In all experiments we include the target side of the
+mined parallel data in the language model, in order
+to distinguish whether results are due to influences
+from parallel or monolingual data.
+5We used MALLET?s stop word removal, but that is only
+for English.
+6Documents were created from Europarl by taking
+?SPEAKER? tags as document boundaries, giving us
+208,431 documents total.
+1378
+Genre Domain Pages Segments Source Tokens Target Tokens
+Total 444K 5.67M 71.5M 67.5M
+travel www.booking.com 13.4K 424K 5.23M 5.14M
+travel www.hotel.info 9.05K 156K 1.93M 2.13M
+government www.fao.org 2.47K 60.4K 1.07M 896K
+religious scriptures.lds.org 7.04K 47.2K 889K 960K
+political www.amnesty.org 4.83K 38.1K 641K 548K
+Table 4: The top five domains from the Spanish-English portion of the data. The domains are ranked by
+the combined number of source and target tokens.
+Index Most Likely Tokens
+1 glitter graphics profile comments share love size girl friends happy blingee cute anime twilight sexy emo
+2 subtitles online web users files rar movies prg akas dwls xvid dvdrip avi results download eng cd movie
+3 miles hotels city search hotel home page list overview select tokyo discount destinations china japan
+4 english language students details skype american university school languages words england british college
+5 translation japanese english chinese dictionary french german spanish korean russian italian dutch
+6 products services ni system power high software design technology control national applications industry
+7 en de el instructions amd hyper riv saab kfreebsd poland user fr pln org wikimedia pl commons fran norway
+8 information service travel services contact number time account card site credit company business terms
+9 people time life day good years work make god give lot long world book today great year end things
+10 show km map hotels de hotel beach spain san italy resort del mexico rome portugal home santa berlin la
+11 rotary international world club korea foundation district business year global hong kong president ri
+12 hotel reviews stay guest rooms service facilities room smoking submitted customers desk score united hour
+13 free site blog views video download page google web nero internet http search news links category tv
+14 casino game games play domaine ago days music online poker free video film sports golf live world tags bet
+15 water food attribution health mango japan massage medical body baby natural yen commons traditional
+16 file system windows server linux installation user files set debian version support program install type
+17 united kingdom states america house london street park road city inn paris york st france home canada
+18 km show map hotels hotel featured search station museum amsterdam airport centre home city rue germany
+19 hotel room location staff good breakfast rooms friendly nice clean great excellent comfortable helpful
+20 de la en le el hotel es het del und die il est der les des das du para
+Table 5: A list of 20 topics generated using the MALLET toolkit (McCallum, 2002) and their most likely
+tokens.
+4.1 News Domain Translation
+Our first set of experiments are based on systems
+built for the 2012 Workshop on Statistical Ma-
+chine Translation (WMT) (Callison-Burch et al,
+2012) using all available parallel and monolingual
+data for that task, aside from the French-English
+Gigaword. In these experiments, we use 5-gram
+language models when the target language is En-
+glish or German, and 4-gram language models for
+French and Spanish. We tune model weights using
+minimum error rate training (MERT; Och, 2003)
+on the WMT 2008 test data. The results are given
+in Table 8. For all language pairs and both test
+sets (WMT 2011 and WMT 2012), we show an
+improvement of around 0.5 BLEU.
+We also included the French-English Gigaword
+in separate experiments given in Table 9, and Table
+10 compares the sizes of the datasets used. These
+results show that even on top of a different, larger
+parallel corpus mined from the web, adding Com-
+monCrawl data still yields an improvement.
+4.2 Open Domain Translation
+A substantial appeal of web-mined parallel data
+is that it might be suitable to translation of do-
+mains other than news, and our topic modeling
+analysis (?3.3) suggested that this might indeed be
+the case. We therefore performed an additional
+set of experiments for Spanish-English, but we
+include test sets from outside the news domain.
+1379
+Europarl CommonCrawl Most Likely Tokens
+9 2975 hair body skin products water massage treatment natural oil weight acid plant
+2 4383 river mountain tour park tours de day chile valley ski argentina national peru la
+8 10377 ford mercury dealer lincoln amsterdam site call responsible affiliates displayed
+7048 675 market services european competition small public companies sector internal
+9159 1359 time president people fact make case problem clear good put made years situation
+13053 849 commission council european parliament member president states mr agreement
+1660 5611 international rights human amnesty government death police court number torture
+1617 4577 education training people cultural school students culture young information
+Table 6: A sample of topics along with the number of Europarl and CommonCrawl documents where
+they are the most likely topic in the mixture. We include topics that are mostly found in Europarl or
+CommonCrawl, and some that are somewhat prominent in both.
+WMT 11 FR-EN EN-FR ES-EN EN-ES EN-DE
+Baseline 30.46 29.96 30.79 32.41 16.12
++Web Data 30.92 30.51 31.05 32.89 16.74
+WMT 12 FR-EN EN-FR ES-EN EN-ES EN-DE
+Baseline 29.25 27.92 32.80 32.83 16.61
++Web Data 29.82 28.22 33.39 33.41 17.30
+Table 8: BLEU scores for several language pairs before and after adding the mined parallel data to
+systems trained on data from WMT data.
+WMT 11 FR-EN EN-FR
+Baseline 30.96 30.69
++Web Data 31.24 31.17
+WMT 12 FR-EN EN-FR
+Baseline 29.88 28.50
++Web Data 30.08 28.76
+Table 9: BLEU scores for French-English and
+English-French before and after adding the mined
+parallel data to systems trained on data from
+WMT data including the French-English Giga-
+word (Callison-Burch et al, 2011).
+For these experiments, we also include training
+data mined from Wikipedia using a simplified ver-
+sion of the sentence aligner described by Smith
+et al (2010), in order to determine how the ef-
+fect of such data compares with the effect of web-
+mined data. The baseline system was trained using
+only the Europarl corpus (Koehn, 2005) as par-
+allel data, and all experiments use the same lan-
+guage model trained on the target sides of Eu-
+roparl, the English side of all linked Spanish-
+English Wikipedia articles, and the English side
+of the mined CommonCrawl data. We use a 5-
+gram language model and tune using MERT (Och,
+Corpus EN-FR EN-ES EN-DE
+News Commentary 2.99M 3.43M 3.39M
+Europarl 50.3M 49.2M 47.9M
+United Nations 316M 281M -
+FR-EN Gigaword 668M - -
+CommonCrawl 121M 68.8M 88.4M
+Table 10: The size (in English tokens) of the train-
+ing corpora used in the SMT experiments from Ta-
+bles 8 and 9 for each language pair.
+2003) on the WMT 2009 test set.
+Unfortunately, it is difficult to obtain meaning-
+ful results on some open domain test sets such as
+the Wikipedia dataset used by Smith et al (2010).
+Wikipedia copied across the public internet, and
+we did not have a simple way to filter such data
+from our mined datasets.
+We therefore considered two tests that were
+less likely to be problematic. The Tatoeba cor-
+pus (Tiedemann, 2009) is a collection of example
+sentences translated into many languages by vol-
+unteers. The front page of tatoeba.org was
+discovered by our URL matching heuristics, but
+we excluded any sentence pairs that were found in
+the CommonCrawl data from this test set.
+1380
+The second dataset is a set of crowdsourced
+translation of Spanish speech transcriptions from
+the Spanish Fisher corpus.7 As part of a re-
+search effort on cross-lingual speech applications,
+we obtained English translations of the data using
+Amazon Mechanical Turk, following a protocol
+similar to one described by Zaidan and Callison-
+Burch (2011): we provided clear instructions,
+employed several quality control measures, and
+obtained redundant translations of the complete
+dataset (Lopez et al, 2013). The advantage of
+this data for our open domain translation test is
+twofold. First, the Fisher dataset consists of con-
+versations in various Spanish dialects on a wide
+variety of prompted topics. Second, because we
+obtained the translations ourselves, we could be
+absolutely assured that they did not appear in some
+form anywhere on the Web, making it an ideal
+blind test.
+WMT10 Tatoeba Fisher
+Europarl 89/72/46/20 94/75/45/18 87/69/39/13
++Wiki 92/78/52/24 96/80/50/21 91/75/44/15
++Web 96/82/56/27 99/88/58/26 96/83/51/19
++Both 96/84/58/29 99/89/60/27 96/83/52/20
+Table 11: n-gram coverage percentages (up to 4-
+grams) of the source side of our test sets given our
+different parallel training corpora computed at the
+type level.
+WMT10 Tatoeba Fisher
+Europarl 27.21 36.13 46.32
++Wiki 28.03 37.82 49.34
++Web 28.50 41.07 51.13
++Both 28.74 41.12 52.23
+Table 12: BLEU scores for Spanish-English be-
+fore and after adding the mined parallel data to a
+baseline Europarl system.
+We used 1000 sentences from each of the
+Tatoeba and Fisher datasets as test. For com-
+parison, we also test on the WMT 2010 test
+set (Callison-Burch et al, 2010). Following
+Munteanu and Marcu (2005), we show the n-gram
+coverage of each corpus (percentage of n-grams
+from the test corpus which are also found in the
+training corpora) in Table 11. Table 12 gives
+end-to-end results, which show a strong improve-
+ment on the WMT test set (1.5 BLEU), and larger
+7Linguistic Data Consortium LDC2010T04.
+improvements on Tatoeba and Fisher (almost 5
+BLEU).
+5 Discussion
+Web-mined parallel texts have been an exclusive
+resource of large companies for several years.
+However, when web-mined parallel text is avail-
+able to everyone at little or no cost, there will
+be much greater potential for groundbreaking re-
+search to come from all corners. With the advent
+of public services such as Amazon Web Services
+and the Common Crawl, this may soon be a re-
+ality. As we have shown, it is possible to obtain
+parallel text for many language pairs in a variety
+of domains very cheaply and quickly, and in suf-
+ficient quantity and quality to improve statistical
+machine translation systems. However, our effort
+has merely scratched the surface of what is pos-
+sible with this resource. We will make our code
+and data available so that others can build on these
+results.
+Because our system is so simple, we believe that
+our results represent lower bounds on the gains
+that should be expected in performance of systems
+previously trained only on curated datasets. There
+are many possible means through which the sys-
+tem could be improved, including more sophisti-
+cated techniques for identifying matching URLs,
+better alignment, better language identification,
+better filtering of data, and better exploitation of
+resulting cross-domain datasets. Many of the com-
+ponents of our pipeline were basic, leaving consid-
+erable room for improvement. For example, the
+URL matching strategy could easily be improved
+for a given language pair by spending a little time
+crafting regular expressions tailored to some ma-
+jor websites. Callison-Burch et al (2011) gathered
+almost 1 trillion tokens of French-English parallel
+data this way. Another strategy for mining parallel
+webpage pairs is to scan the HTML for links to the
+same page in another language (Nie et al, 1999).
+Other, more sophisticated techniques may also
+be possible. Uszkoreit et al (2010), for ex-
+ample, translated all non-English webpages into
+English using an existing translation system and
+used near-duplicate detection methods to find can-
+didate parallel document pairs. Ture and Lin
+(2012) had a similar approach for finding paral-
+lel Wikipedia documents by using near-duplicate
+detection, though they did not need to apply a full
+translation system to all non-English documents.
+1381
+Instead, they represented documents in bag-of-
+words vector space, and projected non-English
+document vectors into the English vector space us-
+ing the translation probabilities of a word align-
+ment model. By comparison, one appeal of our
+simple approach is that it requires only a table
+of language codes. However, with this system
+in place, we could obtain enough parallel data to
+bootstrap these more sophisticated approaches.
+It is also compelling to consider ways in which
+web-mined data obtained from scratch could be
+used to bootstrap other mining approaches. For
+example, Smith et al (2010) mine parallel sen-
+tences from comparable documents in Wikipedia,
+demonstrating substantial gains on open domain
+translation. However, their approach required seed
+parallel data to learn models used in a classifier.
+We imagine a two-step process, first obtaining par-
+allel data from the web, followed by comparable
+data from sources such as Wikipedia using mod-
+els bootstrapped from the web-mined data. Such a
+process could be used to build translation systems
+for new language pairs in a very short period of
+time, hence fulfilling one of the original promises
+of SMT.
+Acknowledgements
+Thanks to Ann Irvine, Jonathan Weese, and our
+anonymous reviewers from NAACL and ACL for
+comments on previous drafts. The research lead-
+ing to these results has received funding from the
+European Union Seventh Framework Programme
+(FP7/2007-2013) under grant agreement 288487
+(MosesCore). This research was partially funded
+by the Johns Hopkins University Human Lan-
+guage Technology Center of Excellence, and by
+gifts from Google and Microsoft.
+References
+David M. Blei, Andrew Y. Ng, and Michael I. Jordan.
+2003. Latent dirichlet alocation. J. Mach. Learn.
+Res., 3:993?1022, March.
+Chris Callison-Burch, Philipp Koehn, Christof Monz,
+Kay Peterson, Mark Przybocki, and Omar F. Zaidan.
+2010. Findings of the 2010 joint workshop on sta-
+tistical machine translation and metrics for machine
+translation. In Proceedings of the Joint Fifth Work-
+shop on Statistical Machine Translation and Met-
+ricsMATR, WMT ?10, pages 17?53. Association for
+Computational Linguistics.
+Chris Callison-Burch, Philipp Koehn, Christof Monz,
+and Omar F. Zaidan. 2011. Findings of the 2011
+workshop on statistical machine translation. In Pro-
+ceedings of the Sixth Workshop on Statistical Ma-
+chine Translation, WMT ?11, pages 22?64. Associ-
+ation for Computational Linguistics.
+Chris Callison-Burch, Philipp Koehn, Christof Monz,
+Matt Post, Radu Soricut, and Lucia Specia. 2012.
+Findings of the 2012 workshop on statistical ma-
+chine translation. In Proceedings of the Seventh
+Workshop on Statistical Machine Translation, pages
+10?51, Montre?al, Canada, June. Association for
+Computational Linguistics.
+Jiang Chen and Jian-Yun Nie. 2000. Parallel web text
+mining for cross-language ir. In IN IN PROC. OF
+RIAO, pages 62?77.
+J. Dean and S. Ghemawat. 2004. Mapreduce: simpli-
+fied data processing on large clusters. In Proceed-
+ings of the 6th conference on Symposium on Opeart-
+ing Systems Design & Implementation-Volume 6,
+pages 10?10. USENIX Association.
+William A. Gale and Kenneth W. Church. 1993. A
+program for aligning sentences in bilingual corpora.
+Comput. Linguist., 19:75?102, March.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran,
+Richard Zens, Chris Dyer, Ondr?ej Bojar, Alexandra
+Constantin, and Evan Herbst. 2007. Moses: open
+source toolkit for statistical machine translation. In
+Proceedings of the 45th Annual Meeting of the ACL
+on Interactive Poster and Demonstration Sessions,
+ACL ?07, pages 177?180. Association for Computa-
+tional Linguistics.
+P. Koehn. 2005. Europarl: A parallel corpus for statis-
+tical machine translation. In MT summit, volume 5.
+Edward Loper and Steven Bird. 2002. Nltk: the natu-
+ral language toolkit. In Proceedings of the ACL-02
+Workshop on Effective tools and methodologies for
+teaching natural language processing and computa-
+tional linguistics - Volume 1, ETMTNLP ?02, pages
+63?70. Association for Computational Linguistics.
+Adam Lopez, Matt Post, and Chris Callison-Burch.
+2013. Parallel speech, transcription, and translation:
+The Fisher and Callhome Spanish-English speech
+translation corpora. Technical Report 11, Johns
+Hopkins University Human Language Technology
+Center of Excellence.
+Marco Lui and Timothy Baldwin. 2012. langid.py:
+an off-the-shelf language identification tool. In Pro-
+ceedings of the ACL 2012 System Demonstrations,
+ACL ?12, pages 25?30. Association for Computa-
+tional Linguistics.
+Andrew Kachites McCallum. 2002. Mal-
+let: A machine learning for language toolkit.
+http://mallet.cs.umass.edu.
+1382
+Dragos Stefan Munteanu and Daniel Marcu. 2005. Im-
+proving Machine Translation Performance by Ex-
+ploiting Non-Parallel Corpora. Comput. Linguist.,
+31:477?504, December.
+Jian-Yun Nie, Michel Simard, Pierre Isabelle, and
+Richard Durand. 1999. Cross-language information
+retrieval based on parallel texts and automatic min-
+ing of parallel texts from the web. In Proceedings of
+the 22nd annual international ACM SIGIR confer-
+ence on Research and development in information
+retrieval, SIGIR ?99, pages 74?81, New York, NY,
+USA. ACM.
+Franz Josef Och. 2003. Minimum error rate training
+in statistical machine translation. In acl, pages 160?
+167, Sapporo, Japan.
+P. Resnik and N. A Smith. 2003. The web as a parallel
+corpus. Computational Linguistics, 29(3):349?380.
+Philip Resnik. 1999. Mining the web for bilingual text.
+In Proceedings of the 37th annual meeting of the As-
+sociation for Computational Linguistics on Compu-
+tational Linguistics, ACL ?99, pages 527?534. As-
+sociation for Computational Linguistics.
+Jason R. Smith, Chris Quirk, and Kristina Toutanova.
+2010. Extracting Parallel Sentences from Compara-
+ble Corpora using Document Level Alignment. In
+NAACL 2010.
+Jo?rg Tiedemann. 2009. News from OPUS - A col-
+lection of multilingual parallel corpora with tools
+and interfaces. In N. Nicolov, K. Bontcheva,
+G. Angelova, and R. Mitkov, editors, Recent
+Advances in Natural Language Processing, vol-
+ume V, pages 237?248. John Benjamins, Amster-
+dam/Philadelphia, Borovets, Bulgaria.
+Ferhan Ture and Jimmy Lin. 2012. Why not grab a
+free lunch? mining large corpora for parallel sen-
+tences to improve translation modeling. In Proceed-
+ings of the 2012 Conference of the North Ameri-
+can Chapter of the Association for Computational
+Linguistics: Human Language Technologies, pages
+626?630, Montre?al, Canada, June. Association for
+Computational Linguistics.
+Jakob Uszkoreit, Jay M. Ponte, Ashok C. Popat, and
+Moshe Dubiner. 2010. Large scale parallel docu-
+ment mining for machine translation. In Proceed-
+ings of the 23rd International Conference on Com-
+putational Linguistics, COLING ?10, pages 1101?
+1109. Association for Computational Linguistics.
+Ashish Venugopal, Jakob Uszkoreit, David Talbot,
+Franz J. Och, and Juri Ganitkevitch. 2011. Water-
+marking the outputs of structured prediction with an
+application in statistical machine translation. In Pro-
+ceedings of the Conference on Empirical Methods in
+Natural Language Processing, EMNLP ?11, pages
+1363?1372. Association for Computational Linguis-
+tics.
+Omar F. Zaidan and Chris Callison-Burch. 2011.
+Crowdsourcing translation: Professional quality
+from non-professionals. In Proc. of ACL.
+1383
+Proceedings of the 6th Workshop on Building and Using Comparable Corpora, pages 112?120,
+Sofia, Bulgaria, August 8, 2013. c?2013 Association for Computational Linguistics
+Mining for Domain-specific Parallel Text from Wikipedia
+Magdalena Plamada?, Martin Volk
+Institute of Computational Linguistics, University of Zurich
+Binzmu?hlestrasse 14, 8050 Zurich
+{plamada, volk}@cl.uzh.ch
+Abstract
+Previous attempts in extracting parallel
+data from Wikipedia were restricted by the
+monotonicity constraint of the alignment
+algorithm used for matching possible can-
+didates. This paper proposes a method for
+exploiting Wikipedia articles without wor-
+rying about the position of the sentences in
+the text. The algorithm ranks the candidate
+sentence pairs by means of a customized
+metric, which combines different similar-
+ity criteria. Moreover, we limit the search
+space to a specific topical domain, since
+our final goal is to use the extracted data
+in a domain-specific Statistical Machine
+Translation (SMT) setting. The precision
+estimates show that the extracted sentence
+pairs are clearly semantically equivalent.
+The SMT experiments, however, show that
+the extracted data is not refined enough to
+improve a strong in-domain SMT system.
+Nevertheless, it is good enough to boost
+the performance of an out-of-domain sys-
+tem trained on sizable amounts of data.
+1 Introduction
+A high-quality Statistical Machine Translation
+(SMT) system can only be built with large quan-
+tities of parallel texts. Moreover, systems special-
+ized in specific domains require in-domain train-
+ing data. A well-known problem of SMT systems
+is that existing parallel corpora cover a small per-
+centage of the possible language pairs and very
+few domains. We therefore need a language-
+independent approach for discovering parallel sen-
+tences in the available multilingual resources.
+This idea was explored intensively in the last
+decade with different text sources, generically
+called comparable corpora, such as news feeds,
+encyclopedias or even the entire Web. The first
+approaches focused merely on news corpora and
+were either based on IBM alignment models (Zhao
+and Vogel, 2002; Fung and Cheung, 2004) or em-
+ploying machine learning techniques (Munteanu
+and Marcu, 2005; Abdul Rauf and Schwenk,
+2011).
+The multilingual Wikipedia is another source
+of comparable texts, not yet thoroughly explored.
+Adafre and de Rijke (2006) describe two meth-
+ods for identifying parallel sentences across it
+based on monolingual sentence similarity (MT
+and respectively, lexicon based). Fung et al
+(2010) approach the problem by combining recall-
+and precision-oriented methods for sentence align-
+ment, such as the DK-vec algorithm or algorithms
+based on cosine similarities. Both approaches
+have achieved good results in terms of precision
+and recall.
+However, we are interested in real applica-
+tion scenarios, such as SMT systems. The fol-
+lowing approaches report significant performance
+improvements when using the extracted data as
+training material for SMT: Smith et al (2010)
+use a maximum entropy-based classifier with
+various feature functions (e.g. alignment cover-
+age, word fertility, translation probability, distor-
+tion). S?tefa?nescu et al (2012) propose an algo-
+rithm based on cross-lingual information retrieval,
+which also considers similarity features equivalent
+to the ones mentioned in the previous paper.
+The presented approaches extract general pur-
+pose sentences, but we are interested in a spe-
+cific topical domain. We have previously tackled
+the problem (Plamada and Volk, 2012) and en-
+countered two major bottlenecks: the alignment
+algorithm for matching possible candidates and
+the similarity metric used to compare them. To
+our knowledge, existing sentence alignment al-
+gorithms (including the one we have employed
+in the first place) have a monotonic order con-
+straint, meaning that crossing alignments are not
+112
+allowed. But this phenomenon occurs often in
+Wikipedia, because its articles in different lan-
+guages are edited independently, without respect-
+ing any guidelines. Moreover, the string-based
+comparison metric proved to be unreliable for
+identifying parallel sentences.
+In this paper we propose an improved approach
+for selecting parallel sentences in Wikipedia arti-
+cles which considers all possible sentence pairs,
+regardless of their position in the text. The selec-
+tion will be made by means of a more informed
+similarity metric, which rates different aspects
+concerning the correspondences between two sen-
+tences. Although the approach is language and
+domain-independent, the present paper reports re-
+sults obtained through querying the German and
+French Wikipedia for Alpine texts (i.e. moun-
+taineering reports, hiking recommendations, arti-
+cles on the biology and the geology of mountain-
+ous regions). Moreover, we report preliminary re-
+sults regarding the use of the extracted corpus for
+SMT training.
+2 Finding candidate articles
+The general architecture of our parallel sentence
+extraction process is shown in Figure 1. We
+applied the approach only to the language pair
+German-French, as these are the languages we
+have expertise in. In the project Domain-specific
+Statistical Machine Translation1 we have built an
+SMT system for the Alpine domain and for this
+language pair. The training data comes from the
+Text+Berg corpus2, which contains the digitized
+publications of the Swiss Alpine Club (SAC) from
+1864 until 2011, in German and French. This
+SMT system will generate the automatic transla-
+tions required in the extraction process.
+The input consists of German and French
+Wikipedia dumps3, available in the MediaWiki
+format 4. Therefore our workflow requires a pre-
+processing step, where the MediaWiki contents
+are transformed to XML and then to raw text.
+Preprocessing is based on existing tools, such as
+WikiPrep5, but further customization is needed in
+order to correctly convert localized MediaWiki el-
+ements (namespaces, templates, date and number
+formats etc.). We then identify Wikipedia articles
+1http://www.cl.uzh.ch/research en.html
+2See www.textberg.ch
+3Accessed in September 2011
+4http://www.mediawiki.org/wiki/MediaWiki
+5http://sourceforge.net/projects/wikiprep/
+Figure 1: The extraction workflow
+available in both languages by means of the inter-
+language links provided by Wikipedia itself. This
+reliable information is a good basis for the extrac-
+tion workflow, since we do not have to worry about
+the document alignment.
+Upon completion of this step, we have extracted
+a bilingual corpus of approximately 400 000 ar-
+ticles per language. The corpus is subsequently
+used for information retrieval (IR) queries aiming
+to identify the articles belonging to the Alpine do-
+main. The input queries contain the 100 most fre-
+quent mountaineering keywords in the Text+Berg
+corpus (e.g. Alp, Gipfel, Berg, Route in German
+and montagne, sommet, voie, cabane in French).
+This filter reduces the search space to 40 000
+articles. Although we have refined our search
+terms by discarding the ones occurring frequently
+in other text types (e.g. meter, day, year, end),
+we were not able to avoid a small percentage of
+false positives. Once we extract the Alpine com-
+parable corpus, we proceed to the extraction of
+113
+parallel sentences, which will be thoroughly dis-
+cussed in the following section. See (Plamada and
+Volk, 2012) for more details about the extraction
+pipeline.
+3 Finding parallel segments in Wikipedia
+articles
+The analysis of our previous results brought into
+attention many ?parallel? sentence pairs of dif-
+ferent lengths, meaning that the shared trans-
+lated content does not span over the whole sen-
+tence. As an example, consider the following sen-
+tences which have been retrieved by the extraction
+pipeline. Although they both contain information
+about the valleys connected by the Turini pass, the
+German sentence contains a fragment about its po-
+sition, which has not been translated into French.
+DE: Der Pass liegt in der a?usseren, besiedelten
+Zone des Nationalpark Mercantour und stellt den
+U?bergang zwischen dem Tal der Be?ve?ra und dem
+Tal der Ve?subie dar.
+FR: Le col de Turini relie la valle?e de la Ve?subie
+a` la valle?e de la Be?ve?ra.
+If this sentence pair would be used for MT
+training, it would most probably confuse the sys-
+tem, because noisy word alignments are to be ex-
+pected. Our solution to this problem is to split
+the sentences into smaller entities (e.g. clauses)
+and then to find the alignments on this granular-
+ity level. The clause boundary detection is per-
+formed independently for German and French, re-
+spectively, following the approach developed by
+Volk (2001). The general idea is to split the sen-
+tences into clauses containing a single full verb.
+Our alignment algorithm, unlike previous ap-
+proaches, ignores the position of the clauses in the
+texts. Although Wikipedia articles are divided into
+sections, their structure is not synchronized across
+the language variants, since articles are edited in-
+dependently. We have encountered, for example,
+cases where one section in the French article was
+included in the general introduction of the Ger-
+man article. If we would have considered sec-
+tions boundaries as anchor points, we would have
+missed useful clause pairs. We therefore decided
+to use an exhaustive matching algorithm, in order
+to cover all possible combinations.
+For the sake of simplicity, we reduce the prob-
+lem to a monolingual alignment task by using an
+intermediary machine translation of the source ar-
+ticle. We decided that German articles should al-
+ways be considered the source because we expect
+a better automatic translation quality from German
+to French. The translation is performed by our in-
+house SMT system trained on Alpine texts. The
+algorithm generates all possible clause pairs be-
+tween the automatic translation and the targeted
+article and computes for each of them a similarity
+score. Subsequently it reduces the search space by
+keeping only the 3 best-scoring alignment candi-
+dates for each clause. Finally the algorithm returns
+the alignment pair which maximizes the similarity
+score and complies with the injectivity constraint.
+In the end we filter the results by allowing only
+clause pairs above the set threshold.
+We defined our similarity measure as a
+weighted sum of feature functions, which returns
+values in the range [0,1]. The similarity score
+models two comparison criteria:
+? METEOR score
+We used the METEOR similarity metric be-
+cause, unlike other string-based metrics (e.g.
+BLEU (Papineni et al, 2002)), it considers
+not only exact matches, but also word stems,
+synonyms, and paraphrases (Denkowski and
+Lavie, 2011). Suppose that we compute the
+similarity between the following sentences in
+French: j? aimerais bien vous voir and je
+voudrais vous voir (both meaning I would
+like to see you). BLEU, which is a string-
+based metric, would assign a similarity score
+of 52.5. This value could hardly be con-
+sidered reliable, given that the sentence ta
+voiture vous voir (paired with the first sen-
+tence) would get the same BLEU score, al-
+though the latter sentence (EN: your car see
+you) is obviously nonsense. On the other
+hand, METEOR would return a score of 90.3
+for the original sentence pair, since it can
+appreciate that the two pronouns (je and j?)
+are both variations of the first person singular
+in French and that the predicates convey the
+same meaning.
+? Number of aligned content words
+However, METEOR scores can also be mis-
+leading, since they rely on automatic word
+alignments. Two sentences are likely to re-
+ceive a high similarity score when they share
+many aligned words. However, the align-
+ments are not always reliable. We often saw
+114
+sentence pairs with a decent Meteor score
+where only some determiners, punctuation
+signs or simple word collocations (e.g. de
+la montagne (EN: of the mountain)) were
+matched. As an illustration, consider the fol-
+lowing sentence pair and its corresponding
+alignment:
+Hyp: les armoiries , le de?sir de la ville de
+breslau par ferdinand i. le 12 mars 1530 a
+Ref: le 19 juin 1990 , le conseil municipal
+re?tablit le blason original de la ville
+2-4 3-5 5-12 6-13 7-14 13-0
+Although the sentences are obviously not se-
+mantically equivalent (a fact also suggested
+by the sparse word alignments), the pair re-
+ceives a METEOR score of 0.23. We decided
+to compensate for this by counting only the
+aligned pairs which link content words and
+dividing them by the total number of words
+in the longest sentence from the considered
+pair. In the example above, only one valid
+alignment (7-14) can be identified, therefore
+the sentence pair will get a partial score of
+1/18. In this manner we can ensure the de-
+crease of the initial similarity score.
+Additionally, we have defined a token ratio fea-
+ture to penalize the sentence length differences.
+Although a length penalty is already included in
+the METEOR score, we still found false candidate
+pairs with exceedingly different lengths. There-
+fore we decided to use this criterion as a selec-
+tion filter rather than including it in the similarity
+function, in order to increase the chances of other
+candidates with similar length. Even if no other
+candidate will pass all the filters, at least we ex-
+pect the precision to increase, since we will have
+one false positive less.
+The final formula for the similarity score be-
+tween two clauses src in the source language and,
+respectively trg in the target language is:
+score(src, trg) = w1 ? s1 + (1? w1) ? s2 (1)
+where s1 represents the METEOR score and s2 the
+alignment score.
+The weights, as well as the final threshold are
+tuned to maximize the correlation with human
+judgments. We modeled the task as a minimiza-
+tion problem, where the function value increases
+by 1 for each correctly selected clause pair and
+decreases by 1 for each wrong pair. The solu-
+tion (consisting of the individual weights and the
+threshold) is found using a brute force approach,
+for which we employed the scipy.optimize
+package from Python. The training set consists
+of an article with 1300 clause pairs, 25 of which
+are parallel and the rest non-parallel. We chose
+this distribution of the useful/not useful clauses
+because this corresponds to the real distribution
+observed in Wikipedia articles. In the best con-
+figuration, we retrieve 23 good clause pairs and 1
+wrong. This corresponds to a precision of 95%
+and a recall of 92% on this small test set.
+However, we can influence the quantity of ex-
+tracted parallel clauses by manually adjusting the
+final filter threshold. Figure 2 depicts the size vari-
+ations of the resulting corpus at different thresh-
+olds, where the relative frequency is represented
+on a logarithmic scale. We notice that the rate of
+decrease is linear in the log scale of the number
+of extracted clause pairs. We start at a similarity
+score of 0.2 because the pairs below this thresh-
+old are too noisy. The data between 0.2 and 0.3
+is already mixed, as it will be shown in the fol-
+lowing sections. However, since this data segment
+contains approximately twice as much data as the
+summed superior ones, we decided to include it in
+the corpus.
+Figure 2: The distribution of the extracted clause
+pairs at different thresholds
+Table 1 presents German-French clause pairs
+with their corresponding similarity scores. On
+the top we can find rather short clauses (up to
+10 words) with perfectly aligned words. One ex-
+pects that the decrease of the values implies that
+115
+Nr. French clause German clause Score
+1 mcnish e?crit dans son journal : mcnish schrieb in sein tagebuch : 1.0
+2 son journal n? a pas e?te? retrouve? sein tagebuch wurde nie gefunden 0.950
+3 elle travailla pendant plusieurs se-
+maines avec lui
+wa?hrend mehrerer wochen arbeitete sie
+mit ihm zusammen
+0.840
+4 en 1783, il fait une premie`re tentative
+infructueuse avec marc the?odore bourrit
+paccard startete 1783 zusammen mit marc
+theodore bourrit einen ersten, erfolglosen
+besteigungsversuch
+0.717
+5 en 1962, les bavarois toni kinshofer,
+siegfried lo?w et anderl mannhardt
+re?ussirent pour la premie`re fois l? as-
+cension par la face du diamir
+1962 durchstiegen die bayern toni
+kinshofer, siegfried lo?w und anderl
+mannhardt erstmals die diamir-flanke
+0.623
+6 le 19 aou?t 1828 il tenta, avec les deux
+guides jakob leuthold et johann wahren
+l? ascension du finsteraarhorn
+august 1828 versuchte er zusammen mit
+den beiden bergfu?hrern jakob leuthold
+und johann wa?hren das finsteraarhorn zu
+besteigen
+0.519
+7 le parc prote`ge le mont robson, le
+plus haut sommet des rocheuses cana-
+diennes
+das 2248 km2 gro?e schutzgebiet er-
+streckt sich um den 3954 m hohen mount
+robson, dem ho?chsten berg der kanadis-
+chen rocky mountains
+0.470
+8 la plupart des e?difices volcaniques du
+haut eifel sont des do?mes isole?s plus ou
+moins aplatis
+die meisten der vulkanbauten der
+hocheifel sind als isolierte kuppen
+vereinzelt oder in reihen der mehr oder
+minder flachen hochfla?che aufgesetzt
+0.379
+9 le site, candidat au patrimoine mondial,
+se compose d? esplanades-autels faits
+de pierres
+die sta?tte, ein kandidat fu?r das unesco-
+welterbe, besteht aus altarplattformen aus
+steinen und erde, gestu?tzt auf einer un-
+terirdischen konstruktion aus bemalten
+ton-pfeilern
+0.259
+10 qu? un cas mineur ayant un effet limite?
+sur la sante?
+wie sich diese substanzen auf die gesund-
+heit auswirken,
+0.200
+Table 1: Examples of extracted clause pairs
+the clauses contain less or even no translated frag-
+ments. A manual inspection of the extracted pairs
+showed that this is not always the case. We have
+found clause pairs with almost perfect 1-1 word
+correspondences and a similarity score of only
+0.51. The ?low? score is due to the fact that we
+are comparing human language to automatic trans-
+lations, which are not perfect.
+On the other hand, a comparable score can be
+achieved by a pair in which one of the clauses
+contains some extra information (e.g. pair num-
+ber 7). The extra parts in the German variant
+(2248 km2 gro?e - EN: with an area of 2248 km2;
+3954 m hohen - EN: 3954 m high) cannot be
+separated by means of clause boundary detection,
+since they don?t contain any verbs. This finding
+would motivate the idea of splitting the phrases
+into subsentential segments (linguistically moti-
+vated or not) and aligning the segments, similar
+to what Munteanu (2006) proposed. Nevertheless,
+we consider this pair a good candidate for the par-
+allel corpus.
+Pair number 8 has the same coordinates (i.e. an
+extra tail in the German variant), yet it receives a
+lower score, which might disqualify it for the final
+list, if we only look at the numbers. In this case,
+the low score is caused by the German compounds
+(Vulkanbauten, Hocheifel), which are unknown to
+the SMT system, therefore they are left untrans-
+lated and cannot be aligned. However, we argue
+that this clause pair should also be part of the ex-
+tracted corpus.
+116
+Score Average sentence length
+range German French
+[0.9? 1.0] 4 4.26
+[0.8? 0.9) 4.87 5.04
+[0.7? 0.8) 6.47 6.65
+[0.6? 0.7) 10.78 10.71
+[0.5? 0.6) 12.09 11.51
+[0.4? 0.5) 11.91 11.80
+[0.3? 0.4) 11.28 11.22
+[0.2? 0.3) 11.22 11.01
+Table 2: The average sentence length for different
+score ranges
+The last pair is definitely a bad candidate for a
+parallel corpus, since the clauses do not convey the
+same meaning, although they share many words
+(avoir un effet - auswirken, sur la sante? - auf die
+Gesundheit). A subsentential approach would al-
+low us to extract the useful segments in this case,
+as well. There are, of course, pairs with similar
+scores and poorer quality, therefore 0.2 is the low-
+est threshold which can provide useful candidate
+pairs. At the other end of the scale, we consider
+pairs above 0.4 as parallel and everything below
+as comparable. As a general rule, a high threshold
+ensures a high accuracy of the extraction pipeline.
+Table 2 presents the average length (number
+of tokens) of the extracted clauses for different
+ranges of the similarity score. We notice that the
+best ranked clauses tend to be very short, whereas
+the last ranked are longer, as the examples in ta-
+ble 1 confirm. However, the average length over
+the whole extracted corpus is below 10 words, a
+small value compared to the results reported on
+Wikipedia articles by S?tefa?nescu and Ion (2013).
+This finding is due to the fact that we are aligning
+clauses instead of whole sentences.
+We expected the German sentences to be usu-
+ally shorter than the French ones (or at least have
+a similar number of words), since they are more
+likely to contain compounds. This fact is con-
+firmed by the first part of the table. A turnaround
+occurs in the range (0.5,0.6), where the German
+sentences become slightly longer than the French
+ones, since they tend to contain extra information
+(see also table 1).
+4 Experiments and Results
+The conducted experiments have focused only on
+the extraction of parallel clauses and their use in a
+SMT scenario. For this purpose, we have used as
+input the articles selected and preprocessed in the
+previous development phase (Plamada and Volk,
+2012). Specifically, the data set consists of 39 000
+parallel articles with approximately 6 million Ger-
+man clauses and 2.7 million French ones. We were
+able to extract 225 000 parallel clause pairs out of
+them, by setting the final filter threshold to 0.2.
+This means that roughly 4% of the German clauses
+have an French equivalent (and 8% when reporting
+to the French clauses), figures comparable to our
+previous results on a different sized data set. How-
+ever, the quality of the extracted data is higher than
+in our previous approaches.
+To evaluate the quality of the parallel data ex-
+tracted, we manually checked a set of 200 au-
+tomatically aligned clauses with similarity scores
+above 0.25. For this test set, 39% of the ex-
+tracted data represent perfect translations, 26% are
+translations with an extra segment (e.g. a noun
+phrase) on one side and 35% represent misalign-
+ments. However, given the high degree of paral-
+lelism between the clauses from the middle class,
+we consider them as true positives, achieving a
+precision of 65%. Furthermore, 40% of the false
+positives have been introduced by matching proper
+names, 32% contain matching subsentential seg-
+ments (word sequences longer than 3 words) and
+27% represent failures in the alignment process.
+4.1 SMT Experiments
+In addition to the manual evaluation discussed in
+the previous subsection, we have run preliminary
+investigations with regard to the usefulness of the
+extracted corpus for SMT. In this evaluation sce-
+nario, we use only pairs with a similarity score
+above 0.35. The results discussed in this sec-
+tion refer only to the translation direction German-
+French. The SMT systems are trained with the
+Moses toolkit (Koehn et al, 2007), according to
+the WMT 2011 guidelines6. The translation per-
+formance was measured using the BLEU evalua-
+tion metric on a single reference translation. We
+also report statistical significance scores, in order
+to indicate the validity of the comparisons between
+the MT systems (Riezler and Maxwell, 2005). We
+consider the BLEU score difference significant if
+the computed p-value is below 0.05.
+We compare two baseline MT systems and sev-
+eral systems with different model mixtures (trans-
+6http://www.statmt.org/wmt11/baseline.html
+117
+lation models, language models or both). The first
+baseline system is an in-domain one, trained on the
+Text+Berg corpus and is the same used for the au-
+tomatic translations required in the extraction step
+(see section 3). The second system is purely out-
+of-domain and it is trained on Europarl, a collec-
+tion of parliamentary proceedings (Koehn, 2005).
+The development set and the test set contain in-
+domain data, held out from the Text+Berg corpus.
+Table 3 lists the sizes of the data sets used for the
+SMT experiments.
+Data set Sentences DE Words FR Words
+SAC 220 000 4 200 000 4 700 000
+Europarl 1 680 000 37 000 000 43 000 000
+Wikipedia 120 000 1 000 000 1 000 000
+Dev set 1424 30 000 33 000
+Test set 991 19 000 21 000
+Table 3: The size of the German-French data sets
+Our first intuition was to add the extracted sen-
+tences to the existing in-domain training corpus
+and to evaluate the performance of the system. In
+the second scenario, we added the extracted data
+to an SMT system for which no in-domain paral-
+lel data was available. For this purpose, we exper-
+imented with different combinations of the mod-
+els involved in the translation process, namely the
+German-French translation model (responsible for
+the translation variants) and the French language
+model (ensures the fluency of the output). Besides
+of the models trained on the parallel data available
+in each of the data sets, we also built combined
+models with optimized weights for each of the in-
+volved data sets. The optimization was performed
+with the tools provided by Sennrich (2012) as part
+of the Moses toolkit. We also want to compare
+several language models, some trained on the indi-
+vidual data sets, others obtained by linearly inter-
+polating different data sets, all optimized for min-
+imal perplexity on the in-domain development set.
+The results are summarized in table 4.
+A first remark is that an out-of-domain lan-
+guage model (LM) adapted with in-domain data
+(extracted from Wikipedia and/or SAC data) sig-
+nificantly improves on top of a baseline system
+trained with out-of-domain texts (Europarl, EP)
+with up to 1.7 BLEU points. And this improve-
+ment can be achieved with only a small quantity
+of additional data compared to the size of the orig-
+inal training data (120k or 220k versus 1680k sen-
+tence pairs). When replacing the out-of-domain
+Translation Language model BLEU
+model score
+Europarl TM EP LM 9.45
+Europarl TM EP+Wiki LM 10.39
+EP+Wiki TM EP+Wiki LM 10.37
+Europarl TM EP+Wiki+SAC LM 11.22
+EP+Wiki TM EP+Wiki+SAC LM 11.74
+EP+WMix TM EP+Wiki+SAC LM 10.40
+SAC TM SAC LM 16.71
+SAC+Wiki TM SAC+Wiki LM 16.51
+SAC+WMix TM SAC+Wiki LM 16.37
+Table 4: SMT results for German-French
+translation model with a combined one (includ-
+ing the Wikipedia data set) and keeping only the
+adapted language models, we can observe two ten-
+dencies. In the first case (using a combination
+of out-of-domain and Wikipedia-data for the lan-
+guage model), the BLEU score remains approxi-
+mately at the same level (10.37-10.39), the differ-
+ence not being statistically significant (p-value =
+0.387).
+The addition of quality in-domain data for the
+LM from the previous configuration brings an im-
+provement of 0.5 BLEU points on top of the best
+Europarl system (11.22 BLEU points). Given that
+all other factors are kept constant, this improve-
+ment can be attributed to the additional transla-
+tion model (TM) trained on Wikipedia data. More-
+over, the statistical significance tests confirm that
+the improved system performs better than the pre-
+vious one (p-value = 0.005). To demonstrate
+that these results are not accidental, we replaced
+the Wikipedia extracted sentences with a random
+combination thereof (referred to as WMix) and re-
+trained the system. Under these circumstances,
+the performance of the system dropped to 10.40
+BLEU points. These findings demonstrate the ef-
+fect of a small in-domain data set on the perfor-
+mance of an out-of-domain system trained on big
+amounts of data. If the data is of good quality, it
+can improve the performance of the system, other-
+wise it significantly deteriorates it.
+We notice that the performance of a strong in-
+domain baseline system (SAC) cannot be heav-
+ily influenced (either positively or negatively) by
+translation and language model mixtures combin-
+ing existing in-domain data with Wikipedia data.
+In terms of BLEU points, the mixture models
+trained with ?good? Wikipedia data cause a perfor-
+118
+mance drop of 0.2, but the significance test shows
+that the difference is not statistically significant (p-
+value = 0.08). On the other hand, the TM includ-
+ing shuffled Wikipedia sentences causes a perfor-
+mance drop of 0.34 BLEU points, which is statis-
+tically significant (p-value = 0.013). We can con-
+clude that the quantity of the data is not the deci-
+sive factor for the performance change, but rather
+the quality of the data. The Wikipedia extracted
+data set maintains the good performance, whereas
+a random mixture of the Wikipedia data set causes
+a performance decrease. Therefore the focus of
+future work should be on obtaining high quality
+data, regardless of its amount.
+5 Conclusions and Outlook
+In this paper we presented a method for extract-
+ing domain-specific parallel data from Wikipedia
+articles. Based on previous experiments, we fo-
+cus on clause level alignments rather than on full-
+sentence extraction methods. Moreover, the rank-
+ing of the candidates is based on a metric com-
+bining different similarity criteria, which we de-
+fined ourselves. The precision estimates show that
+the extracted sentence pairs are clearly semanti-
+cally equivalent. The SMT experiments, however,
+show that the extracted data is not refined enough
+to improve a strong in-domain SMT system. Nev-
+ertheless, it is good enough to overtake an out-of-
+domain system trained on 10 times bigger amounts
+of data.
+Since our extraction system is merely a proto-
+type, there are several ways to improve its per-
+formance, including better filtering for in-domain
+articles, finer grained alignment and more so-
+phisticated similarity metrics. For example, the
+selection of domain-specific articles can be im-
+proved by means of an additional filter based on
+Wikipedia categories. The accuracy of the extrac-
+tion procedure can be improved by means of a
+more informed similarity metric, weighting more
+feature functions. Moreover, we can bypass the
+manual choice of thresholds by employing a clas-
+sifier (e.g. SVMlight (Joachims, 2002)). Addi-
+tionally, we could try to align even shorter sen-
+tence fragments (not necessarily linguistically mo-
+tivated).
+We are confident that Wikipedia can be seen as
+a useful resource for SMT, but further investiga-
+tion is needed in order to find the best method to
+exploit the extracted data in a SMT scenario. For
+this purpose, quality data should be preferred over
+sizable data. We would therefore like to experi-
+ment with different ratio combinations of the data
+sets (Wikipedia extracted and in-domain data) un-
+til we find a combination which outperforms our
+in-domain baseline system.
+References
+Sadaf Abdul Rauf and Holger Schwenk. 2011. Paral-
+lel sentence generation from comparable corpora for
+improved SMT. Machine Translation, 25:341?375.
+Sisay Fissaha Adafre and Maarten de Rijke. 2006.
+Finding similar sentences across multiple languages
+in Wikipedia. Proceedings of the 11th Conference of
+the European Chapter of the Association for Compu-
+tational Linguistics, pages 62?69.
+Michael Denkowski and Alon Lavie. 2011. Meteor
+1.3: Automatic metric for reliable optimization and
+evaluation of machine translation systems. In Pro-
+ceedings of the EMNLP 2011 Workshop on Statisti-
+cal Machine Translation.
+Pascale Fung and Percy Cheung. 2004. Mining very-
+non-parallel corpora: Parallel sentence and lexicon
+extraction via bootstrapping and EM. In Proceed-
+ings of EMNLP.
+Pascale Fung, Emmanuel Prochasson, and Simon Shi.
+2010. Trillions of comparable documents. In Pro-
+ceedings of the the 3rd workshop on Building and
+Using Comparable Corpora (BUCC?10), Malta.
+Thorsten Joachims. 2002. Learning to classify text
+using Support Vector Machines. Kluwer Academic
+Publishers.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran,
+Richard Zens, Chris Dyer, Ondr?ej Bojar, Alexandra
+Constantin, and Evan Herbst. 2007. Moses: open
+source toolkit for statistical machine translation. In
+Proceedings of the 45th Annual Meeting of the ACL
+on Interactive Poster and Demonstration Sessions,
+ACL ?07, pages 177?180.
+Philipp Koehn. 2005. Europarl: A parallel corpus for
+statistical machine translation. In Machine Transla-
+tion Summit X, pages 79?86.
+Dragos Stefan Munteanu and Daniel Marcu. 2005. Im-
+proving machine translation performance by exploit-
+ing non-parallel corpora. Computational Linguis-
+tics, 31:477?504, December.
+Dragos Stefan Munteanu. 2006. Exploiting compara-
+ble corpora. Ph.D. thesis, University Of Southern
+California.
+119
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. BLEU: a method for automatic
+evaluation of machine translation. In Proceedings
+of the 40th Annual Meeting on Association for Com-
+putational Linguistics, ACL ?02, pages 311?318,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+Magdalena Plamada and Martin Volk. 2012. Towards
+a Wikipedia-extracted alpine corpus. In Proceed-
+ings of the Fifth Workshop on Building and Using
+Comparable Corpora, Istanbul, May.
+Stefan Riezler and John T. Maxwell. 2005. On some
+pitfalls in automatic evaluation and significance test-
+ing for MT. In Proceedings of the ACL Workshop
+on Intrinsic and Extrinsic Evaluation Measures for
+Machine Translation and/or Summarization, pages
+57?64, Ann Arbor, Michigan, June. Association for
+Computational Linguistics.
+Rico Sennrich. 2012. Perplexity minimization for
+translation model domain adaptation in statistical
+machine translation. In Proceedings of the 13th
+Conference of the European Chapter of the Asso-
+ciation for Computational Linguistics, pages 539?
+549, Avignon, France. Association For Computa-
+tional Linguistics.
+Jason Smith, Chris Quirk, and Kristina Toutanova.
+2010. Extracting parallel sentences from compa-
+rable corpora using document level alignment. In
+Human Language Technologies: The 2010 Annual
+Conference of the North American Chapter of the
+Association for Computational Linguistics, pages
+403?411, Stroudsburg, PA, USA. Association for
+Computational Linguistics.
+Dan S?tefa?nescu and Radu Ion. 2013. Parallel-Wiki:
+A collection of parallel sentences extracted from
+Wikipedia. In Proceedings of the 14th Conference
+on Intelligent Text Processing and Computational
+Linguistics (CICLing 2013).
+Dan S?tefa?nescu, Radu Ion, and Sabine Hunsicker.
+2012. Hybrid parallel sentence mining from com-
+parable corpora. In Mauro Cettolo, Marcello Fed-
+erico, Lucia Specia, and AndyEditors Way, editors,
+Proceedings of the 16th Conference of the European
+Association for Machine Translation EAMT 2012,
+pages 137?144.
+Martin Volk. 2001. The automatic resolution of prepo-
+sitional phrase - attachment ambiguities in German.
+Habilitation thesis, University of Zurich.
+Bing Zhao and Stephan Vogel. 2002. Adaptive parallel
+sentences mining from web bilingual news collec-
+tion. In Proceedings of the 2002 IEEE International
+Conference on Data Mining, ICDM ?02, pages 745?
+748, Washington, DC, USA. IEEE Computer Soci-
+ety.
+120

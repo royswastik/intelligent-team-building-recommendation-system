@@ -1,0 +1,2052 @@
+Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: Technical Papers,
+pages 753?761, Dublin, Ireland, August 23-29 2014.
+Unsupervised Multiword Segmentation of Large Corpora using
+Prediction-Driven Decomposition of n-grams
+Julian Brooke
+*?
+Vivian Tsang
+?
+Graeme Hirst
+*
+Fraser Shein
+*?
+*
+Department of Computer Science
+University of Toronto
+jbrooke@cs.toronto.edu
+gh@cs.toronto.edu
+?
+Quillsoft Ltd.
+Toronto, Canada
+vtsang@quillsoft.ca
+fshein@quillsoft.ca
+Abstract
+We present a new, efficient unsupervised approach to the segmentation of corpora into multiword
+units. Our method involves initial decomposition of common n-grams into segments which max-
+imize within-segment predictability of words, and then further refinement of these segments into
+a multiword lexicon. Evaluating in four large, distinct corpora, we show that this method cre-
+ates segments which correspond well to known multiword expressions; our model is particularly
+strong with regards to longer (3+ word) multiword units, which are often ignored or minimized
+in relevant work.
+1 Introduction
+Identification of multiword units in language is an active but increasingly fragmented area of research, a
+problem which can limit the ability of others to make use of units beyond the level of the word as input
+to other applications. General research on word association metrics (Church and Hanks, 1990; Smadja,
+1993; Schone and Jurafsky, 2001; Evert, 2004; Pecina, 2010), though increasingly comprehensive in
+its scope, has mostly failed to identify a single best choice, leading some to argue that the variety of
+multiword phenomena must be tackled individually. For instance, there is a body of research focusing
+specifically on collocations that are (to some degree) non-compositional, i.e. multiword expressions (Sag
+et al., 2002; Baldwin and Kim, 2010), with individual projects often limited to a particular set of syntactic
+patterns, e.g. verb-noun combinations (Fazly et al., 2009). A major issue with approaches involving
+statistical association is that they rarely address expressions larger than 2 words (Heid, 2007); in corpus
+linguistics, larger sequences referred to as lexical bundles are extracted using an n-gram frequency cutoff
+(Biber et al., 2004), but the frequency threshold is typically set very high so that only a very limited set
+is extracted. Another drawback, common to almost all these methods, is that they rarely offer an explicit
+segmentation of a text into multiword units, which would be preferable for downstream uses such as
+probabilistic distributional semantics. An exception is the Bayesian approach of Newman et al. (2012),
+but their method does not scale well (see Section 2). Our own long-term motivation is to identify a wide
+variety of multiword units for assisting language learning, since correct use of collocations is known to
+pose a particular challenge to learners (Chen and Baker, 2010).
+Here, we present a multiword unit segmenter
+1
+with the following key features:
+? It is entirely unsupervised.
+? It offers both segmentation of the input corpus and a lexicon which can be used to segment new
+corpora.
+? It is scalable to very large corpora, and works for a variety of corpora.
+? It is language independent.
+This work is licenced under a Creative Commons Attribution 4.0 International License. Page numbers and proceedings footer
+are added by the organizers. License details: http://creativecommons.org/licenses/by/4.0/
+1
+The software is available at http:/www.cs.toronto.edu/
+?
+jbrooke/ngram decomp seg.py .
+753
+? It does not inherently limit possible units with respect to part-of-speech or length.
+? It has a bare minimum of parameters, and can be used off-the-shelf: in particular, it does not require
+the choice of an arbitrary cutoff for some uninterpretable statistical metric.
+? It does, however, include a parameter fixing the minimum number of times that a valid multiword
+unit will appear in the corpus, which ensures sufficient usage examples for relevant applications.
+Our method involves three major steps: extraction of common n-grams, initial segmentation of the
+corpus, and a refinement of the resulting lexicon (and, by extension, the initial segmentation). The
+latter two steps are carried out using a simple but novel heuristic based on maximizing word prediction
+within multiword segments. Importantly, our method requires just a few iterations through the corpus,
+and in practice these iterations can be parallelized. Evaluating with an existing set of multiword units
+from WordNet in four large corpora from distinct genres, we show that our initial segmentation offers
+extremely good subsumption of known collocations, and after lexicon refinement the model offers a
+good trade-off between subsumption and exact matches. We also evaluate a sample of our multiword
+vocabulary using crowdsourcing, and offer a qualitative analysis.
+2 Related Work
+In computational linguistics, there is a large body of research that proposes and/or evaluates lexical as-
+sociation measures for the creation of multiword lexicons (Church and Hanks, 1990; Smadja, 1993;
+Schone and Jurafsky, 2001; Evert, 2004): there are many more measures than can be addressed here?
+work by Pecina (2010) considered 82 variations?but popular choices include the t-test, log likelihood,
+and pointwise mutual information (PMI). In order to build lexicons using these methods, particular syn-
+tactic patterns and thresholds for the metrics are typically chosen. Many of the statistical metrics do not
+generalize at all beyond two words, but PMI (Church and Hanks, 1990), the log ratio of the joint proba-
+bility to the product of the marginal probabilities, is a prominent exception. Other measures specifically
+designed to address collocations of larger than two words include the c-value (Frantzi et al., 2000), a
+metric designed for term extraction which weights term frequency by the log length of the n-gram while
+penalizing n-grams that appear in frequent larger ones, and mutual expectation (Dias et al., 1999), which
+produces a normalized statistic that reflects how much a candidate phrase resists the omission of any
+particular word. Another approach is to simply to combine known n? 1 collocations to form n-length
+collocations (Seretan, 2011), but this is based on the assumption that all longer collocations are built up
+from shorter ones?idioms, for instance, do not usually work in that way.
+An approach used in corpus linguistics which does handle naturally longer sequences is the study
+of lexical bundles (Biber et al., 2004), which are simply n-grams that occur above a certain frequency
+threshold. This includes larger phrasal chunks that would be missed by traditional collocation extraction,
+and so research in this area has tended to focus on how particular phrases (e.g. if you look at) are indi-
+ciative of particular genres (e.g. university lectures). In order to get very reliable phrases, the threshold
+is typically set high enough (Biber et al. use 40 occurrences in 1 million words) to filter out the vast
+majority of expressions in the process.
+With respect to the features of our model, the work closest to ours is probably that of Newman et al.
+(2012). Like us, they offer an unsupervised solution, in their case a generative Dirichlet Process model
+which jointly creates a segmentation of the corpus and a multiword term vocabulary. Their method,
+however, requires full Gibbs sampling with thousands of iterations through the corpus (Newman et al.
+report using 5000), an approach which is simply not tractable for the large corpora that we address in
+this paper (which are roughly 1000 times larger than theirs). Though the model is general, their focus is
+limited to term extraction, and for larger terms they compare only with the c-value approach of Frantzi
+et al. (2000). Other closely related work includes general tools available for creating multiword lexicons
+using association measures or otherwise exploring the collocational behavior of words (Kilgarriff and
+Tugwell, 2001; Araujo et al., 2011; Kulkarni and Finlayson, 2011; Pedersen et al., 2011). Other related
+but distinct tasks include syntactic chunking (Abney, 1991) and word segmentation for Asian languages,
+in particular Chinese (Emerson, 2005).
+754
+3 Method
+3.1 Prediction-based segmentation
+Our full method consists of multiple independent steps, but it is based on one central and relatively simple
+idea that we will introduce first. Given a sequence of words, w
+1
+. . .w
+n
+, and statistics (i.e. n-gram counts)
+about the use of these words in a corpus, we first define p(w
+i
+|w
+j,k
+) as the conditional probability of some
+word w
+i
+appearing with some contextual subsequence w
+j
+. . .w
+i?1
+,w
+i+1
+. . .w
+k
+,1 ? j ? i ? k ? n. In the
+case i = j = k, this is simply the marginal probability, p(w
+i
+). We then define the word predictability
+of some w
+i
+in the context w
+1,n
+as the log of the maximal conditional probability of the word across all
+possible choices of j and k:
+pred(w
+i
+,w
+1,n
+) = max
+j,k
+log p(w
+i
+|w
+j,k
+)
+We can define predictability for the entire sequence then as:
+pred(w
+1,n
+) =
+n
+?
+i=1
+pred(w
+i
+,w
+1,n
+)
+Now we consider the case where we have a set of possible segmentations S of the sequence, where
+each segmentation s ? S can be viewed as a (possibly empty) set of segment boundaries ?s
+0
+,s
+1
+, . . . ,s
+m
+?.
+Among the available options, our optimal segmentation is:
+argmax
+s?S
+m?1
+?
+i=0
+pred(w
+s
+i
+,s
+i+1
+?1
+)
+That is, we will prefer the segmentation which maximizes the overall predictability of each word in the
+sequence, under the restriction that we only predict words using the context within their segments. This
+reflects our basic assumption that words within a good segment, i.e. a multiword unit, are (much) more
+predictive of each other than words outside a unit. Note that if our probabilities are calculated from the
+full set of n-gram counts for the corpus being segmented and the set of possible segmentations S is not
+constrained, a segmentation with a smaller number of breaks will generally be preferred over one with
+more breaks. However, in practice we will be greatly constraining S and also using probabilities based
+on only a subset of all the information in the corpus.
+3.2 Extraction of n-grams
+In order to carry out a segmentation of the corpus using this method, we first need to extract statistics
+in the form of n-gram counts. Given a minimum occurrence threshold, this can be done efficiently even
+for large corpora in an iterative fashion until all n-grams have been extracted. For all our experiments
+here, we limit ourselves to n-grams that appear at least once in 10 million tokens, and we did not collect
+n-grams for n > 10 (which are almost always the result of duplication of texts in the corpus). For the pur-
+poses of calculating conditional probabilities given surrounding context in our predictive segmentation,
+we collected both standard n-grams as well as (for n? 3) skip n-grams with a missing word (e.g. basic *
+processes where the asterisk indicates that any word could appear in that slot). Here we use lower-cased
+unlemmatized tokens, excluding punctuation, though for languages with more inflectional morphology
+than English, lemmatization would be advised.
+3.3 Initial segmentation
+Given these n-gram statistics, our initial segmentation proceeds as follows: For each sentence in the
+corpus, we identify all maximum length n-grams in the sentence, i.e. all those n-grams for n ? 2 where
+there is no larger n-gram which contains them while still being above our threshold of occurrence. These
+n-grams represent the upper bound of our segmentation: we will never break into segments larger than
+these. However, there are many overlaps among these n-grams (in fact, with a low threshold the vast
+majority of n-grams overlap with at least one other), and for proper segmentation we need to resolve
+755
+Figure 1: Three-step procedure for n-gram decomposition into multiword units. a) shows the maximal
+n-grams identified in the sentence, b) is the segmentation after the initial pass of the corpora, and c)
+shows further decomposition of segments after a pass through the lexicon resulting from b).
+all overlaps between these maximal n-grams by inserting at least one break. For this we apply our
+prediction-based decomposition technique. In our discussion in Section 3.1, we did not consider how
+the possible segmentations were selected, but now we can be explicit: the set S consists of all possible
+segmentations which minimally resolve all n-gram overlaps. By minimally resolve, we mean that the
+removal of any breakpoint from our set would result in an unresolved overlap: in short, there are no
+extraneous breaks, and therefore no cases where a possible set of breaks is a subset of another possible
+set. Figure 1a shows a real example: if we just consider the last three maximal n-grams, there are two
+possible minimal breaks: a single break between in and basic or two breaks, one between roles and in
+and one between basic and cellular.
+Rather than optimizing over all possible breaks over the whole sentence, which is computationally
+problematic, we simplify the algorithm somewhat by moving sequentially through each n-gram over-
+lap in the sentence, taking any previous breaks as given while considering only the minimum breaks
+necessary to resolve any overlaps that directly influence the segmentation of the two overlapping spans
+under consideration, which is to say any other overlapping spans which contain at least one word also
+contained in at least one of overlapping spans under consideration. For example, in Figure 1a we first
+deal independently with each of the first two overlaps (the spans modified with glucose and are enriched
+in lipid rafts, and then we consider the final two overlaps together: The result is shown in Figure 1b. In
+development, we tested including more context (i.e. considering second-order influence) and found no
+benefit. Since we do not consider breaks other than those required to resolve overlapping n-grams, these
+segments tend to be long. This is by design; our intention is that these segments will subsume as many
+multiword units as possible, and therefore will be amenable to refinement by further decomposition in
+the next step.
+3.4 Lexicon decomposition
+Based on the initial segmentation of the entire corpus, we extract a tentative lexicon, with corresponding
+counts. Then, in order from longest to shortest, we consider decomposition of each entry. First, using
+our prediction-based decomposition method, we find the best decomposition of the entry into two parts;
+note that we only need to consider one break per lexicon entry, since breaks in the (smaller) parts will
+be considered independently later in the process. If the count in our lexicon is below the occurrence
+threshold, we always carry out this split, which means we remove the entry from the lexicon and (after
+all n-grams of that length have been processed, so as to avoid ordering effects) add its counts to the
+counts of n-grams of its best decomposition. If the count is above the threshold, we preserve the full
+entry (for entries of length 3 or greater) only if the following inequality is true for each subsegment w
+j,k
+in the full entry w
+1,n
+:
+k
+?
+i= j
+pred(w
+i
+,w
+1,n
+)? pred(w
+j,k
+) > log p(w
+j,k
+)? log p(w
+1,n
+)
+756
+That is, the ratio (expressed as a difference of logarithms) between the count of the segment and the full
+unsegmented entry (in our preliminary lexicon) is lower than the ratio of the predictability (as defined
+in our discussion of prediction-based decomposition) of the words in the segment with the context of
+the full entry to the predictability of words with only the context included within the segment (which
+is just pred(w
+j,k
+)). In other words, we preserve only longer multiword sequences in our lexicon when
+any decrease in the probability of the full entry relative to its smaller components
+2
+is fully offset by an
+increase in the conditional probability of the individual words of that segment when the larger context
+from the full segment is available. For example, after we have decided on a potential break in the phrase
+basic | cellular process from our example in Figure 1, we compare the (marginal) probability ?lost? by
+including basic in a larger phrase, i.e. the ratio of counts of basic to basic cellular process in our lexicon),
+to the (conditional) probability ?gained? by how much more predictable the segment is in this context;
+when the segment in question is a single word, as in this case, this is simply p(basic|cellular process)/
+p(basic), and we break only when there is more gain than loss. This restriction could be parameterized
+for more fine-grained control of the trade-off between larger and smaller segments in specific cases, but
+in the interest of avoiding nuisance parameters we just use it directly. Once we have decomposed all
+eligible entries to create a final lexicon, we apply these same decompositions to the segments in our
+initial segmentation to produce a final segmentation (see Figure 1c).
+4 Evaluation
+Multiword lexicons are typically evaluated in one of two ways: direct comparison to an existing lexicon,
+or precision of the top n candidates offered by the model. There are problems with both these meth-
+ods, since there are no resources that offer a truly comprehensive treatment of multiword units, defined
+broadly, and the top n candidates from a model for small n may not be a particularly representative sam-
+ple: in particular, they might not include more common terms, which should be given more weight when
+one is considering downstream applications. Given the dual output of our model, evaluation using seg-
+mentation is another option, except that creating full gold standard segmentations would be a particularly
+difficult annotation task, since our notion of multiword unit is a broad one.
+In light of this, we evaluate by taking the best from these various approaches. Given an existing mul-
+tiword lexicon, we can evaluate not by comparing our lexicon to it directly, but rather by looking at the
+extent to which our segmentation preserves these known multiword units. There are several major ad-
+vantages to this approach: first, it does not require a full lexicon or gold standard segmentation; second,
+common units are automatically given more weight in the evaluation; third, we can use it for evaluation
+in very large corpora. Our two main metrics are subsumption (Sub), namely the percentage of multiword
+tokens that are fully contained with a segment, and exact matches (Exact), the percentage of multiword
+tokens which correspond exactly to a segment. Exact matches would seem to be preferable to subsump-
+tion, but in practice this is not necessarily the case, since our method often identifies valid compound
+terms and larger constructions than our reference lexicon contains; for example, WordNet only contains
+the expression a lot, but when appearing as part of a noun phrase our model typically segments this to a
+lot of, which, in our opinion, is a preferable segmentation. To quantify overall performance, we calculate
+a harmonic mean (Mean) of the two metrics. We also looked specifically at performance for terms of 3
+or more words (Mean 3+), which are less studied and more relevant to our interests.
+Our second evaluation focuses on the quality of these longer terms with a post hoc annotation of
+output from our model and the best alternatives. We randomly extracted pairs of segments of three words
+or more where our model mostly but not entirely overlapped with an alternative model (750 examples
+per corpus per method), and asked CrowdFlower workers to choose which output seemed to be a better
+multiword unit in the context; they were shown the entire sentence with the relevant span underlined,
+and then the two individual chunks separately. To ensure quality, we used our multiword lexicon to
+2
+This probability is based on the respective counts in our preliminary lexicon at this step in the process, not the original n-
+gram probability. One key advantage to doing the initial segmentation first is that words that appear consistently in larger units,
+an extreme example is the bigram vector machine in the term support vector machine, already have low or zero probability, and
+will not appear in the lexicon or be good candidate segments for decomposition. This rather intuitively accomplishes what the
+c-value metric is modeling by applying negative weights to candidates appearing in larger n-grams.
+757
+create gold standard examples (comparing known multiword units to purposely bad segmentations which
+overlapped with them), and used them to test and filter out unreliable workers: for inclusion in our final
+set, we required a minimum 90% performance on the test questions. We also limited each contributor to
+only 250 judgments, so that our results reflected a variety of opinions.
+We considered a number of alternatives to our approach, though we limited the comparison to methods
+which could predict segments greater than 2 words, those that were computationally feasible for large
+corpora, and those which segment into single words only as a last resort: approaches which prefer single
+words cannot do well under our evaluation because we have no negative examples, only positive ones.
+The majority of our alternatives involve ranking all potential n-grams (not just the maximal) with n? 2
+and then greedily segmenting them: big-n prefers longer n-grams (with a backoff to counts); c-value is
+used for term extraction (Frantzi et al., 2000) and was also compared to by Newman et al. (2012); ME
+refers to the Mutual Expectation metric (Dias et al., 1999); and PMI uses a standard extension of PMI to
+more than 2 words. We also tested standard (pairwise) PMI as a metric for recursively joining contiguous
+units (starting with words) into larger units until no larger units can be formed (PMI join), and a version
+of our decomposition algorithm which selects the minimal breaks which maximize total word count
+across segments rather than total word predictability (count decomp); the fact that traditional association
+metrics are not defined for single words prevents us from using them as alternatives to predictability in
+our decomposition approach. Finally, we also include an oracle which chooses the correct n-grams when
+they are available for segmentation, but which still fails for units that are below our threshold.
+We evaluated our model in four large English corpora: news articles from the Gigaword corpus (Graff
+and Cieri, 2003) (4.9 billion tokens), out-of-copyright texts from the Gutenberg Project
+3
+(1.7 billion
+tokens), a collection of abstracts from PubMed (2.2 billion tokens)
+4
+, and blogs from the ICWSM 2009
+social media corpus (Burton et al., 2009) (1.1 million tokens). Our main comparison lexicon is WordNet
+3.0, which contains a good variety of expressions appropriate to the various genres, but we also included
+multiword terms from the Specialist Lexicon
+5
+for better coverage of the biomedical domain. One issue
+with our evaluation is that it assumes all tokens are true instances of the multiword unit in question; we
+carried out a manual inspection of multiword tokens identified by string match in our development sets
+(5000 sentences set aside from each of the abstract and blog corpora), and excluded from the evaluation
+a small set of idiomatic expressions (e.g. on it, do in) whose literal, non-MWE usage is too common for
+the expression to be used reliably for evaluation; otherwise, we were satisfied that the vast majority of
+multiword tokens were true matches. When one multiword token appeared within another, we ignored
+the smaller of the two; when two overlapped in the text, we ignored both.
+5 Results
+All the results for the main evaluation are shown in Table 1. First, we observe that our initial segmentation
+always provides the highest subsumption, and our final lexicon always provides the highest harmonic
+mean, with a modest drop in subsumption but a huge increase in exact matches. The alternative models
+fall roughly into two categories: those which have reasonably high subsumption, but few exact matches
+(PMI rank seems to be the best of these) and those that have many exact matches (sometimes better
+than either of our models) but are almost completely ineffective for identifying multiword units of length
+greater than 2 (ME rank and c-value, with ME offering more exact matches): the latter phenomenon is
+attributable to the predominance of two-word multiword tokens in our evaluation, which means a model
+can do reasonably well by guessing mostly two-word units. For the corpora with more multiword units
+of greater length, i.e. the PubMed abstracts and the Gutenberg corpus, our method also provides the most
+exact matches. Our best results come in the PubMed corpus, probably because the texts are the most
+uniform, though results are satisfactory in all four corpora tested here, which represent a considerable
+range of genres.
+3
+http://www.gutenberg.org . Here we use the English texts from the 2010 image, with headers and footers filtered out using
+some simple heuristics.
+4
+http://www.ncbi.nlm.nih.gov/pubmed/
+5
+http://www.nlm.nih.gov/research/umls/new users/online learning/LEX 001.htm
+758
+Table 1: Performance in segmenting multiword units of various segmentation methods in 4 large corpora.
+Sub. = Subsumption (%); Exact = Exact Match (%); Mean = Harmonic mean of Sub and Exact; Mean 3+
+= Harmonic mean of Sub and Exact for multiword tokens of at length 3 or more. Bold is best in column
+for corpus, excluding the oracle.
+Method
+Gigaword news articles Gutenberg texts
+Sub Exact Mean Mean 3+ Sub Exact Mean Mean 3+
+Oracle 97.1 97.1 97.1 95.5 97.0 97.0 97.0 97.8
+big-n rank 88.7 28.8 43.5 51.4 84.9 30.1 44.4 57.5
+c-value rank 69.1 66.1 67.6 23.3 58.6 57.7 58.2 12.6
+ME rank 75.3 70.0 72.6 14.4 63.2 61.0 62.1 10.9
+PMI rank 90.8 30.0 45.1 53.5 86.9 32.8 47.7 61.2
+PMI join 83.1 32.8 47.0 43.7 77.7 32.6 46.0 45.5
+Count decomp 75.9 31.3 44.3 47.1 69.2 31.5 43.3 54.2
+Prediction decomp, initial 92.2 36.4 52.2 64.4 89.3 38.7 54.0 71.6
+Prediction decomp, final 85.6 66.4 75.2 63.8 78.9 62.8 70.0 61.6
+Method
+PubMed abstracts ICWSM blogs
+Sub Exact Mean Mean 3+ Sub Exact Mean Mean 3+
+Oracle 91.9 91.9 91.9 84.0 96.5 96.5 96.5 99.4
+big-n rank 82.2 40.1 53.9 55.5 86.1 33.3 48.0 60.8
+c-value rank 63.2 62.3 62.7 21.7 64.3 62.4 63.3 14.6
+ME rank 68.5 65.8 67.1 9.1 69.7 66.2 67.9 11.7
+PMI rank 87.0 41.4 56.1 58.3 88.4 35.7 50.8 63.4
+PMI join 79.8 39.7 53.0 46.8 80.3 35.4 49.1 47.0
+Count decomp 71.0 38.4 49.9 50.4 71.5 33.5 45.6 53.9
+Prediction decomp, initial 88.6 50.3 64.1 67.2 90.5 40.3 55.8 70.9
+Prediction decomp, final 85.2 73.4 78.8 69.5 83.2 64.9 72.9 66.9
+Table 2: CrowdFlower pairwise preference evaluation, our full model versus a selection of alternatives
+Comparison Preference for Prediction decomp, final
+Prediction decomp, final vs. ME 57.9%
+Prediction decomp, final vs. Multi PMI 71.0%
+Prediction decomp, final vs. Prediction decomp, initial 70.5%
+For our crowdsourced evaluation, we compared our final model to the best models of each of the two
+major types from the first round, namely Mutual Expectation and PMI rank, as well as our initial seg-
+mentation. The results are given in Table 2. Our full model is consistently preferred over the alternatives.
+This is not surprising in the case of the high-subsumption, low-accuracy models, since the resulting seg-
+ments often have extraneous words included: an example is in spite of my, which our model correctly
+segmented to just in spite of. Given that the ME ranking rarely produces units larger than 2 words, how-
+ever, we might have predicted that when it does it would be more precise than our model, but in fact
+our model was somewhat preferred (a chi-square test confirmed that this result was statistically different
+from chance, p < 0.001). An example of an instance where our model offered a better segmentation is
+call for an end to as compared to for an end to from the ME model, though there are also many instances
+where the ME segmentation is more sensible, e.g. what difference does it make as compared to difference
+does it make from our model.
+Looking closer at the output and vocabulary of our model across the various genres, we see a wide
+range of multiword phenomena: in the medical abstracts, for instance, there is a lot of medical jargon (e.g.
+daily caloric intake) but also other larger connective phrases and formulaic language (e.g. an alternative
+explanation for, readily distinguished from). The blogs also have (very different) formulaic language of
+759
+the sort studied using lexical bundles (e.g. all I can say is that, where else can you) and lots of idiomatic
+language (e.g. reinventing the wheel, look on the bright side). The idioms from the Gutenberg, not
+surprisingly, tend to be less clich?ed and more evocative (e.g. ghost of a smile); there are rather stodgy
+expressions like far be it from me and conjunctions we would not see in the other corpora (e.g. rocks
+and shoals, masters and mistresses). By contrast, many of the larger expressions in the news articles are
+from sports and finance (e.g. investor demand for, tied the game with), with many that would be filtered
+out using the simple grammatical filters often applied in this space. However, for bigrams in particular,
+some additional syntactic filtering is clearly warranted.
+6 Conclusion
+We have presented an efficient but effective method for segmenting a corpus into multiword collocational
+units, with a particular focus on units of length greater than two. Our evaluation indicates that this
+method results in high-quality segments that capture a variety of multiword phenomena, and is better
+in this regard than alternatives based on relevant association measures. This result is consistent across
+corpora, though we do particularly well with highly stereotyped language such as seen in the biomedical
+domain.
+Future work on improving the model will likely focus on extensions related to syntax, for instance
+bootstrapped POS filtering and discounting of predictability that can be attributed solely to syntactic
+patterns. Our method could also be adapted to decompose full syntactic trees rather than sequences of
+words, offering tractable alternatives to Bayesian approaches that identify recurring tree fragments (Cohn
+et al., 2009); this would allow us, for instance, to correctly identify constructions with long-distance
+dependencies or other kinds of variation where relying on the surface form is insufficient (Seretan, 2011).
+With regards to applications, we will be investigating how to help learners notice these chunks when
+reading and then use them appropriately in their own writing; this work will eventually intersect with
+the well-established areas of grammatical error correction (Leacock et al., 2014) and automated essay
+scoring (Shermis and Burstein, 2003). As part of this, we will be building distributional lexical repre-
+sentations of these multiword units, which is why our emphasis here was on a highly scalable method.
+Part of our interest is of course in capturing the semantics of idiomatic phrases, but we note that even
+in the case when a multiword unit is semantically compositional, it might provide de facto word sense
+disambiguation or be stylistically distinct from its components, i.e. be very specific to a particular genre
+or sub-genre. Therefore, provided we have enough examples to get reliable distributional statistics, these
+larger units are likely to provide useful information for various downstream applications.
+Acknowledgments
+This work was supported by the Natural Sciences and Engineering Research Council of Canada and the
+MITACS Elevate program. Thanks to our reviewers and also Tong Wang and David Jacob for their input.
+References
+Steven Abney. 1991. Parsing by chunks. In Robert Berwick, Steven Abney, and Carol Tenny, editors, Principle-
+Based Parsing, pages 257?278. Kluwer Academic Publishers.
+Vitor De Araujo, Carlos Ramisch, and Aline Villavicencio. 2011. Fast and flexible MWE candidate generation
+with the mwetoolkit. In Proceedings of the Multiword Expression Workshop at ACL 2011 (MWE 2011).
+Timothy Baldwin and Su Nam Kim. 2010. Multiword expressions. In Nitin Indurkhya and Fred J. Damerau,
+editors, Handbook of Natural Language Processing, Second Edition. CRC Press, Taylor and Francis Group,
+Boca Raton, FL.
+Douglas Biber, Susan Conrad, and Viviana Cortes. 2004. If you look at. . .: Lexical bundles in university teaching
+and textbooks. Applied Linguistics, 25:371?405.
+Kevin Burton, Akshay Java, and Ian Soboroff. 2009. The ICWSM 2009 Spinn3r Dataset. In Proceedings of the
+Third Annual Conference on Weblogs and Social Media (ICWSM ?09), San Jose, CA.
+760
+Yu-Hua Chen and Paul Baker. 2010. Lexical bundles in L1 and L2 academic writing. Language Learning &
+Technology, 14(2):30?49.
+Kenneth Ward Church and Patrick Hanks. 1990. Word association norms, mutual information, and lexicography.
+Computational Linguistics, 16(1):22?29.
+Trevor Cohn, Sharon Goldwater, and Phil Blunsom. 2009. Inducing compact but accurate tree-substitution gram-
+mars. In Proceedings of Human Language Technologies: The 2009 Annual Conference of the North American
+Chapter of the Association for Computational Linguistics (NAACL ?09).
+Ga?el Dias, Sylvie Guillor?e, and Jos?e Gabriel Pereira Lopes. 1999. Language independent automatic acquisition
+of rigid multiword units from unrestricted text corpora. In Proceedings of Conf?erence Traitement Automatique
+des Langues Naturelles (TALN) 1999.
+Thomas Emerson. 2005. The second international Chinese word segmentation bakeoff. In Proceedings of the
+Fourth SIGHAN Workshop on Chinese Language Processing.
+Stefan Evert. 2004. The statistics of word cooccurences?word pairs and collocatoins. Ph.D. thesis, University of
+Stuttgart.
+Afsaneh Fazly, Paul Cook, and Suzanne Stevenson. 2009. Unsupervised type and token identification of idiomatic
+expressions. Computational Linguistics, 35(1):61?103.
+Katerina Frantzi, Sophia Ananiadou, and Hideki Mima. 2000. Automatic recognition of multi-word terms: the
+c-value/nc-value method. International Journal on Digital Libraries, 3:115?130.
+David Graff and Christopher Cieri. 2003. English Gigaword. Linguistic Data Consortium, Philadelphia, PA.
+Ulrich Heid. 2007. Compuational linguistic aspects of phraseology. In Harald Burger, Dmitrij Dobrovol?skij,
+Peter K?uhn, and Neal R. Norrick, editors, Phraseology. An international handbook. Mouton de Gruyter, Berlin.
+Adam Kilgarriff and David Tugwell. 2001. Word sketch: Extraction and display of significant collocations for
+lexicography. In Proceedings of the ACL Workshop on Collocation: Computational Extraction, Analysis and
+Exploitation.
+Nidhi Kulkarni and Mark Finlayson. 2011. jMWE: A Java toolkit for detecting multi-word expressions. In
+Proceedings of the Multiword Expression Workshop at ACL 2011 (MWE 2011).
+Claudia Leacock, Martin Chodorow, Michael Gamon, and Joel Tetreault. 2014. Automated Grammatical Error
+Detection for Language Learners (2nd Edition). Morgan & Claypool.
+David Newman, Nagendra Koilada, Jey Han Lau, and Timothy Baldwin. 2012. Bayesian text segmentation for
+index term identification and keyphrase extraction. In Proceedings of the 24th International Conference on
+Computational Linguistics (COLING ?12).
+Pavel Pecina. 2010. Lexical association measures and collocation extraction. Language Resources and Evalua-
+tion, 44:137?158.
+Ted Pedersen, Satanjeev Banerjee, Bridget McInnes, Saiyam Kohli, Mahesh Joshi, and Ying Liu. 2011. The
+Ngram statistics package (text::nsp) : A flexible tool for identifying ngrams, collocations, and word associations.
+In Proceedings of the Multiword Expression Workshop at ACL 2011 (MWE 2011).
+Ivan A. Sag, Timothy Baldwin, Francis Bond, Ann Copestake, and Dan Flickinger. 2002. Multiword expressions:
+A pain in the neck for NLP. In Proceedings of the 3rd International Conference on Intelligent Text Processing
+and Computational Linguistics (CICLing ?02).
+Patrick Schone and Dan Jurafsky. 2001. Is knowledge-free induction of multiword unit dictionary headwords a
+solved problem? In Proceedings of Empirical Methods in Natural Language Processing (EMNLP ?01).
+Violeta Seretan. 2011. Syntax-Based Collocation Extraction. Springer.
+Mark D. Shermis and Jill Burstein, editors. 2003. Automated Essay Scoring: A Cross-Disciplinary Approach.
+Lawrence Erlbaum Associates, Mahwah, NJ.
+Frank Smadja. 1993. Retrieving collocations from text: Xtract. Computational Linguistics, pages 143?177.
+761
+Proceedings of the NAACL HLT 2010 Workshop on Computational Linguistics and Writing, pages 15?23,
+Los Angeles, California, June 2010. c?2010 Association for Computational Linguistics
+Grammaticality Judgement in a Word Completion Task 
+ 
+ 
+Alfred Renaud2 and Fraser Shein1,2 and Vivian Tsang1 
+1Bloorview Kids Rehab 2Quillsoft Ltd. 
+150 Kilgour Road 2416 Queen Street East 
+Toronto, ON  M4G 1R8, Canada Toronto, ON  M2A 1N1, Canada 
+{arenaud,fshein,vtsang}@bloorview.ca 
+ 
+ 
+ 
+ 
+ 
+ 
+Abstract 
+In this paper, we present findings from a hu-
+man judgement task we conducted on the ef-
+fectiveness of syntax filtering in a word com-
+pletion task.  Human participants were asked 
+to review a series of incomplete sentences and 
+identify which words from accompanying lists 
+extend the expressions in a grammatically ap-
+propriate way.  The accompanying word lists 
+were generated by two word completion sys-
+tems (our own plus a third-party commercial 
+system) where the ungrammatical items were 
+filtered out.  Overall, participants agreed more, 
+to a statistically significant degree, with the 
+syntax-filtered systems than with baseline.  
+However, further analysis suggests that syntax 
+filtering alone does not necessarily improve 
+the overall acceptability and usability of the 
+word completion output.  Given that word 
+completion is typically employed in applica-
+tions to aid writing, unlike other NLP tasks, 
+accounting for the role of writer vs. reader be-
+comes critical.  Evaluating word completion 
+and, more generally, applications for alterna-
+tive and augmentative communication (AAC) 
+will be discussed. 
+1 Introduction 
+Writers often need help from others to help with 
+spelling and grammar.  For persons with physical 
+or learning disabilities, writing can be very stress-
+ful because of a greater reliance on the assistance 
+of others.  Software tools such as word comple-
+tion are now commonly used to reduce the physi-
+cal and cognitive load of completing a word or a 
+sentence and thereby reducing a writer?s depend-
+ence on others.  But can such tools be as effective 
+as a human with adequate linguistic knowledge?  
+While it is hardly possible to completely emulate 
+a human tutor or a communication partner, the 
+purpose of this research is to investigate how 
+much linguistic knowledge is necessary to ensure 
+the usability of word completion.  Here, we will 
+focus on the grammaticality of word completion. 
+1.1 Word Completion 
+Word completion facilitates text entry by suggest-
+ing a list of words that can follow a given linguis-
+tic context.  If the desired word is in the list, the 
+user can select that word with a mouse click or a 
+keystroke, thereby saving the effort of typing the 
+remaining letters of the word.  Otherwise, the user 
+can continue typing while the software continues 
+to display new lists of words based on that input. 
+For example, consider a user wants to type 
+?That girl by the benches??   After each letter the 
+user manually enters, a system would return a list 
+of potential next words.  Say, the next letter the 
+user enters is ?w.?  A system may offer the fol-
+lowing choices: a) was, b) were, c) with, d) where, 
+e) wrapped.  By suggesting words in any given 
+context, word completion can assist in the compo-
+sition of well-formed text. 
+Typical word completion systems suggest 
+words by exploiting n-gram Markov statistical 
+models (Bentrup, 1987).  These systems probabil-
+istically determine the current word in a sentence 
+given the previous n?1 words as context, based on 
+a pre-generated n-gram language model derived 
+from a corpus.  With n typically being of low or-
+15
+der (two or three, due to sparse data and computa-
+tional issues), one consequence is that the appli-
+cability of suggested words beyond a certain word 
+distance may become somewhat arbitrary.  Fur-
+ther design improvements for word completion 
+depend on the user population and the intended 
+use.  For example, the demand on the system to 
+have a sophisticated language model may depend 
+on whether the intent is to primarily reduce the 
+physical or cognitive load of entering text.  
+Evaluation approaches can elucidate on design 
+and implementation issues for providing meaning-
+ful word choices. 
+1.2  Evaluation Approaches 
+A number of studies have been carried out to 
+evaluate the efficacy of word completion systems.  
+Koester (1994) measured time savings, which is 
+the reduction in time that the user takes to gener-
+ate a particular text with the aid of a word comple-
+tion system compared to the time taken without it.  
+The rationale for this measure is that any word 
+completion system imposes a cognitive load on its 
+users, whereby they now need to 1) change their 
+focus between the target document and the word 
+list display, and possibly between the screen and 
+keyboard; 2) visually scan the word list to decide 
+whether their intended word is present; and 3) se-
+lect the intended word with the keyboard or 
+mouse.  Others have also examined similar visual-
+cognitive issues of using word completion (e.g., 
+Tam and Wells, 2009).  The overall approach im-
+plicitly defines a user-centred approach to evalua-
+tion by having human subjects simulate the actual 
+writing process (usually in a copying, not writing 
+task).  Thus, results depend on the abilities and 
+preferences of individual subjects. 
+System-based evaluation measures exist, the 
+most common of which is keystroke savings.  This 
+measures the reduction in the number of key-
+strokes needed to produce a given text with the 
+aid of a word completion system.  Keystroke sav-
+ings is an important factor for users with physical 
+disabilities who have difficulty working with a 
+keyboard for which it is desirable to keep the 
+number of keystrokes to a minimum.  A comple-
+mentary measure, completion keystrokes, deter-
+mines how quickly a given word is predicted by 
+counting the number of characters required to 
+reach completion.  Completion keystrokes differs 
+from keystroke savings in that the latter counts the 
+letters remaining in the word. 
+In contrast to the previous two measures, both 
+of which measure at the character level, hit rate 
+measures at the word level by calculating the ratio 
+of the number of words correctly predicted to the 
+total number of words predicted.  Given a suffi-
+ciently large lexicon, hit rate can be as high as 
+100% if every letter of every word is manually 
+entered to its completion.  As this can be mislead-
+ing, hit rate is more typically measured with refer-
+ence to the number of characters already typed in 
+order to assess the system?s demand on the user. 
+These objective measures address motor load 
+independent of cognitive load.  With the exception 
+of time savings, these measures can be bench-
+marked automatically by simulating the writing 
+process by using existing texts. 
+A shortcoming of these objective measures is 
+that they focus on the reduction on the user?s 
+physical demand by simulating the entering of an 
+already written text, and effectively ignore con-
+sideration of word choices other than the unique 
+intended word.  In reality, the actual writing proc-
+ess depends also on the quality of the entire group 
+of suggested word choices with respect to the in-
+tended content.  Renaud (2002) addressed this 
+shortcoming by arguing that the syntactic and se-
+mantic relations between words can impact on 
+choice-making at the target word.  He introduced 
+two measures, validity and appropriateness, 
+measuring grammatical consistency and semantic 
+relevance of all system output, respectively.  The 
+former measure calculates the proportion of a sys-
+tem?s suggested words that is syntactically ac-
+ceptable.  The latter focuses on the proportion of 
+relevant output based on lexical and domain se-
+mantics.  Renaud compared a number of commer-
+cial systems and found a positive correlation be-
+tween the new and existing measures.  This find-
+ing also lends additional support to Wood?s 
+(1996) finding that offering syntactically and se-
+mantically appropriate choices improves perform-
+ance.  (Note that the converse may not hold true.) 
+For the remainder of this paper, we will put our 
+emphasis on the impact of linguistic content (here, 
+grammaticality) on the quality of word comple-
+tion.  The paper is organized as follows.  In the 
+next section, we will describe the need to incorpo-
+rate syntactic information in word completion.  In 
+sections 3 and 4, we will describe our human 
+16
+judgement task evaluating the grammaticality of 
+word completion.  Based on our analysis, we will 
+return to the evaluation issue in section 5 and dis-
+cuss how grammaticality alone does not address 
+the larger usability issue of word completion.  
+Here, we propose that the word completion task, 
+unlike traditional NLP tasks, requires both the 
+reader?s and writer?s perspectives, which impacts 
+the interpretation of our evaluation, and in turn 
+impacts design decisions.  In section 6, we will 
+conclude by offering a more inclusive perspective 
+on AAC. 
+2 The Demand for Syntactic Filtering 
+As shown earlier, many evaluation methods have 
+focused on 1) the proportion of key-presses nor-
+mally required during a typing session that the 
+user need not to manually enter and 2) the propor-
+tion of text words in a typing session that the sys-
+tem is able correctly to predict.  For a user with a 
+learning disability or language difficulties, a 
+greater concern is that all presented words be 
+valid, logical, and free of grammatical errors.  
+Current state-of-the-art systems suffer by suggest-
+ing words that are often syntactically implausible 
+while excluding more justifiable but less probable 
+suggestions (cf. our example in section 1).  A user 
+may be confused by inappropriate suggestions, 
+even if correct suggestions are also present. 
+To quantify the importance of syntax in word 
+completion, we compare the average hit rate 
+scores (over all words) with the hit rate scores at 
+points in sentences we consider as syntactically 
+critical (see section 3 for their selection).  Nantais 
+et al (2001) reported an overall hit rate of ap-
+proximately 56% using bigram word completion 
+after entering the first letter of a word across a 
+large document.  However, at the word location 
+where it is crucial to maintain correct syntactic 
+relation with the existing sentence fragment, hit 
+rates are often much lower.  In our study situation, 
+the hit rate is at best 39%?these syntactic chal-
+lenges tend to be semantically contentful and thus 
+present difficulties to human subjects.  Likewise, 
+the systems are expected to struggle with them.  
+Without a clear understanding of content specific 
+issues during writing, examining time and key-
+stroke savings alone does not reveal the increased 
+difficulty a user faces at these word positions.  We 
+will return to these issues in section 5. 
+2.1 Building Syntactic Knowledge 
+Knowledge of syntax can be obtained by first tag-
+ging each dictionary word with its part of speech, 
+such as noun or adjective.  This information may 
+then be used in either a probabilistic or a symbolic 
+manner.  Systems may reason probabilistically by 
+combining tag n-gram models, where the part-of-
+speech tags for the previous n?1 words in a sen-
+tence are used to predict the tag for the current 
+word, with word n-gram models that cue the re-
+sulting part(s) of speech to find words proper 
+(Hunnicutt and Carlberger, 2001).  Fazly and 
+Hirst (2003) introduced two algorithms for com-
+bining tag trigrams with word bigrams.  The first 
+algorithm involved conditional independence as-
+sumptions between word and tag models, and the 
+second algorithm involved a weighted linear com-
+bination of the two models. 
+A fundamental limitation to this approach is 
+that low-order probabilistic language models can 
+only account for relationships between closely co-
+located words.  Symbolic syntactic prediction 
+guided by a grammar, on the other hand, can deal 
+with long-distance word relationships of arbitrary 
+depth by applying rules that govern how words 
+from syntactic categories can be joined, to assign 
+all sentence words to a category.  This approach 
+uses knowledge of English grammar to analyze 
+the structure of the sentence in progress and de-
+termine the applicable syntactic categories (e.g., 
+noun, verb), along with other features (e.g., singu-
+lar, past participle), to which the currently 
+typed/predicted word must belong.  In this way a 
+word completion system is able to suggest words 
+that are grammatically consistent with the active 
+sentence fragment. 
+As such, research closer in nature to our work 
+involves parsers that process the input sentence 
+incrementally as each word is entered.  Wood?s 
+(1996) augmented phrase-structure grammar 
+showed that symbolic syntactic prediction can 
+improve overall performance when combined 
+with statistical orthographic prediction.  McCoy 
+(1998) used the augmented transition network or 
+ATN (Woods, 1970) formalism to find candidate 
+word categories from which to generate word 
+lists.  Gustavii and Pettersson (2003) used a chart 
+parser to re-rank, or filter, word lists by gram-
+matical value.  These parsing algorithms manipu-
+late some data structure that represents, and im-
+17
+poses ordering on, syntactic constituents of sen-
+tences.  Recently, we have been developing a syn-
+tax module (Renaud et al, 2010) based on an 
+ATN-style parser, which can facilitate both in-
+creasing the level of correctness in parses through 
+grammar correction, and modifying the informa-
+tion collected during parsing for a particular ap-
+plication (Newman, 2007).  Specifically, this 
+system filters words provided by n-gram 
+completion such that the word list only shows 
+words that fit an acceptable grammatical structure. 
+It operates on a longer list of the same frequency-
+ranked words our core predictor generates. Under 
+this setup, our syntax module can influence the 
+final list shown to the user by demoting 
+implausible words that otherwise would have been 
+displayed and replacing them with plausible 
+words that otherwise would not. Our rationale for 
+using a symbolic vs. a probabilistic parser in word 
+completion is beyond the scope of the current pa-
+per. 
+3 Grammaticality Judgement Experiment 
+To evaluate the impact of syntactic filtering on 
+word completion, we devised a human judgment 
+task where human subjects were asked to judge 
+the grammatical acceptability of a word offered 
+by word completion software, with or without 
+syntactic filtering.  Given a partial sentence and a 
+leading prefix for the next word, word completion 
+software presents a number of choices for the po-
+tential next word.  Although the goal is to assess 
+the grammaticality of predicted words with or 
+without syntactic filtering, the intent is to assess 
+whether the inclusion of syntactic heuristics in the 
+word completion algorithm improves the quality 
+of word choices. 
+3.1 Experimental Setup 
+In our experiment, we compared three different 
+word completion systems: our baseline comple-
+tion system (WordQ?*, henceforth ?baseline?), 
+our word completion system with syntax filtering 
+(?System B?).  We also included a third-party 
+commercial word completion system with syntax 
+filtering built-in (Co:Writer??, ?System C?).  In 
+                                                          
+* http://www.wordq.com; our baseline system uses a bigram 
+language model trained on a corpus of well-edited text. 
+? http://www.donjohnston.com/products/cowriter/index.html 
+each system, we inputted a partial sentence plus 
+the leading character for the next word.  Each sys-
+tem returned a list of five choices for the potential 
+next word.  Our subjects were asked to judge the 
+grammatical acceptability of each word (binary 
+decision: yes or no). 
+It is worth noting that the more letters are 
+manually inserted, the narrower the search space 
+becomes for the next word.  Nantais et al (2001) 
+suggested that after inserting two characters, the 
+hit rate via automatic means can be as high as 
+72%; the hit rate for humans is likely much 
+higher.  Given that our goal is to examine the 
+grammaticality of word choices and not hit rate, 
+providing only one leading letter allows sufficient 
+ambiguity on what the potential next word is, 
+which in turn allows for a range of grammatical 
+choices for our judgement task. 
+3.2 Sentence Selection 
+We selected our test sentences from Canadian 
+news sources (Toronto Star and the Globe and 
+Mail), which are considered reliably grammatical.  
+We chose a total of 138 sentences.?  Each sen-
+tence was truncated into a fragment containing the 
+first x-1 words and the first character of the xth 
+word, where x ranges from three to ten inclusive.  
+The truncation position x was deliberately selected 
+to include a variety of grammatical challenges. 
+We divided the sentence fragments into nine 
+types of grammatical challenges: 1) subject-verb 
+agreement; 2) subject-verb agreement in question-
+asking; 3) subject-verb agreement within a rela-
+tive clause; 4) appositives; 5) verb sequence (aux-
+iliary verb-main verb agreement); 6) case agree-
+ment; 7) non-finite clauses; 8) number agreement; 
+and 9) others. 
+For example, the sentence ?That girl by the 
+benches was in my high school? from section 1.1 
+can be used to test the system?s ability to recog-
+nize subject-verb agreement if we truncate the 
+sentence to produce the fragment ?That girl by the 
+benches w___.?  Here, subject-verb agreement 
+should be decided against the subject ?girl? and 
+not the (tempting) subject ?benches.? 
+                                                          
+? We did not pick a larger number of sentences due to the 
+time constraint in our experimental setup. The rationale is to 
+avoid over-fatiguing our human subjects (approximately an 
+hour per session). Based on our pilot study, we were able to 
+fit 140 sentences over three one-hour sessions. 
+18
+After the initial selection process, we reduced 
+our collection to 123 partial sentences.  Because 
+the sentences were not evenly distributed across 
+the nine categories, we divided the sentences into 
+three sets such that the frequency distribution of 
+the sentence types was the same for all three sets 
+(41 sentences per set).  The three word completion 
+systems were each assigned a different set.? 
+3.3 Grammaticality Judgements 
+We fed each partial sentence into the correspond-
+ing system to produce a word list for grammatical 
+judgement.  Recall our example earlier, given five 
+word choices per partial sentence, for each word 
+choice, our subjects were asked to judge its 
+grammatical acceptability (yes or no).  
+We recruited 14 human subjects, all native 
+speakers of English with a university education.  
+Each subject was presented all 123 sentences cov-
+ering the three systems, in a paper-based task.  
+The sentence order was randomized and the sub-
+jects were unaware of which system produced 
+what list. 
+Given that each system produced a list of five 
+options for each partial sentence, each subject 
+produced 5?41=205 judgements for each system.  
+There were 14 sets of such judgements in total. 
+4 Results and Analysis 
+Our primary objective is to examine the subjects? 
+agreement with the system, and whether the sub-
+jects generally agree among themselves.  Our ra-
+tionale is this.  If the subjects generally agree with 
+one another, then there is an overall agreement on 
+the perception of grammaticality in word comple-
+tion.  If this is indeed the case, we then need to 
+examine how and why our subjects agree or dis-
+agree with the systems.  Otherwise, if there is low 
+inter-subject agreement, aside from issues related 
+to the experimental setup, we need to reconsider 
+whether offering grammatical word completion 
+choices is indeed practical and possible. 
+We first calculated individual participant 
+agreement with the output of each system (i.e., 
+                                                          
+? We initially to used three different sets, i.e., one set per 
+system, to avoid a sampling ?fluke? of different grammatical 
+difficulties/categories. However, for exactly the same reason, 
+we also tested our system using the two sets for the other two 
+systems for ease of comparison. See section 4.1 for details. 
+averaged over all participants).  The baseline 
+scored 68%.  System B scored 72% and System C 
+scored 74%.  Thus, an early important result was 
+that syntax assistance in general, independent of 
+particular approach or algorithm, does appear to 
+improve subject agreement in a word completion 
+task.  (Note that we treat system C as a black box 
+as we are not privy to its algorithms, which are 
+not published.)  
+Overall, the grammaticality of a given test word 
+(i.e., averaged over all test words) had an average 
+agreement of 85%, or by 12 of the 14 participants.  
+The percentage agreement for each system was 
+84% for the baseline, 87% for system B, and 86% 
+for system C.  If at least two-thirds of the partici-
+pants (10 of 14) agreed on the grammaticality of a 
+particular test word, we considered the collective 
+opinion to be consistent for that word and de-
+clared a consensus.  Participants reached consen-
+sus on 77% of the test words for the baseline, 82% 
+of the test words for system B, and 80% of the test 
+words for system C.  
+Next, we calculated consensus participant 
+agreement for each system.  This measure was 
+different from the previous in that we considered 
+only those cases where 10 or more of the 14 par-
+ticipants agreed with one another on the gram-
+maticality of a system?s test word and discarded 
+all other cases.  In 75% of the consensus cases for 
+the baseline, the subjects agreed with the system 
+(by approving on the grammaticality); in the other 
+25% of the consensus cases the subjects disagreed 
+with the system.  System B scored 78% on the 
+consensus agreement and system C scored 81%. 
+A repeated-measures analysis of variance 
+(ANOVA) was performed on the data.  For both 
+individual and consensus participant agreement, 
+each of Systems B and C outperformed the base-
+line system (statistically significant, p<.05), while 
+the difference between the two systems with syn-
+tax awareness was not statistically significant. 
+To summarize our findings, our subjects gener-
+ally found the output grammatically more accept-
+able if syntactic assistance was built in (72% and 
+74% over 68% in raw participant agreement; 78% 
+and 81% over 75% in consensus agreement).  The 
+behaviour of our System B generally was in line 
+with the behaviour of the third-party System C. 
+Finally, the agreement among subjects for all sys-
+tems was quite high (~85%) and is considered 
+reliable. 
+19
+4.1  Subject Agreement with Other Systems 
+To further understand the behaviour of our own 
+system (in contrast to our subjects? judgements), 
+we create two new systems, A' and C' based on 
+the output of the baseline system and the third-
+party System C. Recall that the sentence set used 
+in each system is mutually exclusive from the set 
+used in another system.  Therefore, this setup in-
+troduces an additional set of 41 sentences ? 5 pre-
+dicted words ? 2 systems = 410 judgements. 
+Our setup is simple: we feed into our parser 
+each of the sentence fragments for the correspond-
+ing system, along with each predicted word origi-
+nally produced.  If our parser accepts the word, 
+the analysis remains unchanged.  Otherwise, we 
+count it as a ?negative? result, which we explain 
+below. 
+Consider again our earlier example, ?The girl 
+by the benches w___.?  Say system C' produces 
+the following options: a) was, b) were, c) with, d) 
+where, e) wrapped.  We then attempt to generate a 
+partial parse using the partial sentence with each 
+predicted word, i.e., ?The girl by the benches 
+was,? ?The girl by the benches were,? and so on.  
+If, for instance, our parser could not generate a 
+parse for ?The girl by the benches where,? then 
+we would treat the word choice ?where? as not 
+approved for the purpose of recalculating subject 
+agreement.  So if any subjects had approved its 
+grammaticality (i.e., considered it a grammatical 
+next word), then we counted it as a disagreement 
+(between the parser and the human judge), other-
+wise, we considered it an agreement.  
+Consider the following example.  One partial 
+sentence for System C was ?Japanese farmers 
+immediately pick the shoots which a[m]??  Only 
+1 of 14 judges agreed with it.  System C' also 
+flagged ?am? as ungrammatical.  Now 13 judges 
+agreed with it. 
+On the other hand, consider this partial sen-
+tence originally from the baseline system, ?The 
+reason we are doing these i[nclude]?? where 10 
+judges said yes but our parser could not generate a 
+parse.  In this case, A' scores 4 on agreement. 
+Overall, A' overrode 10 decisions and scored 
+71% agreement as a result.  That is a 3% im-
+provement over the baseline 68% score.  Nine of 
+the 10 reversed consensus in a positive direction 
+and 1 (example above) reversed consensus in a 
+negative direction.  In comparison, C' overrode 6 
+decisions, and scored 76% (2.0% improvement 
+over the original 74%).  Five of 6 cases reversed 
+consensus, all in a positive direction.  (The other 
+case reversed a non-consensus in a positive direc-
+tion.)  Given that the theoretical maximum agree-
+ments for the two systems are 84% and 86% (i.e., 
+regardless of polarity), there is considerable in-
+crease in the subject agreement. 
+It is worth noting that many subjects made the 
+number agreement mistake due to proximity.  In 
+the previous example, ?The reason we are doing 
+these i[nclude]??, the subjects made the incorrect 
+agreement linking ?include? to ?these? instead of 
+linking to ?the reason.?  While these cases are not 
+prevalent, this is one reason (among many) that 
+the theoretical maximum agreement is not 100%. 
+4.2  System?s vs. Subjects? Perspective 
+Although the agreement between the systems and 
+the subjects were high, no system achieved perfect 
+agreement?many words were considered un-
+grammatical extensions of the partial sentences.  
+We see two possible explanations: 1) the dis-
+agreeable output was erroneous; or 2) the dis-
+agreeable output was grammatical but judged as 
+ungrammatical under certain conditions. 
+We manually examined the parse trees of the 
+?disagreeable? cases from our system.  Interest-
+ingly, in most cases, we found there exists a rea-
+sonable parse tree leading to a grammatical sen-
+tence.  We thus conclude that grammaticality 
+judgements of partial sentences might not com-
+pletely reflect the underlying improvement of the 
+word completion quality.  That is, discrepancies 
+between human and computer judgement need not 
+point to a poor quality syntax filter; instead, it 
+may indicate that the system is exhibiting correct 
+behaviour but simply disagrees with subjects on 
+the particular grammatical cases in question.  In 
+such cases, subjects? disagreement with the sys-
+tem does not provide sufficient grounds for mak-
+ing modifications to the system?s behaviour.  
+Rather, it is worth examining the factors leading 
+to the subjects? perception of a word as an un-
+grammatical extension of a partial sentence. 
+5 Discussion 
+Overall, our results indicate that our subjects 
+agree with the grammaticality of word completion 
+more when syntactic filtering is used than not.  
+20
+That said, in light of the disagreeable cases, we 
+believe that the quality of word completion may 
+not be so straightforwardly evaluated. 
+5.1 Selectional Restriction 
+Take this example, ?The plane carrying the sol-
+diers a___.?  The next word ?are? was unani-
+mously considered ungrammatical by our human 
+judges.  Consider the following full sentence ver-
+sion of it: ?The plane carrying the soldiers are 
+contemplating is too difficult a task.?  In this case, 
+the subject is ?the plane carrying? (as an activity), 
+the relative clause is ?the soldiers are contemplat-
+ing?, and finally, the verb phrase is ?is too diffi-
+cult a task.?  This sentence may be difficult to in-
+terpret but a meaningful interpretation is possible 
+syntactically and semantically.  
+Consider the following variation, ?The political 
+situation the soldiers a___.?  In this case, it is not 
+difficult to conceive that ?are? is a possible next 
+word, as in ?The political situation the soldiers are 
+discussing is getting worse.?  The syntactic con-
+struction is [noun phrase] [relative clause] [verb 
+phrase].  Both partial sentences have a potential 
+grammatical parse.  Why then is one considered 
+grammatical and the other not? 
+Sentences that induce midpoint reading diffi-
+culties in humans are well known in psycholin-
+guistics and are referred to as garden-path sen-
+tences (Frazier, 1978).  Reading ?the plane carry-
+ing the soldiers? induces an expectation in the 
+reader?s mind that the sentence is about the plane 
+doing the carrying, and not about the carrying of 
+the plane by the soldiers, leading to a ?short cir-
+cuit? at the word ?are.?  
+In linguistics and CL, one aspect of this phe-
+nomenon, selectional restriction, has been ex-
+plored previously (most notably Levin, 1993 and 
+Resnik, 1995).  Selectional restriction is defined 
+as the semantics of a verb restricting the type of 
+words and phrases that can occur as its arguments.  
+Essentially, the meaning of the verb makes an im-
+pact on what is possible syntactically and seman-
+tically.  What we observe here is a generalized 
+case where it is no longer only about a verb plac-
+ing syntactic and semantic restrictions on its sur-
+rounding words.  Instead, we observe how a word 
+or a number of words influencing the semantic 
+interpretation, and in turn impacting on the per-
+ception of grammaticality of the next word (cf. hit 
+rate issues in section 2). 
+5.2  Evaluation Approach 
+Although our original intent was to study the 
+grammaticality of word completion, ultimately the 
+question is what impacts on the quality of word 
+completion.  It is without a doubt that the gram-
+maticality of the next word suggestions impacts 
+on the perception of the quality of word comple-
+tion.  However, we believe the key hinges on 
+whose perspective of quality is considered, which 
+then becomes a usability issue. 
+Recall that word completion is designed to aid 
+the writing process.  The curious part of our 
+evaluation was that we devised it as a grammati-
+cality judgement task via reading.  Is grammati-
+cality different when one is reading vs. writing?  
+We consider this issue in two ways. 
+ 
+Partial Sentences vs. Full Sentences 
+ 
+Let us revisit our garden-path example: 
+1a. The plane carrying the soldiers a[re]? 
+1b. The plane carrying the soldiers are 
+ contemplating is not that difficult a task. 
+2a. The political situation the soldiers a[re]? 
+2b. The political situation the soldiers are
+ losing sleep over is getting worse. 
+In sentences 1a and 2a, readers have no choice but 
+to judge the grammaticality of ?are? based on the 
+existing partial sentence.  Depending on the 
+reader?s creativity, one may or may not anticipate 
+potential full sentences such as 1b and 2b.  In con-
+trast, consider an alternative experimental setup 
+where the readers were offered full sentences such 
+as 1b and 2b and were asked to judge the gram-
+maticality of ?are.?  Given the complexity of the 
+sentences (selectional restriction aside), the read-
+ers would have no choice but to consider the exis-
+tence of a relative clause, which should increase 
+the likelihood of evaluating ?are? as a grammati-
+cal component of the sentence. 
+ 
+Reading vs. Writing 
+ 
+Now we have observed the potential impact on 
+grammaticality judgements of a potential next 
+word when reading a partial sentence vs. a full 
+sentence.  That said, it needs emphasizing that the 
+21
+key issue is to evaluate the quality of a suggested 
+next word given a partial sentence, not grammati-
+cality in complete isolation.  When a user uses 
+word completion, he/she is actively engaged in the 
+writing process.  No software can truly predict the 
+intent of the writer; the full sentence is waiting to 
+be written and cannot be written a priori. 
+Consider someone who is in the process of 
+writing the sentence ?The plane carrying the sol-
+diers??  Is this writer likely to be debating in 
+his/her head whether the sentence is about the 
+plane that does the carrying or ?plane carrying? as 
+an activity?  Clearly, the writer?s intent is clear to 
+the writer him/herself.  In contrast, a sentence may 
+be perfectly grammatical and semantically rea-
+sonable, yet a reader may still find it ambiguous 
+and/or difficult to read.  In other words, the per-
+ception of grammaticality of a next word depends 
+on the task (reading vs. writing).  This is not to 
+say that our evaluation task is compromised as a 
+result.  Despite that the general grammar rules do 
+not change, our reading judgements depending on 
+the context (e.g., partial vs. full sentence) suggests 
+that the reading perspective only provide a partial 
+picture on the quality of output that is intended for 
+a writing task.  In our case, higher quality syntac-
+tic filtering (e.g., our parser here) may not lead to 
+greater usability.  
+6 Concluding Remarks 
+In this paper, we have shown that the quality of 
+word completions depends on the perspective one 
+takes.  Considering that AAC is to aid someone in 
+producing content for communication, i.e., for 
+third-party consumption, the reading-writing di-
+chotomy is too serious an issue to ignore.  This 
+issue has received some CL attention (Morris, 
+2004, 2010; Hirst, 2008, 2009) but has not been 
+discussed in the AAC literature (Tsang et al, 
+2010).  The question remains, how do we then 
+evaluate, and more generally, design and use an 
+AAC application? 
+We believe the issue is far from clear.  Take our 
+current focus?grammaticality of word comple-
+tion.  If the form of the content produced is un-
+grammatical or difficult to read from the perspec-
+tive of a reader, you risk having the reader misun-
+derstand the writer?s intent.  However, from the 
+writer?s perspective, unless he/she is perceptive of 
+the interpretation problems with his/her potential 
+readers, there is no incentive to produce content as 
+such; the writer can only produce content based 
+on his/her previous linguistic experience. 
+One may argue that corpus statistics may best 
+capture human linguistic behaviour.  For example, 
+hit rate statistics using existing corpora is one 
+such way of assessing the quality of word comple-
+tion.  However, corpora tell only one half of the 
+story?only the writing half is captured, the inter-
+pretation issues from the reading side are rarely 
+captured, if at all. 
+More important, the design of word completion 
+is setup in a way that the task consists of both a 
+reading component and a writing one?the appro-
+priateness of suggested words is assessed by the 
+writer via reading during the writing task.  In fact, 
+this is not merely a case of reading vs. writing, but 
+rather, an issue of relevance depending on the lin-
+guistic context as well as the user?s perception of 
+it.  Traditionally, researchers in CL and psycho-
+linguistics have attempted to deal with human 
+processing of linguistic content at various levels 
+(cf. the CUNY Conference on Human Sentence 
+Processing, e.g., Merlo and Stevenson, 2002).  
+However, no computational means is truly privy 
+to the content behind the linguistic form.  Content, 
+ultimately, resides in the reader?s or the writer?s 
+head, i.e., intent.  The question remains how best 
+to design AAC to aid someone to communicate 
+this content. 
+In summary, in our grammaticality judgement 
+task, incorporating syntax in word completion 
+improves the perceived quality of word choices.  
+That said, it is unclear how quality relates to us-
+ability.  Indeed, the evaluation is far from conclu-
+sive in that it only captures the reader?s perspec-
+tive and not the writer?s.  Currently, we are not 
+aware of the existence of a purely writer-based 
+evaluation for grammaticality of word completion 
+(see Lesher et al, 2002 for one curious attempt).  
+More generally, the reader-writer (or speaker-
+listener) dichotomy is unexplored in AAC re-
+search and should be considered more seriously 
+because communication (as text, speech, or oth-
+erwise) involves multiple people producing and 
+consuming content, where the perception of con-
+tent differs considerably.  The challenge of AAC 
+may lie in bridging the gap between production 
+and consumption where communication is neither 
+only about communicating intent nor making in-
+terpretations. 
+22
+Acknowledgments 
+This project is funded by Quillsoft Ltd.  We also 
+wish to thank Jiafei Niu (University of Toronto) 
+for conducting our usability study and Frank  
+Rudzicz (University of Toronto) for providing 
+helpful comments. 
+References  
+John Bentrup. 1987. Exploiting Word Frequencies and 
+their Sequential Dependencies. Proceedings of 
+RESNA 10th Annual Conference, 121?122. 
+Afsaneh Fazly and Graeme Hirst. 2003. Testing the 
+Efficacy of Part-of-Speech Information in Word 
+Completion. Proceedings of the 2003 EACL Work-
+shop on Language Modeling for Text Entry Meth-
+ods, 9?16. 
+Lyn Frazier. 1978. On Comprehending Sentences: Syn-
+tactic Parsing Strategies. Ph.D. Thesis, University 
+of Connecticut. 
+Ebba Gustavii and Eva Pettersson. 2003. A Swedish 
+Grammar for Word Prediction. Master?s Thesis, 
+Department of Linguistics, Uppsala University. 
+Graeme Hirst. 2008. The Future of Text-Meaning in 
+Computational Linguistics. In Proceedings of the 
+11th International Conference on Text, Speech and 
+Dialogue, 1?9. 
+Graeme Hirst. 2009. Limitations of the Philosophy of 
+Language Understanding Implicit in Computational 
+Linguistics. In Proceedings of the Seventh European 
+Conference on Computing and Philosophy, 108?
+109. 
+Sheri Hunnicutt and Johan Carlberger. 2001. Improv-
+ing Word Prediction Using Markov Models and 
+Heuristic Methods. Augmentative and Alternative 
+Communication, 17(4):255?264. 
+Heidi Koester. 1994. User Performance with Augmen-
+tative Communication Systems: Measurements and 
+Models. Ph.D. thesis, University of Michigan. 
+Gregory W. Lesher, Bryan J. Moulton, D. Jeffery 
+Higginbotham, and Brenna Alsofrom. 2002. Limits 
+of Human Word Prediction Performance. In Pro-
+ceedings of 2002 CSUN Conference. 
+Beth Levin. 1993. English Verb Classes and Alterna-
+tions: A Preliminary Investigation. University of 
+Chicago Press. 
+Kathleen F. McCoy. 1998. The Intelligent Word Pre-
+diction Project. University of Delaware. 
+http://ww.asel.udel.edu/nli/nlp/wpredict.html 
+Paola Merlo and Suzanne Stevenson, Eds. 2002. The 
+Lexical Basis of Sentence Processing: Formal, 
+Computational and Experimental Issues. John Ben-
+jamins Publishing Company. 
+Jane Morris. 2004. Readers? Interpretations of Lexical 
+Cohesion in Text. Conference of the Canadian As-
+sociation for Information Science, Winnipeg, Mani-
+toba. 
+Jane Morris. 2010. Individual Differences in the Inter-
+pretation of Text: Implications for Information Sci-
+ence. Journal of the American Society for Informa-
+tion Science and Technology, 61(1):141?149. 
+Tom Nantais, Fraser Shein, and Mattias Johansson. 
+2001. Efficacy of the word prediction algorithm in 
+WordQ. In Proceedings of the 2001 RESNA Annual 
+Conference, 77?79. 
+Paula S. Newman. 2007. RH: A Retro Hybrid Parser. 
+In Proceedings of the 2007 NAACL Conference, 
+Companion, 121?124. 
+Alfred Renaud. 2002. Diagnostic Evaluation Measures 
+for Improving Performance of Word Prediction Sys-
+tems. Master?s Thesis, School of Computer Science, 
+University of Waterloo. 
+Alfred Renaud, Fraser Shein, and Vivian Tsang. 2010. 
+A Symbolic Approach to Parsing in the Context of 
+Word Completion. In Preparation. 
+Philip Resnik. 1995. Selectional Constraints: An In-
+formation-Theoretic Model and its Computational 
+Realization. Cognition, 61:127?125. 
+Cynthia Tam and David Wells. 2009. Evaluating the 
+Benefits of Displaying Word Prediction Lists on a 
+Personal Digital Assistant at the Keyboard Level. 
+Assistive Technology, 21:105?114. 
+Vivian Tsang and Kelvin Leung. 2010. An Ecological 
+Perspective of Communication With or Without 
+AAC Use. In Preparation. 
+Matthew Wood. 1996. Syntactic Pre-Processing in 
+Single-Word Prediction for Disabled People. Ph.D. 
+Thesis, Department of Computer Science, Univer-
+sity of Bristol. 
+William Woods. 1970. Transition Network Grammars 
+for Natural Language Analysis. Communications of 
+the ACM, 13(10):591?606. 
+23
+NAACL-HLT 2012 Workshop on Predicting and Improving Text Readability for target reader populations (PITR 2012)., pages 33?39,
+Montre?al, Canada, June 7, 2012. c?2012 Association for Computational Linguistics
+Building Readability Lexicons with Unannotated Corpora
+Julian Brooke* Vivian Tsang? David Jacob? Fraser Shein*? Graeme Hirst*
+*Department of Computer Science
+University of Toronto
+{jbrooke,gh}@cs.toronto.edu
+?Quillsoft Ltd.
+Toronto, Canada
+{vtsang, djacob, fshein}@quillsoft.ca
+Abstract
+Lexicons of word difficulty are useful for var-
+ious educational applications, including read-
+ability classification and text simplification. In
+this work, we explore automatic creation of
+these lexicons using methods which go beyond
+simple term frequency, but without relying on
+age-graded texts. In particular, we derive infor-
+mation for each word type from the readability
+of the web documents they appear in and the
+words they co-occur with, linearly combining
+these various features. We show the efficacy of
+this approach by comparing our lexicon with an
+existing coarse-grained, low-coverage resource
+and a new crowdsourced annotation.
+1 Introduction
+With its goal of identifying documents appropriate
+to readers of various proficiencies, automatic anal-
+ysis of readability is typically approached as a text-
+level classification task. Although at least one pop-
+ular readability metric (Dale and Chall, 1995) and
+a number of machine learning approaches to read-
+ability rely on lexical features (Si and Callan, 2001;
+Collins-Thompson and Callan, 2005; Heilman et al,
+2007; Petersen and Ostendorf, 2009; Tanaka-Ishii et
+al., 2010), the readability of individual lexical items
+is not addressed directly in these approaches. Nev-
+ertheless, information about the difficulty of individ-
+ual lexical items, in addition to being useful for text
+readability classification (Kidwell et al, 2009), can
+be applied to other tasks, for instance lexical simpli-
+fication (Carroll et al, 1999; Burstein et al, 2007).
+Our interest is in providing students with educa-
+tional software that is sensitive to the difficulty of
+particular English expressions, providing proactive
+support for those which are likely to be outside a
+reader?s vocabulary. However, our existing lexical
+resource is coarse-grained and lacks coverage. In
+this paper, we explore the extent to which an auto-
+matic approach could be used to fill in the gaps of
+our lexicon. Prior approaches have generally de-
+pended on some kind of age-graded corpus (Kid-
+well et al, 2009; Li and Feng, 2011), but this kind
+of resource is unlikely to provide the coverage that
+we require; instead, our methods here are based on
+statistics from a huge web corpus. We show that
+frequency, an obvious proxy for difficulty, is only
+the first step; in fact we can derive key information
+from the documents that words appear in and the
+words that they appear with, information that can be
+combined to give high performance in identifying
+relative difficulty. We compare our automated lexi-
+con against our existing resource as well as a crowd-
+sourced annotation.
+2 Related Work
+Simple metrics form the basis of much readability
+work: most involve linear combinations of word
+length, syllable count, and sentence length (Kincaid
+et al, 1975; Gunning, 1952), though the popular
+Dale-Chall reading score (Dale and Chall, 1995) is
+based on a list of 3000 ?easy? words; a recent re-
+view suggests these metrics are fairly interchange-
+able (van Oosten et al, 2010). In machine-learning
+classification of texts by grade level, unigrams have
+been found to be reasonably effective for this task,
+outperforming readability metrics (Si and Callan,
+2001; Collins-Thompson and Callan, 2005). Var-
+33
+ious other features have been explored, including
+parse (Petersen and Ostendorf, 2009) and coherence
+features (Feng et al, 2009), but the consensus seems
+to be that lexical features are the most consistently
+useful for automatic readability classification, even
+when considering non-native readers (Heilman et
+al., 2007).
+In the field of readability, the work of Kidwell et
+al. (2009) is perhaps closest to ours. Like the above,
+their goal is text readability classification, but they
+proceed by first deriving an age of acquisition for
+each word based on its statistical distribution in age-
+annotated texts. Also similar is the work of Li and
+Feng (2011), who are critical of raw frequency as an
+indicator and instead identify core vocabulary based
+on the common use of words across different age
+groups. With respect to our goal of lowering reliance
+on fine-grained annotation, the work of Tanaka-Ishii
+et al (2010) is also relevant; they create a readability
+system that requires only two general classes of text
+(easy and difficult), other texts are ranked relative to
+these two classes using regression.
+Other lexical acquisition work has also informed
+our approach here. For instance, our co-occurrence
+method is an adaption of a technique applied in
+sentiment analysis (Turney and Littman, 2003),
+which has recently been shown to work for formal-
+ity (Brooke et al, 2010), a dimension of stylistic
+variation that seems closely related to readability.
+Taboada et al (2011) validate their sentiment lex-
+icon using crowdsourced judgments of the relative
+polarity of pairs of words, and in fact crowd sourcing
+has been applied directly to the creation of emotion
+lexicons (Mohammad and Turney, 2010).
+3 Resources
+Our primary resource is an existing lexicon, pre-
+viously built under the supervision of the one of
+authors. This resource, which we will refer to
+as the Difficulty lexicon, consists of 15,308 words
+and expressions classified into three difficulty cate-
+gories: beginner, intermediate, and advanced. Be-
+ginner, which was intended to capture the vocabu-
+lary of early elementary school, is an amalgamation
+of various smaller sources, including the Dolch list
+(Dolch, 1948). The intermediate words, which in-
+clude words learned in late elementary and middle
+Table 1: Examples from the Difficulty lexicon
+Beginner
+coat, away, arrow, lizard, afternoon, rainy,
+carpet, earn, hear, chill
+Intermediate
+bale, campground, motto, intestine, survey,
+regularly, research, conflict
+Advanced
+contingency, scoff, characteristic, potent, myriad,
+detracted, illegitimate, overture
+school, were extracted from Internet-published texts
+written by students at these grade levels, and then fil-
+tered manually. The advanced words began as a list
+of common words that were in neither of the origi-
+nal two lists, but they have also been manually fil-
+tered; they are intended to reflect the vocabulary un-
+derstood by the average high school student. Table
+1 contains some examples from each list.
+For our purposes here, we only use a subset of the
+Difficulty lexicon: we filtered out inflected forms,
+proper nouns, and words with non-alphabetic com-
+ponents (including multiword expressions) and then
+randomly selected 500 words from each level for
+our test set and 300 different words for our develop-
+ment/training set. Rather than trying to duplicate our
+arbitrary three-way distinction by manual or crowd-
+sourced means, we instead focused on the relative
+difficulty of individual words: for each word in each
+of the two sets, we randomly selected three compar-
+ison words, one from each of the difficulty levels,
+forming a set of 4500 test pairs (2700 for the de-
+velopment set): 1/3 of these pairs are words from
+the same difficulty level, 4/9 are from adjacent dif-
+ficulty levels, and the remaining 2/9 are at opposite
+ends of our difficulty spectrum.
+Our crowdsourced annotation was obtained using
+Crowdflower, which is an interface built on top of
+Mechanical Turk. For each word pair to be com-
+pared, we elicited 5 judgments from workers. Rather
+than frame the question in terms of difficulty or read-
+ability, which we felt was too subjective, we instead
+asked which of the two words the worker thought
+he or she learned first: the worker could choose ei-
+ther word, or answer ?about the same time?. They
+34
+were instructed to choose the word they did know if
+one of the two words was unknown, and ?same? if
+both were unknown. For our evaluation, we took the
+majority judgment as the gold standard; when there
+was no majority judgment, then the words were con-
+sidered ?the same?. To increase the likelihood that
+our workers were native speakers of English, we
+required that the responses come from the US or
+Canada. Before running our main set, we ran sev-
+eral smaller test runs and manually inspected them
+for quality; although there were outliers, the major-
+ity of the judgments seemed reasonable.
+Our corpus is the ICWSM Spinn3r 2009 dataset
+(Burton et al, 2009). We chose this corpus because
+it was used by Brooke et al (2010) to derive a lexi-
+con of formality; they found that it was more effec-
+tive for these purposes than smaller mixed-register
+corpora like the BNC. The ICWSM 2009, collected
+over several weeks in 2008, contains about 7.5 mil-
+lion blogs, or 1.3 billion tokens, including well over
+a million word types (more than 200,000 of which
+which appear at least 10 times). We use only the
+documents which have at least 100 tokens. The cor-
+pus has been tagged using the TreeTagger (Schmid,
+1995).
+4 Automatic Lexicon Creation
+Our method for lexicon creation involves first ex-
+tracting a set of relevant numerical features for each
+word type. We can consider each feature as defin-
+ing a lexicon on its own, which can be evaluated us-
+ing our test set. Our features can be roughly broken
+into three types: simple features, document readabil-
+ity features, and co-occurrence features. The first of
+these types does not require much explanation: it in-
+cludes the length of the word, measured in terms of
+letters and syllables (the latter is derived using a sim-
+ple but reasonably accurate vowel-consonant heuris-
+tic), and the log frequency count in our corpus.1
+The second feature type involves calculating sim-
+ple readability metrics for each document in our cor-
+pus, and then defining the relevant feature for the
+word type as the average value of the metric for all
+the documents that the word appears in. For exam-
+1Though it is irrelevant when evaluating the feature alone,
+the log frequency was noticeably better when combining fre-
+quency with other features.
+ple, if Dw is the set of documents where word type
+w appears and di is the ith word in a document d,
+then the document word length (DWL) for w can be
+defined as follows:
+DWL(w) = |Dw|
+?1 ?
+d?Dw
+?
+|d|
+i=0 length(di)
+|d|
+Other features calculated in this way include: the
+document sentence length, that is the average token
+length of sentences; the document type-token ratio2;
+and the document lexical density, the ratio of content
+words (nouns, verbs, adjectives, and adverbs) to all
+words.
+The co-occurence features are inspired by the
+semi-supervised polarity lexicon creation method of
+Turney and Littman (2003). The first step is to build
+a matrix consisting of each word type and the docu-
+ments it appears in; here, we use a binary representa-
+tion, since the frequency with which a word appears
+in a particular document does not seem directly rel-
+evant to readability. We also do not remove tradi-
+tional stopwords, since we believe that the use of
+certain common function words can in fact be good
+indicators of text readability. Once the matrix is
+built, we apply latent semantic analysis (Landauer
+and Dumais, 1997); we omit the mathematical de-
+tails here, but the result is a dimensionality reduc-
+tion such that each word is represented as a vector
+of some k dimensions. Next, we select two sets of
+seed words (P and N) which will represent the ends
+of the spectrum which we are interested in deriving.
+We derive a feature value V for each word by sum-
+ming the cosine similarity of the word vector with
+all the seeds:
+V (w) =
+?p?P cos(?(w,p))
+|P|
+?
+?n?N cos(?(w,n))
+|N|
+We further normalize this to a range of 1 to
+?1, centered around the core vocabulary word and.
+Here, we try three possible versions of P and N: the
+first, Formality, is the set of words used by Brooke
+et al (2010) in their study of formality, that is, a
+2We calculate this using only the first 100 words of the docu-
+ment, to avoid the well-documented influence of length on TTR.
+35
+set of slang and other markers of oral communica-
+tion as N, and a set of formal discourse markers and
+adverbs as P, with about 100 of each. The second,
+Childish, is a set of 10 common ?childish? concrete
+words (e.g. mommy, puppy) as N, and a set of 10
+common abstract words (e.g. concept, philosophy)
+as P. The third, Difficulty, consists of the 300 begin-
+ner words from our development set as N, and the
+300 advanced words from our development set as P.
+We tested several values of k for each of the seed
+sets (from 20 to 500); there was only small variation
+so here we just present our best results for each set
+as determined by testing in the development set.
+Our final lexicon is created by taking a linear
+combination of the various features. We can find an
+appropriate weighting of each term by taking them
+from a model built using our development set. We
+test two versions of this: by default, we use a linear
+regression model where for training beginner words
+are tagged as 0, advanced words as 1, and intermedi-
+ate words as 0.5. The second model is a binary SVM
+classifier; the features of the model are the differ-
+ence between the respective features for each of the
+two words, and the classifier predicts whether the
+first or second word is more difficult. Both models
+were built using WEKA (Witten and Frank, 2005),
+with default settings except for feature normaliza-
+tion, which must be disabled in the SVM to get use-
+ful weights for the linear combination which creates
+our lexicon. In practice, we would further normalize
+our lexicon; here, however, this normalization is not
+relevant since our evaluation is based entirely on rel-
+ative judgments. We also tested a range of other ma-
+chine learning algorithms available in WEKA (e.g.
+decision trees and MaxEnt) but the crossvalidated
+accuracy was similar to or slightly lower than using
+a linear classifier.
+5 Evaluation
+All results are based on comparing the relative dif-
+ficulty judgments made for the word pairs in our
+test set (or, more often, some subset) by the various
+sources. Since even the existing Difficulty lexicon is
+not entirely reliable, we report agreement rather than
+accuracy. Except for agreement of Crowdflower
+workers, agreement is the percentage of pairs where
+the sources agreed as compared to the total num-
+ber of pairs. For agreement between Crowdflower
+workers, we follow Taboada et al (2011) in calcu-
+lating agreement across all possible pairings of each
+worker for each pair. Although we considered using
+a more complex metric such as Kappa, we believe
+that simple pairwise agreement is in fact equally in-
+terpretable when the main interest is relative agree-
+ment of various methods; besides, Kappa is intended
+for use with individual annotators with particular bi-
+ases, an assumption which does not hold here.
+To evaluate the reliability of our human-annotated
+resources, we look first at the agreement within the
+Crowdflower data, and between the Crowdflower
+and our Difficulty lexicon, with particular attention
+to within-class judgments. We then compare the
+predictions of various automatically extracted fea-
+tures and feature combinations with these human
+judgments; since most of these involve a continuous
+scale, we focus only on words which were judged to
+be different.3 For the Difficulty lexicon (Diff.), the
+n in this comparison is 3000, while for the Crowd-
+flower (CF) judgments it is 4002.
+6 Results
+We expect a certain amount of noise using crowd-
+sourced data, and indeed agreement among Crowd-
+flower workers was not extremely high, only 56.6%
+for a three-way choice; note, however, that in these
+circumstances a single worker disagreeing with the
+rest will drop pairwise agreement in that judgement
+to 60%.4 Tellingly, average agreement was rela-
+tively high (72.5%) for words on the extremes of our
+difficulty spectrum, and low for words in the same
+difficulty category (46.0%), which is what we would
+expect. As noted by Taboada et al (2011), when
+faced with a pairwise comparison task, workers tend
+to avoid the ?same? option; instead, the proximity of
+the words on the underlying spectrum is reflected in
+disagreement. When we compare the crowdsourced
+judgements directly to the Difficulty lexicon, base
+3A continuous scale will nearly always predict some differ-
+ence between two words. An obvious approach would be to set
+a threshold within which two words will be judged the same,
+but the specific values depend greatly on the scale and for sim-
+plicity we do not address this problem here.
+4In 87.3% of cases, at least 3 workers agreed; in 56.2% of
+cases, 4 workers agreed, and in 23.1% of cases all 5 workers
+agreed.
+36
+agreement is 63.1%. This is much higher than
+chance, but lower than we would like, considering
+these are two human-annotated sources. However,
+it is clear that much of this disagreement is due to
+?same? judgments, which are three times more com-
+mon in the Difficulty lexicon-based judgments than
+in the Crowdflower judgments (even when disagree-
+ment is interpreted as a ?same? judgment). Pairwise
+agreement of non-?same? judgments for word pairs
+which are in the same category in the Difficultly lex-
+icon is high enough (45.9%)5 for us to conclude that
+this is not random variation, strongly suggesting that
+there are important distinctions within our difficulty
+categories, i.e. that it is not sufficiently fine-grained.
+If we disregard all words that are judged as same in
+one (or both) of the two sources, the agreement of
+the resulting word pairs is 91.0%, which is reason-
+ably high.
+Table 2 contains the agreement when feature val-
+ues or a linear combination of feature values are used
+to predict the readability of the unequal pairs from
+the two manual sources. First, we notice that the
+Crowdflower set is obviously more difficult, proba-
+bly because it contains more pairs with fairly subtle
+(though noticeable) distinctions. Other clear differ-
+ences between the annotations: whereas for Crowd-
+flower frequency is the key indicator, this is not true
+for our original annotation, which prefers the more
+complex features we have introduced here. A few
+features did poorly in general: syllable count ap-
+pears too coarse-grained to be useful on its own,
+lexical density is only just better than chance, and
+type-token ratio performs at or below chance. Oth-
+erwise, many of the features within our major types
+give roughly the same performance individually.
+When we combine features, we find that simple
+and document features combine to positive effect,
+but the co-occurrence features are redundant with
+each other and, for the most part, the document fea-
+tures. A major boost comes, however, from combin-
+ing either document or co-occurrence features with
+the simple features; this is especially true for our
+Difficulty lexicon annotation, where the gain is 7%
+to 8 percentage points. It does not seem to matter
+very much whether the weights of each feature are
+determined by pairwise classifier or by linear regres-
+5Random agreement here is 33.3%.
+Table 2: Agreement (%) of automated methods with man-
+ual resources on pairwise comparison task (Diff. = Diffi-
+culty lexicon, CF = Crowdflower)
+Features
+Resource
+Diff. CF
+Simple
+Syllable length 62.5 54.9
+Word length 68.8 62.4
+Term frequency 69.2 70.7
+Document
+Avg. word length 74.5 66.8
+Avg. sentence length 73.5 65.9
+Avg. type-token ratio 47.0 50.0
+Avg. lexical density 56.1 54.7
+Co-occurrence
+Formality 74.7 66.5
+Childish 74.2 65.5
+Difficulty 75.7 66.1
+Linear Combinations
+Simple 79.3 75.0
+Document 80.1 70.8
+Co-occurrence 76.0 67.0
+Document+Co-occurrence 80.4 70.2
+Simple+Document 87.5 79.1
+Simple+Co-occurrence 86.7 78.2
+All 87.6 79.5
+All (SVM) 87.1 79.2
+sion: this is interesting because it means we can train
+a model to create a readability spectrum with only
+pairwise judgments. Finally, we took all the 2500
+instances where our two annotations agreed that one
+word was more difficult, and tested our best model
+against only those pairs. Results using this selec-
+tive test set were, unsurprisingly, higher than those
+of either of the annotations alone: 91.2%, which is
+roughly the same as the original agreement between
+the two manual annotations.
+7 Discussion
+Word difficulty is a vague concept, and we have ad-
+mittedly sidestepped a proper definition here: in-
+stead, we hope to establish a measure of reliabil-
+ity in judgments of ?lexical readability? by looking
+for agreement across diverse sources of informa-
+tion. Our comparison of our existing resources with
+37
+crowdsourced judgments suggests that some consis-
+tency is possible, but that granularity is, as we pre-
+dicted, a serious concern, one which ultimately un-
+dermines our validation to some degree. An auto-
+matically derived lexicon, which can be fully con-
+tinuous or as coarse-grained as needed, seems like
+an ideal solution, though the much lower perfor-
+mance of the automatic lexicon in predicting the
+more fine-grained Crowdflower judgments indicates
+that automatically-derived features are limited in
+their ability to deal with subtle differences. How-
+ever, a visual inspection of the spectrum created by
+the automatic methods suggests that, with a judi-
+cious choice of granularity, it should be sufficient for
+our needs. In future work, we also intend to evalu-
+ate its use for readability classification, and perhaps
+expand it to include multiword expressions and syn-
+tactic patterns.
+Our results clearly show the benefit of combin-
+ing multiple sources of information to build a model
+of word difficulty. Word frequency and word length
+are of course relevant, and the utility of the docu-
+ment context features is not surprising, since they
+are merely a novel extension of existing proxies
+for readability. The co-occurrence features were
+also useful, though they seem fairly redundant and
+slightly inferior to document features; we posit that
+these features, in addition to capturing notions of
+register such as formality, may also offer seman-
+tic distinctions relevant to the acquisition process.
+For instance, children may have a large vocabulary
+in very concrete domains such as animals, includ-
+ing words (e.g. lizard) that are not particularly fre-
+quent in adult corpora, while very common words in
+other domains (such as the legal domain) are com-
+pletely outside the range of their experience. If we
+look at some of the examples which term frequency
+alone does not predict, they seem to be very much
+of this sort: dollhouse/emergence, skirt/industry,
+magic/system. Unsupervised techniques for identi-
+fying semantic variation, such as LSA, can capture
+these sorts of distinctions. However, our results indi-
+cate that simply looking at the readability of the texts
+that these sort of words appear in (i.e. our document
+features) is mostly sufficient, and less than 10% of
+the pairs which are correctly ordered by these two
+feature sets are different. In any case, an age-graded
+corpus is definitely not required.
+There are a few other benefits of using word co-
+occurrence that we would like to touch on, though
+we leave a full exploration for future work. First, if
+we consider readability in other languages, each lan-
+guage may have different properties which render
+proxies such as word length much less useful (e.g.
+ideographic languages like Chinese or agglutinative
+languages like Turkish). However, word (or lemma)
+co-occurrence, like frequency, is essentially a uni-
+versal feature across languages, and thus can be di-
+rectly extended to any language. Second, if we con-
+sider how we would extend difficulty-lexicon cre-
+ation to the context of adult second-language learn-
+ers, it might be enough to adjust our seed terms to
+reflect the differences in the language exposure of
+this population, i.e. we would expect difficulty in ac-
+quiring colloquialisms that are typically learned in
+childhood but are not part of the core vocabulary of
+the adult language.
+8 Conclusion
+In this paper, we have presented an automatic
+method for the derivation of a readability lexicon re-
+lying only on an unannotated word corpus. Our re-
+sults show that although term frequency is a key fea-
+ture, there are other, more complex features which
+provide competitive results on their own as well as
+combining with term frequency to improve agree-
+ment with manual resources that reflect word diffi-
+culty or age of acquisition. By comparing our man-
+ual lexicon with a new crowdsourced annotation, we
+also provide a validation of the resource, while at
+the same time highlighting a known issue, the lack
+of fine-grainedness. Our manual lexicon provides a
+solution for this problem, albeit at the cost of some
+reliability. Although our immediate interest is not
+text readability classification, the information de-
+rived could be applied fairly directly to this task, and
+might be particularly useful in the case when anno-
+tated texts are not avaliable.
+Acknowledgments
+This work was financially supported by the Natu-
+ral Sciences and Engineering Research Council of
+Canada.
+38
+References
+Julian Brooke, Tong Wang, and Graeme Hirst. 2010. Au-
+tomatic acquisition of lexical formality. In Proceed-
+ings of the 23rd International Conference on Compu-
+tational Linguistics (COLING ?10).
+Jill Burstein, Jane Shore, John Sabatini, Yong-Won Lee,
+and Matthew Ventura. 2007. The automated text
+adaptation tool. In Proceedings of the Annual Confer-
+ence of the North American Chapter of the Association
+for Computational Linguistics (NAACL ?07), Software
+Demonstrations, pages 3?4.
+Kevin Burton, Akshay Java, and Ian Soboroff. 2009. The
+ICWSM 2009 Spinn3r Dataset. In Proceedings of the
+Third Annual Conference on Weblogs and Social Me-
+dia (ICWSM 2009), San Jose, CA.
+John Carroll, Guido Minnen, Darren Pearce, Yvonne
+Canning, Siobhan Devlin, and John Tait. 1999. Sim-
+plifying English text for language impaired readers.
+In Proceedings of the 9th Conference of the European
+Chapter of the Association for Computational Linguis-
+tics (EACL?99), pages 269?270.
+Kevyn Collins-Thompson and Jamie Callan. 2005.
+Predicting reading difficulty with statistical language
+models. Journal of the American Society for Informa-
+tion Science Technology, 56(13):1448?1462.
+Edgar Dale and Jeanne Chall. 1995. Readability Re-
+visited: The New Dale-Chall Readability Formula.
+Brookline Books, Cambridge, MA.
+Edward William Dolch. 1948. Problems in Reading.
+The Garrard Press.
+Lijun Feng, Noe?mie Elhadad, and Matt Huenerfauth.
+2009. Cognitively motivated features for readability
+assessment. In Proceedings of the 12th Conference of
+the European Chapter of the Association for Compu-
+tational Linguistics (EACL ?09), pages 229?237.
+Robert Gunning. 1952. The Technique of Clear Writing.
+McGraw-Hill.
+Michael J. Heilman, Kevyn Collins, and Jamie Callan.
+2007. Combining lexical and grammatical features to
+improve readability measures for first and second lan-
+guage texts. In Proceedings of the Conference of the
+North American Chapter of Association for Computa-
+tional Linguistics (NAACL-HLT ?07).
+Paul Kidwell, Guy Lebanon, and Kevyn Collins-
+Thompson. 2009. Statistical estimation of word
+acquisition with application to readability predic-
+tion. In Proceedings of the 2009 Conference on
+Empirical Methods in Natural Language Processing
+(EMNLP?09), pages 900?909.
+J. Peter Kincaid, Robert. P. Fishburne Jr., Richard L.
+Rogers, and Brad. S. Chissom. 1975. Derivation of
+new readability formulas for Navy enlisted personnel.
+Research Branch Report 8-75, Millington, TN: Naval
+Technical Training, U. S. Naval Air Station, Memphis,
+TN.
+Thomas K. Landauer and Susan Dumais. 1997. A so-
+lution to Plato?s problem: The latent semantic analysis
+theory of the acquisition, induction, and representation
+of knowledge. Psychological Review, 104:211?240.
+Hanhong Li and Alex C. Feng. 2011. Age tagging
+and word frequency for learners? dictionaries. In Har-
+ald Baayan John Newman and Sally Rice, editors,
+Corpus-based Studies in Language Use, Language
+Learning, and Language Documentation. Rodopi.
+Saif Mohammad and Peter Turney. 2010. Emotions
+evoked by common words and phrases: Using Me-
+chanical Turk to create an emotion lexicon. In Pro-
+ceedings of the NAACL HLT 2010 Workshop on Com-
+putational Approaches to Analysis and Generation of
+Emotion in Text, pages 26?34, Los Angeles.
+Sarah E. Petersen and Mari Ostendorf. 2009. A machine
+learning approach to reading level assessment. Com-
+puter Speech and Language, 23(1):89?106.
+Helmut Schmid. 1995. Improvements in part-of-speech
+tagging with an application to German. In Proceed-
+ings of the ACL SIGDAT Workshop, pages 47?50.
+Luo Si and Jamie Callan. 2001. A statistical model
+for scientific readability. In Proceedings of the Tenth
+International Conference on Information and Knowl-
+edge Management (CIKM ?01), pages 574?576.
+Maite Taboada, Julian Brooke, Milan Tofiloski, Kimberly
+Voll, and Manifred Stede. 2011. Lexicon-based meth-
+ods for sentiment analysis. Computational Linguis-
+tics, 37(2):267?307.
+Kumiko Tanaka-Ishii, Satoshi Tezuka, and Hiroshi Ter-
+ada. 2010. Sorting texts by readability. Computa-
+tional Linguistics, 36(2):203?227.
+Peter Turney and Michael Littman. 2003. Measuring
+praise and criticism: Inference of semantic orientation
+from association. ACM Transactions on Information
+Systems, 21:315?346.
+Philip van Oosten, Dries Tanghe, and Veronique Hoste.
+2010. Towards an improved methodology for auto-
+mated readability prediction. In Proceedings of the 7th
+International Conference on Language Resources and
+Evaluation (LREC ?10).
+Ian H. Witten and Eibe Frank. 2005. Data Mining: Prac-
+tical Machine Learning Tools and Techniques. Mor-
+gan Kaufmann, San Francisco.
+39

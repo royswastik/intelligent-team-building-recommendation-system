@@ -1,0 +1,1945 @@
+Proceedings of the 45th Annual Meeting of the Association of Computational Linguistics, pages 560?567,
+Prague, Czech Republic, June 2007. c?2007 Association for Computational Linguistics
+Fast Semantic Extraction Using a Novel Neural Network Architecture
+Ronan Collobert
+NEC Laboratories America, Inc.
+4 Independence Way
+Suite 200, Princeton, NJ 08540
+collober@nec-labs.com
+Jason Weston
+NEC Laboratories America, Inc.
+4 Independence Way
+Suite 200, Princeton, NJ 08540
+jasonw@nec-labs.com
+Abstract
+We describe a novel neural network archi-
+tecture for the problem of semantic role la-
+beling. Many current solutions are compli-
+cated, consist of several stages and hand-
+built features, and are too slow to be applied
+as part of real applications that require such
+semantic labels, partly because of their use
+of a syntactic parser (Pradhan et al, 2004;
+Gildea and Jurafsky, 2002). Our method in-
+stead learns a direct mapping from source
+sentence to semantic tags for a given pred-
+icate without the aid of a parser or a chun-
+ker. Our resulting system obtains accuracies
+comparable to the current state-of-the-art at
+a fraction of the computational cost.
+1 Introduction
+Semantic understanding plays an important role in
+many end-user applications involving text: for infor-
+mation extraction, web-crawling systems, question
+and answer based systems, as well as machine trans-
+lation, summarization and search. Such applications
+typically have to be computationally cheap to deal
+with an enormous quantity of data, e.g. web-based
+systems process large numbers of documents, whilst
+interactive human-machine applications require al-
+most instant response. Another issue is the cost of
+producing labeled training data required for statisti-
+cal models, which is exacerbated when those models
+also depend on syntactic features which must them-
+selves be learnt.
+To achieve the goal of semantic understanding,
+the current consensus is to divide and conquer the
+[The company]ARG0 [bought]REL [sugar]ARG1 [on the world
+market]ARGM-LOC [to meet export commitments]ARGM-PNC
+Figure 1: Example of Semantic Role Labeling from
+the PropBank dataset (Palmer et al, 2005). ARG0
+is typically an actor, REL an action, ARG1 an ob-
+ject, and ARGM describe various modifiers such as
+location (LOC) and purpose (PNC).
+problem. Researchers tackle several layers of pro-
+cessing tasks ranging from the syntactic, such as
+part-of-speech labeling and parsing, to the semantic:
+word-sense disambiguation, semantic role-labeling,
+named entity extraction, co-reference resolution and
+entailment. None of these tasks are end goals in
+themselves but can be seen as layers of feature ex-
+traction that can help in a language-based end ap-
+plication, such as the ones described above. Un-
+fortunately, the state-of-the-art solutions of many of
+these tasks are simply too slow to be used in the ap-
+plications previously described. For example, state-
+of-the-art syntactic parsers theoretically have cubic
+complexity in the sentence length (Younger, 1967)1
+and several semantic extraction algorithms use the
+parse tree as an initial feature.
+In this work, we describe a novel type of neural
+network architecture that could help to solve some
+of these issues. We focus our experimental study on
+the semantic role labeling problem (Palmer et al,
+2005): being able to give a semantic role to a syn-
+1Even though some parsers effectively exhibit linear be-
+havior in sentence length (Ratnaparkhi, 1997), fast statistical
+parsers such as (Henderson, 2004) still take around 1.5 seconds
+for sentences of length 35 in tests that we made.
+560
+tactic constituent of a sentence, i.e. annotating the
+predicate argument structure in text (see for exam-
+ple Figure 1). Because of its nature, role labeling
+seems to require the syntactic analysis of a sentence
+before attributing semantic labels. Using this intu-
+ition, state-of-the-art systems first build a parse tree,
+and syntactic constituents are then labeled by feed-
+ing hand-built features extracted from the parse tree
+to a machine learning system, e.g. the ASSERT sys-
+tem (Pradhan et al, 2004). This is rather slow, tak-
+ing a few seconds per sentence at test time, partly
+because of the parse tree component, and partly be-
+cause of the use of Support Vector Machines (Boser
+et al, 1992), which have linear complexity in test-
+ing time with respect to the number of training ex-
+amples. This makes it hard to apply this method to
+interesting end user applications.
+Here, we propose a radically different approach
+that avoids the more complex task of building a full
+parse tree. From a machine learning point of view, a
+human does not need to be taught about parse trees
+to talk. It is possible, however, that our brains may
+implicitly learn features highly correlated with those
+extracted from a parse tree. We propose to develop
+an architecture that implements this kind of implicit
+learning, rather than using explicitly engineered fea-
+tures. In practice, our system also provides semantic
+tags at a fraction of the computational cost of other
+methods, taking on average 0.02 seconds to label a
+sentence from the Penn Treebank, with almost no
+loss in accuracy.
+The rest of the article is as follows. First, we de-
+scribe the problem of shallow semantic parsing in
+more detail, as well as existing solutions to this prob-
+lem. We then detail our algorithmic approach ? the
+neural network architecture we employ ? followed
+by experiments that evaluate our method. Finally,
+we conclude with a summary and discussion of fu-
+ture work.
+2 Shallow Semantic Parsing
+FrameNet (Baker et al, 1998) and the Proposition
+Bank (Palmer et al, 2005), or PropBank for short,
+are the two main systems currently developed for
+semantic role-labeling annotation. We focus here
+on PropBank. PropBank encodes role labels by se-
+mantically tagging the syntactic structures of hand
+annotated parses of sentences. The current version
+of the dataset gives semantic tags for the same sen-
+tences as in the Penn Treebank (Marcus et al, 1993),
+which are excerpts from theWall Street Journal. The
+central idea is that each verb in a sentence is la-
+beled with its propositional arguments, where the
+abstract numbered arguments are intended to fill typ-
+ical roles. For example, ARG0 is typically the actor,
+and ARG1 is typically the thing acted upon. The
+precise usage of the numbering system is labeled for
+each particular verb as so-called frames. Addition-
+ally, semantic roles can also be labeled with one of
+13 ARGM adjunct labels, such as ARGM-LOC or
+ARGM-TMP for additional locational or temporal
+information relative to some verb.
+Shallow semantic parsing has immediate applica-
+tions in tasks such as meta-data extraction (e.g. from
+web documents) and question and answer based sys-
+tems (e.g. call center systems), amongst others.
+3 Previous Work
+Several authors have already attempted to build ma-
+chine learning approaches for the semantic role-
+labeling problem. In (Gildea and Jurafsky, 2002)
+the authors presented a statistical approach to learn-
+ing (for FrameNet), with some success. They pro-
+posed to take advantage of the syntactic tree struc-
+ture that can be predicted by a parser, such as Char-
+niak?s parser (Charniak, 2000). Their aim is, given
+a node in the parse tree, to assign a semantic role
+label to the words that are the children of that node.
+They extract several key types of features from the
+parse tree to be used in a statistical model for pre-
+diction. These same features also proved crucial to
+subsequent approaches, e.g. (Pradhan et al, 2004).
+These features include:
+? The parts of speech and syntactic labels of
+words and nodes in the tree.
+? The node?s position (left or right) in relation to
+the verb.
+? The syntactic path to the verb in the parse tree.
+? Whether a node in the parse tree is part of a
+noun or verb phrase (by looking at the parent
+nodes of that node).
+561
+? The voice of the sentence: active or passive
+(part of the PropBank gold annotation);
+as well as several other features (predicate, head
+word, verb sub-categorization, . . . ).
+The authors of (Pradhan et al, 2004) used a
+similar structure, but added more features, notably
+head word part-of-speech, the predicted named en-
+tity class of the argument, word sense disambigua-
+tion of the verb and verb clustering, and others (they
+add 25 variants of 12 new feature types overall.)
+Their system also uses a parser, as before, and then a
+polynomial Support Vector Machine (SVM) (Boser
+et al, 1992) is used in two further stages: to clas-
+sify each node in the tree as being a semantic ar-
+gument or not for a given verb; and then to clas-
+sify each semantic argument into one of the classes
+(ARG1, ARG2, etc.). The first SVM solves a two-
+class problem, the second solves a multi-class prob-
+lem using a one-vs-the-rest approach. The final sys-
+tem, called ASSERT, gives state-of-the-art perfor-
+mance and is also freely available at: http://
+oak.colorado.edu/assert/. We compare
+to this system in our experimental results in Sec-
+tion 5. Several other competing methods exist, e.g.
+the ones that participated in the CONLL 2004 and
+2005 challenges (http://www.lsi.upc.edu/
+?srlconll/st05/st05.html). In this paper
+we focus on a comparison with ASSERT because
+software to re-run it is available online. This also
+gives us a timing result for comparison purposes.
+The three-step procedure used in ASSERT (calcu-
+lating a parse tree and then applying SVMs twice)
+leads to good classification performance, but has
+several drawbacks. First in speed: predicting a
+parse tree is extremely demanding in computing re-
+sources. Secondly, choosing the features necessary
+for SVM classification requires extensive research.
+Finally, the SVM classification algorithm used in ex-
+isting approaches is rather slow: SVM training is at
+least quadratic in time with respect to the number
+of training examples. The number of support vec-
+tors involved in the SVM decision function also in-
+creases linearly with the number of training exam-
+ples. This makes SVMs slow on large-scale prob-
+lems, both during training and testing phases.
+To alleviate the burden of parse tree computation,
+several attempts have been made to remove the full
+parse tree information from the semantic role label-
+ing system, in fact the shared task of CONLL 2004
+was devoted to this goal, but the results were not
+completely satisfactory. Previously, in (Gildea and
+Palmer, 2001), the authors tried to show that the
+parse tree is necessary for good generalization by
+showing that segments derived from a shallow syn-
+tactic parser or chunker do not perform as well for
+this goal. A further analysis of using chunkers, with
+improved results was also given in (Punyakanok et
+al., 2005), but still concluded the full parse tree is
+most useful.
+4 Neural Network Architecture
+Ideally, we want an end-to-end fast learning system
+to output semantic roles for syntactic constituents
+without using a time consuming parse tree.
+Also, as explained before, we are interesting in
+exploring whether machine learning approaches can
+learn structure implicitly. Hence, even if there is a
+deep relationship between syntax and semantics, we
+prefer to avoid hand-engineered features that exploit
+this, and see if we can develop a model that can learn
+these features instead. We are thus not interested
+in chunker-based techniques, even though they are
+faster than parser-based techniques.
+We propose here a neural network based architec-
+ture which achieves these two goals.
+4.1 Basic Architecture
+The type of neural network that we employ is aMulti
+Layer Perceptron (MLP). MLPs have been used for
+many years in the machine learning field and slowly
+abandoned for several reasons: partly because of
+the difficulty of solving the non-convex optimization
+problems associated with learning (LeCun et al,
+1998), and partly because of the difficulty of their
+theoretical analysis compared to alternative convex
+approaches.
+An MLP works by successively projecting the
+data to be classified into different spaces. These
+projections are done in what is called hidden lay-
+ers. Given an input vector z, a hidden layer applies
+a linear transformation (matrix M ) followed by a
+squashing function h:
+z 7? Mz 7? h(Mz) . (1)
+562
+A typical squashing function is the hyperbolic tan-
+gent h(?) = tanh(?). The last layer (the output
+layer) linearly separates the classes. The composi-
+tion of the projections in the hidden layers could be
+viewed as the work done by the kernel in SVMs.
+However there is a very important difference: the
+kernel in SVM is fixed and arbitrarily chosen, while
+the hidden layers in an MLP are trained and adapted
+to the classification task. This allows us to create
+much more flexible classification architectures.
+Our method for semantic role labeling classifies
+each word of a sentence separately. We do not use
+any semantic constituent information: if the model
+is powerful enough, words in the same semantic
+constituent should have the same class label. This
+means we also do not separate the problem into
+an identification and classification phase, but rather
+solve in a single step.
+4.1.1 Notation
+We represent words as indices. We consider a fi-
+nite dictionary of words D ? N. Let us represent a
+sentence of nw words to be analyzed as a function
+s(?). The ith word in the sentence is given by the
+index s(i):
+1 ? i ? nw s(i) ? D .
+We are interested in predicting the semantic role la-
+bel of the word at position posw, given a verb at po-
+sition posv (1 ? posw, posv ? nw). A mathemati-
+cal description of our network architecture schemat-
+ically shown in Figure 2 follows.
+4.1.2 Transforming words into feature vectors
+Our first concern in semantic role labeling is that
+we have to deal with words, and that a simple in-
+dex i ? D does not carry any information specific
+to a word: for each word we need a set of features
+relevant for the task. As described earlier, previous
+methods construct a parse tree, and then compute
+hand-built features which are then fed to a classi-
+fication algorithm. In order to bypass the use of a
+parse tree, we convert each word i ? D into a par-
+ticular vector wi ? Rd which is going to be learnt
+for the task we are interested in. This approach has
+already been used with great success in the domain
+of language models (Bengio and Ducharme, 2001;
+Schwenk and Gauvain, 2002).
+ 
+ 
+
+
+     
+ 
+
+
+Lookup Table d
+.
+.
+.
+d
+Linear Layer with sentence?adapted columns
+d
+C(position w.r.t. cat, position w.r.t. sat)
+Softmax Squashing Layer
+...
+ARG1 ARG2 ARGMLOC ARGMTMP
+Classical Linear Layer
+Tanh Squashing Layer
+nhu Ci
+ws(6)
+ws(2)
+s(1)w
+...C1 C2 C6
+Classical Linear Layer
+ws(6)...ws(2)s(1)w
+s(1)  s(2)   ...                   s(6)
+satthe
+Input Sentence
+on the matcat
+Figure 2: MLP architecture for shallow semantic
+parsing. The input sequence is at the top. The out-
+put class probabilities for the word of interest (?cat?)
+given the verb of interest (?sat?) are given at the bot-
+tom.
+The first layer of our MLP is thus a lookup table
+which replaces the word indices into a concatenation
+of vectors:
+{s(1), . . . , s(nw)}
+7? (ws(1) . . . ws(nw)) ? R
+nw d .
+(2)
+The weights {wi | i ? D} for this layer are consid-
+ered during the backpropagation phase of the MLP,
+and thus adapted automatically for the task we are
+interested in.
+4.1.3 Integrating the verb position
+Feeding word vectors alone to a linear classifica-
+tion layer as in (Bengio and Ducharme, 2001) leads
+563
+to very poor accuracy because the semantic classifi-
+cation of a given word also depends on the verb in
+question. We need to provide the MLP with infor-
+mation about the verb position within the sentence.
+For that purpose we use a kind of linear layer which
+is adapted to the sentence considered. It takes the
+form:
+(ws(1) . . . ws(nw)) 7? M
+?
+?
+?
+wTs(1)
+...
+wTs(nw)
+?
+?
+? ,
+where M ? Rnhu?nw d, and nhu is the number of
+hidden units. The specific nature of this layer is
+that the matrix M has a special block-column form
+which depends on the sentence:
+M = (C1| . . . |Cnw) ,
+where each column Ci ? Rnhu?d depends on the
+position of the ith word in s(?), with respect to the
+position posw of the word of interest, and with re-
+spect to the position posv of the verb of interest:
+Ci = C(i? posw, i? posv) ,
+where C(?, ?) is a function to be chosen.
+In our experiments C(?, ?) was a linear layer with
+discretized inputs (i ? posw, i ? posv) which were
+transformed into two binary vectors of size wsz,
+where a bit is set to 1 if it corresponds to the po-
+sition to encode, and 0 otherwise. These two binary
+vectors are then concatenated and fed to the linear
+layer. We chose the ?window size? wsz = 11. If
+a position lies outside the window, then we still set
+the leftmost or rightmost bit to 1. The parameters in-
+volved in this function are also considered during the
+backpropagation. With such an architecture we al-
+low our MLP to automatically adapt the importance
+of a word in the sentence given its distance to the
+word we want to classify, and to the verb we are in-
+terested in.
+This idea is the major novelty in this work, and is
+crucial for the success of the entire architecture, as
+we will see in the experiments.
+4.1.4 Learning class probabilities
+The last layer in our MLP is a classical linear
+layer as described in (1), with a softmax squashing
+function (Bridle, 1990). Considering (1) and given
+z? = Mz, we have
+hi(z?) =
+exp z?i
+?
+j exp z?j
+.
+This allows us to interpret outputs as probabilities
+for each semantic role label. The training of the
+whole system is achieved using a normal stochastic
+gradient descent.
+4.2 Word representation
+As we have seen, in our model we are learning one
+d dimensional vector to represent each word. If the
+dataset were large enough, this would be an elegant
+solution. In practice many words occur infrequently
+within PropBank, so (independent of the size of d)
+we can still only learn a very poor representation for
+words that only appear a few times. Hence, to con-
+trol the capacity of our model we take the original
+word and replace it with its part-of-speech if it is
+a verb, noun, adjective, adverb or number as deter-
+mined by a part-of-speech classifier, and keep the
+words for all other parts of speech. This classifier is
+itself a neural network. This way we keep linking
+words which are important for this task. We do not
+do this replacement for the predicate itself.
+5 Experiments
+We used Sections 02-21 of the PropBank dataset
+version 1 for training and validation and Section
+23 for testing as standard in all our experiments.
+We first describe the part-of-speech tagger we em-
+ploy, and then describe our semantic role labeling
+experiments. Software for our method, SENNA (Se-
+mantic Extraction using a Neural Network Archi-
+tecture), more details on its implementation, an on-
+line applet and test set predictions of our system
+in comparison to ASSERT can be found at http:
+//ml.nec-labs.com/software/senna.
+Part-Of-Speech Tagger The part-of-speech clas-
+sifier we employ is a neural network architecture of
+the same type as in Section 4, where the function
+Ci = C(i ? posw) depends now only on the word
+position, and not on a verb. More precisely:
+Ci =
+{
+0 if 2 |i? posw| > wsz ? 1
+Wi?posw otherwise ,
+564
+where Wk ? Rnhu?d and wsz is a window size.
+We chose wsz = 5 in our experiments. The
+d-dimensional vectors learnt take into account the
+capitalization of a word, and the prefix and suf-
+fix calculated using Porter-Stemmer. See http:
+//ml.nec-labs.com/software/senna for
+more details. We trained on the training set of Prop-
+Bank supplemented with the Brown corpus, result-
+ing in a test accuracy on the test set of PropBank of
+96.85% which compares to 96.66% using the Brill
+tagger (Brill, 1992).
+Semantic Role Labeling In our experiments we
+considered a 23-class problem of NULL (no la-
+bel), the core arguments ARG0-5, REL, ARGA, and
+ARGM- along with the 13 secondary modifier labels
+such as ARGM-LOC and ARGM-TMP. We simpli-
+fied R-ARGn and C-ARGn to be written as ARGn,
+and post-processed ASSERT to do this as well.
+We compared our system to the freely available
+ASSERT system (Pradhan et al, 2004). Both sys-
+tems are fed only the input sentence during testing,
+with traces removed, so they cannot make use of
+many PropBank features such as frameset identiti-
+fier, person, tense, aspect, voice, and form of the
+verb. As our algorithm outputs a semantic tag for
+each word of a sentence, we directly compare this
+per-word accuracy with ASSERT. Because ASSERT
+uses a parser, and because PropBank was built by la-
+beling the nodes of a hand-annotated parse tree, per-
+node accuracy is usually reported in papers such as
+(Pradhan et al, 2004). Unfortunately our approach
+is based on a completely different premise: we tag
+words, not syntactic constituents coming from the
+parser. We discuss this further in Section 5.2.
+The per-word accuracy comparison results can be
+seen in Table 5. Before labeling the semantic roles
+of each predicate, one must first identify the pred-
+icates themselves. If a predicate is not identified,
+NULL tags are assigned to each word for that pred-
+icate. The first line of results in the table takes into
+account this identification process. For the neural
+network, we used our part-of-speech tagger to per-
+form this as a verb-detection task.
+We noticed ASSERT failed to identify relatively
+many predicates. In particular, it seems predicates
+such as ?is? are sometimes labeled as AUX by
+the part-of-speech tagger, and subsequently ignored.
+We informed the authors of this, but we did not re-
+ceive a response. To deal with this, we considered
+the additional accuracy (second row in the table)
+measured over only those sentences where the pred-
+icate was identified by ASSERT.
+Timing results The per-sentence compute time is
+also given in Table 5, averaged over all sentences in
+the test set. Our method is around 250 times faster
+than ASSERT. It is not really feasible to run AS-
+SERT for most applications.
+Measurement NN ASSERT
+Per-word accuracy
+(all verbs) 83.64% 83.46%
+Per-word accuracy
+(ASSERT verbs) 84.09% 86.06%
+Per-sentence
+compute time (secs) 0.02 secs 5.08 secs
+Table 1: Experimental comparison with ASSERT
+5.1 Analysis of our MLP
+While we gave an intuitive justification of the archi-
+tecture choices of our model in Section 4, we now
+give a systematic empirical study of those choices.
+First of all, providing the position of the word and
+the predicate in function C(?, ?) is essential: the best
+model we obtained with a window around the word
+only gave 51.3%, assuming correct identification of
+all predicates. Our best model achieves 83.95% in
+this setting.
+If we do not cluster the words according to their
+part-of-speech, we also lose some performance, ob-
+taining 78.6% at best. On the other hand, clustering
+all words (such as CC, DT, IN part-of-speech tags)
+also gives weaker results (81.1% accuracy at best).
+We believe that including all words would give very
+good performance if the dataset was large enough,
+but training only on PropBank leads to overfitting,
+many words being infrequent. Clustering is a way
+to fight against overfitting, by grouping infrequent
+words: for example, words with the label NNP, JJ,
+RB (which we cluster) appear on average 23, 22 and
+72 times respectively in the training set, while CC,
+DT, IN (which we do not cluster) appear 2420, 5659
+and 1712 times respectively.
+565
+Even though some verbs are infrequent, one can-
+not cluster all verbs into a single group, as each verb
+dictates the types of semantic roles in the sentence,
+depending on its frame. Clustering all words into
+their part-of-speech, including the predicate, gives
+a poor 73.8% compared with 81.1%, where every-
+thing is clustered apart from the predicate.
+Figure 3 gives some anecdotal examples of test set
+predictions of our final model compared to ASSERT.
+5.2 Argument Classification Accuracy
+So far we have not used the same accuracy measures
+as in previous work (Gildea and Jurafsky, 2002;
+Pradhan et al, 2004). Currently our architecture is
+designed to label on a per-word basis, while existing
+systems perform a segmentation process, and then
+label segments. While we do not optimize our model
+for the same criteria, it is still possible to measure the
+accuracy using the same metrics. We measured the
+argument classification accuracy of our network, as-
+suming the correct segmentation is given to our sys-
+tem, as in (Pradhan et al, 2004), by post-processing
+our per-word tags to form a majority vote over each
+segment. This gives 83.18% accuracy for our net-
+work when we suppose the predicate must also be
+identified, and 80.53% for the ASSERT software.
+Measuring only on predicates identified by ASSERT
+we instead obtain 84.32% accuracy for our network,
+and 87.02% for ASSERT.
+6 Discussion
+We have introduced a neural network architecture
+that can provide computationally efficient semantic
+role tagging. It is also a general architecture that
+could be applied to other problems as well. Because
+our network currently outputs labels on a per-word
+basis it is difficult to assess existing accuracy mea-
+sures. However, it should be possible to combine
+our approach with a shallow parser to enhance per-
+formance, and make comparisons more direct.
+We consider this work as a starting point for dif-
+ferent research directions, including the following
+areas:
+? Incorporating hand-built features Currently,
+the only prior knowledge our system encodes
+comes from part-of-speech tags, in stark con-
+trast to other methods. Of course, performance
+TRUTH: He camped out at a high-tech nerve center
+on the floor of [the Big Board, where]ARGM-LOC [he]ARG0
+[could]ARGM-MOD [watch]REL [updates on prices and pend-
+ing stock orders]ARG1.
+ASSERT (68.7%): He camped out at a high-tech nerve
+center on the floor of the Big Board, [ where]ARGM-LOC
+[he]ARG0 [could]ARGM-MOD [watch]REL [updates]ARG1 on
+prices and pending stock orders.
+NN (100%): He camped out at a high-tech nerve center
+on the floor of [the Big Board, where]ARGM-LOC [he]ARG0
+[could]ARGM-MOD [watch]REL [updates on prices and pend-
+ing stock orders]ARG1.
+TRUTH: [United Auto Workers Local 1069, which]ARG0
+[represents]REL [3,000 workers at Boeing?s helicopter unit
+in Delaware County, Pa.]ARG1 , said it agreed to extend its
+contract on a day-by-day basis, with a 10-day notification
+to cancel, while it continues bargaining.
+ASSERT (100%): [United Auto Workers Local 1069,
+which]ARG0 [represents]REL [3,000 workers at Boeing?s
+helicopter unit in Delaware County, Pa.]ARG1 , said it agreed
+to extend its contract on a day-by-day basis, with a 10-day
+notification to cancel, while it continues bargaining.
+NN (89.1%): [United Auto Workers Local 1069,
+which]ARG0 [represents]REL [3,000 workers at Boeing?s
+helicopter unit]ARG1 [ in Delaware County]ARGM-LOC , Pa. ,
+said it agreed to extend its contract on a day-by-day basis,
+with a 10-day notification to cancel, while it continues
+bargaining.
+Figure 3: Two examples from the PropBank test set,
+showing Neural Net and ASSERT and gold standard
+labelings, with per-word accuracy in brackets. Note
+that even though our labeling does not match the
+hand-annotated one in the second sentence it still
+seems to make some sense as ?in Delaware County?
+is labeled as a location modifier. The complete set
+of predictions on the test set can be found at http:
+//ml.nec-labs.com/software/senna.
+would improve with more hand-built features.
+For example, simply adding whether each word
+is part of a noun or verb phrase using the hand-
+annotated parse tree (the so-called ?GOV? fea-
+ture from (Gildea and Jurafsky, 2002)) im-
+proves the performance of our system from
+83.95% to 85.8%. One must trade the gener-
+ality of the model with its specificity, and also
+take into account how long the features take to
+compute.
+? Incorporating segment information Our system
+has no prior knowledge about segmentation in
+text. This could be encoded in many ways:
+most obviously by using a chunker, but also by
+566
+designing a different network architecture, e.g.
+by encoding contiguity constraints. To show
+the latter is useful, using hand-annotated seg-
+ments to force contiguity by majority vote leads
+to an improvement from 83.95% to 85.6%.
+? Incorporating known invariances via virtual
+training data. In image recognition problems
+it is common to create artificial training data by
+taking into account invariances in the images,
+e.g. via rotation and scale. Such data improves
+generalization substantially. It may be possible
+to achieve similar results for text, by ?warp-
+ing? training data to create new sentences, or
+by constructing sentences from scratch using a
+hand-built grammar.
+? Unlabeled data. Our representation of words
+is as d dimensional vectors. We could try to
+improve this representation by learning a lan-
+guage model from unlabeled data (Bengio and
+Ducharme, 2001). As many words in Prop-
+Bank only appear a few times, the representa-
+tion might improve, even though the learning is
+unsupervised. This may also make the system
+generalize better to types of data other than the
+Wall Street Journal.
+? Transductive Inference. Finally, one can also
+use unlabeled data as part of the supervised
+training process, which is called transduction
+or semi-supervised learning.
+In particular, we find the possibility of using un-
+labeled data, invariances and the use of transduc-
+tion exciting. These possibilities naturally fit into
+our framework, whereas scalability issues will limit
+their application in competing methods.
+References
+C.F. Baker, C.J. Fillmore, and J.B. Lowe. 1998. The
+Berkeley FrameNet project. Proceedings of COLING-
+ACL, 98.
+Y. Bengio and R. Ducharme. 2001. A neural probabilis-
+tic language model. In Advances in Neural Informa-
+tion Processing Systems, NIPS 13.
+B.E. Boser, I.M. Guyon, and V.N. Vapnik. 1992. A train-
+ing algorithm for optimal margin classifiers. Proceed-
+ings of the fifth annual workshop on Computational
+learning theory, pages 144?152.
+J.S. Bridle. 1990. Probabilistic interpretation of feed-
+forward classification network outputs, with relation-
+ships to statistical pattern recognition. In F. Fogelman
+Soulie? and J. He?rault, editors, Neurocomputing: Al-
+gorithms, Architectures and Applications, pages 227?
+236. NATO ASI Series.
+E. Brill. 1992. A simple rule-based part of speech tag-
+ger. Proceedings of the Third Conference on Applied
+Natural Language Processing, pages 152?155.
+E. Charniak. 2000. A maximum-entropy-inspired parser.
+Proceedings of the first conference on North American
+chapter of the Association for Computational Linguis-
+tics, pages 132?139.
+D. Gildea and D. Jurafsky. 2002. Automatic label-
+ing of semantic roles. Computational Linguistics,
+28(3):245?288.
+D. Gildea and M. Palmer. 2001. The necessity of pars-
+ing for predicate argument recognition. Proceedings
+of the 40th Annual Meeting on Association for Com-
+putational Linguistics, pages 239?246.
+J. Henderson. 2004. Discriminative training of a neural
+network statistical parser. In Proceedings of the 42nd
+Meeting of Association for Computational Linguistics.
+Y. LeCun, L. Bottou, G. B. Orr, and K.-R. Mu?ller. 1998.
+Efficient backprop. In G.B. Orr and K.-R. Mu?ller, ed-
+itors, Neural Networks: Tricks of the Trade, pages 9?
+50. Springer.
+M.P. Marcus, M.A. Marcinkiewicz, and B. Santorini.
+1993. Building a large annotated corpus of En-
+glish: the penn treebank. Computational Linguistics,
+19(2):313?330.
+M. Palmer, D. Gildea, and P. Kingsbury. 2005. The
+proposition bank: An annotated corpus of semantic
+roles. Comput. Linguist., 31(1):71?106.
+S. Pradhan, W. Ward, K. Hacioglu, J. Martin, and D. Ju-
+rafsky. 2004. Shallow semantic parsing using support
+vector machines. Proceedings of HLT/NAACL-2004.
+V. Punyakanok, D. Roth, and W. Yih. 2005. The ne-
+cessity of syntactic parsing for semantic role labeling.
+Proceedings of IJCAI?05, pages 1117?1123.
+A. Ratnaparkhi. 1997. A linear observed time statistical
+parser based on maximum entropy models. Proceed-
+ings of EMNLP.
+H. Schwenk and J.L. Gauvain. 2002. Connection-
+ist language modeling for large vocabulary continu-
+ousspeech recognition. Proceedings of ICASSP?02.
+D. H. Younger. 1967. Recognition and parsing of
+context-free languages in time n3. Information and
+Control, 10.
+567
+Proceedings of the 14th Conference of the European Chapter of the Association for Computational Linguistics, pages 482?490,
+Gothenburg, Sweden, April 26-30 2014.
+c?2014 Association for Computational Linguistics
+Word Embeddings through Hellinger PCA
+R
+?
+emi Lebret
+Idiap Research Institute
+Rue Marconi 19, CP 592
+1920 Martigny, Switzerland
+remi@lebret.ch
+Ronan Collobert
+Idiap Research Institute
+Rue Marconi 19, CP 592
+1920 Martigny, Switzerland
+ronan@collobert.com
+Abstract
+Word embeddings resulting from neural
+language models have been shown to be
+a great asset for a large variety of NLP
+tasks. However, such architecture might
+be difficult and time-consuming to train.
+Instead, we propose to drastically sim-
+plify the word embeddings computation
+through a Hellinger PCA of the word co-
+occurence matrix. We compare those new
+word embeddings with some well-known
+embeddings on named entity recognition
+and movie review tasks and show that we
+can reach similar or even better perfor-
+mance. Although deep learning is not re-
+ally necessary for generating good word
+embeddings, we show that it can provide
+an easy way to adapt embeddings to spe-
+cific tasks.
+1 Introduction
+Building word embeddings has always generated
+much interest for linguists. Popular approaches
+such as Brown clustering algorithm (Brown et al.,
+1992) have been used with success in a wide vari-
+ety of NLP tasks (Sch?utze, 1995; Koo et al., 2008;
+Ratinov and Roth, 2009). Those word embed-
+dings are often seen as a low dimensional-vector
+space where the dimensions are features poten-
+tially describing syntactic or semantic properties.
+Recently, distributed approaches based on neural
+network language models (NNLM) have revived
+the field of learning word embeddings (Collobert
+and Weston, 2008; Huang and Yates, 2009; Turian
+et al., 2010; Collobert et al., 2011). However, a
+neural network architecture can be hard to train.
+Finding the right parameters to tune the model is
+often a challenging task and the training phase is
+in general computationally expensive.
+This paper aims to show that such good word
+embeddings can be obtained using simple (mostly
+linear) operations. We show that similar word
+embeddings can be computed using the word co-
+occurrence statistics and a well-known dimension-
+ality reduction operation such as Principal Com-
+ponent Analysis (PCA). We then compare our em-
+beddings with the CW (Collobert and Weston,
+2008), Turian (Turian et al., 2010), HLBL (Mnih
+and Hinton, 2008) embeddings, which come from
+deep architectures and the LR-MVL (Dhillon et
+al., 2011) embeddings, which also come from a
+spectral method on several NLP tasks.
+We claim that, assuming an appropriate met-
+ric, a simple spectral method as PCA can generate
+word embeddings as good as with deep-learning
+architectures. On the other hand, deep-learning
+architectures have shown their potential in sev-
+eral supervised NLP tasks, by using these word
+embeddings. As they are usually generated over
+large corpora of unlabeled data, words are repre-
+sented in a generic manner. Having generic em-
+beddings, good performance can be achieved on
+NLP tasks where the syntactic aspect is domi-
+nant such as Part-Of-Speech, chunking and NER
+(Turian et al., 2010; Collobert et al., 2011; Dhillon
+et al., 2011). For supervised tasks relying more
+on the semantic aspect as sentiment classification,
+it is usually helpful to adapt the existing embed-
+dings to improve performance (Labutov and Lip-
+son, 2013). We show in this paper that such em-
+bedding specialization can be easily done via neu-
+ral network architectures and that helps to increase
+general performance.
+2 Related Work
+As 80% of the meaning of English text comes
+from word choice and the remaining 20% comes
+from word order (Landauer, 2002), it seems quite
+important to leverage word order to capture all the
+semantic information. Connectionist approaches
+have therefore been proposed to develop dis-
+tributed representations which encode the struc-
+482
+tural relationships between words (Hinton, 1986;
+Pollack, 1990; Elman, 1991). More recently, a
+neural network language model was proposed in
+Bengio et al. (2003) where word vector representa-
+tions are simultaneously learned along with a sta-
+tistical language model. This architecture inspired
+other authors: Collobert and Weston (2008) de-
+signed a neural language model which eliminates
+the linear dependency on vocabulary size, Mnih
+and Hinton (2008) proposed a hierarchical linear
+neural model, Mikolov et al. (2010) investigated
+a recurrent neural network architecture for lan-
+guage modeling. Such architectures being trained
+over large corpora of unlabeled text with the aim
+to predict correct scores end up learning the co-
+occurence statistics.
+Linguists assumed long ago that words occur-
+ring in similar contexts tend to have similar mean-
+ings (Wittgenstein, 1953). Using the word co-
+occurrence statistics is thus a natural choice to em-
+bed similar words into a common vector space
+(Turney and Pantel, 2010). Common approaches
+calculate the frequencies, apply some transforma-
+tions (tf-idf, PPMI), reduce the dimensionality and
+calculate the similarities (Lowe, 2001). Consid-
+ering a fixed-sized word vocabulary D and a set
+of wordsW to embed, the co-occurence matrix C
+is of size |W|?|D|. C is then vocabulary size-
+dependent. One can apply a dimensionality reduc-
+tion operation to C leading to
+?
+C ? R
+|W|?d
+, where
+d  |D|. Dimensionality reduction techniques
+such as Singular Valued Decomposition (SVD)
+are widely used (e.g. LSA (Landauer and Du-
+mais, 1997), ICA (V?ayrynen and Honkela, 2004)).
+However, word co-occurence statistics are dis-
+crete distributions. An information theory mea-
+sure such as the Hellinger distance seems to be
+more appropriate than the Euclidean distance over
+a discrete distribution space. In this paper we
+will compare the Hellinger PCA against the clas-
+sical Euclidean PCA and the Low Rank Multi-
+View Learning (LR-MVL) method, which is an-
+other spectral method based on Canonical Corre-
+lation Analysis (CCA) to learn word embeddings
+(Dhillon et al., 2011).
+It has been shown that using word embeddings
+as features helps to improve general performance
+on many NLP tasks (Turian et al., 2010). How-
+ever these embeddings can be too generic to per-
+form well on other tasks such as sentiment clas-
+sification. For such task, word embeddings must
+capture the sentiment information. Maas et al.
+(2011) proposed a model for jointly capturing se-
+mantic and sentiment components of words into
+vector spaces. More recently, Labutov and Lip-
+son (2013) presented a method which takes exist-
+ing embeddings and, by using some labeled data,
+re-embed them in the same space. They showed
+that these new embeddings can be better predic-
+tors in a supervised task. In this paper, we con-
+sider word embedding-based linear and non-linear
+models for two NLP supervised tasks: Named En-
+tity Recognition and IMDB movie review. We an-
+alyze the effect of fine-tuning existing embeddings
+over each task of interest.
+3 Spectral Method for Word
+Embeddings
+A NNLM learns which words among the vocab-
+ulary are likely to appear after a given sequence
+of words. More formally, it learns the next word
+probability distribution. Instead, simply counting
+words on a large corpus of unlabeled text can be
+performed to retrieve those word distributions and
+to represent words (Turney and Pantel, 2010).
+3.1 Word co-occurence statistics
+?You shall know a word by the company it keeps?
+(Firth, 1957). It is a natural choice to use the word
+co-occurence statistics to acquire representations
+of word meanings. Raw word co-occurence fre-
+quencies are computed by counting the number of
+times each context word w ? D occurs after a se-
+quence of words T :
+p(w|T ) =
+p(w, T )
+p(T )
+=
+n(w, T )
+?
+w
+n(w, T )
+, (1)
+where n(w, T ) is the number of times each context
+word w occurs after the sequence T . The size of
+T can go from 1 to t words. The next word prob-
+ability distribution p for each word or sequence of
+words is thus obtained. It is a multinomial dis-
+tribution of |D| classes (words). A co-occurence
+matrix of size N ? |D| is finally built by com-
+puting those frequencies over all the N possible
+sequences of words.
+3.2 Hellinger distance
+Similarities between words can be derived by
+computing a distance between their correspond-
+ing word distributions. Several distances (or met-
+rics) over discrete distributions exist, such as the
+483
+Bhattacharyya distance, the Hellinger distance or
+Kullback-Leibler divergence. We chose here the
+Hellinger distance for its simplicity and symme-
+try property (as it is a true distance). Consid-
+ering two discrete probability distributions P =
+(p
+1
+, . . . , p
+k
+) and Q = (q
+1
+, . . . , q
+k
+), the Hellinger
+distance is formally defined as:
+H(P,Q) = ?
+1
+?
+2
+?
+?
+?
+?
+k
+?
+i=1
+(
+?
+p
+i
+?
+?
+q
+i
+)
+2
+, (2)
+which is directly related to the Euclidean norm of
+the difference of the square root vectors:
+H(P,Q) =
+1
+?
+2
+?
+?
+P ?
+?
+Q?
+2
+. (3)
+Note that it makes more sense to take the Hellinger
+distance rather than the Euclidean distance for
+comparing discrete distributions, as P and Q are
+unit vectors according to the Hellinger distance
+(
+?
+P and
+?
+Q are units vector according to the `
+2
+norm).
+3.3 Dimensionality Reduction
+As discrete distributions are vocabulary size-
+dependent, using directly the distribution as a
+word embedding is not really tractable for large
+vocabulary. We propose to perform a princi-
+pal component analysis (PCA) of the word co-
+occurence probability matrix to represent words
+in a lower dimensional space while minimizing
+the reconstruction error according to the Hellinger
+distance.
+4 Architectures for NLP tasks
+Traditional NLP approaches extract from docu-
+ments a rich set of hand-designed features which
+are then fed to a standard classification algorithm.
+The choice of features is a task-specific empirical
+process. In contrast, we want to pre-process our
+features as little as possible. In that respect, a mul-
+tilayer neural network architecture seems appro-
+priate as it can be trained in an end-to-end fashion
+on the task of interest.
+4.1 Sentence-level Approach
+The sentence-level approach aims at tagging with
+a label each word in a given sentence. Embed-
+dings of each word in a sentence are fed to linear
+and non-linear classification models followed by a
+CRF-type sentence tag inference. We chose here
+neural networks as classifiers.
+Sliding window Context is crucial to character-
+ize word meanings. We thus consider n context
+words around each word x
+t
+to be tagged, lead-
+ing to a window of N = (2n + 1) words [x]
+t
+=
+(x
+t?n
+, . . . , x
+t
+, . . . , x
+t+n
+). As each word is em-
+bedded into a d
+wrd
+-dimensional vector, it results
+a d
+wrd
+? N vector representing a window of N
+words, which aims at characterizing the middle
+word x
+t
+in this window. Given a complete sen-
+tence of T words, we can obtain for each word a
+context-dependent representation by sliding over
+all the possible windows in the sentence. A same
+linear transformation is then applied on each win-
+dow for each word to tag:
+g([x]
+t
+) = W [x]
+t
++ b , (4)
+where W ? R
+M?d
+wrd
+N
+and b ? R
+M
+are the pa-
+rameters, with M the number of classes. Alterna-
+tively, a one hidden layer non-linear network can
+be considered:
+g([x]
+t
+) = Wh(U [x]
+t
+) + b , (5)
+where U ? R
+n
+hu
+?d
+wrd
+N
+, with n
+hu
+the number of
+hidden units and h(.) a transfer function.
+CRF-type inference There exists strong depen-
+dencies between tags in a sentence: some tags
+cannot follow other tags. To take the sentence
+structure into account, we want to encourage valid
+paths of tags during training, while discourag-
+ing all other paths. Considering the matrix of
+scores outputs by the network, we train a sim-
+ple conditional random field (CRF). At inference
+time, given a sentence to tag, the best path which
+minimizes the sentence score is inferred with the
+Viterbi algorithm. More formally, we denote ?
+all the trainable parameters of the network and
+f
+?
+([x]
+T
+1
+) the matrix of scores. The element [f
+?
+]
+i,t
+of the matrix is the score output by the network for
+the sentence [x]
+T
+1
+and the i
+th
+tag, at the t
+th
+word.
+We introduce a transition score [A]
+i,j
+for jumping
+from i to j tags in successive words, and an initial
+score [A]
+i,0
+for starting from the i
+th
+tag. As the
+transition scores are going to be trained, we define
+?
+? = ??{[A]
+i,j
+?i, j}. The score of a sentence [x]
+T
+1
+along a path of tags [i]
+T
+1
+is then given by the sum
+of transition scores and networks scores:
+s([x]
+T
+1
+, [i]
+T
+1
+,
+?
+?) =
+T
+?
+t=1
+(A
+[i]
+t?1
+,[i]
+t
++ [f
+?
+]
+[i]
+t
+,t
+) .
+(6)
+484
+We normalize this score over all possible tag paths
+[j]
+T
+1
+using a softmax, and we interpret the resulting
+ratio as a conditional tag path probability. Taking
+the log, the conditional probability of the true path
+[y]
+T
+1
+is therefore given by:
+log p([y]
+T
+1
+, [x]
+T
+1
+,
+?
+?) = s([x]
+T
+1
+, [y]
+T
+1
+,
+?
+?)
+? logadd
+?[j]
+T
+1
+s([x]
+T
+1
+, [j]
+T
+1
+,
+?
+?) ,
+(7)
+where we adopt the notation
+logadd
+i
+z
+i
+= log (
+?
+i
+e
+z
+i
+) . (8)
+Computing the log-likelihood efficiently is not
+straightforward, as the number of terms in the
+logadd grows exponentially with the length of
+the sentence. It can be computed in linear time
+with the Forward algorithm, which derives a recur-
+sion similar to the Viterbi algorithm (see Rabiner
+(1989)). We can thus maximize the log-likelihood
+over all the training pairs ([x]
+T
+1
+, [y]
+T
+1
+) to find, given
+a sentence [x]
+T
+1
+, the best tag path which minimizes
+the sentence score (6):
+argmax
+[j]
+T
+1
+s([x]
+T
+1
+, [j]
+T
+1
+,
+?
+?) . (9)
+In contrast to classical CRF, all parameters ? are
+trained in a end-to-end manner, by backpropa-
+gation through the Forward recursion, following
+Collobert et al. (2011).
+4.2 Document-level Approach
+The document-level approach is a document bi-
+nary classifier, with classes y ? {?1, 1}. For each
+document, a set of (trained) filters is applied to
+the sliding window described in section 4.1. The
+maximum value obtained by the i
+th
+filter over the
+whole document is:
+max
+t
+[
+w
+i
+[x]
+t
++ b
+i
+]
+i,t
+1 ? i ? n
+filter
+. (10)
+It can be seen as a way to measure if the infor-
+mation represented by the filter has been captured
+in the document or not. We feed all these inter-
+mediate scores to a linear classifier, leading to the
+following simple model:
+f
+?
+(x) = ?max
+t
+[
+W [x]
+t
++ b
+]
+. (11)
+In the case of movie reviews, the i
+th
+filter might
+capture positive or negative sentiment depending
+on the sign of ?
+i
+. As in section 4.1, we will also
+consider a non-linear classifier in the experiments.
+Training The neural network is trained using
+stochastic gradient ascent. We denote ? all the
+trainable parameters of the network. Using a train-
+ing set T , we minimize the following soft margin
+loss function with respect to ?:
+? ?
+?
+(x,y)?T
+log
+(
+1 + e
+?yf
+?
+(x)
+)
+. (12)
+4.3 Embedding Fine-Tuning
+As seen in section 3, the process to compute
+generic word embedding is quite straightforward.
+These embeddings can then be used as features
+for supervised NLP systems and help to improve
+the general performance (Turian et al., 2010; Col-
+lobert et al., 2011; Chen et al., 2013). However,
+most of these systems cannot tune these embed-
+dings as they are not structurally able to. By lever-
+aging the deep architecture of our system, we can
+define a lookup-table layer initialized with exist-
+ing embeddings as the first layer of the network.
+Lookup-Table Layer We consider a fixed-sized
+word dictionary D. Given a sequence of N words
+w
+1
+, w
+2
+, . . . , w
+N
+, each word w
+n
+? W is first em-
+bedded into a d
+wrd
+-dimensional vector space, by
+applying a lookup-table operation:
+LT
+W
+(w
+n
+) =W
+(
+0, . . . , 1 , . . . , 0
+at index w
+n
+)
+= ?W ?
+w
+n
+,
+(13)
+where the matrix W ? R
+d
+wrd
+?|D|
+represents
+the embeddings to be tuned in this lookup layer.
+?W ?
+w
+n
+? R
+d
+wrd
+is the w
+th
+column ofW and d
+wrd
+is the word vector size. Given any sequence of N
+words [w]
+N
+1
+in D, the lookup table layer applies
+the same operation for each word in the sequence,
+producing the following output matrix:
+LT
+W
+([w]
+N
+1
+) =
+(
+?W ?
+1
+[w]
+1
+. . . ?W ?
+1
+[w]
+N
+)
+.
+(14)
+Training Given a task of interest, a relevant rep-
+resentation of each word is then given by the cor-
+responding lookup table feature vector, which is
+trained by backpropagation. Word representations
+are initialized with existing embeddings.
+485
+5 Experimental Setup
+We evaluate the quality of our embeddings ob-
+tained on a large corpora of unlabeled text by com-
+paring their performance against the CW (Col-
+lobert and Weston, 2008), Turian (Turian et al.,
+2010), HLBL (Mnih and Hinton, 2008), and LR-
+MVL (Dhillon et al., 2011) embeddings on NER
+and movie review tasks. We also show that the
+general performance can be improved for these
+tasks by fine-tuning the word embeddings.
+5.1 Building Word Representation over
+Large Corpora
+Our English corpus is composed of the entire En-
+glish Wikipedia
+1
+(where all MediaWiki markups
+have been removed), the Reuters corpus and the
+Wall Street Journal (WSJ) corpus. We consider
+lower case words to limit the number of words
+in the vocabulary. Additionally, all occurrences
+of sequences of numbers within a word are re-
+placed with the string ?NUMBER?. The result-
+ing text was tokenized using the Stanford tok-
+enizer
+2
+. The data set contains about 1,652 million
+words. As vocabulary, we considered all the words
+within our corpus which appear at least one hun-
+dred times. This results in a 178,080 words vocab-
+ulary. To build the co-occurence matrix, we used
+only the 10,000 most frequent words within our
+vocabulary as context words. To get embeddings
+for words, we needed to only consider sequences
+T of t = 1 word. After PCA, each word can
+be represented in any n-dimensional vector (with
+n ? {1, . . . , 10000}). We chose to embed words
+in a 50-dimensional vector, which is the common
+dimension among the other embeddings in the lit-
+erature. The resulting embeddings will be referred
+as H-PCA in the following sections. To highlight
+the importance of the Hellinger distance, we also
+computed the PCA of the co-occurence probabil-
+ity matrix with respect to the Euclidean metric.
+The resulting embeddings are denoted E-PCA.
+Computational cost The Hellinger PCA is very
+fast to compute. We report in Table 1 the time
+needed to compute the embeddings described
+above. For this benchmark we used Intel i7 3770K
+3.5GHz CPUs. As the computation of the covari-
+ance matrix is highly parallelizable, we report re-
+sults with 1, 100 and 500 CPUs. The Eigende-
+1
+Available at http://download.wikimedia.org. We took the
+May 2012 version.
+2
+Available at http://nlp.stanford.edu/software/tokenizer.shtml
+composition of the C matrix has been computed
+with the SSYEVR LAPACK subroutine on one
+CPU. We compare completion times for 1,000 and
+10,000 eigenvectors. Finally, we report comple-
+tion times to generate the emdeddings by linear
+projection using 50, 100 and 200 eigenvectors. Al-
+though the linear projection is already quite fast
+on only one CPU, this operation can also be com-
+puted in parallel. Those results show that the
+Hellinger PCA can generate about 200,000 em-
+beddings in about three minutes with a cluster of
+100 CPUs.
+time (s)
+# of CPUs 1 100 500
+Covariance matrix 9930 99 20
+1,000 Eigenvectors 72 - -
+10,000 Eigenvectors 110 - -
+50D Embeddings 20 0.2 0.04
+100D Embeddings 29 0.29 0.058
+200D Embeddings 67 0.67 0.134
+Total for 50D 10,022 171.2 92.04
+Table 1: Benchmark of the experiment. Times are
+reported in seconds.
+5.2 Existing Available Word Embeddings
+We compare our H-PCA?s embeddings with the
+following publicly available embeddings:
+? LR-MVL
+3
+: it covers 300,000 words with 50
+dimensions for each word. They were trained
+on the RCV1 corpus using the Low Rank
+Multi-View Learning method. We only used
+their context oblivious embeddings coming
+from the eigenfeature dictionary.
+? CW
+4
+: it covers 130,000 words with 50 di-
+mensions for each word. They were trained
+for about two months, over Wikipedia, using
+a neural network language model approach.
+? Turian
+5
+: it covers 268,810 words with 25,
+50, 100 or 200 dimensions for each word.
+They were trained on the RCV1 corpus us-
+ing the same system as the CW embeddings
+but with different parameters. We used only
+the 50 dimensions.
+3
+Available at http://www.cis.upenn.edu/ un-
+gar/eigenwords/
+4
+From SENNA: http://ml.nec-labs.com/senna/
+5
+Available at http://metaoptimize.com/projects/wordreprs/
+486
+? HLBL
+5
+: it covers 246,122 words with 50 or
+100 dimensions for each word. They were
+trained on the RCV1 corpus using a Hierar-
+chical Log-Bilinear Model. We used only the
+50 dimensions.
+5.3 Supervised Evaluation Tasks
+Using word embeddings as feature proved that it
+can improve the generalization performance on
+several NLP tasks (Turian et al., 2010; Collobert
+et al., 2011; Chen et al., 2013). Using our word
+embeddings, we thus trained the sentence-level ar-
+chitecture described in section 4.1 on a NER task.
+Named Entity Recognition (NER) It labels
+atomic elements in the sentence into categories
+such as ?PERSON? or ?LOCATION?. The
+CoNLL 2003 setup
+6
+is a NER benchmark data
+set based on Reuters data. The contest provides
+training, validation and testing sets. The networks
+are fed with two raw features: word embeddings
+and a capital letter feature. The ?caps? feature
+tells if each word was in lowercase, was all up-
+percase, had first letter capital, or had at least
+one non-initial capital letter. No other feature has
+been used to tune the models. This is a main
+difference with other systems which usually use
+more features as POS tags, prefixes and suffixes
+or gazetteers. Hyper-parameters were tuned on
+the validation set. We selected n = 2 context
+words leading to a window of 5 words. We used a
+special ?PADDING? word for context at the be-
+ginning and the end of each sentence. For the
+non-linear model, the number of hidden units was
+300. As benchmark system, we report the system
+of Ando et al. (2005), which reached 89.31% F1
+with a semi-supervised approach and less special-
+ized features than CoNLL 2003 challengers.
+The NER evaluation task is mainly syntactic.
+As we wish to evaluate whether our word embed-
+dings can also capture semantic, we trained the
+document-level architecture described in section
+4.2 over a movie review task.
+IMDB Review Dataset We used a collection of
+50,000 reviews from IMDB
+7
+. It allows no more
+than 30 reviews per movie. It contains an even
+number of positive and negative reviews, so ran-
+domly guessing yields 50% accuracy. Only highly
+polarized reviews have been considered. A nega-
+6
+http://www.cnts.ua.ac.be/conll2003/ner/
+7
+Available at http://www.andrew-maas.net/data/sentiment
+tive review has a score ? 4 out of 10, and a posi-
+tive review has a score ? 7 out of 10. It has been
+evenly divided into training and test sets (25,000
+reviews each). For this task, we only used the
+word embeddings as features. We perform a sim-
+ple cross-validation on the training set to choose
+the optimal hyper-parameters. The network had a
+window of 5 words and n
+filter
+= 1000 filters. As
+benchmark system, we report the system of Maas
+et al. (2011), which reached 88.90% accuracy with
+a mix of unsupervised and supervised techniques
+to learn word vectors capturing semantic term-
+document information, as well as rich sentiment
+content.
+ 87.5
+ 88
+ 88.5
+ 89
+ 89.5
+ 90
+ 90.5
+ 91
+ 91.5
+ 92
+ 92.5
+ 93
+ 0.001  0.01  0.1  1
+F1 
+sco
+re
+lambda
+LRMVLTurianCWH-PCAHLBL
+(a) NER validation set.
+ 83
+ 84
+ 85
+ 86
+ 87
+ 88
+ 89
+ 90
+ 91
+ 0.001  0.01  0.1  1
+acc
+ura
+cy
+lambda
+LRMVLTurianCWH-PCAHLBL
+(b) IMDB review dataset.
+Figure 1: Effect of varying the normalization fac-
+tor ? with a non-linear approach and fine-tuning.
+5.4 Embeddings Normalization
+Word embeddings are continuous vector spaces
+that are not necessarily in a bounded range. To
+avoid saturation issues in the network architec-
+tures, embeddings need to be properly normalized.
+Considering the matrix of word embeddings E,
+the normalized embeddings are:
+?
+E =
+?(E ?
+?
+E)
+?(E)
+(15)
+487
+where
+?
+E is the mean of the embeddings, ?(E) is
+the standard deviation of the embeddings and ? is
+a normalization factor. Figure 1 shows the effect
+of ? on both supervised tasks. The embeddings
+normalization depends on the type of the network
+architecture. In the document-level approach, best
+results are obtained with ? = 0.1 for all embed-
+dings, while a normalization factor set to 1 is bet-
+ter for H-PCA?s embeddings in the sentence-level
+approach. These results show the importance of
+applying the right normalization for word embed-
+dings.
+5.5 Results
+H-PCA?s embeddings Results summarized in
+Table 2 reveal that performance on NER task can
+be as good with word embeddings from a word co-
+occurence matrix decomposition as with a neural
+network language model trained for weeks. The
+best F1 scores are indeed obtained using the H-
+PCA tuned embeddings. Results for the movie re-
+view task in Table 3 show that H-PCA?s embed-
+dings also perform as well as all the other embed-
+dings on the movie review task. It is worth men-
+tioning that on both tasks, H-PCA?s embeddings
+outperform the E-PCA?s embeddings, demonstrat-
+ing the value of the Hellinger distance. When the
+embeddings are not tuned, the CW?s embeddings
+slightly outperform the H-PCA?s embeddings on
+NER task. The performance difference between
+both fixed embeddings on the movie review task is
+about 3%. Embeddings from the CW neural lan-
+guage model seems to capture more semantic in-
+formation but we showed that this lack of semantic
+information can be offset by fine-tuning.
+Embeddings fine-tuning We note that tuning
+the embeddings by backpropagation increases the
+general performance on both NER and movie re-
+view tasks. The increase is, in general, higher for
+the movie review task, which reveals the impor-
+tance of embedding fine-tuning for NLP tasks with
+a high semantic component. We show in Table 4
+that the embeddings after fine-tuning give a higher
+rank to words that are related to the task of interest
+which is movie-sentiment-based relations in this
+case.
+Linear vs nonlinear model We also report re-
+sults with a linear version of our neural networks.
+Having non-linearity helps for NER. It seems im-
+portant to extract non-linear features for such a
+task. However, we note that the linear approach
+Approach Fixed Tuned
+Benchmark 89.31
+Non-Linear Approach
+H-PCA 87.91 ? 0.17 89.16 ? 0.09
+E-PCA 84.28 ? 0.15 87.09 ? 0.12
+LR-MVL 86.83 ? 0.20 87.38 ? 0.07
+CW 88.14 ? 0.21 88.69 ? 0.16
+Turian 86.26 ? 0.13 87.35 ? 0.12
+HLBL 83.87 ? 0.25 85.91 ? 0.17
+Linear Approach
+H-PCA 84.64 ? 0.11 87.97 ? 0.09
+E-PCA 78.15 ? 0.15 85.99 ? 0.09
+LR-MVL 82.27 ? 0.14 86.83 ? 0.17
+CW 84.50 ? 0.19 86.84 ? 0.08
+Turian 83.33 ? 0.07 86.79 ? 0.11
+HLBL 80.31? 0.11 85.06 ? 0.13
+Table 2: Performance comparison on NER task
+with different embeddings. The first column is
+results with the original embeddings. The sec-
+ond column is results with embeddings after fine-
+tuning for this task. Results are reported in F1
+score (mean ? standard deviation of ten training
+runs with different initialization).
+Approach Fixed Tuned
+Benchmark 88.90
+Non-Linear Approach
+H-PCA 84.20 ? 0.16 89.89 ? 0.09
+E-PCA 74.85 ? 0.12 89.70 ? 0.06
+LR-MVL 85.33 ? 0.14 90.06 ? 0.09
+CW 87.54 ? 0.27 89.77 ? 0.05
+Turian 85.33 ? 0.10 89.99 ? 0.05
+HLBL 85.51 ? 0.14 89.58 ? 0.06
+Linear Approach
+H-PCA 84.11 ? 0.05 89.90 ? 0.10
+E-PCA 73.27 ? 0.16 89.62 ? 0.05
+LR-MVL 84.37 ? 0.16 89.77 ? 0.09
+CW 87.62 ? 0.24 89.92 ? 0.07
+Turian 84.44 ? 0.13 89.66 ? 0.10
+HLBL 85.34 ? 0.10 89.64 ? 0.05
+Table 3: Performance comparison on movie re-
+view task with different embeddings. The first
+column is results with the original embeddings.
+The second column is results with embeddings af-
+ter fine-tuning for this task. Results are reported
+in classification accuracy (mean ? standard devi-
+ation of ten training runs with different initializa-
+tion).
+488
+BORING BAD AWESOME
+before after before after before after
+SAD CRAP HORRIBLE TERRIBLE SPOOKY TERRIFIC
+SILLY LAME TERRIBLE STUPID AWFUL TIMELESS
+SUBLIME MESS DREADFUL BORING SILLY FANTASTIC
+FANCY STUPID UNFORTUNATE DULL SUMMERTIME LOVELY
+SOBER DULL AMAZING CRAP NASTY FLAWLESS
+TRASH HORRIBLE AWFUL WRONG MACABRE MARVELOUS
+LOUD RUBBISH MARVELOUS TRASH CRAZY EERIE
+RIDICULOUS SHAME WONDERFUL SHAME ROTTEN LIVELY
+RUDE AWFUL GOOD KINDA OUTRAGEOUS FANTASY
+MAGIC ANNOYING FANTASTIC JOKE SCARY SURREAL
+Table 4: Set of words with their 10 nearest neighbors before and after fine-tuning for the movie review
+task (using the Euclidean metric in the embedding space). H-PCA?s embeddings are used here.
+performs as well as the non-linear approach for
+the movie review task. Our linear approach cap-
+tures all the necessary sentiment features to pre-
+dict whether a review is positive or negative. It
+is thus not surprising that a bag-of-words based
+method can perform well on this task (Wang and
+Manning, 2012). However, as our method takes
+the whole review as input, we can extract windows
+of words having the most discriminative power:
+it is a major advantage of our method compared
+to conventional bag-of-words based methods. We
+report in Table 5 some examples of windows of
+words extracted from the most discriminative fil-
+ters ?
+i
+(positive and negative). Note that there is
+about the same number of positive and negative
+filters after learning.
+6 Conclusion
+We have demonstrated that appealing word
+embeddings can be obtained by computing a
+Hellinger PCA of the word co-occurence ma-
+trix. While a neural network language model
+can be painful and long to train, we can get
+a word co-occurence matrix by simply counting
+words over a large corpus. The resulting em-
+beddings give similar results on NLP tasks, even
+from a N ? 10, 000 word co-occurence matrix
+computed with only one word of context. It re-
+veals that having a significant, but not too large
+set of common words, seems sufficient for cap-
+turing most of the syntactic and semantic char-
+acteristics of words. As PCA of a N ? 10, 000
+matrix is really fast and not memory consuming,
+our method gives an interesting and practical al-
+ternative to neural language models for generat-
+?
+i
+[x]
+t
+-
+the worst film this year
+very worst film i ?ve
+very worst movie i ?ve
+-
+watch this unfunny stinker .
+, extremely unfunny drivel come
+, this ludicrous script gets
+-
+it was pointless and boring
+it is unfunny . unfunny
+film are awful and embarrassing
++
+both really just wonderful .
+. a truly excellent film
+. a really great film
++
+excellent film with great performances
+excellent film with a great
+excellent movie with a stellar
++
+incredible . just incredible .
+performances and just amazing .
+one was really great .
+Table 5: The top 3 positive and negative filters
+?
+i
+w
+i
+and their respective top 3 windows of words
+[x]
+t
+within the whole IMDB review dataset.
+ing word embeddings. However, we showed that
+deep-learning is an interesting framework to fine-
+tune embeddings over specific NLP tasks. Our
+H-PCA?s embeddings are available online, here:
+http://www.lebret.ch/words/.
+Acknowledgments
+This work was supported by the HASLER foun-
+dation through the grant ?Information and Com-
+munication Technology for a Better World 2020?
+(SmartWorld).
+489
+References
+R. K. Ando, T. Zhang, and P. Bartlett. 2005. A frame-
+work for learning predictive structures from multi-
+ple tasks and unlabeled data. Journal of Machine
+Learning Research, 6:1817?1853.
+Y. Bengio, R. Ducharme, P. Vincent, and C. Janvin.
+2003. A neural probabilistic language model. J.
+Mach. Learn. Res., 3:1137?1155, March.
+P. F. Brown, P. V. deSouza, R. L. Mercer, V. J. D. Pietra,
+and J C. Lai. 1992. Class-based n-gram mod-
+els of natural language. Computational Linguistics,
+18(4):467?479.
+Y. Chen, B. Perozzi, R. Al-Rfou?, and S. Skiena. 2013.
+The expressive power of word embeddings. CoRR,
+abs/1301.3226.
+R. Collobert and J. Weston. 2008. A unified architec-
+ture for natural language processing: Deep neural
+networks with multitask learning. In International
+Conference on Machine Learning, ICML.
+R. Collobert, J. Weston, L. Bottou, M. Karlen,
+K. Kavukcuoglu, and P. Kuksa. 2011. Natural lan-
+guage processing (almost) from scratch. Journal of
+Machine Learning Research, 12:2493?2537.
+P. S. Dhillon, D. Foster, and L. Ungar. 2011. Multi-
+view learning of word embeddings via CCA. In
+Advances in Neural Information Processing Systems
+(NIPS), volume 24.
+J. L. Elman. 1991. Distributed representations, sim-
+ple recurrent networks, and grammatical structure.
+Machine Learning, 7:195?225.
+J. R. Firth. 1957. A synopsis of linguistic theory 1930-
+55. 1952-59:1?32.
+G. E. Hinton. 1986. Learning distributed representa-
+tions of concepts. In Proceedings of the Eighth An-
+nual Conference of the Cognitive Science Society,
+pages 1?12. Hillsdale, NJ: Erlbaum.
+F. Huang and A. Yates. 2009. Distributional represen-
+tations for handling sparsity in supervised sequence-
+labeling. In Proceedings of the Association for
+Computational Linguistics (ACL), pages 495?503.
+Association for Computational Linguistics.
+T. Koo, X. Carreras, and M. Collins. 2008. Simple
+semi-supervised dependency parsing. In Proceed-
+ings of the Association for Computational Linguis-
+tics (ACL), pages 595?603.
+I. Labutov and H. Lipson. 2013. Re-embedding words.
+In ACL.
+T. K. Landauer and S. T. Dumais. 1997. A solution to
+Plato?s problem: The Latent Semantic Analysis the-
+ory of the acquisition, induction, and representation
+of knowledge. Psychological Review.
+T. K. Landauer. 2002. On the computational basis
+of learning and cognition: Arguments from lsa. In
+N. Ross, editor, The psychology of learning and mo-
+tivation, volume 41, pages 43?84. Academic Press,
+San Francisco, CA.
+W. Lowe, 2001. Towards a theory of semantic space,
+pages 576?581.
+A. L. Maas, R. E. Daly, P. T. Pham, D. Huang, A. Y.
+Ng, and C. Potts. 2011. Learning word vectors for
+sentiment analysis. In ACL, pages 142?150.
+T. Mikolov, M. Karafiat, L. Burget, J. Cernocky, and
+Sanjeev Khudanpur. 2010. Recurrent neural net-
+work based language model.
+A. Mnih and G. Hinton. 2008. A Scalable Hierarchical
+Distributed Language Model. In Advances in Neural
+Information Processing Systems, volume 21.
+J. B. Pollack. 1990. Recursive distributed representa-
+tions. Artificial Intelligence, 46:77?105.
+L. R. Rabiner. 1989. A tutorial on hidden markov
+models and selected applications in speech recogni-
+tion. In Proceedings of the IEEE, pages 257?286.
+L. Ratinov and D. Roth. 2009. Design challenges and
+misconceptions in named entity recognition. In Pro-
+ceedings of the Thirteenth Conference on Computa-
+tional Natural Language Learning (CoNLL), pages
+147?155. Association for Computational Linguis-
+tics.
+H. Sch?utze. 1995. Distributional part-of-speech tag-
+ging. In Proceedings of the Association for Compu-
+tational Linguistics (ACL), pages 141?148. Morgan
+Kaufmann Publishers Inc.
+J. Turian, L. Ratinov, and Y. Bengio. 2010. Word rep-
+resentations: A simple and general method for semi-
+supervised learning. In ACL.
+P. D. Turney and P. Pantel. 2010. From frequency to
+meaning: Vector space models of semantics. J. Artif.
+Int. Res., 37(1):141?188, January.
+J. J. V?ayrynen and T. Honkela. 2004. Word category
+maps based on emergent features created by ICA.
+In Proceedings of the STeP?2004 Cognition + Cy-
+bernetics Symposium.
+S Wang and C. D. Manning. 2012. Baselines and bi-
+grams: Simple, good sentiment and topic classifica-
+tion. ACL ?12.
+L. Wittgenstein. 1953. Philosophical Investigations.
+Blackwell.
+490

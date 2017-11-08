@@ -1,0 +1,5264 @@
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 1487?1498,
+October 25-29, 2014, Doha, Qatar.
+c
+?2014 Association for Computational Linguistics
+Language Modeling with Power Low Rank Ensembles
+Ankur P. Parikh
+School of Computer Science
+Carnegie Mellon University
+apparikh@cs.cmu.edu
+Avneesh Saluja
+Electrical & Computer Engineering
+Carnegie Mellon University
+avneesh@cs.cmu.edu
+Chris Dyer
+School of Computer Science
+Carnegie Mellon University
+cdyer@cs.cmu.edu
+Eric P. Xing
+School of Computer Science
+Carnegie Mellon University
+epxing@cs.cmu.edu
+Abstract
+We present power low rank ensembles
+(PLRE), a flexible framework for n-gram
+language modeling where ensembles of
+low rank matrices and tensors are used
+to obtain smoothed probability estimates
+of words in context. Our method can
+be understood as a generalization of n-
+gram modeling to non-integer n, and in-
+cludes standard techniques such as abso-
+lute discounting and Kneser-Ney smooth-
+ing as special cases. PLRE training is effi-
+cient and our approach outperforms state-
+of-the-art modified Kneser Ney baselines
+in terms of perplexity on large corpora as
+well as on BLEU score in a downstream
+machine translation task.
+1 Introduction
+Language modeling is the task of estimating the
+probability of sequences of words in a language
+and is an important component in, among other
+applications, automatic speech recognition (Ra-
+biner and Juang, 1993) and machine translation
+(Koehn, 2010). The predominant approach to lan-
+guage modeling is the n-gram model, wherein
+the probability of a word sequence P (w
+1
+, . . . , w
+`
+)
+is decomposed using the chain rule, and then a
+Markov assumption is made: P (w
+1
+, . . . , w
+`
+) ?
+?
+`
+i=1
+P (w
+i
+|w
+i?1
+i?n+1
+). While this assumption sub-
+stantially reduces the modeling complexity, pa-
+rameter estimation remains a major challenge.
+Due to the power-law nature of language (Zipf,
+1949), the maximum likelihood estimator mas-
+sively overestimates the probability of rare events
+and assigns zero probability to legitimate word se-
+quences that happen not to have been observed in
+the training data (Manning and Sch?utze, 1999).
+Many smoothing techniques have been pro-
+posed to address the estimation challenge. These
+reassign probability mass (generally from over-
+estimated events) to unseen word sequences,
+whose probabilities are estimated by interpolating
+with or backing off to lower order n-gram models
+(Chen and Goodman, 1999).
+Somewhat surprisingly, these widely used
+smoothing techniques differ substantially from
+techniques for coping with data sparsity in other
+domains, such as collaborative filtering (Koren et
+al., 2009; Su and Khoshgoftaar, 2009) or matrix
+completion (Cand`es and Recht, 2009; Cai et al.,
+2010). In these areas, low rank approaches based
+on matrix factorization play a central role (Lee
+and Seung, 2001; Salakhutdinov and Mnih, 2008;
+Mackey et al., 2011). For example, in recom-
+mender systems, a key challenge is dealing with
+the sparsity of ratings from a single user, since
+typical users will have rated only a few items. By
+projecting the low rank representation of a user?s
+(sparse) preferences into the original space, an es-
+timate of ratings for new items is obtained. These
+methods are attractive due to their computational
+efficiency and mathematical well-foundedness.
+In this paper, we introduce power low rank en-
+sembles (PLRE), in which low rank tensors are
+used to produce smoothed estimates for n-gram
+probabilities. Ideally, we would like the low rank
+structures to discover semantic and syntactic relat-
+edness among words and n-grams, which are used
+to produce smoothed estimates for word sequence
+probabilities. In contrast to the few previous low
+rank language modeling approaches, PLRE is not
+orthogonal to n-gram models, but rather a gen-
+eral framework where existing n-gram smoothing
+methods such as Kneser-Ney smoothing are spe-
+cial cases. A key insight is that PLRE does not
+compute low rank approximations of the original
+1487
+joint count matrices (in the case of bigrams) or ten-
+sors i.e. multi-way arrays (in the case of 3-grams
+and above), but instead altered quantities of these
+counts based on an element-wise power operation,
+similar to how some smoothing methods modify
+their lower order distributions.
+Moreover, PLRE has two key aspects that lead
+to easy scalability for large corpora and vocabu-
+laries. First, since it utilizes the original n-grams,
+the ranks required for the low rank matrices and
+tensors tend to be remain tractable (e.g. around
+100 for a vocabulary size V ? 1 ? 10
+6
+) leading
+to fast training times. This differentiates our ap-
+proach over other methods that leverage an under-
+lying latent space such as neural networks (Bengio
+et al., 2003; Mnih and Hinton, 2007; Mikolov et
+al., 2010) or soft-class models (Saul and Pereira,
+1997) where the underlying dimension is required
+to be quite large to obtain good performance.
+Moreover, at test time, the probability of a se-
+quence can be queried in time O(?
+max
+) where
+?
+max
+is the maximum rank of the low rank matri-
+ces/tensors used. While this is larger than Kneser
+Ney?s virtually constant query time, it is substan-
+tially faster than conditional exponential family
+models (Chen and Rosenfeld, 2000; Chen, 2009;
+Nelakanti et al., 2013) and neural networks which
+require O(V ) for exact computation of the nor-
+malization constant. See Section 7 for a more de-
+tailed discussion of related work.
+Outline: We first review existing n-gram
+smoothing methods (?2) and then present the in-
+tuition behind the key components of our tech-
+nique: rank (?3.1) and power (?3.2). We then
+show how these can be interpolated into an ensem-
+ble (?4). In the experimental evaluation on English
+and Russian corpora (?5), we find that PLRE out-
+performs Kneser-Ney smoothing and all its vari-
+ants, as well as class-based language models. We
+also include a comparison to the log-bilinear neu-
+ral language model (Mnih and Hinton, 2007) and
+evaluate performance on a downstream machine
+translation task (?6) where our method achieves
+consistent improvements in BLEU.
+2 Discount-based Smoothing
+We first provide background on absolute discount-
+ing (Ney et al., 1994) and Kneser-Ney smooth-
+ing (Kneser and Ney, 1995), two common n-gram
+smoothing methods. Both methods can be formu-
+lated as back-off or interpolated models; we de-
+scribe the latter here since that is the basis of our
+low rank approach.
+2.1 Notation
+Let c(w) be the count of word w, and similarly
+c(w,w
+i?1
+) for the joint count of words w and
+w
+i?1
+. For shorthand we will define w
+j
+i
+to denote
+the word sequence {w
+i
+, w
+i+1
+, ..., w
+j?1
+, w
+j
+}. Let
+?
+P (w
+i
+) refer to the maximum likelihood estimate
+(MLE) of the probability of word w
+i
+, and simi-
+larly
+?
+P (w
+i
+|w
+i?1
+) for the probability conditioned
+on a history, or more generally,
+?
+P (w
+i
+|w
+i?1
+i?n+1
+).
+Let N
+?
+(w
+i
+) := |{w : c(w
+i
+, w) > 0}| be
+the number of distinct words that appear be-
+fore w
+i
+. More generally, let N
+?
+(w
+i
+i?n+1
+) =
+|{w : c(w
+i
+i?n+1
+, w) > 0}|. Similarly, let
+N
++
+(w
+i?1
+i?n+1
+) = |{w : c(w,w
+i?1
+i?n+1
+) > 0}|. V
+denotes the vocabulary size.
+2.2 Absolute Discounting
+Absolute discounting works on the idea of inter-
+polating higher order n-gram models with lower-
+order n-gram models. However, first some prob-
+ability mass must be ?subtracted? from the higher
+order n-grams so that the leftover probability can
+be allocated to the lower order n-grams. More
+specifically, define the following discounted con-
+ditional probability:
+?
+P
+D
+(w
+i
+|w
+i?1
+i?n+1
+) =
+max{c(w
+i
+, w
+i?1
+i?n+1
+)?D, 0}
+c(w
+i?1
+i?n+1
+)
+Then absolute discounting P
+abs
+(?) uses the follow-
+ing (recursive) equation:
+P
+abs
+(w
+i
+|w
+i?1
+i?n+1
+) =
+?
+P
+D
+(w
+i
+|w
+i?1
+i?n+1
+)
++ ?(w
+i?1
+i?n+1
+)P
+abs
+(w
+i
+|w
+i?1
+i?n+2
+)
+where ?(w
+i?1
+i?n+1
+) is the leftover weight (due to
+the discounting) that is chosen so that the con-
+ditional distribution sums to one: ?(w
+i?1
+i?n+1
+) =
+D
+c(w
+i?1
+i?n+1
+)
+N
++
+(w
+i?1
+i?n+1
+). For the base case, we set
+P
+abs
+(w
+i
+) =
+?
+P (w
+i
+).
+Discontinuity: Note that if c(w
+i?1
+i?n+1
+) = 0, then
+?(w
+i?1
+i?n+1
+) =
+0
+0
+, in which case ?(w
+i?1
+i?n+1
+) is set
+to 1. We will see that this discontinuity appears in
+PLRE as well.
+1488
+2.3 Kneser Ney Smoothing
+Ideally, the smoothed probability should preserve
+the observed unigram distribution:
+?
+P (w
+i
+) =
+?
+w
+i?1
+i?n+1
+P
+sm
+(w
+i
+|w
+i?1
+i?n+1
+)
+?
+P (w
+i?1
+i?n+1
+) (1)
+where P
+sm
+(w
+i
+|w
+i?1
+i?n+1
+) is the smoothed condi-
+tional probability that a model outputs. Unfortu-
+nately, absolute discounting does not satisfy this
+property, since it exclusively uses the unaltered
+MLE unigram model as its lower order model. In
+practice, the lower order distribution is only uti-
+lized when we are unsure about the higher order
+distribution (i.e., when ?(?) is large). Therefore,
+the unigram model should be altered to condition
+on this fact.
+This is the inspiration behind Kneser-Ney (KN)
+smoothing, an elegant algorithm with robust per-
+formance in n-gram language modeling. KN
+smoothing defines alternate probabilities P
+alt
+(?):
+P
+alt
+D
+(w
+i
+|w
+i?1
+i?n
+?
++1
+) =
+?
+?
+?
+?
+?
+?
+?
+?
+P
+D
+(w
+i
+|w
+i?1
+i?n
+?
++1
+), if n
+?
+= n
+max{N
+?
+(w
+i
+i?n
+?
++1
+)?D,0}
+?
+w
+i
+N
+?
+(w
+i
+i?n
+?
++1
+)
+, if n
+?
+< n
+The base case for unigrams reduces to
+P
+alt
+(w
+i
+) =
+N
+?
+(w
+i
+)?
+w
+i
+N
+?
+(w
+i
+)
+. Intuitively P
+alt
+(w
+i
+) is
+proportional to the number of unique words that
+precede w
+i
+. Thus, words that appear in many dif-
+ferent contexts will be given higher weight than
+words that consistently appear after only a few
+contexts. These alternate distributions are then
+used with absolute discounting:
+P
+kn
+(w
+i
+|w
+i?1
+i?n+1
+) = P
+alt
+D
+(w
+i
+|w
+i?1
+i?n+1
+)
++ ?(w
+i?1
+i?n+1
+)P
+kn
+(w
+i
+|w
+i?1
+i?n+2
+) (2)
+where we set P
+kn
+(w
+i
+) = P
+alt
+(w
+i
+). By definition,
+KN smoothing satisfies the marginal constraint in
+Eq. 1 (Kneser and Ney, 1995).
+3 Power Low Rank Ensembles
+In n-gram smoothing methods, if a bigram count
+c(w
+i
+, w
+i?1
+) is zero, the unigram probabilities are
+used, which is equivalent to assuming that w
+i
+and
+w
+i?1
+are independent ( and similarly for general
+n). However, in this situation, instead of back-
+ing off to a 1-gram, we may like to back off to a
+?1.5-gram? or more generally an order between 1
+and 2 that captures a coarser level of dependence
+between w
+i
+and w
+i?1
+and does not assume full in-
+dependence.
+Inspired by this intuition, our strategy is to con-
+struct an ensemble of matrices and tensors that
+not only consists of MLE-based count informa-
+tion, but also contains quantities that represent lev-
+els of dependence in-between the various orders in
+the model. We call these combinations power low
+rank ensembles (PLRE), and they can be thought
+of as n-gram models with non-integer n. Our ap-
+proach can be recursively formulated as:
+P
+plre
+(w
+i
+|w
+i?1
+i?n+1
+) = P
+alt
+D
+0
+(w
+i
+|w
+i?1
+i?n+1
+)
++ ?
+0
+(w
+i?1
+i?n+1
+)
+(
+ZD
+1
+(w
+i
+|w
+i?1
+i?n+1
+) + .....
++ ?
+??1
+(w
+i?1
+i?n+1
+)
+(
+ZD
+?
+(w
+i
+|w
+i?1
+i?n+1
+)
++ ?
+?
+(w
+i?1
+i?n+1
+)
+(
+P
+plre
+(w
+i
+|w
+i?1
+i?n+2
+)
+))
+...
+)
+(3)
+where Z
+1
+, ...,Z
+?
+are conditional probability ma-
+trices that represent the intermediate n-gram or-
+ders
+1
+and D is a discount function (specified in
+?4).
+This formulation begs answers to a few crit-
+ical questions. How to construct matrices that
+represent conditional probabilities for intermedi-
+ate n? How to transform them in a way that
+generalizes the altered lower order distributions
+in KN smoothing? How to combine these matri-
+ces such that the marginal constraint in Eq. 1 still
+holds? The following propose solutions to these
+three queries:
+1. Rank (Section 3.1): Rank gives us a concrete
+measurement of the dependence between w
+i
+and w
+i?1
+. By constructing low rank ap-
+proximations of the bigram count matrix and
+higher-order count tensors, we obtain matri-
+ces that represent coarser dependencies, with
+a rank one approximation implying that the
+variables are independent.
+2. Power (Section 3.2): In KN smoothing, the
+lower order distributions are not the original
+counts but rather altered estimates. We pro-
+pose a continuous generalization of this alter-
+ation by taking the element-wise power of the
+counts.
+1
+with a slight abuse of notation, let ZD
+j
+be shorthand
+for Z
+j,D
+j
+1489
+3. Creating the Ensemble (Section 4): Lastly,
+PLRE also defines a way to interpolate the
+specifically constructed intermediate n-gram
+matrices. Unfortunately a constant discount,
+as presented in Section 2, will not in general
+preserve the lower order marginal constraint
+(Eq. 1). We propose a generalized discount-
+ing scheme to ensure the constraint holds.
+3.1 Rank
+We first show how rank can be utilized to construct
+quantities between an n-gram and an n? 1-gram.
+In general, we think of an n-gram as an n
+th
+or-
+der tensor i.e. a multi-way array with n indices
+{i
+1
+, ..., i
+n
+}. (A vector is a tensor of order 1, a ma-
+trix is a tensor of order 2 etc.) Computing a spe-
+cial rank one approximation of slices of this tensor
+produces the n? 1-gram. Thus, taking rank ? ap-
+proximations in this fashion allows us to represent
+dependencies between an n-gram and n?1-gram.
+Consider the bigram count matrix B with
+N counts which has rank V . Note that
+?
+P (w
+i
+|w
+i?1
+) =
+B(w
+i
+,w
+i?1
+)?
+w
+B(w,w
+i?1
+)
+. Additionally, B
+can be considered a random variable that is the re-
+sult of sampling N tuples of (w
+i
+, w
+i?1
+) and ag-
+glomerating them into a count matrix. Assum-
+ing w
+i
+and w
+i?1
+are independent, the expected
+value (with respect to the empirical distribution)
+E[B] = NP (w
+i
+)P (w
+i?1
+), which can be rewrit-
+ten as being proportional to the outer product of
+the unigram probability vector with itself, and is
+thus rank one.
+This observation extends to higher order
+n-grams as well. Let C
+n
+be the n
+th
+order tensor
+where C
+n
+(w
+i
+, ...., w
+i?n+1
+) = c(w
+i
+, ..., w
+i?n+1
+).
+Furthermore denote C
+n
+(:, w?
+i?1
+i?n+2
+, :) to
+be the V ? V matrix slice of C
+n
+where
+w
+i?n+2
+, ..., w
+i?1
+are held fixed to a particular
+sequence w?
+i?n+2
+, ..., w?
+i?1
+. Then if w
+i
+is con-
+ditionally independent of w
+i?n+1
+given w
+i?1
+i?n+2
+,
+then E[C
+n
+(:, w?
+i?1
+i?n+2
+, :)] is rank one ?w?
+i?1
+i?n+2
+.
+However, it is rare that these matrices are ac-
+tually rank one, either due to sampling vari-
+ance or the fact that w
+i
+and w
+i?1
+are not in-
+dependent. What we would really like to say
+is that the best rank one approximation B
+(1)
+(under some norm) of B is ?
+?
+P (w
+i
+)
+?
+P (w
+i?1
+).
+While this statement is not true under the `
+2
+norm, it is true under generalized KL diver-
+gence (Lee and Seung, 2001): gKL(A||B) =
+?
+ij
+(
+A
+ij
+log(
+A
+ij
+B
+ij
+)?A
+ij
++B
+ij
+)
+)
+.
+In particular, generalized KL divergence pre-
+serves row and column sums: if M
+(?)
+is the best
+rank ? approximation of M under gKL then the
+row sums and column sums of M
+(?)
+and M are
+equal (Ho and Van Dooren, 2008). Leveraging
+this property, it is straightforward to prove the fol-
+lowing lemma:
+Lemma 1. Let B
+(?)
+be the best rank ? ap-
+proximation of B under gKL. Then B
+(1)
+?
+?
+P (w
+i
+)
+?
+P (w
+i?1
+) and ?w
+i?1
+s.t. c(w
+i?1
+) 6= 0:
+?
+P (w
+i
+) =
+B
+(1)
+(w
+i
+, w
+i?1
+)
+?
+w
+B
+(1)
+(w,w
+i?1
+)
+For more general n, let C
+n,(?)
+i?1,...,i?n+2
+be the
+best rank ? approximation of C
+n
+(:, w?
+i?1
+i?n+2
+, :
+) under gKL. Then similarly, ?w
+i?1
+i?n+1
+s.t.
+c(w
+i?1
+i?n+1
+) > 0:
+?
+P (w
+i
+|w
+i?1
+, ..., w
+i?n+2
+)
+=
+C
+n,(1)
+i?1,...,i?n+2
+(w
+i
+, w
+i?1
+i?n+1
+)
+?
+w
+C
+n,(1)
+i?1,...,i?n+2
+(w,w
+i?1
+i?n+1
+)
+(4)
+Thus, by selecting 1 < ? < V , we obtain count
+matrices and tensors between n and n ? 1-grams.
+The condition that c(w
+i?1
+i?n+1
+) > 0 corresponds to
+the discontinuity discussed in ?2.2.
+3.2 Power
+Since KN smoothing alters the lower order distri-
+butions instead of simply using the MLE, vary-
+ing the rank is not sufficient in order to generalize
+this suite of techniques. Thus, PLRE computes
+low rank approximations of altered count matri-
+ces. Consider taking the elementwise power ? of
+the bigram count matrix, which is denoted by B
+??
+.
+For example, the observed bigram count matrix
+and associated row sum:
+B
+?1
+=
+(
+1.0 2.0 1.0
+0 5.0 0
+2.0 0 0
+)
+row sum
+?
+(
+4.0
+5.0
+2.0
+)
+As expected the row sum is equal to the uni-
+gram counts (which we denote as u). Now con-
+sider B
+?0.5
+:
+B
+?0.5
+=
+(
+1.0 1.4 1.0
+0 2.2 0
+1.4 0 0
+)
+row sum
+?
+(
+3.4
+2.2
+1.4
+)
+Note how the row sum vector has been altered.
+In particular since w
+1
+(corresponding to the first
+1490
+row) has a more diverse history than w
+2
+, it has
+a higher row sum (compared to in u where w
+2
+has the higher row sum). Lastly, consider the case
+when p = 0:
+B
+?0
+=
+(
+1.0 1.0 1.0
+0 1.0 0
+1.0 0 0
+)
+row sum
+?
+(
+3.0
+1.0
+1.0
+)
+The row sum is now the number of unique words
+that precede w
+i
+(since B
+0
+is binary) and is thus
+equal to the (unnormalized) Kneser Ney unigram.
+This idea also generalizes to higher order n-grams
+and leads us to the following lemma:
+Lemma 2. Let B
+(?,?)
+be the best rank ? ap-
+proximation of B
+??
+under gKL. Then ?w
+i?1
+s.t.
+c(w
+i?1
+) 6= 0:
+P
+alt
+(w
+i
+) =
+B
+(0,1)
+(w
+i
+, w
+i?1
+)
+?
+w
+B
+(0,1)
+(w,w
+i?1
+)
+For more general n, let C
+n,(?,?)
+i?1,...,i?n+2
+be the best
+rank ? approximation of C
+n,(?)
+(:, w?
+i?1
+i?n+2
+, :) un-
+der gKL. Similarly, ?w
+i?1
+i?n+1
+s.t. c(w
+i?1
+i?n+1
+) > 0:
+P
+alt
+(w
+i
+|w
+i?1
+, ..., w
+i?n+2
+)
+=
+C
+n,(0,1)
+i?1,...,i?n+2
+(w
+i
+, w
+i?1
+i?n+1
+)
+?
+w
+C
+n,(0,1)
+i?1,...,i?n+2
+(w,w
+i?1
+i?n+1
+)
+(5)
+4 Creating the Ensemble
+Recall our overall formulation in Eq. 3; a naive
+solution would be to set Z
+1
+, ...,Z
+?
+to low rank
+approximations of the count matrices/tensors un-
+der varying powers, and then interpolate through
+constant absolute discounting. Unfortunately, the
+marginal constraint in Eq. 1 will generally not hold
+if this strategy is used. Therefore, we propose a
+generalized discounting scheme where each non-
+zero n-gram count is associated with a different
+discount D
+j
+(w
+i
+, w
+i?1
+i?n
+?
++1
+). The low rank approxi-
+mations are then computed on the discounted ma-
+trices, leaving the marginal constraint intact.
+For clarity of exposition, we focus on the spe-
+cial case where n = 2 with only one low rank
+matrix before stating our general algorithm:
+P
+plre
+(w
+i
+|w
+i?1
+) =
+?
+PD
+0
+(w
+i
+|w
+i?1
+)
++ ?
+0
+(w
+i?1
+)
+(
+ZD
+1
+(w
+i
+|w
+i?1
+) + ?
+1
+(w
+i?1
+)P
+alt
+(w
+i
+)
+)
+(6)
+Our goal is to compute D
+0
+,D
+1
+and Z
+1
+so
+that the following lower order marginal constraint
+holds:
+?
+P (w
+i
+) =
+?
+w
+i?1
+P
+plre
+(w
+i
+|w
+i?1
+)
+?
+P (w
+i?1
+) (7)
+Our solution can be thought of as a two-
+step procedure where we compute the discounts
+D
+0
+,D
+1
+(and the ?(w
+i?1
+) weights as a by-
+product), followed by the low rank quantity Z
+1
+.
+First, we construct the following intermediate en-
+semble of powered, but full rank terms. Let
+Y
+?
+j
+be the matrix such that Y
+?
+j
+(w
+i
+, w
+i?1
+) :=
+c(w
+i
+, w
+i?1
+)
+?
+j
+. Then define
+P
+pwr
+(w
+i
+|w
+i?1
+) := Y
+(?
+0
+=1)
+D
+0
+(w
+i
+|w
+i?1
+)
++ ?
+0
+(w
+i?1
+)
+(
+Y
+(?
+1
+)
+D
+1
+(w
+i
+|w
+i?1
+)
++ ?
+1
+(w
+i?1
+)Y
+(?
+2
+=0)
+(w
+i
+|w
+i?1
+)
+)
+(8)
+where with a little abuse of notation:
+Y
+?
+j
+D
+j
+(w
+i
+|w
+i?1
+) =
+c(w
+i
+, w
+i?1
+)
+?
+j
+?D
+j
+(w
+i
+, w
+i?1
+)
+?
+w
+i
+c(w
+i
+, w
+i?1
+)
+?
+j
+Note that P
+alt
+(w
+i
+) has been replaced with
+Y
+(?
+2
+=0)
+(w
+i
+|w
+i?1
+), based on Lemma 2, and will
+equal P
+alt
+(w
+i
+) once the low rank approximation is
+taken as discussed in ? 4.2).
+Since we have only combined terms of differ-
+ent power (but all full rank), it is natural choose
+the discounts so that the result remains unchanged
+i.e., P
+pwr
+(w
+i
+|w
+i?1
+) =
+?
+P (w
+i
+|w
+i?1
+), since the low
+rank approximation (not the power) will imple-
+ment smoothing. Enforcing this constraint gives
+rise to a set of linear equations that can be solved
+(in closed form) to obtain the discounts as we now
+show below.
+4.1 Step 1: Computing the Discounts
+To ensure the constraint that P
+pwr
+(w
+i
+|w
+i?1
+) =
+?
+P (w
+i
+|w
+i?1
+), it is sufficient to enforce the follow-
+ing two local constraints:
+Y
+(?
+j
+)
+(w
+i
+|w
+i?1
+) = Y
+(?
+j
+)
+D
+j
+(w
+i
+|w
+i?1
+)
++ ?
+j
+(w
+i?1
+)Y
+(?
+j+1
+)
+(w
+i
+|w
+i?1
+) for j = 0, 1
+(9)
+This allows each D
+j
+to be solved for indepen-
+dently of the other {D
+j
+?
+}
+j
+?
+6=j
+. Let c
+i,i?1
+=
+c(w
+i
+, w
+i?1
+), c
+j
+i,i?1
+= c(w
+i
+, w
+i?1
+)
+?
+j
+, and d
+j
+i,i?1
+=
+1491
+Dj
+(w
+i
+, w
+i?1
+). Expanding Eq. 9 yields that
+?w
+i
+, w
+i?1
+:
+c
+j
+i,i?1
+?
+i
+c
+j
+i,i?1
+=
+c
+j
+i,i?1
+? d
+j
+i,i?1
+?
+i
+c
+j
+i,i?1
++
+(
+?
+i
+d
+j
+i,i?1
+?
+i
+c
+j
+i,i?1
+)
+c
+j+1
+i,i?1
+?
+i
+c
+j+1
+i,i?1
+(10)
+which can be rewritten as:
+?d
+j
+i,i?1
++
+(
+?
+i
+d
+j
+i,i?1
+)
+c
+j+1
+i,i?1
+?
+i
+c
+j+1
+i,i?1
+= 0 (11)
+Note that Eq. 11 decouples across w
+i?1
+since the
+only d
+j
+i,i?1
+terms that are dependent are the ones
+that share the preceding context w
+i?1
+.
+It is straightforward to see that setting d
+j
+i,i?1
+proportional to c
+j+1
+i,i?1
+satisfies Eq. 11. Furthermore
+it can be shown that all solutions are of this form
+(i.e., the linear system has a null space of exactly
+one). Moreover, we are interested in a particular
+subset of solutions where a single parameter d
+?
+(independent of w
+i?1
+) controls the scaling as in-
+dicated by the following lemma:
+Lemma 3. Assume that ?
+j
+? ?
+j+1
+. Choose any
+0 ? d
+?
+? 1. Set d
+j
+i,i?1
+= d
+?
+c
+j+1
+i,i?1
+?i, j. The
+resulting discounts satisfy Eq. 11 as well as the
+inequality constraints 0 ? d
+j
+i,i?1
+? c
+j
+i,i?1
+. Fur-
+thermore, the leftover weight ?
+j
+takes the form:
+?
+j
+(w
+i?1
+) =
+?
+i
+d
+j
+i,i?1
+?
+i
+c
+j
+i,i?1
+=
+d
+?
+?
+i
+c
+j+1
+i,i?1
+?
+i
+c
+j
+i,i?1
+Proof. Clearly this choice of d
+j
+i,i?1
+satisfies
+Eq. 11. The largest possible value of d
+j
+i,i?1
+is
+c
+j+1
+i,i?1
+. ?
+j
+? ?
+j+1
+, implies c
+j
+i,i?1
+? c
+j+1
+i,i?1
+. Thus
+the inequality constraints are met. It is then easy
+to verify that ? takes the above form.
+The above lemma generalizes to longer contexts
+(i.e. n > 2) as shown in Algorithm 1. Note that if
+?
+j
+= ?
+j+1
+then Algorithm 1 is equivalent to scal-
+ing the counts e.g. deleted-interpolation/Jelinek
+Mercer smoothing (Jelinek and Mercer, 1980). On
+the other hand, when ?
+j+1
+= 0, Algorithm 1
+is equal to the absolute discounting that is used
+in Kneser-Ney. Thus, depending on ?
+j+1
+, our
+method generalizes different types of interpola-
+tion schemes to construct an ensemble so that the
+marginal constraint is satisfied.
+Algorithm 1 Compute D
+In: Count tensor C
+n
+, powers ?
+j
+, ?
+j+1
+such that
+?
+j
+? ?
+j+1
+, and parameter d
+?
+.
+Out: Discount D
+j
+for powered counts C
+n,(?
+j
+)
+and associated leftover weight ?
+j
+1: Set D
+j
+(w
+i
+, w
+i?1
+i?n+1
+) = d
+?
+c(w
+i
+, w
+i?1
+i?n+1
+)
+?
+j+1
+.
+2:
+?
+j
+(w
+i
+, w
+i?1
+i?n+1
+) =
+d
+?
+?
+w
+i
+c(w
+i
+, w
+i?1
+i?n+1
+)
+?
+j+1
+?
+w
+i
+c(w
+i
+, w
+i?1
+i?n+1
+)
+?
+j
+Algorithm 2 Compute Z
+In: Count tensor C
+n
+, power ?, discounts D, rank
+?
+Out: Discounted low rank conditional probability
+table Z
+(?,?)
+D (wi|w
+i?1
+i?n+1
+) (represented implicitly)
+1: Compute powered counts C
+n,(??)
+.
+2: Compute denominators
+?
+w
+i
+c(w
+i
+, w
+i?1
+i?n+1
+)
+?
+?w
+i?1
+i?n+1
+s.t. c(w
+i?1
+i?n+1
+) > 0.
+3: Compute discounted powered counts
+C
+n,(??)
+D = C
+n,(??)
+?D.
+4: For each slice M
+w?
+i?1
+i?n+2
+:= C
+n,(??)
+D (:
+, w?
+i?1
+i?n+2
+, :) compute
+M
+(?)
+:= min
+A?0:rank(A)=?
+?M
+w?
+i?1
+i?n+2
+?A?
+KL
+(stored implicitly as M
+(?)
+= LR)
+Set Z
+(?,?)
+D (:, w?
+i?1
+i?n+2
+, :) = M
+(?)
+5: Note that
+Z
+(?,?)
+D (wi|w
+i?1
+i?n+1
+) =
+Z
+(?,?)
+D (wi, w
+i?1
+i?n+1
+)
+?
+w
+i
+c(w
+i
+, w
+i?1
+i?n+1
+)
+?
+4.2 Step 2: Computing Low Rank Quantities
+The next step is to compute low rank approxi-
+mations ofY
+(?
+j
+)
+D
+j
+to obtainZD
+j
+such that the inter-
+mediate marginal constraint in Eq. 7 is preserved.
+This constraint trivially holds for the intermediate
+ensemble P
+pwr
+(w
+i
+|w
+i?1
+) due to how the discounts
+were derived in ? 4.1. For our running bigram ex-
+ample, define Z
+(?
+j
+,?
+j
+)
+D
+j
+to be the best rank ?
+j
+ap-
+proximation to Y
+(?
+j
+,?
+j
+)
+D
+j
+according to gKL and let
+Z
+?
+j
+,?
+j
+D
+j
+(w
+i
+|w
+i?1
+) =
+Z
+?
+j
+,?
+j
+D
+j
+(w
+i
+, w
+i?1
+)
+?
+w
+i
+c(w
+i
+, w
+i?1
+)
+?
+j
+Note that Z
+?
+j
+,?
+j
+D
+j
+(w
+i
+|w
+i?1
+) is a valid (discounted)
+conditional probability since gKL preserves
+row/column sums so the denominator remains un-
+changed under the low rank approximation. Then
+1492
+using the fact that Z
+(0,1)
+(w
+i
+|w
+i?1
+) = P
+alt
+(w
+i
+)
+(Lemma 2) we can embellish Eq. 6 as
+P
+plre
+(w
+i
+|w
+i?1
+) = PD
+0
+(w
+i
+|w
+i?1
+)+
+?
+0
+(w
+i?1
+)
+(
+Z
+(?
+1
+,?
+1
+)
+D
+1
+(w
+i
+|w
+i?1
+) + ?
+1
+(w
+i?1
+)P
+alt
+(w
+i
+)
+)
+Leveraging the form of the discounts and
+row/column sum preserving property of gKL, we
+then have the following lemma (the proof is in the
+supplementary material):
+Lemma 4. Let P
+plre
+(w
+i
+|w
+i?1
+) indicate the PLRE
+smoothed conditional probability as computed by
+Eq. 6 and Algorithms 1 and 2. Then, the marginal
+constraint in Eq. 7 holds.
+4.3 More general algorithm
+In general, the principles outlined in the previ-
+ous sections hold for higher order n-grams. As-
+sume that the discounts are computed according
+to Algorithm 1 with parameter d
+?
+and Z
+(?
+j
+,?
+j
+)
+D
+j
+is
+computed according to Algorithm 2. Note that, as
+shown in Algorithm 2, for higher order n-grams,
+theZ
+(?
+j
+,?
+j
+)
+D
+j
+are created by taking low rank approx-
+imations of slices of the (powered) count tensors
+(see Lemma 2 for intuition). Eq. 3 can now be
+embellished:
+P
+plre
+(w
+i
+|w
+i?1
+i?n+1
+) = P
+alt
+D
+0
+(w
+i
+|w
+i?1
+i?n+1
+)
++ ?
+0
+(w
+i?1
+i?n+1
+)
+(
+Z
+(?
+1
+,?
+1
+)
+D
+1
+(w
+i
+|w
+i?1
+i?n+1
+) + .....
++ ?
+??1
+(w
+i?1
+i?n+1
+)
+(
+Z
+(?
+?
+,?
+?
+)
+D
+?
+(w
+i
+|w
+i?1
+i?n+1
+)
++ ?
+?
+(w
+i?1
+i?n+1
+)
+(
+P
+plre
+(w
+i
+|w
+i?1
+i?n+2
+)
+))
+...
+)
+(12)
+Lemma 4 also applies in this case and is given in
+Theorem 1 in the supplementary material.
+4.4 Links with KN Smoothing
+In this section, we explicitly show the relation-
+ship between PLRE and KN smoothing. Rewrit-
+ing Eq. 12 in the following form:
+P
+plre
+(w
+i
+|w
+i?1
+i?n+1
+) = P
+terms
+plre
+(w
+i
+|w
+i?1
+i?n+1
+)
++?
+0:?
+(w
+i?1
+i?n+1
+)P
+plre
+(w
+i
+|w
+i?1
+i?n+2
+) (13)
+where P
+terms
+plre
+(w
+i
+|w
+i?1
+i?n+1
+) contains the terms in
+Eq. 12 except the last, and ?
+0:?
+(w
+i?1
+i?n+1
+) =
+?
+?
+h=0
+?
+h
+(w
+i?1
+i?n+1
+), we can leverage the form of
+the discount, and using the fact that ?
+?+1
+= 0
+2
+:
+?
+0:?
+(w
+i?1
+i?n?1
+) =
+d
+?
+?+1
+N
++
+(w
+i?1
+i?n+1
+)
+c(w
+i?1
+i?n+1
+)
+With this form of ?(?), Eq. 13 is remarkably sim-
+ilar to KN smoothing (Eq. 2) if KN?s discount pa-
+rameter D is chosen to equal (d
+?
+)
+?+1
+.
+The difference is that P
+alt
+(?) has been replaced
+with the alternate estimate P
+terms
+plre
+(w
+i
+|w
+i?1
+i?n+1
+),
+which have been enriched via the low rank struc-
+ture. Since these alternate estimates were con-
+structed via our ensemble strategy they contain
+both very fine-grained dependencies (the origi-
+nal n-grams) as well as coarser dependencies (the
+lower rank n-grams) and is thus fundamentally
+different than simply taking a single matrix/tensor
+decomposition of the trigram/bigram matrices.
+Moreover, it provides a natural way of setting
+d
+?
+based on the Good-Turing (GT) estimates em-
+ployed by KN smoothing. In particular, we can set
+d
+?
+to be the (? + 1)
+th
+root of the KN discount D
+that can be estimated via the GT estimates.
+4.5 Computational Considerations
+PLRE scales well even as the order n increases.
+To compute a low rank bigram, one low rank ap-
+proximation of a V ? V matrix is required. For
+the low rank trigram, we need to compute a low
+rank approximation of each slice C
+n,(?p)
+D (:, w?i?1, :
+) ?w?
+i?1
+. While this may seem daunting at first, in
+practice the size of each slice (number of non-zero
+rows/columns) is usually much, much smaller than
+V , keeping the computation tractable.
+Similarly, PLRE also evaluates conditional
+probabilities at evaluation time efficiently. As
+shown in Algorithm 2, the normalizer can be pre-
+computed on the sparse powered matrix/tensor. As
+a result our test complexity is O(
+?
+?
+total
+i=1
+?
+i
+) where
+?
+total
+is the total number of matrices/tensors in
+the ensemble. While this is larger than Kneser
+Ney?s practically constant complexity of O(n),
+it is much faster than other recent methods for
+language modeling such as neural networks and
+conditional exponential family models where ex-
+act computation of the normalizing constant costs
+O(V ).
+5 Experiments
+To evaluate PLRE, we compared its performance
+on English and Russian corpora with several vari-
+2
+for derivation see proof of Lemma 4 in the supplemen-
+tary material
+1493
+ants of KN smoothing, class-based models, and
+the log-bilinear neural language model (Mnih and
+Hinton, 2007). We evaluated with perplexity in
+most of our experiments, but also provide results
+evaluated with BLEU (Papineni et al., 2002) on a
+downstream machine translation (MT) task. We
+have made the code for our approach publicly
+available
+3
+.
+To build the hard class-based LMs, we utilized
+mkcls
+4
+, a tool to train word classes that uses
+the maximum likelihood criterion (Och, 1995) for
+classing. We subsequently trained trigram class
+language models on these classes (correspond-
+ing to 2
+nd
+-order HMMs) using SRILM (Stolcke,
+2002), with KN-smoothing for the class transition
+probabilities. SRILM was also used for the base-
+line KN-smoothed models.
+For our MT evaluation, we built a hierarchi-
+cal phrase translation (Chiang, 2007) system us-
+ing cdec (Dyer et al., 2010). The KN-smoothed
+models in the MT experiments were compiled us-
+ing KenLM (Heafield, 2011).
+5.1 Datasets
+For the perplexity experiments, we evaluated our
+proposed approach on 4 datasets, 2 in English and
+2 in Russian. In all cases, the singletons were re-
+placed with ?<unk>? tokens in the training cor-
+pus, and any word not in the vocabulary was re-
+placed with this token during evaluation. There is
+a general dearth of evaluation on large-scale cor-
+pora in morphologically rich languages such as
+Russian, and thus we have made the processed
+Large-Russian corpus available for comparison
+3
+.
+? Small-English: APNews corpus (Bengio et al.,
+2003): Train - 14 million words, Dev - 963,000,
+Test - 963,000. Vocabulary- 18,000 types.
+? Small-Russian: Subset of Russian news com-
+mentary data from 2013 WMT translation task
+5
+:
+Train- 3.5 million words, Dev - 400,000 Test -
+400,000. Vocabulary - 77,000 types.
+? Large-English: English Gigaword, Training -
+837 million words, Dev - 8.7 million, Test - 8.7
+million. Vocabulary- 836,980 types.
+? Large-Russian: Monolingual data from WMT
+2013 task. Training - 521 million words, Vali-
+dation - 50,000, Test - 50,000. Vocabulary- 1.3
+million types.
+3
+http://www.cs.cmu.edu/?apparikh/plre.html
+4
+http://code.google.com/p/giza-pp/
+5
+http://www.statmt.org/wmt13/training-monolingual-
+nc-v8.tgz
+For the MT evaluation, we used the parallel data
+from the WMT 2013 shared task, excluding the
+Common Crawl corpus data. The newstest2012
+and newstest2013 evaluation sets were used as the
+development and test sets respectively.
+5.2 Small Corpora
+For the class-based baseline LMs, the
+number of classes was selected from
+{32, 64, 128, 256, 512, 1024} (Small-English)
+and {512, 1024} (Small-Russian). We could not
+go higher due to the computationally laborious
+process of hard clustering. For Kneser-Ney, we
+explore four different variants: back-off (BO-KN)
+interpolated (int-KN), modified back-off (BO-
+MKN), and modified interpolated (int-MKN).
+Good-Turing estimates were used for discounts.
+All models trained on the small corpora are of
+order 3 (trigrams).
+For PLRE, we used one low rank bigram and
+one low rank trigram in addition to the MLE n-
+gram estimates. The powers of the intermediate
+matrices/tensors were fixed to be 0.5 and the dis-
+counts were set to be square roots of the Good Tur-
+ing estimates (as explained in ? 4.4). The ranks
+were tuned on the development set. For Small-
+English, the ranges were {1e ? 3, 5e ? 3} (as a
+fraction of the vocabulary size) for both the low
+rank bigram and low rank trigram models. For
+Small-Russian the ranges were {5e ? 4, 1e ? 3}
+for both the low rank bigram and the low rank tri-
+gram models.
+The results are shown in Table 1. The best class-
+based LM is reported, but is not competitive with
+the KN baselines. PLRE outperforms all of the
+baselines comfortably. Moreover, PLRE?s perfor-
+mance over the baselines is highlighted in Russian.
+With larger vocabulary sizes, the low rank ap-
+proach is more effective as it can capture linguistic
+similarities between rare and common words.
+Next we discuss how the maximum n-gram or-
+der affects performance. Figure 1 shows the rela-
+tive percentage improvement of our approach over
+int-MKN as the order is increased from 2 to 4 for
+both methods. The Small-English dataset has a
+rather small vocabulary compared to the number
+of tokens, leading to lower data sparsity in the bi-
+gram. Thus the PLRE improvement is small for
+order = 2, but more substantial for order = 3. On
+the other hand, for the Small-Russian dataset, the
+vocabulary size is much larger and consequently
+the bigram counts are sparser. This leads to sim-
+1494
+Dataset class-1024(3) BO-KN(3) int-KN(3) BO-MKN(3) int-MKN(3) PLRE(3)
+Small-English Dev 115.64 99.20 99.73 99.95 95.63 91.18
+Small-English Test 119.70 103.86 104.56 104.55 100.07 95.15
+Small-Russian Dev 286.38 281.29 265.71 287.19 263.25 241.66
+Small-Russian Test 284.09 277.74 262.02 283.70 260.19 238.96
+Table 1: Perplexity results on small corpora for all methods.
+Small-Russian
+Small-English
+Figure 1: Relative percentage improvement of
+PLRE over int-MKN as the maximum n-gram or-
+der for both methods is increased.
+ilar improvements for all orders (which are larger
+than that for Small-English).
+On both these datasets, we also experimented
+with tuning the discounts for int-MKN to see if
+the baseline could be improved with more careful
+choices of discounts. However, this achieved only
+marginal gains (reducing the perplexity to 98.94
+on the Small-English test set and 259.0 on the
+Small-Russian test set).
+Comparison to LBL (Mnih and Hinton,
+2007): Mnih and Hinton (2007) evaluate on the
+Small-English dataset (but remove end markers
+and concatenate the sentences). They obtain per-
+plexities 117.0 and 107.8 using contexts of size 5
+and 10 respectively. With this preprocessing, a 4-
+gram (context 3) PLRE achieves 108.4 perplexity.
+5.3 Large Corpora
+Results on the larger corpora for the top 2 per-
+forming methods ?PLRE? and ?int-MKN? are pre-
+sented in Table 2. Due to the larger training size,
+we use 4-gram models in these experiments. How-
+ever, including the low rank 4-gram tensor pro-
+vided little gain and therefore, the 4-gram PLRE
+only has additional low rank bigram and low rank
+trigram matrices/tensors. As above, ranks were
+tuned on the development set. For Large-English,
+the ranges were {1e?4, 5e?4, 1e?3} (as a frac-
+tion of the vocabulary size) for both the low rank
+Dataset int-MKN(4) PLRE(4)
+Large-English Dev 73.21 71.21
+Large-English Test 77.90 ? 0.203 75.66 ? 0.189
+Large-Russian Dev 326.9 297.11
+Large-Russian Test 289.63 ? 6.82 264.59 ? 5.839
+Table 2: Mean perplexity results on large corpora,
+with standard deviation.
+Dataset PLRE Training Time
+Small-English 3.96 min ( order 3) / 8.3 min (order 4)
+Small-Russian 4.0 min (order 3) / 4.75 min (order 4)
+Large-English 3.2 hrs (order 4)
+Large-Russian 8.3 hrs (order 4)
+Table 3: PLRE training times for a fixed parameter
+setting
+6
+. 8 Intel Xeon CPUs were used.
+Method BLEU
+int-MKN(4) 17.63 ? 0.11
+PLRE(4) 17.79 ? 0.07
+Smallest Diff PLRE+0.05
+Largest Diff PLRE+0.29
+Table 4: Results on English-Russian translation
+task (mean ? stdev). See text for details.
+bigram and low rank trigram models. For Small-
+Russian the ranges were {1e?5, 5e?5, 1e?4} for
+both the low rank bigram and the low rank trigram
+models. For statistical validity, 10 test sets of size
+equal to the original test set were generated by ran-
+domly sampling sentences with replacement from
+the original test set. Our method outperforms ?int-
+MKN? with gains similar to that on the smaller
+datasets. As shown in Table 3, our method obtains
+fast training times even for large datasets.
+6 Machine Translation Task
+Table 4 presents results for the MT task, trans-
+lating from English to Russian
+7
+. We used
+MIRA (Chiang et al., 2008) to learn the feature
+weights. To control for the randomness in MIRA,
+we avoid retuning when switching LMs - the set
+of feature weights obtained using int-MKN is the
+same, only the language model changes. The
+6
+As described earlier, only the ranks need to be tuned, so
+only 2-3 low rank bigrams and 2-3 low rank trigrams need to
+be computed (and combined depending on the setting).
+7
+the best score at WMT 2013 was 19.9 (Bojar et al.,
+2013)
+1495
+procedure is repeated 10 times to control for op-
+timizer instability (Clark et al., 2011). Unlike
+other recent approaches where an additional fea-
+ture weight is tuned for the proposed model and
+used in conjunction with KN smoothing (Vaswani
+et al., 2013), our aim is to show the improvements
+that PLRE provides as a substitute for KN. On av-
+erage, PLRE outperforms the KN baseline by 0.16
+BLEU, and this improvement is consistent in that
+PLRE never gets a worse BLEU score.
+7 Related Work
+Recent attempts to revisit the language model-
+ing problem have largely come from two direc-
+tions: Bayesian nonparametrics and neural net-
+works. Teh (2006) and Goldwater et al. (2006)
+discovered the connection between interpolated
+Kneser Ney and the hierarchical Pitman-Yor pro-
+cess. These have led to generalizations that ac-
+count for domain effects (Wood and Teh, 2009)
+and unbounded contexts (Wood et al., 2009).
+The idea of using neural networks for language
+modeling is not new (Miikkulainen and Dyer,
+1991), but recent efforts (Mnih and Hinton, 2007;
+Mikolov et al., 2010) have achieved impressive
+performance. These methods can be quite expen-
+sive to train and query (especially as the vocab-
+ulary size increases). Techniques such as noise
+contrastive estimation (Gutmann and Hyv?arinen,
+2012; Mnih and Teh, 2012; Vaswani et al., 2013),
+subsampling (Xu et al., 2011), or careful engi-
+neering approaches for maximum entropy LMs
+(which can also be applied to neural networks)
+(Wu and Khudanpur, 2000) have improved train-
+ing of these models, but querying the probabil-
+ity of the next word given still requires explicitly
+normalizing over the vocabulary, which is expen-
+sive for big corpora or in languages with a large
+number of word types. Mnih and Teh (2012) and
+Vaswani et al. (2013) propose setting the normal-
+ization constant to 1, but this is approximate and
+thus can only be used for downstream evaluation,
+not for perplexity computation. An alternate tech-
+nique is to use word-classing (Goodman, 2001;
+Mikolov et al., 2011), which can reduce the cost
+of exact normalization to O(
+?
+V ). In contrast, our
+approach is much more scalable, since it is triv-
+ially parallelized in training and does not require
+explicit normalization during evaluation.
+There are a few low rank approaches (Saul and
+Pereira, 1997; Bellegarda, 2000; Hutchinson et al.,
+2011), but they are only effective in restricted set-
+tings (e.g. small training sets, or corpora divided
+into documents) and do not generally perform
+comparably to state-of-the-art models. Roark et
+al. (2013) also use the idea of marginal constraints
+for re-estimating back-off parameters for heavily-
+pruned language models, whereas we use this con-
+cept to estimate n-gram specific discounts.
+8 Conclusion
+We presented power low rank ensembles, a tech-
+nique that generalizes existing n-gram smoothing
+techniques to non-integer n. By using ensembles
+of sparse as well as low rank matrices and ten-
+sors, our method captures both the fine-grained
+and coarse structures in word sequences. Our
+discounting strategy preserves the marginal con-
+straint and thus generalizes Kneser Ney, and un-
+der slight changes can also extend other smooth-
+ing methods such as deleted-interpolation/Jelinek-
+Mercer smoothing. Experimentally, PLRE con-
+vincingly outperforms Kneser-Ney smoothing as
+well as class-based baselines.
+Acknowledgements
+This work was supported by NSF IIS1218282,
+NSF IIS1218749, NSF IIS1111142, NIH
+R01GM093156, the U. S. Army Research Labo-
+ratory and the U. S. Army Research Office under
+contract/grant number W911NF-10-1-0533, the
+NSF Graduate Research Fellowship Program
+under Grant No. 0946825 (NSF Fellowship to
+APP), and a grant from Ebay Inc. (to AS).
+References
+Jerome R. Bellegarda. 2000. Large vocabulary speech
+recognition with multispan statistical language mod-
+els. IEEE Transactions on Speech and Audio Pro-
+cessing, 8(1):76?84.
+Yoshua Bengio, R?ejean Ducharme, Pascal Vincent, and
+Christian Janvin. 2003. A neural probabilistic lan-
+guage model. J. Mach. Learn. Res., 3:1137?1155,
+March.
+Ond?rej Bojar, Christian Buck, Chris Callison-Burch,
+Christian Federmann, Barry Haddow, Philipp
+Koehn, Christof Monz, Matt Post, Radu Soricut, and
+Lucia Specia. 2013. Findings of the 2013 Work-
+shop on Statistical Machine Translation. In Pro-
+ceedings of the Eighth Workshop on Statistical Ma-
+chine Translation, pages 1?44, Sofia, Bulgaria, Au-
+gust. Association for Computational Linguistics.
+Jian-Feng Cai, Emmanuel J Cand`es, and Zuowei Shen.
+2010. A singular value thresholding algorithm for
+1496
+matrix completion. SIAM Journal on Optimization,
+20(4):1956?1982.
+Emmanuel J Cand`es and Benjamin Recht. 2009. Exact
+matrix completion via convex optimization. Foun-
+dations of Computational mathematics, 9(6):717?
+772.
+Stanley F. Chen and Joshua Goodman. 1999. An
+empirical study of smoothing techniques for lan-
+guage modeling. Computer Speech & Language,
+13(4):359?393.
+Stanley F Chen and Ronald Rosenfeld. 2000. A survey
+of smoothing techniques for me models. Speech and
+Audio Processing, IEEE Transactions on, 8(1):37?
+50.
+Stanley F. Chen. 2009. Shrinking exponential lan-
+guage models. In Proceedings of Human Lan-
+guage Technologies: The 2009 Annual Conference
+of the North American Chapter of the Association
+for Computational Linguistics, NAACL ?09, pages
+468?476, Stroudsburg, PA, USA. Association for
+Computational Linguistics.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of the Con-
+ference on Empirical Methods in Natural Language
+Processing, pages 224?233. Association for Com-
+putational Linguistics.
+David Chiang. 2007. Hierarchical phrase-based trans-
+lation. Comput. Linguist., 33(2):201?228, June.
+Jonathan H. Clark, Chris Dyer, Alon Lavie, and
+Noah A. Smith. 2011. Better hypothesis testing for
+statistical machine translation: Controlling for op-
+timizer instability. In Proceedings of the 49th An-
+nual Meeting of the Association for Computational
+Linguistics: Human Language Technologies: Short
+Papers - Volume 2, HLT ?11, pages 176?181.
+Chris Dyer, Jonathan Weese, Hendra Setiawan, Adam
+Lopez, Ferhan Ture, Vladimir Eidelman, Juri Gan-
+itkevitch, Phil Blunsom, and Philip Resnik. 2010.
+cdec: A decoder, alignment, and learning framework
+for finite-state and context-free translation models.
+In Proceedings of the ACL 2010 System Demonstra-
+tions, pages 7?12. Association for Computational
+Linguistics.
+Sharon Goldwater, Thomas Griffiths, and Mark John-
+son. 2006. Interpolating between types and tokens
+by estimating power-law generators. In Advances in
+Neural Information Processing Systems, volume 18.
+Joshua Goodman. 2001. Classes for fast maximum
+entropy training. In Acoustics, Speech, and Signal
+Processing, 2001. Proceedings.(ICASSP?01). 2001
+IEEE International Conference on, volume 1, pages
+561?564. IEEE.
+Michael Gutmann and Aapo Hyv?arinen. 2012. Noise-
+contrastive estimation of unnormalized statistical
+models, with applications to natural image statistics.
+Journal of Machine Learning Research, 13:307?
+361.
+Kenneth Heafield. 2011. KenLM: faster and smaller
+language model queries. In Proceedings of the
+EMNLP 2011 Sixth Workshop on Statistical Ma-
+chine Translation, pages 187?197, Edinburgh, Scot-
+land, United Kingdom, July.
+Ngoc-Diep Ho and Paul Van Dooren. 2008. Non-
+negative matrix factorization with fixed row and col-
+umn sums. Linear Algebra and its Applications,
+429(5):1020?1025.
+Brian Hutchinson, Mari Ostendorf, and Maryam Fazel.
+2011. Low rank language models for small training
+sets. Signal Processing Letters, IEEE, 18(9):489?
+492.
+Frederick Jelinek and Robert Mercer. 1980. Interpo-
+lated estimation of markov source parameters from
+sparse data. Pattern recognition in practice.
+Reinhard Kneser and Hermann Ney. 1995. Im-
+proved backing-off for m-gram language modeling.
+In Acoustics, Speech, and Signal Processing, 1995.
+ICASSP-95., 1995 International Conference on, vol-
+ume 1, pages 181?184. IEEE.
+Philipp Koehn. 2010. Statistical Machine Translation.
+Cambridge University Press, New York, NY, USA,
+1st edition.
+Yehuda Koren, Robert Bell, and Chris Volinsky. 2009.
+Matrix factorization techniques for recommender
+systems. Computer, 42(8):30?37.
+Daniel D. Lee and H. Sebastian Seung. 2001. Algo-
+rithms for non-negative matrix factorization. Ad-
+vances in Neural Information Processing Systems,
+13:556?562.
+Lester Mackey, Ameet Talwalkar, and Michael I Jor-
+dan. 2011. Divide-and-conquer matrix factoriza-
+tion. arXiv preprint arXiv:1107.0789.
+Christopher D Manning and Hinrich Sch?utze. 1999.
+Foundations of statistical natural language process-
+ing, volume 999. MIT Press.
+Risto Miikkulainen and Michael G. Dyer. 1991. Natu-
+ral language processing with modular pdp networks
+and distributed lexicon. Cognitive Science, 15:343?
+399.
+Tom Mikolov, Martin Karafit, Luk Burget, Jan ernock,
+and Sanjeev Khudanpur. 2010. Recurrent neu-
+ral network based language model. In Proceed-
+ings of the 11th Annual Conference of the Interna-
+tional Speech Communication Association (INTER-
+SPEECH 2010), volume 2010, pages 1045?1048.
+International Speech Communication Association.
+1497
+Tomas Mikolov, Stefan Kombrink, Lukas Burget,
+JH Cernocky, and Sanjeev Khudanpur. 2011.
+Extensions of recurrent neural network language
+model. In Acoustics, Speech and Signal Processing
+(ICASSP), 2011 IEEE International Conference on,
+pages 5528?5531. IEEE.
+Andriy Mnih and Geoffrey Hinton. 2007. Three new
+graphical models for statistical language modelling.
+In Proceedings of the 24th international conference
+on Machine learning, pages 641?648. ACM.
+Andriy Mnih and Yee Whye Teh. 2012. A fast and
+simple algorithm for training neural probabilistic
+language models. In Proceedings of the Interna-
+tional Conference on Machine Learning.
+Anil Kumar Nelakanti, Cedric Archambeau, Julien
+Mairal, Francis Bach, and Guillaume Bouchard.
+2013. Structured penalties for log-linear language
+models. In Proceedings of the 2013 Conference on
+Empirical Methods in Natural Language Process-
+ing, pages 233?243, Seattle, Washington, USA, Oc-
+tober. Association for Computational Linguistics.
+Hermann Ney, Ute Essen, and Reinhard Kneser.
+1994. On Structuring Probabilistic Dependencies in
+Stochastic Language Modelling. Computer Speech
+and Language, 8:1?38.
+Franz Josef Och. 1995. Maximum-likelihood-
+sch?atzung von wortkategorien mit verfahren der
+kombinatorischen optimierung. Bachelor?s thesis
+(Studienarbeit), University of Erlangen.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei
+jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. pages 311?318.
+Lawrence Rabiner and Biing-Hwang Juang. 1993.
+Fundamentals of speech recognition.
+Brian Roark, Cyril Allauzen, and Michael Riley. 2013.
+Smoothed marginal distribution constraints for lan-
+guage modeling. In Proceedings of the 51st Annual
+Meeting of the Association for Computational Lin-
+guistics (ACL), pages 43?52.
+Ruslan Salakhutdinov and Andriy Mnih. 2008.
+Bayesian probabilistic matrix factorization using
+Markov chain Monte Carlo. In Proceedings of the
+25th international conference on Machine learning,
+pages 880?887. ACM.
+Lawrence Saul and Fernando Pereira. 1997. Aggre-
+gate and mixed-order markov models for statistical
+language processing. In Proceedings of the sec-
+ond conference on empirical methods in natural lan-
+guage processing, pages 81?89. Somerset, New Jer-
+sey: Association for Computational Linguistics.
+Andreas Stolcke. 2002. SRILM - An Extensible Lan-
+guage Modeling Toolkit. In Proceedings of the In-
+ternational Conference in Spoken Language Pro-
+cessing.
+Xiaoyuan Su and Taghi M Khoshgoftaar. 2009. A sur-
+vey of collaborative filtering techniques. Advances
+in artificial intelligence, 2009:4.
+Yee Whye Teh. 2006. A hierarchical bayesian lan-
+guage model based on pitman-yor processes. In
+Proceedings of the 21st International Conference
+on Computational Linguistics and the 44th annual
+meeting of the Association for Computational Lin-
+guistics, pages 985?992. Association for Computa-
+tional Linguistics.
+Ashish Vaswani, Yinggong Zhao, Victoria Fossum,
+and David Chiang. 2013. Decoding with large-
+scale neural language models improves translation.
+In Proceedings of the 2013 Conference on Em-
+pirical Methods in Natural Language Processing,
+pages 1387?1392, Seattle, Washington, USA, Oc-
+tober. Association for Computational Linguistics.
+Frank Wood and Yee Whye Teh. 2009. A hierarchical
+nonparametric Bayesian approach to statistical lan-
+guage model domain adaptation. In Artificial Intel-
+ligence and Statistics, pages 607?614.
+Frank Wood, C?edric Archambeau, Jan Gasthaus,
+Lancelot James, and Yee Whye Teh. 2009. A
+stochastic memoizer for sequence data. In Proceed-
+ings of the 26th Annual International Conference on
+Machine Learning, pages 1129?1136. ACM.
+Jun Wu and Sanjeev Khudanpur. 2000. Efficient train-
+ing methods for maximum entropy language model-
+ing. In Interspeech, pages 114?118.
+Puyang Xu, Asela Gunawardana, and Sanjeev Khu-
+danpur. 2011. Efficient subsampling for training
+complex language models. In Proceedings of the
+Conference on Empirical Methods in Natural Lan-
+guage Processing, EMNLP ?11, pages 1128?1136,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+George Zipf. 1949. Human behaviour and the prin-
+ciple of least-effort. Addison-Wesley, Cambridge,
+MA.
+1498
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics, pages 1062?1072,
+Baltimore, Maryland, USA, June 23-25 2014.
+c
+?2014 Association for Computational Linguistics
+Spectral Unsupervised Parsing with Additive Tree Metrics
+Ankur P. Parikh
+School of Computer Science
+Carnegie Mellon University
+apparikh@cs.cmu.edu
+Shay B. Cohen
+School of Informatics
+University of Edinburgh
+scohen@inf.ed.ac.uk
+Eric P. Xing
+School of Computer Science
+Carnegie Mellon University
+epxing@cs.cmu.edu
+Abstract
+We propose a spectral approach for un-
+supervised constituent parsing that comes
+with theoretical guarantees on latent struc-
+ture recovery. Our approach is grammar-
+less ? we directly learn the bracketing
+structure of a given sentence without us-
+ing a grammar model. The main algorithm
+is based on lifting the concept of additive
+tree metrics for structure learning of la-
+tent trees in the phylogenetic and machine
+learning communities to the case where
+the tree structure varies across examples.
+Although finding the ?minimal? latent tree
+is NP-hard in general, for the case of pro-
+jective trees we find that it can be found
+using bilexical parsing algorithms. Empir-
+ically, our algorithm performs favorably
+compared to the constituent context model
+of Klein and Manning (2002) without the
+need for careful initialization.
+1 Introduction
+Solutions to the problem of grammar induction
+have been long sought after since the early days of
+computational linguistics and are interesting both
+from cognitive and engineering perspectives. Cog-
+nitively, it is more plausible to assume that chil-
+dren obtain only terminal strings of parse trees and
+not the actual parse trees. This means the unsu-
+pervised setting is a better model for studying lan-
+guage acquisition. From the engineering perspec-
+tive, training data for unsupervised parsing exists
+in abundance (i.e. sentences and part-of-speech
+tags), and is much cheaper than the syntactically
+annotated data required for supervised training.
+Most existing solutions treat the problem of un-
+supervised parsing by assuming a generative pro-
+cess over parse trees e.g. probabilistic context
+free grammars (Jelinek et al, 1992), and the con-
+stituent context model (Klein and Manning, 2002).
+Learning then reduces to finding a set of parame-
+ters that are estimated by identifying a local max-
+imum of an objective function such as the likeli-
+hood (Klein and Manning, 2002) or a variant of it
+(Smith and Eisner, 2005; Cohen and Smith, 2009;
+Headden et al, 2009; Spitkovsky et al, 2010b;
+Gillenwater et al, 2010; Golland et al, 2012). Un-
+fortunately, finding the global maximum for these
+objective functions is usually intractable (Cohen
+and Smith, 2012) which often leads to severe lo-
+cal optima problems (but see Gormley and Eisner,
+2013). Thus, strong experimental results are often
+achieved by initialization techniques (Klein and
+Manning, 2002; Gimpel and Smith, 2012), incre-
+mental dataset use (Spitkovsky et al, 2010a) and
+other specialized techniques to avoid local optima
+such as count transforms (Spitkovsky et al, 2013).
+These approaches, while empirically promising,
+generally lack theoretical justification.
+On the other hand, recently proposed spectral
+methods approach the problem via restriction of
+the PCFG model (Hsu et al, 2012) or matrix com-
+pletion (Bailly et al, 2013). These novel perspec-
+tives offer strong theoretical guarantees but are not
+designed to achieve competitive empirical results.
+In this paper, we suggest a different approach,
+to provide a first step to bridging this theory-
+experiment gap. More specifically, we approach
+unsupervised constituent parsing from the per-
+spective of structure learning as opposed to pa-
+rameter learning. We associate each sentence with
+an undirected latent tree graphical model, which is
+a tree consisting of both observed variables (corre-
+sponding to the words in the sentence) and an ad-
+ditional set of latent variables that are unobserved
+in the data. This undirected latent tree is then di-
+rected via a direction mapping to give the final
+constituent parse.
+In our framework, parsing reduces to finding the
+best latent structure for a given sentence. How-
+ever, due to the presence of latent variables, struc-
+ture learning of latent trees is substantially more
+complicated than in observed models. As before,
+one solution would be local search heuristics.
+Intuitively, however, latent tree models en-
+code low rank dependencies among the observed
+variables permitting the development of ?spec-
+1062
+tral? methods that can lead to provably correct
+solutions. In particular we leverage the con-
+cept of additive tree metrics (Buneman, 1971;
+Buneman, 1974) in phylogenetics and machine
+learning that can create a special distance met-
+ric among the observed variables as a function
+of the underlying spectral dependencies (Choi et
+al., 2011; Song et al, 2011; Anandkumar et al,
+2011; Ishteva et al, 2012). Additive tree met-
+rics can be leveraged by ?meta-algorithms? such
+as neighbor-joining (Saitou and Nei, 1987) and
+recursive grouping (Choi et al, 2011) to provide
+consistent learning algorithms for latent trees.
+Moreover, we show that it is desirable to learn
+the ?minimal? latent tree based on the tree metric
+(?minimum evolution? in phylogenetics). While
+this criterion is in general NP-hard (Desper and
+Gascuel, 2005), for projective trees we find that a
+bilexical parsing algorithm can be used to find an
+exact solution efficiently (Eisner and Satta, 1999).
+Unlike in phylogenetics and graphical models,
+where a single latent tree is constructed for all the
+data, in our case, each part of speech sequence is
+associated with its own parse tree. This leads to a
+severe data sparsity problem even for moderately
+long sentences. To handle this issue, we present
+a strategy that is inspired by ideas from kernel
+smoothing in the statistics community (Zhou et al,
+2010; Kolar et al, 2010b; Kolar et al, 2010a).
+This allows principled sharing of samples from
+different but similar underlying distributions.
+We provide theoretical guarantees on the re-
+covery of the correct underlying latent tree and
+characterize the associated sample complexity un-
+der our technique. Empirically we evaluate our
+method on data in English, German and Chi-
+nese. Our algorithm performs favorably to Klein
+and Manning?s (2002) constituent-context model
+(CCM), without the need for careful initialization.
+In addition, we also analyze CCM?s sensitivity to
+initialization, and compare our results to Seginer?s
+algorithm (Seginer, 2007).
+2 Learning Setting and Model
+In this section, we detail the learning setting and a
+conditional tree model we learn the structure for.
+2.1 Learning Setting
+Let w = (w
+1
+, ..., w
+`
+) be a vector of words corre-
+sponding to a sentence of length `. Each w
+i
+is rep-
+resented by a vector in R
+p
+for p ? N. The vector
+is an embedding of the word in some space, cho-
+VBD DT NNVBD DT NN
+Figure 2: Candidate constituent parses for x = (VBD, DT, NN)
+(left-correct, right -incorrect)
+sen from a fixed dictionary that maps word types
+to R
+p
+. In addition, let x = (x
+1
+, ..., x
+`
+) be the as-
+sociated vector of part-of-speech (POS) tags (i.e.
+x
+i
+is the POS tag of w
+i
+).
+In our learning algorithm, we assume that ex-
+amples of the form (w
+(i)
+,x
+(i)
+) for i ? [N ] =
+{1, . . . , N} are given, and the goal is to predict
+a bracketing parse tree for each of these examples.
+The word embeddings are used during the learn-
+ing process, but the final decoder that the learning
+algorithm outputs maps a POS tag sequence x to
+a parse tree. While ideally we would want to use
+the word information in decoding as well, much of
+the syntax of a sentence is determined by the POS
+tags, and relatively high level of accuracy can be
+achieved by learning, for example, a supervised
+parser from POS tag sequences.
+Just like our decoder, our model assumes that
+the bracketing of a given sentence is a function
+of its POS tags. The POS tags are generated
+from some distribution, followed by a determin-
+istic generation of the bracketing parse tree. Then,
+latent states are generated for each bracket, and
+finally, the latent states at the yield of the bracket-
+ing parse tree generate the words of the sentence
+(in the form of embeddings). The latent states are
+represented by vectors z ? R
+m
+where m < p.
+2.2 Intuition
+For intuition, consider the simple tag sequence
+x = (VBD, DT, NN). Two candidate constituent
+parse structures are shown in Figure 2 and the cor-
+rect one is boxed in green (the other in red). Re-
+call that our training data contains word phrases
+that have the tag sequence x e.g. w
+(1)
+=
+(hit, the, ball), w
+(2)
+= (ate, an, apple).
+Intuitively, the words in the above phrases ex-
+hibit dependencies that can reveal the parse struc-
+ture. The determiner (w
+2
+) and the direct object
+(w
+3
+) are correlated in that the choice of deter-
+miner depends on the plurality of w
+3
+. However,
+the choice of verb (w
+1
+) is mostly independent of
+the determiner. We could thus conclude that w
+2
+and w
+3
+should be closer in the parse tree than w
+1
+1063
+The be ar ate the fish
+?1 , ?2 , ?3 , ?4 , ?5 , ?1, ?2, ?3
+? = (??,??, ???, ??,??)
+?(?)
+((DT NN) (VBD (DT NN)))
+w 1 w 2 w 3
+z 3
+z 1
+w 4 w 5
+z 2
+w 1 w 2 w 3
+z 3z 1
+w 4 w 5
+z 2
+Figure 1: Example for the tag
+sequence (DT, NN, VBD, DT, NN)
+showing the overview of our
+approach. We first learn a undi-
+rected latent tree for the se-
+quence (left). We then ap-
+ply a direction mapping h
+dir
+to
+direct the latent tree (center).
+This can then easily be con-
+verted into a bracketing (right).
+andw
+2
+, giving us the correct structure. Informally,
+the latent state z corresponding to the (w
+2
+, w
+3
+)
+bracket would store information about the plural-
+ity of z, the key to the dependence betweenw
+2
+and
+w
+3
+. It would then be reasonable to assume that w
+2
+and w
+3
+are independent given z.
+2.3 A Conditional Latent Tree Model
+Following this intuition, we propose to model the
+distribution over the latent bracketing states and
+words for each tag sequence x as a latent tree
+graphical model, which encodes conditional inde-
+pendences among the words given the latent states.
+Let V := {w
+1
+, ..., w
+`
+, z
+1
+, ..., z
+H
+}, with w
+i
+rep-
+resenting the word embeddings, and z
+i
+represent-
+ing the latent states of the bracketings. Then, ac-
+cording to our base model it holds that:
+p(w, z|x) =
+H
+?
+i=1
+p(z
+i
+|pix(zi), ?(x))
+?
+`(x)
+?
+i=1
+p(w
+i
+|pix(wi), ?(x)) (1)
+where pix(?) returns the parent node index of the
+argument in the latent tree corresponding to tag
+sequence x.
+1
+If z is the root, then pix(z) = ?.
+All the w
+i
+are assumed to be leaves while all the
+z
+i
+are internal (i.e. non-leaf) nodes. The param-
+eters ?(x) control the conditional probability ta-
+bles. We do not commit to a certain parametric
+family, but see more about the assumptions we
+make about ? in ?3.2. The parameter space is de-
+noted ?. The model assumes a factorization ac-
+cording to a latent-variable tree. The latent vari-
+ables can incorporate various linguistic properties,
+such as head information, valence of dependency
+being generated, and so on. This information is
+expected to be learned automatically from data.
+Our generative model deterministically maps a
+POS sequence to a bracketing via an undirected
+1
+At this point, pi refers to an arbitrary direction of the
+undirected tree u(x).
+latent-variable tree. The orientation of the tree is
+determined by a direction mapping h
+dir
+(u), which
+is fixed during learning and decoding. This means
+our decoder first identifies (given a POS sequence)
+an undirected tree, and then orients it by applying
+h
+dir
+on the resulting tree (see below).
+Define U to be the set of undirected latent trees
+where all internal nodes have degree exactly 3 (i.e.
+they correspond to binary bracketing), and in addi-
+tion h
+dir
+(u) for any u ? U is projective (explained
+in the h
+dir
+section). In addition, let T be the set
+of binary bracketings. The complete generative
+model that we follow is then:
+? Generate a tag sequence x = (x
+1
+, . . . , x
+`
+)
+? Decide on u(x) ? U , the undirected latent tree
+that x maps to.
+? Set t ? T by computing t = h
+dir
+(u).
+? Set ? ? ? by computing ? = ?(x).
+? Generate a tuple v = (w
+1
+, . . . , w
+`
+, z
+1
+, ..., z
+H
+)
+where w
+i
+? R
+p
+, z
+j
+? R
+m
+according to Eq. 1.
+See Figure 1 (left) for an example.
+The Direction Mapping h
+dir
+. Generating a
+bracketing via an undirected tree enables us to
+build on existing methods for structure learning
+of latent-tree graphical models (Choi et al, 2011;
+Anandkumar et al, 2011). Our learning algorithm
+focuses on recovering the undirected tree based
+for the generative model that was described above.
+This undirected tree is converted into a directed
+tree by applying h
+dir
+. The mapping h
+dir
+works in
+three steps:
+? It first chooses a top bracket ([1, R ? 1], [R, `])
+where R is the mid-point of the bracket and ` is
+the length of the sentence.
+? It marks the edge e
+i,j
+that splits the tree accord-
+ing to the top bracket as the ?root edge? (marked
+in red in Figure 1(center))
+? It then creates t from u by directing the tree out-
+ward from e
+i,j
+as shown in Figure 1(center)
+1064
+The resulting t is a binary bracketing parse tree.
+As implied by the above definition of h
+dir
+, se-
+lecting which edge is the root can be interpreted
+as determining the top bracket of the constituent
+parse. For example, in Figure 1, the top bracket
+is ([1, 2], [3, 5]) = ([DT, NN], [VBD, DT, NN]). Note
+that the ?root? edge e
+z
+1
+,z
+2
+partitions the leaves
+into precisely this bracketing. As indicated in the
+above section, we restrict the set of undirected
+trees to be those such that after applying h
+dir
+the
+resulting t is projective i.e. there are no crossing
+brackets. In ?4.1, we discuss an effective heuristic
+to find the top bracket without supervision.
+3 Spectral Learning Algorithm based on
+Additive Tree Metrics
+Our goal is to recover t ? T for tag sequence x
+using the data D = [(w
+(i)
+,x
+(i)
+)]
+N
+i=1
+. To get an in-
+tuition about the algorithm, consider a partition of
+the set of examplesD intoD(x) = {(w
+(i)
+,x
+(i)
+) ?
+D|x
+(i)
+= x}, i.e. each section in the partition has
+an identical sequence of part of speech tags. As-
+sume for this section |D(x)| is large (we address
+the data sparsity issue in ?3.4).
+We can then proceed by learning how to map a
+POS sequence x to a tree t ? T (through u ? U)
+by focusing only on examples in D(x).
+Directly attempting to maximize the likelihood
+unfortunately results in an intractable optimiza-
+tion problem and greedy heuristics are often em-
+ployed (Harmeling and Williams, 2011). Instead
+we propose a method that is provably consistent
+and returns a tree that can be mapped to a bracket-
+ing using h
+dir
+.
+If all the variables were observed, then the
+Chow-Liu algorithm (Chow and Liu, 1968) could
+be used to find the most likely tree structure u ?
+U . The Chow-Liu algorithm essentially computes
+the distances among all pairs of variables (the neg-
+ative of the mutual information) and then finds the
+minimum cost tree. However, the fact that the z
+i
+are latent variables makes this strategy substan-
+tially more complicated. In particular, it becomes
+challenging to compute the distances among pairs
+of latent variables. What is needed is a ?special?
+distance function that allows us to reverse engineer
+the distances among the latent variables given the
+distances among the observed variables. This is
+the key idea behind additive tree metrics that are
+the basis of our approach.
+In the following sections, we describe the key
+steps to our method. ?3.1 and ?3.2 largely describe
+existing background on additive tree metrics and
+latent tree structure learning, while ?3.3 and ?3.4
+discuss novel aspects that are unique to our prob-
+lem.
+3.1 Additive Tree Metrics
+Let u(x) be the true undirected tree of sentence x
+and assume the nodes V to be indexed by [M ] =
+{1, . . . ,M} such that M = |V| = H + `. Fur-
+thermore, let v ? V refer to a node in the undi-
+rected tree (either observed or latent). We assume
+the existence of a distance function that allows us
+to compute distances between pairs of nodes. For
+example, as we see in ?3.2 we will define the dis-
+tance d(i, j) to be a function of the covariance ma-
+trix E[v
+i
+v
+>
+j
+|u(x), ?(x)]. Thus if v
+i
+and v
+j
+are both
+observed variables, the distance can be directly
+computed from the data.
+Moreover, the metrics we construct are such
+that they are tree additive, defined below:
+Definition 1 A function d
+u(x) : [M ]?[M ]? R is
+an additive tree metric (Erd?os et al, 1999) for the
+undirected tree u(x) if it is a distance metric,
+2
+and
+furthermore, ?i, j ? [M ] the following relation
+holds:
+d
+u(x)(i, j) =
+?
+(a,b)?path
+u(x)(i,j)
+d
+u(x)(a, b) (2)
+where path
+u(x)(i, j) is the set of all the edges in
+the (undirected) path from i to j in the tree u(x).
+As we describe below, given the tree structure,
+the additive tree metric property allows us to com-
+pute ?backwards? the distances among the latent
+variables as a function of the distances among the
+observed variables.
+Define D to be the M ? M distance matrix
+among the M variables, i.e. D
+ij
+= d
+u(x)(i, j).
+LetD
+WW
+, D
+ZW
+(equal toD
+>
+WZ
+), andD
+ZZ
+indi-
+cate the word-word, latent-word and latent-latent
+sub-blocks of D respectively. In addition, since
+u(x) is assumed to be known from context, we
+denote d
+u(x)(i, j) just by d(i, j).
+Given the fact that the distance between a pair
+of nodes is a function of the random variables
+they represent (according to the true model), only
+D
+WW
+can be empirically estimated from data.
+However, if the underlying tree structure is known,
+then Definition 1 can be leveraged to compute
+D
+ZZ
+and D
+ZW
+as we show below.
+2
+This means that it satisfies d(i, j) = 0 if and only if
+i = j, the triangle inequality and is also symmetric.
+1065
+v j v ie i , j
+(a)
+v ie i , jv j
+(b)
+Figure 3: Two types of edges in general undirected latent
+trees. (a) leaf edge, (b) internal edge
+We first show how to compute d(i, j) for all i, j
+such that i and j are adjacent to each other in u(x),
+based only on observed nodes. It then follows that
+the other elements of the distance matrix can be
+computed based on Definition 1. To show how to
+compute distances between adjacent nodes, con-
+sider the two cases: (1) (i, j) is a leaf edge; (2)
+(i, j) is an internal edge.
+Case 1 (leaf edge, figure 3(a)) Assume without
+loss of generality that j is the leaf and i is an in-
+ternal latent node. Then i must have exactly two
+other neighbors a ? [M ] and b ? [M ]. Let A
+denote the set of nodes that are closer to a than
+i and similarly let B denote the set of nodes that
+are closer to b than i. Let A
+?
+and B
+?
+denote all
+the leaves (word nodes) in A and B respectively.
+Then using path additivity (Definition 1), it can be
+shown that for any a
+?
+? A
+?
+, b
+?
+? B
+?
+it holds that:
+d(i, j) =
+1
+2
+(d(j, a
+?
+) + d(j, b
+?
+)? d(a
+?
+, b
+?
+)) (3)
+Note that the right-hand side only depends on
+distances between observed random variables.
+Case 2 (internal edge, figure 3(b)) Both i and
+j are internal nodes. In this case, i has exactly
+two other neighbors a ? [M ] and b ? [M ], and
+similarly, j has exactly other two neighbors g ?
+[M ] and h ? [M ]. Let A denote the set of nodes
+closer to a than i, and analogously for B, G, and
+H . Let A
+?
+, B
+?
+, G
+?
+, and H
+?
+refer to the leaves in
+A,B,G, and H respectively. Then for any a
+?
+?
+A
+?
+, b
+?
+? B
+?
+, g
+?
+? G
+?
+, and h
+?
+? H
+?
+it can be
+shown that:
+d(i, j) =
+1
+4
+(
+d(a
+?
+, g
+?
+) + d(a
+?
+, h
+?
+) + d(b
+?
+, g
+?
+)
++d(b
+?
+, h
+?
+)? 2d(a
+?
+, b
+?
+)? 2d(g
+?
+, h
+?
+)
+)
+(4)
+Empirically, one can obtain a more robust em-
+pirical estimate
+?
+d(i, j) by averaging over all valid
+choices of a
+?
+, b
+?
+in Eq. 3 and all valid choices of
+a
+?
+, b
+?
+, g
+?
+, h
+?
+in Eq. 4 (Desper and Gascuel, 2005).
+3.2 Constructing a Spectral Additive Metric
+In constructing our distance metric, we begin with
+the following assumption on the distribution in
+Eq. 1 (analogous to the assumptions made in
+Anandkumar et al, 2011).
+Assumption 1 (Linear, Rank m, Means)
+E[z
+i
+|pix(zi),x] = A
+(z
+i
+|z
+pix(z
+i
+)
+,x)pix(zi) ?i ? [H]
+where A
+(z
+i
+|pix(z
+i
+),x) ? R
+m?m
+has rank m.
+E[w
+i
+|pix(wi),x] = C
+(w
+i
+|pix(w
+i
+),x)pix(wi) ?i ? [`(x)]
+where C
+(w
+i
+|pix(w
+i
+),x) ? R
+p?m
+has rank m.
+Also assume that E[z
+i
+z
+>
+i
+|x] has rank m ?i ?
+[H].
+Note that the matrices A and C are a direct
+function of ?(x), but we do not specify a model
+family for ?(x). The only restriction is in the form
+of the above assumption. If w
+i
+and z
+i
+were dis-
+crete, represented as binary vectors, the above as-
+sumption would correspond to requiring all con-
+ditional probability tables in the latent tree to have
+rankm. Assumption 1 allows for the w
+i
+to be high
+dimensional features, as long as the expectation
+requirement above is satisfied. Similar assump-
+tions are made with spectral parameter learning
+methods e.g. Hsu et al (2009), Bailly et al (2009),
+Parikh et al (2011), and Cohen et al (2012).
+Furthermore, Assumption 1 makes it explicit
+that regardless of the size of p, the relationships
+among the variables in the latent tree are restricted
+to be of rank m, and are thus low rank since p >
+m. To leverage this low rank structure, we propose
+using the following additive metric, a normalized
+variant of that in Anandkumar et al (2011):
+d
+spectral
+(i, j) = ? log ?
+m
+(?x(i, j))
++
+1
+2
+log ?
+m
+(?x(i, i)) +
+1
+2
+log ?
+m
+(?x(j, j)) (5)
+where ?
+m
+(A) denotes the product of the top m
+singular values of A and ?x(i, j) := E[viv
+>
+j
+|x],
+i.e. the uncentered cross-covariance matrix.
+We can then show that this metric is additive:
+Lemma 1 If Assumption 1 holds then, d
+spectral
+is
+an additive tree metric (Definition 1).
+A proof is in the supplementary for completeness.
+From here, we use d to denote d
+spectral
+, since that
+is the metric we use for our learning algorithm.
+1066
+3.3 Recovering the Minimal Projective
+Latent Tree
+It has been shown (Rzhetsky and Nei, 1993) that
+for any additive tree metric, u(x) can be recovered
+by solving arg min
+u?U
+c(u) for c(u):
+c(u) =
+?
+(i,j)?E
+u
+d(i, j). (6)
+where E
+u
+is the set of pairs of nodes which are
+adjacent to each other in u and d(i, j) is computed
+using Eq. 3 and Eq. 4.
+Note that the metric d we use in defining c(u)
+is based on the expectations from the true distri-
+bution. In practice, the true distribution is un-
+known, and therefore we use an approximation for
+the distance metric
+?
+d. As we discussed in ?3.1
+all elements of the distance matrix are functions
+of observable quantities if the underlying tree u is
+known. However, only the word-word sub-block
+D
+WW
+can be directly estimated from the data
+without knowledge of the tree structure.
+This subtlety makes solving the minimization
+problem in Eq. 6 NP-hard (Desper and Gascuel,
+2005) if u is allowed to be an arbitrary undirected
+tree. However, if we restrict u to be in U , as we do
+in the above, then maximizing c?(u) over U can be
+solved using the bilexical parsing algorithm from
+Eisner and Satta (1999). This is because the com-
+putation of the other sub-blocks of the distance
+matrix only depend on the partitions of the nodes
+shown in Figure 3 into A, B, G, and H , and not
+on the entire tree structure.
+Therefore, the procedure to find a bracketing
+for a given POS tag x is to first estimate the dis-
+tance matrix sub-block
+?
+D
+WW
+from raw text data
+(see ?3.4), and then solve the optimization prob-
+lem arg min
+u?U
+c?(u) using a variant of the Eisner-
+Satta algorithm where c?(u) is identical to c(u) in
+Eq. 6, with d replaced with
+?
+d.
+Summary. We first defined a generative model
+that describes how a sentence, its sequence of POS
+tags, and its bracketing is generated (?2.3). First
+an undirected u ? U is generated (only as a func-
+tion of the POS tags), and then u is mapped to
+a bracketing using a direction mapping h
+dir
+. We
+then showed that we can define a distance met-
+ric between nodes in the undirected tree, such that
+minimizing it leads to a recovery of u. This dis-
+tance metric can be computed based only on the
+text, without needing to identify the latent infor-
+mation (?3.2). If the true distance metric is known,
+Algorithm 1 The learning algorithm for find-
+ing the latent structure from a set of examples
+(w
+(i)
+,x
+(i)
+), i ? [N ].
+Inputs: Set of examples (w
+(i)
+,x
+(i)
+) for i ? [N ],
+a kernel K
+?
+(j, k, j
+?
+, k
+?
+|x,x
+?
+), an integer m
+Data structures: For each i ? [N ], j, k ?
+`(x
+(i)
+) there is a (uncentered) covariance matrix
+?
+?x(i)(j, k) ? R
+p?p
+, and a distance
+?
+d
+spectral
+(j, k).
+Algorithm:
+(Covariance estimation) ?i ? [N ], j, k ? `(x
+(i)
+)
+? Let C
+j
+?
+,k
+?
+|i
+? = w
+(i
+?
+)
+j
+?
+(w
+(i
+?
+)
+k
+?
+)
+>
+, k
+j,k,j
+?
+,k
+?
+,i,i
+?
+=
+K
+?
+(j, k, j
+?
+, k
+?
+|x
+(i)
+,x
+(i
+?
+)
+) and `
+i
+?
+= `(x
+(i
+?
+)
+),
+and estimate each p? p covariance matrix as:
+?
+?x(j, k) =
+?
+N
+i
+?
+=1
+?
+`
+i
+?
+j
+?
+=1
+?
+`
+i
+?
+k
+?
+=1
+k
+j,k,j
+?
+,k
+?
+,i,i
+?
+C
+j
+?
+,k
+?
+|i
+?
+?
+N
+i
+?
+=1
+?
+`
+i
+?
+j
+?
+=1
+?
+`
+i
+?
+k
+?
+=1
+k
+j,k,j
+?
+,k
+?
+,i,i
+?
+? Compute
+?
+d
+spectral
+(j, k) ?j, k ? `(x
+(i)
+) using
+Eq. 5.
+(Uncover structure) ?i ? [N ]
+? Find u?
+(i)
+= arg min
+u?U
+c?(u), and for the ith
+example, return the structure h
+dir
+(u?
+(i)
+).
+with respect to the true distribution that generates
+the words in a sentence, then u can be fully recov-
+ered by optimizing the cost function c(u). How-
+ever, in practice the distance metric must be esti-
+mated from data, as discussed below.
+3.4 Estimation of d from Sparse Data
+We now address the data sparsity problem, in par-
+ticular that D(x) can be very small, and therefore
+estimating d for each POS sequence separately can
+be problematic.
+3
+In order to estimate d from data, we need to es-
+timate the covariance matrices ?x(i, j) (for i, j ?
+{1, . . . , `(x)}) from Eq. 5.
+To give some motivation to our solu-
+tion, consider estimating the covariance
+matrix ?x(1, 2) for the tag sequence
+x = (DT
+1
+, NN
+2
+, VBD
+3
+, DT
+4
+, NN
+5
+). D(x) may
+be insufficient for an accurate empirical es-
+3
+This data sparsity problem is quite severe ? for example,
+the Penn treebank (Marcus et al, 1993) has a total number
+of 43,498 sentences, with 42,246 unique POS tag sequences,
+averaging |D(x)| to be 1.04.
+1067
+timate. However, consider another sequence
+x
+?
+= (RB
+1
+, DT
+2
+, NN
+3
+, VBD
+4
+, DT
+5
+, ADJ
+6
+, NN
+7
+).
+Although x and x
+?
+are not identical, it is likely
+that ?x?(2, 3) is similar to ?x(1, 2) because the
+determiner and the noun appear in similar syn-
+tactic context. ?x?(5, 7) also may be somewhat
+similar, but ?x?(2, 7) should not be very similar
+to ?x(1, 2) because the noun and the determiner
+appear in a different syntactic context.
+The observation that the covariance matrices
+depend on local syntactic context is the main driv-
+ing force behind our solution. The local syntactic
+context acts as an ?anchor,? which enhances or re-
+places a word index in a sentence with local syn-
+tactic context. More formally, an anchor is a func-
+tion G that maps a word index j and a sequence of
+POS tags x to a local context G(j,x). The anchor
+we use is G(j,x) = (j, x
+j
+). Then, the covariance
+matrices ?x are estimated using kernel smooth-
+ing (Hastie et al, 2009), where the smoother tests
+similarity between the different anchors G(j,x).
+The full learning algorithm is given in Figure 1.
+The first step in the algorithm is to estimate the
+covariance matrix block
+?
+?x(i)(j, k) for each train-
+ing example x
+(i)
+and each pair of preterminal po-
+sitions (j, k) in x
+(i)
+. Instead of computing this
+block by computing the empirical covariance ma-
+trix for positions (j, k) in the data D(x), the al-
+gorithm uses all of the pairs (j
+?
+, k
+?
+) from all of
+N training examples. It averages the empirical
+covariance matrices from these contexts using a
+kernel weight, which gives a similarity measure
+for the position (j, k) in x
+(i)
+and (j
+?
+, k
+?
+) in an-
+other example x
+(i
+?
+)
+. ? is the kernel ?bandwidth?,
+a user-specified parameter that controls how in-
+clusive the kernel will be with respect to exam-
+ples in D (see ? 4.1 for a concrete example). Note
+that the learning algorithm is such that it ensures
+that
+?
+?x(i)(j, k) =
+?
+?x(i?)(j
+?
+, k
+?
+) if G(j,x
+(i)
+) =
+G(j
+?
+,x
+(i
+?
+)
+) and G(k,x
+(i)
+) = G(k
+?
+,x
+(i
+?
+)
+).
+Once the empirical estimates for the covariance
+matrices are obtained, a variant of the Eisner-Satta
+algorithm is used, as mentioned in ?3.3.
+3.5 Theoretical Guarantees
+Our main theoretical guarantee is that Algorithm 1
+will recover the correct tree u ? U with high prob-
+ability, if the given top bracket is correct and if
+we obtain enough examples (w
+(i)
+,x
+(i)
+) from the
+model in ?2. We give the theorem statement be-
+low. The constants lurking in the O-notation and
+the full proof are in the supplementary.
+Denote ?x(j, k)
+(r)
+as the r
+th
+singu-
+lar value of ?x(j, k). Let ?
+?
+(x) :=
+min
+j,k?`(x) min
+(
+?x(j, k)
+(m)
+)
+.
+Theorem 1 Define u? as the estimated tree for tag
+sequence x and u(x) as the correct tree. Let
+4(x) := min
+u
+?
+?U :u
+?
+6=u(x)
+(c(u(x))? c(u
+?
+))/(8|`(x)|)
+Assume that
+N ? O
+?
+?
+m
+2
+log
+(
+p
+2
+`(x)2
+?
+)
+min(?
+?
+(x)
+2
+4(x)
+2
+, ?
+?
+(x)
+2
+)?x(?)
+2
+?
+?
+Then with probability 1? ?, u? = u(x).
+where ?x(?), defined in the supplementary, is a
+function of the underlying distribution over the tag
+sequences x and the kernel bandwidth ?.
+Thus, the sample complexity of our approach
+depends on the dimensionality of the latent and
+observed states (m and p), the underlying singu-
+lar values of the cross-covariance matrices (?
+?
+(x))
+and the difference in the cost of the true tree com-
+pared to the cost of the incorrect trees (4(x)).
+4 Experiments
+We report results on three different languages: En-
+glish, German, and Chinese. For English we use
+the Penn treebank (Marcus et al, 1993), with sec-
+tions 2?21 for training and section 23 for final
+testing. For German and Chinese we use the Ne-
+gra treebank and the Chinese treebank respectively
+and the first 80% of the sentences are used for
+training and the last 20% for testing. All punc-
+tuation from the data is removed.
+4
+We primarily compare our method to the
+constituent-context model (CCM) of Klein and
+Manning (2002). We also compare our method to
+the algorithm of Seginer (2007).
+4.1 Experimental Settings
+Top bracket heuristic Our algorithm requires
+the top bracket in order to direct the latent tree.
+In practice, we employ the following heuristic to
+find the bracket using the following three steps:
+? If there exists a comma/semicolon/colon at in-
+dex i that has at least a verb before i and both
+a noun followed by a verb after i, then return
+([0, i ? 1], [i, `(x)]) as the top bracket. (Pick
+the rightmost comma/semicolon/colon if multi-
+ple satisfy the criterion).
+4
+We make brief use of punctuation for our top bracket
+heuristic detailed below before removing it.
+1068
+Length CCM CCM-U CCM-OB CCM-UB
+? 10 72.5 57.1 58.2 62.9
+? 15 54.1 36 24 23.7
+? 20 50 34.7 19.3 19.1
+? 25 47.2 30.7 16.8 16.6
+? 30 44.8 29.6 15.3 15.2
+? 40 26.3 13.5 13.9 13.8
+Table 1: Comparison of different CCM variants on English
+(training). U stands for universal POS tagset, OB stands for
+conjoining original POS tags with Brown clusters and UB
+stands for conjoining universal POS tags with Brown clusters.
+The best setting is just the vanilla setting, CCM.
+? Otherwise find the first non-participle verb (say
+at index j) and return ([0, j ? 1], [j, `(x)]).
+? If no verb exists, return ([0, 1], [1, `(x)]).
+Word embeddings As mentioned earlier, each
+w
+i
+can be an arbitrary feature vector. For all lan-
+guages we use Brown clustering (Brown et al,
+1992) to construct a log(C) + C feature vector
+where the first log(C) elements indicate which
+mergable cluster the word belongs to, and the last
+C elements indicate the cluster identity. For En-
+glish, more sophisticated word embeddings are
+easily obtainable, and we experiment with neural
+word embeddings Turian et al (2010) of length
+50. We also explored two types of CCA embed-
+dings: OSCCA and TSCCA, given in Dhillon et
+al. (2012). The OSCCA embeddings behaved bet-
+ter, so we only report its results.
+Choice of kernel For our experiments, we use
+the kernel
+K
+?
+(j, k, j
+?
+, k
+?
+|x,x
+?
+)
+= max
+{
+0, 1?
+?(j, k, j
+?
+, k
+?
+|x,x
+?
+)
+?
+}
+where ? denotes the user-specified bandwidth,
+and ?(j, k, j
+?
+, k
+?
+|x,x
+?
+) =
+|j ? k| ? |j
+?
+? k
+?
+|
+|j ? k|+ |j
+?
+? k
+?
+|
+if
+x(j) = x(j
+?
+) and x(k
+?
+) = x(k), and sign(j ?
+k) = sign(j
+?
+? k
+?
+) (and? otherwise).
+The kernel is non-zero if and only if the tags at
+position j and k in x are identical to the ones in
+position j
+?
+and k
+?
+in x
+?
+, and if the direction be-
+tween j and k is identical to the one between j
+?
+and k
+?
+. Note that the kernel is not binary, as op-
+posed to the theoretical kernel in the supplemen-
+tary material. Our experiments show that using a
+non-zero value different than 1 that is a function
+of the distance between j and k compared to the
+distance between j
+?
+and k
+?
+does better in practice.
+Choice of data For CCM, we found that if the
+full dataset (all sentence lengths) is used in train-
+ing, then performance degrades when evaluating
+on sentences of length ? 10. We therefore restrict
+the data used with CCM to sentences of length
+? `, where ` is the maximal sentence length being
+evaluated. This does not happen with our algo-
+rithm, which manages to leverage lexical informa-
+tion whenever more data is available. We therefore
+use the full data for our method for all lengths.
+We also experimented with the original POS
+tags and the universal POS tags of Petrov et al
+(2011). Here, we found out that our method
+does better with the universal part of speech tags.
+For CCM, we also experimented with the origi-
+nal parts of speech, universal tags (CCM-U), the
+cross-product of the original parts of speech with
+the Brown clusters (CCM-OB), and the cross-
+product of the universal tags with the Brown clus-
+ters (CCM-UB). The results in Table 1 indicate
+that the vanilla setting is the best for CCM.
+Thus, for all results, we use universal tags for
+our method and the original POS tags for CCM.
+We believe that our approach substitutes the need
+for fine-grained POS tags with the lexical informa-
+tion. CCM, on the other hand, is fully unlexical-
+ized.
+Parameter Selection Our method requires two
+parameters, the latent dimension m and the band-
+width ?. CCM also has two parameters, the num-
+ber of extra constituent/distituent counts used for
+smoothing. For both methods we chose the best
+parameters for sentences of length ` ? 10 on the
+English Penn Treebank (training) and used this
+set for all other experiments. This resulted in
+m = 7, ? = 0.4 for our method and 2, 8 for
+CCM?s extra constituent/distituent counts respec-
+tively. We also tried letting CCM choose differ-
+ent hyperparameters for different sentence lengths
+based on dev-set likelihood, but this gave worse
+results than holding them fixed.
+4.2 Results
+Test I: Accuracy Table 2 summarizes our re-
+sults. CCM is used with the initializer proposed
+in Klein and Manning (2002).
+5
+NN, CC, and BC
+indicate the performance of our method for neural
+embeddings, CCA embeddings, and Brown clus-
+tering respectively, using the heuristic for h
+dir
+de-
+5
+We used the implementation available at
+http://tinyurl.com/lhwk5n6.
+1069
+` English German Chinese
+NN-O NN CC-O CC BC-O BC CCM BC-O BC CCM BC-O BC CCM
+t
+r
+a
+i
+n
+? 10 70.9 69.2 70.4 68.7 71.1 69.3 72.5 64.6 59.9 62.6 64.9 57.3 46.1
+? 20 55.1 53.5 53.2 51.6 53.0 51.5 50 52.7 48.7 47.9 51.4 46 22.4
+? 40 46.1 44.5 43.6 41.9 43.3 41.8 26.3 46.7 43.6 19.8 42.6 38.6 15
+t
+e
+s
+t
+? 10 69.2 66.7 68.3 65.5 68.9 66.1 70.5 66.4 61.6 64.7 58.0 53.2 40.7
+? 15 60.3 58.3 58.6 56.4 58.6 56.5 53.8 57.5 53.5 49.6 54.3 49.4 35.9
+? 20 54.1 52.3 52.3 50.3 51.9 50.2 50.4 52.8 49.2 48.9 49.7 45.5 20.1
+? 25 50.8 49.0 48.6 46.6 48.3 46.6 47.4 50.0 46.8 45.6 46.7 42.7 17.8
+? 30 48.1 46.3 45.6 43.7 45.4 43.8 44.9 48.3 45.4 21.9 44.6 40.7 16.1
+? 40 45.5 43.8 43.0 41.1 42.7 41.1 26.1 46.9 44.1 20.1 42.2 38.6 14.3
+Table 2: F
+1
+bracketing measure for the test sets and train sets in three languages. NN, CC, and BC indicate the performance of
+our method for neural embeddings, CCA embeddings, and Brown clustering respectively, using the heuristic for h
+dir
+described
+in ? 4.1. NN-O, CC-O, and BC-O indicate that the oracle (i.e. true top bracket) was used for h
+dir
+.
+0
+5
+1 0
+1 5
+2 0
+2 5
+3 0
+3 5
+20- 30 31- 40 41- 50 51- 60 61- 70 71- 80
+Fre
+que
+ncy
+ 
+Bracketing F1 
+CCM Random Restarts (Length <= 10) 
+Figure 4: Histogram showing performance of CCM across
+100 random restarts for sentences of length ? 10.
+scribed in ? 4.1. NN-O, CC-O, and BC-O indicate
+that the oracle (i.e. true top bracket) was used for
+h
+dir
+. For our method, test set results can be ob-
+tained by using Algorithm 1 (except the distances
+are computed using the training data).
+For English, while CCM behaves better for
+short sentences (` ? 10), our algorithm is more
+robust with longer sentences. This is especially
+noticeable for length ? 40, where CCM breaks
+down and our algorithm is more stable. We find
+that the neural embeddings modestly outperform
+the CCA and Brown cluster embeddings.
+The results for German are similar, except CCM
+breaks down earlier at sentences of ` ? 30. For
+Chinese, our method substantially outperforms
+CCM for all lengths. Note that CCM performs
+very poorly, obtaining only around 20% accu-
+racy even for sentences of ` ? 20. We didn?t
+have neural embeddings for German and Chinese
+(which worked best for English) and thus only
+used Brown cluster embeddings.
+For English, the disparity between NN-O (ora-
+cle top bracket) and NN (heuristic top bracket) is
+rather low suggesting that our top bracket heuris-
+tic is rather effective. However, for German and
+Chinese note that the ?BC-O? performs substan-
+tially better, suggesting that if we had a better top
+bracket heuristic our performance would increase.
+Test II: Sensitivity to initialization The EM al-
+gorithm with the CCM requires very careful ini-
+tialization, which is described in Klein and Man-
+ning (2002). If, on the other hand, random ini-
+tialization is used, the variance of the performance
+of the CCM varies greatly. Figure 4 shows a his-
+togram of the performance level for sentences of
+length ? 10 for different random initializers. As
+one can see, for some restarts, CCM obtains ac-
+curacies lower than 30% due to local optima. Our
+method does not suffer from local optima and thus
+does not require careful initialization.
+Test III: Comparison to Seginer?s algorithm
+Our approach is not directly comparable to
+Seginer?s because he uses punctuation, while we
+use POS tags. Using Seginer?s parser we were
+able to get results on the training sets. On English:
+75.2% (` ? 10), 64.2% (` ? 20), 56.7% (` ? 40).
+On German: 57.8% (` ? 10), 45.0% (` ? 20), and
+39.9% (` ? 40). On Chinese: 56.6% (` ? 10),
+45.1% (` ? 20), and 38.9% (` ? 40).
+Thus, while Seginer?s method performs better
+on English, our approach performs 2-3 points bet-
+ter on German, and both methods give similar per-
+formance on Chinese.
+5 Conclusion
+We described a spectral approach for unsu-
+pervised constituent parsing that comes with
+theoretical guarantees on latent structure recovery.
+Empirically, our algorithm performs favorably to
+the CCM of Klein and Manning (2002) without
+the need for careful initialization.
+Acknowledgements: This work is supported
+by NSF IIS1218282, NSF IIS1111142, NIH
+R01GM093156, and the NSF Graduate Research
+Fellowship Program under Grant No. 0946825
+(NSF Fellowship to APP).
+1070
+References
+A. Anandkumar, K. Chaudhuri, D. Hsu, S. M. Kakade,
+L. Song, and T. Zhang. 2011. Spectral methods
+for learning multivariate latent tree structure. arXiv
+preprint arXiv:1107.1283.
+R. Bailly, F. Denis, and L. Ralaivola. 2009. Gram-
+matical inference as a principal component analysis
+problem. In Proceedings of ICML.
+R. Bailly, X. Carreras, F. M. Luque, and A. Quattoni.
+2013. Unsupervised spectral learning of WCFG
+as low-rank matrix completion. In Proceedings of
+EMNLP.
+P. F. Brown, P.V. Desouza, R.L. Mercer, V.J.D. Pietra,
+and J.C. Lai. 1992. Class-based n-gram mod-
+els of natural language. Computational linguistics,
+18(4):467?479.
+O. P. Buneman. 1971. The recovery of trees from mea-
+sures of dissimilarity. Mathematics in the archaeo-
+logical and historical sciences.
+P. Buneman. 1974. A note on the metric properties of
+trees. Journal of Combinatorial Theory, Series B,
+17(1):48?50.
+M.J. Choi, V. YF Tan, A. Anandkumar, and A.S. Will-
+sky. 2011. Learning latent tree graphical mod-
+els. The Journal of Machine Learning Research,
+12:1771?1812.
+C. K. Chow and C. N. Liu. 1968. Approximating
+Discrete Probability Distributions With Dependence
+Trees. IEEE Transactions on Information Theory,
+IT-14:462?467.
+S. B. Cohen and N. A. Smith. 2009. Shared logistic
+normal distributions for soft parameter tying in un-
+supervised grammar induction. In Proceedings of
+HLT-NAACL.
+S. B. Cohen and N. A. Smith. 2012. Empirical risk
+minimization for probabilistic grammars: Sample
+complexity and hardness of learning. Computa-
+tional Linguistics, 38(3):479?526.
+S. B. Cohen, K. Stratos, M. Collins, D. P. Foster, and
+L. Ungar. 2012. Spectral learning of latent-variable
+PCFGs. In Proceedings of ACL.
+R. Desper and O. Gascuel. 2005. The minimum evo-
+lution distance-based approach to phylogenetic in-
+ference. Mathematics of evolution and phylogeny,
+pages 1?32.
+P. S. Dhillon, J. Rodu, D. P. Foster, and L. H. Ungar.
+2012. Two step cca: A new spectral method for es-
+timating vector models of words. In Proceedings of
+ICML.
+J. Eisner and G. Satta. 1999. Efficient parsing for
+bilexical context-free grammars and head automaton
+grammars. In Proceedings of ACL.
+P. Erd?os, M. Steel, L. Sz?ekely, and T. Warnow. 1999.
+A few logs suffice to build (almost) all trees: Part ii.
+Theoretical Computer Science, 221(1):77?118.
+J. Gillenwater, K. Ganchev, J. Grac?a, F. Pereira, and
+B. Taskar. 2010. Sparsity in dependency grammar
+induction. In Proceedings of ACL.
+K. Gimpel and N.A. Smith. 2012. Concavity and ini-
+tialization for unsupervised dependency parsing. In
+Proceedings of NAACL.
+D. Golland, J. DeNero, and J. Uszkoreit. 2012. A
+feature-rich constituent context model for grammar
+induction. In Proceedings of ACL.
+M. Gormley and J. Eisner. 2013. Nonconvex global
+optimization for latent-variable models. In Proceed-
+ings of ACL.
+S. Harmeling and C. KI Williams. 2011. Greedy
+learning of binary latent trees. Pattern Analysis
+and Machine Intelligence, IEEE Transactions on,
+33(6):1087?1097.
+T. Hastie, R. Tibshirani, and J. Friedman. 2009. The
+Elements of Statistical Learning: Data Mining, In-
+ference, and Prediction. Springer Series in Statis-
+tics. Springer Verlag.
+W. P. Headden, M. Johnson, and D. McClosky. 2009.
+Improving unsupervised dependency parsing with
+richer contexts and smoothing. In Proceedings of
+NAACL-HLT.
+D. Hsu, S. Kakade, and T. Zhang. 2009. A spectral
+algorithm for learning hidden Markov models. In
+Proceedings of COLT.
+D. Hsu, S. M. Kakade, and P. Liang. 2012. Identi-
+fiability and unmixing of latent parse trees. arXiv
+preprint arXiv:1206.3137.
+M. Ishteva, H. Park, and L. Song. 2012. Unfolding
+latent tree structures using 4th order tensors. arXiv
+preprint arXiv:1210.1258.
+F. Jelinek, J. D. Lafferty, and R. L. Mercer. 1992. Ba-
+sic methods of probabilistic context free grammars.
+Springer.
+D. Klein and C. D. Manning. 2002. A generative
+constituent-context model for improved grammar in-
+duction. In Proceedings of ACL.
+M. Kolar, A. P. Parikh, and E. P. Xing. 2010a. On
+sparse nonparametric conditional covariance selec-
+tion. In Proceedings of ICML.
+M. Kolar, L. Song, A. Ahmed, and E. P. Xing. 2010b.
+Estimating time-varying networks. The Annals of
+Applied Statistics, 4(1):94?123.
+M. P. Marcus, B. Santorini, and M. A. Marcinkiewicz.
+1993. Building a large annotated corpus of En-
+glish: The Penn treebank. Computational Linguis-
+tics, 19:313?330.
+1071
+A.P. Parikh, L. Song, and E.P. Xing. 2011. A spectral
+algorithm for latent tree graphical models. In Pro-
+ceedings of ICML.
+S. Petrov, D. Das, and R. McDonald. 2011. A univer-
+sal part-of-speech tagset. ArXiv:1104.2086.
+A. Rzhetsky and M. Nei. 1993. Theoretical founda-
+tion of the minimum-evolution method of phyloge-
+netic inference. Molecular Biology and Evolution,
+10(5):1073?1095.
+N. Saitou and M. Nei. 1987. The neighbor-joining
+method: a new method for reconstructing phylo-
+genetic trees. Molecular biology and evolution,
+4(4):406?425.
+Y. Seginer. 2007. Fast unsupervised incremental pars-
+ing. In Proceedings of ACL.
+N. A. Smith and J. Eisner. 2005. Contrastive estima-
+tion: Training log-linear models on unlabeled data.
+In Proceedings of ACL.
+L. Song, A.P. Parikh, and E.P. Xing. 2011. Kernel
+embeddings of latent tree graphical models. In Pro-
+ceedings of NIPS.
+V. I. Spitkovsky, H. Alshawi, and D. Jurafsky. 2010a.
+From baby steps to leapfrog: how less is more in
+unsupervised dependency parsing. In Proceedings
+of NAACL.
+V. I. Spitkovsky, H. Alshawi, D. Jurafsky, and C. D.
+Manning. 2010b. Viterbi training improves un-
+supervised dependency parsing. In Proceedings of
+CoNLL.
+V. I. Spitkovsky, H. Alshawi, and D. Jurafsky. 2013.
+Breaking out of local optima with count transforms
+and model recombination: A study in grammar in-
+duction. In Proceedings of EMNLP.
+J. P. Turian, L.-A. Ratinov, and Y. Bengio. 2010. Word
+representations: A simple and general method for
+semi-supervised learning. In Proceedings of ACL.
+S. Zhou, J. Lafferty, and L. Wasserman. 2010. Time
+varying undirected graphs. Machine Learning,
+80(2-3):295?319.
+1072
+Proceedings of the 8th International Workshop on Semantic Evaluation (SemEval 2014), pages 652?656,
+Dublin, Ireland, August 23-24, 2014.
+ThinkMiners: Disorder Recognition using Conditional Random Fields
+and Distributional Semantics
+Ankur Parikh Avinesh PVS Joy Mustafi Lalit Agarwalla Ashish Mungi
+IBM India Pvt Ltd, IBM Software Group, Watson
+{anparikh,pavinesh,jmustafi,lalit.agarwalla,r1amungi}@in.ibm.com
+Abstract
+In 2014, SemEval organized multiple chal-
+lenges on natural language processing and
+information retrieval. One of the task was
+analysis of the clinical text. This challenge
+is further divided into two tasks. The task
+A of the challenge was to extract disor-
+der mention spans in the clinical text and
+the task B was to map each of the disor-
+der mentions to a unique Unified Medical
+Language System Concept Unique Iden-
+tifier. We participated in the task A and
+developed a clinical disorder recognition
+system. The proposed system consists of
+a Conditional Random Fields based ap-
+proach to recognize disorder entities. The
+SemEval challenge organizers manually
+annotated disorder entities in 298 clini-
+cal notes, of which 199 notes were used
+for training and 99 for development. On
+the test data, our system achieved the F-
+measure of 0.844 for entity recognition in
+relaxed and 0.689 in strict evaluation.
+Keywords: medical language processing,
+clinical concept extraction, conditional
+random fields.
+1 Introduction
+Mining concepts from the electronic medical
+records such as clinical reports, discharge sum-
+maries as well as large number of doctor?s notes
+has become an utmost important task for auto-
+matic analysis in the medical domain. Identifica-
+tion and mapping of the concepts like symptoms,
+disorders, surgical procedures, body sites to a nor-
+malized standards are usually the first steps to-
+This work is licensed under a Creative Commons At-
+tribution 4.0 International Licence. Page numbers and pro-
+ceedings footer are added by the organisers. Licence details:
+http://creativecommons.org/licenses/by/4.0/
+wards understanding natural language text in the
+medical records.
+In this paper, we describe a machine learning
+based disorder recognition system for the Task 7A
+of 2014 SemEval challenge. In Section 2 we give
+a background of the existing solutions to tackle
+the problem. Section 3 covers our approach in
+detail, followed by evaluation and conclusion in
+Section 4 and Section 5 respectively.
+2 Background
+In recent times, many systems have been de-
+veloped to extract clinical concepts from vari-
+ous types of clinical notes. The earlier nat-
+ural language processing (NLP) systems were
+mainly built heavily using domain knowledge
+i.e. medical dictionaries. These systems in-
+clude MetaMap (Aronson and Lang, 2010), Hi-
+TEX (Zeng et al., 2006), KnowledgeMap (Denny
+et al., 2003), MedLEE (Friedman et al., 1994),
+SymText (Koehler, 1994) and Mplus (Christensen
+et al., 2002). In the past couple of years, re-
+searchers have been exploring the use of machine
+learning algorithms in the clinical concept detec-
+tion. To promote the research in this field many or-
+ganizations such as ShARe/CLEF, SemEval have
+organized a few clinical NLP challenges. In CLEF
+2013 (Pradhan et al., 2013), the challenge was to
+recognize medication-related concepts. Both rule-
+based (Fan et al., 2013; Ramanan et al., 2013;
+Wang and Akella, 2013) and machine learning
+based methods as well as hybrid methods (Xia
+et al., 2013; Osborne et al., 2013; Hervas et al.,
+2013) were developed. In this shared-task sequen-
+tial labeling algorithms (i.e., Conditional Random
+Fields (CRF)) (Gung, 2013; Patrick et al., 2013;
+Bodnari et al., 2013; Zuccon et al., 2013) and ma-
+chine learning methods (i.e., Support Vector Ma-
+chine (SVM)) (Cogley et al., 2013) have been
+demonstrated to achieve promising performance
+when provided with a large annotated corpus for
+652
+Figure 1: Dataset distribution
+training.
+3 Approach
+Entity recognition has been tried in various do-
+mains like news articles, Wikipedia, sports arti-
+cles, financial reports and clinical texts. In clinical
+text, entities can vary from medical procedures,
+disorders, body site indicators etc. Clinical text
+also presents with a peculiar concept of disjoint
+disorders/entities. This phenomenon is common
+in clinical domain compared to others and further
+complicates entity extraction from clinical notes.
+3.1 Data
+The data consisted of around 298 notes from dif-
+ferent clinical types including radiology reports,
+discharge summaries, ECG and ECHO reports.
+For each note, disorder entities were annotated
+based on a pre-defined guidelines. The data set
+was further divided into two, with 199 notes in the
+training set and 99 notes in the development set.
+The training set contains 5811 disorders where as
+the development contained 5340 disorders. Figure
+1 shows the distribution of the training and devel-
+opment set respectively.
+3.2 Data Preprocessing
+In the pre-processing step we tokenized, lemma-
+tized and tagged the text with part of speech us-
+ing the Apache cTAKES
+1
+(Savova et al., 2010).
+Further, section and source meta data extraction is
+done for the text in the documents.
+In Named Entity Recognition (NER), when
+solved using machine learning, the text is typically
+converted to BIO format (Beginning, Inside and
+Outside the entity). BIO representation means the
+1
+https://ctakes.apache.org/
+words in the text are assigned one of the follow-
+ing tags B - begin, I - inside and O - outside of the
+entity i.e. in this case a disorder. So now the task
+of NER is a sequence labeling problem to assign
+the labels to the tokens. Especially in the medical
+domain, the challenge is more complicated due to
+the presence of disjoint disorders (<10%), which
+could not be solved using the traditional BIO-
+notation. BIO approach works well with entities
+which are consecutive. So, we took an enhanced
+approach (Tang et al., 2013a) where the consec-
+utive disorders are assigned traditional BIO tags
+and for disjoint disorders we create two tag sets a)
+D{B,I} : for disjoint entity words which are not
+shared by multiple concepts; and b) H{B,I}: for
+disjoint entity words which belong to more than
+one disjoint concept.
+The following examples show the annotations
+of consecutive as well as disjoint disorders.
+1: ?The left atrium is moderately dilated.?
+?The/O left/DB atrium/DI is/O moderately/O
+dilated/DB ./O?
+2: ?The left & right atrium are moderately
+dilated.?
+?The/O left/DB &/O right/DB atrium/HB are/O
+moderately/O dilated/HB ./O?
+3.3 Sequence Labeling
+We have used Conditional Random Fields (CRF),
+a popular approach to solve sequence labeling
+tasks. CRF++
+2
+was used as an implementation of
+CRF for our purpose.
+2
+http://crfpp.googlecode.com/svn/trunk/doc/index.html
+653
+Feature set used for the learning algorithm:
+? Word level features: words [-2,2], suffix and
+prefix.
+? Syntactic features: parts-of-speech(POS).
+? Discourse features: source & section. Sen-
+tence containing disorder mentions usually
+have similar syntactic patterns based on sec-
+tions (ex: ?Past Medical History?) and source
+type (ex: discharge summary, radiology re-
+port). To capture this, source and section
+meta data have been provided as a feature.
+? Distributional semantics: We used a con-
+textual similarity based approach from the
+popular concept called NC-value (Frantzi et
+al., 2000).
+We followed the following steps to encap-
+sulate the distributional semantics into the
+learning model:
+? For all the disorders in the training data
+we created two sets of contextual words
+namely context before (CB
+a
+train) and
+context after (CA
+a
+train). These words
+belong to open class (Noun, Verb, Ad-
+jective, Adverb) allocated for each sec-
+tion (S
+j
+).
+? Weights are calculated for the contex-
+tual words.
+Weight(b
+train
+) =
+freq(disorders,b)
+freq(disorders)
+? For each word in the test data we created
+a similar sets of contextual words(CB
+a
+,
+CA
+a
+) as above.
+? Two scores are calculated for each
+token based on the product of frequency
+of the contextual word per section S
+j
+with weight calculated of that word in
+the training set.
+For each section (S
+j
+):
+NC?value
+B
+(a) =
+X
+bCB
+a
+,S
+j
+f
+a
+(b
+test
+)?weight(b
+train
+)
+(1)
+NC?value
+A
+(a) =
+X
+bCA
+a
+,S
+j
+f
+a
+(b
+test
+)?weight(b
+train
+)
+(2)
+where
+a is the candidate term,
+CB
+a
+is the set of context words of ?a?
+in a window of [-2,0],
+CA
+a
+is the set of context words of ?a?
+in a window of [0,2],
+S
+j
+is a section like ?Past Medical
+History?, ?Lab Reports? etc.
+b is a word from CB
+a
+or CA
+a
+,
+f
+a
+(b
+test
+) is the frequency of b as a term
+context word of ?a? in the test set,
+weight(b
+train
+) is the weight of b as term
+context word of a disorder in the
+training set,
+NC-value
+B
+(a) is the distributional
+semantic score of contextual words
+before the candidate term,
+NC-value
+A
+(a) is the distributional
+semantic score of contextual words
+after the candidate term.
+? Further a similarity class is calculated
+based on a set of thresholds on the
+NC-value namely High-Sim, Med-Sim,
+Low-Sim and assigned to the tokens.
+Most of the features were similar to that of the pre-
+vious approaches (Tang et al., 2013a; Tang et al.,
+2012; Tang et al., 2013; Jiang et al., 2011) with an
+addition of an innovative distributional semantics
+based features (Nc-value
+B
+, NC-value
+A
+), which we
+have tried and tested for concept mining in clinical
+text.
+4 Evaluation
+The evaluation was done in two categories a) strict
+evaluation: exact match, which requires the start-
+ing and ending of the concept to be the same as
+the gold standard data b) relaxed evaluation: here
+the concepts don?t match exactly with the start and
+end of the concept but may overlap.
+In the strict and relaxed evaluation, the best F-
+measure among our system was 0.689, 0.844 with-
+out the distributional semantics where as best Pre-
+cision was 0.907, 0.749 with the distributional se-
+mantics as a feature. Table 1. shows the detailed
+result.
+5 Conclusion
+Extraction of the concepts from the medical text
+is the fundamental task in the process of analysing
+patient data. In this paper we have tried a CRF
+based approach to mine the disorder terms from
+the clinical free text. We have tried various word
+654
+SemEval-2014 Strict Relaxed
+Shared Task 7A Precision Recall F-measure Precision Recall F-measure
+Disorder Recognition
+0.734 0.65 0.689 0.892 0.802 0.844without Distributional
+Semantics Feature
+Disorder Recognition
+0.749 0.617 0.677 0.907 0.758 0.826with Distributional
+Semantics Feature
+Table 1: Results of the system on test set
+level, syntactic, discourse and distributional se-
+mantic based features as adapted to the medical
+domain.
+We have observed an increase (+1.5%) in pre-
+cision but a drastic fall (-4.4%) in recall while
+using the distributional semantic feature. Ideally
+this feature has to improve the results because it
+takes contextual features into consideration. In our
+opinion inappropriate scaling of the feature values
+might have caused the drop. Further we would
+like to investigate the use of large unlabeled data,
+dependency tree based context and more experi-
+ments have to be carried out like threshold setting,
+feature value scaling to show better results. Also
+due to license issues we could not use UMLS dic-
+tionary. From our survey we figured out that 2-3%
+of improvement has been observed when the con-
+cepts from the dictionary are used.
+References
+B. Tang, H. Cao, Y. Wu, M. Jiang, and H. Xu.
+2013. Recognizing clinical entities in hospital dis-
+charge summaries using Structural Support Vector
+Machines with word representation features. BMC
+Med Inform Decis Mak, vol. 13 Suppl 1, p. S1.
+M. Jiang, Y. Chen, M. Liu, S. T. Rosenbloom, S. Mani,
+J. C. Denny, and H. Xu. 2011. A study of machine-
+learning-based approaches to extract clinical enti-
+ties and their assertions from discharge summaries.
+J Am Med Inform Assoc, vol. 18, no. 5, pp. 601606.
+B. Tang, Y. Wu, M. Jiang, Y. Chen, J. C. Denny, and H.
+Xu. 2013. A hybrid system for temporal informa-
+tion extraction from clinical text. J Am Med Inform
+Assoc.
+B. Tang, H. Cao, Y. Wu, M. Jiang, and H. Xu. 2012.
+Clinical entity recognition using structural support
+vector machines with rich features. in Proceedings
+of the ACM sixth international workshop on Data
+and text mining in biomedical informatics, New
+York, NY, USA, pp. 1320.
+C. Friedman, P. O. Alderson, J. H. Austin, J. J. Cimino,
+and S. B. Johnson. 1994. A general natural-
+language text processor for clinical radiology. J Am
+Med Inform Assoc, vol. 1, no. 2, pp. 161174.
+S. B. Koehler. 1994. SymText: a natural language un-
+derstanding system for encoding free text medical
+data. University of Utah.
+L. M. Christensen, P. J. Haug, and M. Fiszman. 2002.
+MPLUS: a probabilistic medical language under-
+standing system. in Proceedings of the ACL-02
+workshop on Natural language processing in the
+biomedical domain - Volume 3, Stroudsburg, PA,
+USA, pp. 2936.
+J. C. Denny, P. R. Irani, F. H. Wehbe, J. D. Smithers,
+and A. Spickard. 2003. The KnowledgeMap
+Project: Development of a Concept-Based Medical
+School Curriculum Database. AMIA Annu Symp
+Proc, vol. 2003, pp. 195199.
+G. K. Savova, J. J. Masanz, P. V. Ogren, J. Zheng,
+S. Sohn, K. C. Kipper Schuler, and C. G. Chute.
+2010. Mayo clinical Text Analysis and Knowledge
+Extraction System (cTAKES): architecture, compo-
+nent evaluation and applications. J Am Med Inform
+Assoc, vol. 17, no. 5, pp. 507513.
+Q. T. Zeng, S. Goryachev, S. Weiss, M. Sordo, S. N.
+Murphy, and R. Lazarus. 2006. Extracting princi-
+pal diagnosis, co-morbidity and smoking status for
+asthma research: evaluation of a natural language
+processing system. BMC Med Inform Decis Mak,
+vol. 6, p. 30.
+A. R. Aronson and F. M. Lang. 2010. An overview
+of MetaMap: historical perspective and recent ad-
+vances. J Am Med Inform Assoc, vol. 17, no. 3, pp.
+229236.
+. Uzuner, I. Solti, and E. Cadag. 2010. Extracting med-
+ication information from clinical text. J Am Med
+Inform Assoc, vol. 17, no. 5, pp. 514518.
+Katerina Frantzi, Sophia Ananiadou, and Hideki Mima
+2000. Automatic recognition of multi-word terms:.
+the C-value/NC-value method. International Journal
+on Digital Libraries 3(2):115?130.
+655
+James Cogley, Nicola Stokes and Joe Carthy. 2013.
+Medical Disorder Recognition with Structural Sup-
+port Vector Machines. Online Working Notes of the
+CLEF 2013 Evaluation Labs and Workshop, 23 - 26
+September, Valencia - Spain.
+Robert Leaman, Ritu Khare and Zhiyong Lu. 2013.
+NCBI at 2013 ShARe/CLEF eHealth Shared Task:
+Disorder Normalization in Clinical Notes with
+Dnorm. Online Working Notes of the CLEF 2013
+Evaluation Labs and Workshop, 23 - 26 September,
+Valencia - Spain.
+James Gung. 2013. Using Relations for Identifica-
+tion and Normalization of Disorders: Team CLEAR
+in the ShARe/CLEF 2013 eHealth Evaluation Lab.
+Online Working Notes of the CLEF 2013 Evaluation
+Labs and Workshop, 23 - 26 September, Valencia -
+Spain.
+Hongfang Liu, Kavishwar Wagholikar, Siddhartha Jon-
+nalagadda and Sunghwan Sohn. 2013. Integrated
+cTAKES for Concept Mention Detection and Nor-
+malization. Online Working Notes of the CLEF
+2013 Evaluation Labs and Workshop, 23 - 26
+September, Valencia - Spain.
+Jon D. Patrick, Leila Safari and Ying Ou. 2013.
+ShARe/CLEF eHealth 2013 Named Entity Recogni-
+tion and Normalization of Disorders Challenge. On-
+line Working Notes of the CLEF 2013 Evaluation
+Labs and Workshop, 23 - 26 September, Valencia -
+Spain.
+Andreea Bodnari, Louise Deleger, Thomas Lavergne,
+Aurelie Neveol and Pierre Zweigenbaum. 2013.
+A Supervised Named-Entity Extraction System for
+Medical Text. Online Working Notes of the CLEF
+2013 Evaluation Labs and Workshop, 23 - 26
+September, Valencia - Spain.
+Guido Zuccon, Alexander Holloway, Bevan Koop-
+man and Anthony Nguyen. 2013. Identify Disor-
+ders in Health Records using Conditional Random
+Fields and Metamap AEHRC at ShARe/CLEF 2013
+eHealth Evaluation Lab Task 1. Online Working
+Notes of the CLEF 2013 Evaluation Labs and Work-
+shop, 23 - 26 September, Valencia - Spain.
+Jung-wei Fan, Navdeep Sood and Yang Huang. 2013.
+Disorder Concept Identification from Clinical Notes
+An Experience with the ShARe/CLEF 2013 Chal-
+lenge. Online Working Notes of the CLEF 2013
+Evaluation Labs and Workshop, 23 - 26 September,
+Valencia - Spain.
+S. V. Ramanan, Shereen Broido and P. Senthil Nathan.
+2013. Performance of a multi-class biomedical tag-
+ger on clinical records. Online Working Notes of
+the CLEF 2013 Evaluation Labs and Workshop, 23
+- 26 September, Valencia - Spain.
+Chunye Wang and Ramakrishna Akella. 2013. Perfor-
+mance of a multi-class biomedical tagger on clinical
+records. Online Working Notes of the CLEF 2013
+Evaluation Labs and Workshop, 23 - 26 September,
+Valencia - Spain.
+Yunqing Xia, Xiaoshi Zhong, Peng Liu, Cheng Tan,
+Sen Na, Qinan Hu and Yaohai Huang. 2013. Com-
+bining MetaMap and cTAKES in Disorder Recog-
+nition: THCIB at CLEF eHealth Lab 2013 Task 1.
+Online Working Notes of the CLEF 2013 Evaluation
+Labs and Workshop, 23 - 26 September, Valencia -
+Spain.
+John David Osborne, Binod Gyawali and Thamar
+Solorio. 2013. Evaluation of YTEX and MetaMap
+for clinical concept recognition. Online Working
+Notes of the CLEF 2013 Evaluation Labs and Work-
+shop, 23 - 26 September, Valencia - Spain.
+Lucia Hervas, Victor Martinez, Irene Sanchez and
+Alberto Diaz. 2013. UCM at CLEF eHealth
+2013 Shared Task1. Online Working Notes of the
+CLEF 2013 Evaluation Labs and Workshop, 23 - 26
+September, Valencia - Spain.
+Sameer Pradhan, Noemie Elhadad, Brett R. South,
+David Martinez, Lee Christensen, Amy Vogel,
+Hanna Suominen, Wendy W. Chapman and Guer-
+gana Savova. 2013. Task 1: ShARe/CLEF eHealth
+Evaluation Lab 2013. Online Working Notes of the
+CLEF 2013 Evaluation Labs and Workshop, 23 - 26
+September, Valencia - Spain.
+656
+Proceedings of the 2010 Named Entities Workshop, ACL 2010, pages 81?84,
+Uppsala, Sweden, 16 July 2010. c?2010 Association for Computational Linguistics
+Phrase-based Transliteration System with Simple Heuristics
+Avinesh PVS and Ankur Parikh
+IIIT Hyderabad
+Language Technologies Research Centre
+{avinesh,shaileshkumar.parikh}@students.iiit.ac.in
+Abstract
+This paper presents modeling of translit-
+eration as a phrase-based machine transla-
+tion system. We used a popular phrase-
+based machine translation system for
+English-Hindi machine transliteration. We
+have achieved an accuracy of 38.1% on the
+test set. We used some basic rules to mod-
+ulate the existing phrased-based transliter-
+ation system. Our experiments show that
+phrase-based machine translation systems
+can be adopted by modulating the system
+to fit the transliteration problem.
+1 Introduction
+Transliteration is the practice of converting a text
+from one writing system into another in a system-
+atic way. Most significantly it is used in Machine
+Translation (MT) systems, Information Retrieval
+systems where a large portion of unknown words
+(out of vocabulary) are observed. Named enti-
+ties (NE), technical words, borrowed words and
+loan words constitute the majority of the unknown
+words. So, transliteration can also be termed as
+the process of obtaining the phonetic translation
+of names across various languages (Shishtla et al,
+2009). Transcribing the words from one language
+to another without the help of bilingual dictionary
+is a challenging task.
+Previous work in transliteration include
+(Surana and Singh, 2009) who propose a translit-
+eration system using two different approaches
+of transliterating the named entities based on
+their origin. (Sherif and Kondrak, 2007) use
+the Viterbi based monotone search algorithm for
+searching possible candidate sub-string translit-
+erations. (Malik, 2006) solved some special
+cases of transliteration for Punjabi using a set of
+transliteration rules.
+In the recent years Statistical Machine Trans-
+lation (SMT) systems (Brown et al, 1990), (Ya-
+mada and Knight, 2001), (Chiang, 2005), (Char-
+niak et al, 2003) have been in focus. It is easy
+to develop a MT system for a new pair of lan-
+guage using an existing SMT system and a par-
+allel corpora. It isn?t a surprise to see SMT being
+attractive in terms of less human labour as com-
+pared to other traditional systems. These SMT
+systems have also become popular in the transliter-
+ation field (Finch and Sumita, 2008), (Finch and
+Sumita, 2009), (Rama and Gali, 2009). (Finch
+and Sumita, 2008) use a bi-directional decoder
+whereas (Finch and Sumita, 2009) use a machine
+translation system comprising of two phrase-based
+decoders. The first decoder generated from first
+token of the target to the last. The second decoder
+generated the target from last to first. (Rama and
+Gali, 2009) modeled the phrase-based SMT sys-
+tem using minimum error rate training (MERT) for
+learning model weights.
+In this paper we present a phrase-based ma-
+chine transliteration technique with simple heuris-
+tics for transliterating named entities of English-
+Hindi pair using small amount of training and de-
+velopment data. The structure of our paper is as
+follows. Section 2 describes the modeling of trans-
+lation problem to transliteration. Modeling of the
+parameters and the heuristics are presented in Sec-
+tion 3. Section 4 and 5 we give a brief description
+about the data-set and error-analysis. Finally we
+conclude in Section 6.
+2 Modeling Approach
+Transliteration can be viewed as a task of
+character-level machine translation process. Both
+the problems involve transformation of source to-
+kens in one language to target tokens in another
+language.
+Transliteration differs from machine translation in
+two ways (Finch and Sumita, 2009):
+1. Reordering of the target tokens is generally
+81
+h a n m A nu a
+h a n u m a nHANUMAN   
+hanumAna
+hanuman
+hanumAna
+Input Lowercase After Giza Alignments
+h
+h
+a
+a
+n
+n
+u
+u
+m a
+A
+n
+n am
+Post?Processing
+Figure 1: English-Hindi transliteration example through our system(To represent Hindi font roman script
+is used)
+abscent in transliteration.
+2. Number of token types (vocabulary) in the
+data is relatively very less and finite as com-
+pared to the translation data.
+The work in this paper is related to the work of
+(Rama and Gali, 2009) who also use SMT directly
+to transliterate. We can model the translation
+problem to transliteration problem by replacing
+words with characters. So instead of sentences
+let us assume a given word is represented as a
+sequence of characters of the source language
+F=f1,f2,f3,...fn which needs to be transcribed as
+a sequence of characters in the target language
+E=e1,e2,e3,...em. 1
+The best possible target language sequence of
+characters among the possible candidate charac-
+ters can be represented as:
+Ebest = ArgmaxE P(E|F)
+The above equation can be represented in terms
+of noisy channel model using Bayes Rule:
+Ebest = ArgmaxE P(F|E) ? P(E)
+Here P(F|E) represents the transcription model
+where as P(E) represents the language model i.e
+the character n-gram of the target language. The
+above equation returns the best possible output
+sequence of characters for the given sequence of
+characters F.
+We used some heuristics on top of Moses tool
+kit, which is a publicly available tool provided by
+(Hoang et al, 2007).
+1F,E is used to name source and target language sequences
+as used in conventional machine translation notations
+3 Method
+3.1 Pre-processing
+Firstly the data on the English side is converted to
+lowercase to reduce data sparsity. Each character
+of the words in the training and development data
+are separated with spaces. We also came across
+multi-word sequences which posed a challenge for
+our approach. We segmented the multi-words into
+separate words, such that they would be transliter-
+ated as different words.
+3.2 Alignment and Post Processing
+Parallel word lists are given to GIZA++ for char-
+acter alignments. We observed grow-diag-final-
+and as the best alignment heuristic. From the
+differences mentioned above between translitera-
+tion and translation we came up with some simple
+heuristics to do post processing on the GIZA++
+alignments.
+1. As reordering of the target tokens is not al-
+lowed in transliteration. Crossing of the arcs
+during the alignments are removed.
+As shown in Fig 1. above.
+The second A ? a is removed as it was cross-
+ing the arcs.
+2. If the target character is aligned to NULL
+character on the source side then the NULL
+is removed, and the target language character
+is aligned to the source character aligned to
+previous target character.
+From Fig 1.
+n ? n
+NULL ? a
+to
+82
+n ? na
+3.3 Training and Parameter Tuning
+The language models and translation models were
+built on the combined training and the develop-
+ment data. But the learning of log-linear weights
+during the MERT step is done using development
+data separately. It is obvious that the system would
+perform better if it was trained on the combined
+data. 8-gram language model and a maximum
+phrase length of 7 is used during training.
+The transliteration systems were modeled using
+the minimum error rate training procedure intro-
+duced by (Och, 2003). We used BLUE score as a
+evaluation metric for our convenience during tun-
+ing. BLUE score is commonly used to evaluate
+machine translation systems and it is a function of
+geometric mean of n-gram precision. It was ob-
+served that improvement of the BLUE score also
+showed improvements in ACC.
+4 Experiments and Results
+Training data of 9975 words is used to build
+the system models, while the development data
+of 1974 words is used for tuning the log-linear
+weights for the translation engines. Our accuracies
+on test-data are reported in Table 1. Due to time
+constraints we couldn?t focus on multiple correct
+answers in the training data, we picked just the
+first one for our training. Some of the translation
+features like word penalty, phrase penalty, reorder
+parameters don?t play any role in transliteration
+process hence we didn?t include them.
+Before the release of the test-data we tested the
+system without tuning i.e. default weights were
+used on the development data. Later once the test-
+data was released the system was tuned on the de-
+velopment data to model the weights. We evalu-
+ated our system on ACC which accounts for Word
+Accuracy for top-1, Mean F-score, Mean Recipro-
+cal Rank (MRR).
+Table 1: Evaluation on Test Data
+Measure Result
+ACC 0.381
+Mean F-score 0.860
+MRR 0.403
+MAPref 0.381
+5 Error Analysis
+From the reference corpora we examined that ma-
+jority of the errors were due to foreign origin
+words. As the phonetic transcription of these
+words is different from the other words. We also
+observed from error analysis that the correct tar-
+get sequence of characters were occurring at lower
+rank in the 20-best list. We would like to see how
+different ranking mechanisms like SVM re-rank
+etc would help in boosting the correct accuracies
+of the system.
+6 Conclusion
+In this paper we show that the usage of some
+heuristics on top of popular phrase-based machine
+translation works well for the task of translit-
+eration. First the source and target characters
+are aligned using GIZA++. Then some heuris-
+tics are used to modify the alignments. These
+modified alignments are used during estimation
+of the weights during minimum error rate train-
+ing (MERT). Finally the Hindi characters are de-
+coded using the beam-search based decoder. We
+also produced the 20-best outputs using the n-best
+list provided by moses toolkit. It is very interesting
+to see how simple heuristics helped in performing
+better than other systems.
+References
+Peter F. Brown, John Cocke, Stephen A. Della Pietra,
+Vincent J. Della Pietra, Fredrick Jelinek, John D.
+Lafferty, Robert L. Mercer, and Paul S. Roossin.
+1990. A statistical approach to machine translation.
+COMPUTATIONAL LINGUISTICS, 16(2):79?85.
+Eugene Charniak, Kevin Knight, and Kenji Yamada.
+2003. Syntax-based language models for statistical
+machine translation. In MT Summit IX. Intl. Assoc.
+for Machine Translation.
+David Chiang. 2005. A hierarchical phrase-based
+model for statistical machine translation. In In ACL,
+pages 263?270.
+Andrew Finch and Eiichiro Sumita. 2008. Phrase-
+based machine transliteration. In In Proc. 3rd Int?l.
+Joint Conf NLP, volume 1.
+Andrew Finch and Eiichiro Sumita. 2009. Translit-
+eration by bidirectional statistical machine transla-
+tion. In NEWS ?09: Proceedings of the 2009 Named
+Entities Workshop: Shared Task on Transliteration,
+pages 52?56, Morristown, NJ, USA. Association for
+Computational Linguistics.
+83
+Hieu Hoang, Alexandra Birch, Chris Callison-burch,
+Richard Zens, Rwth Aachen, Alexandra Constantin,
+Marcello Federico, Nicola Bertoldi, Chris Dyer,
+Brooke Cowan, Wade Shen, Christine Moran, and
+Ondej Bojar. 2007. Moses: Open source toolkit for
+statistical machine translation. pages 177?180.
+M. G. Abbas Malik. 2006. Punjabi machine translit-
+eration. In ACL-44: Proceedings of the 21st Inter-
+national Conference on Computational Linguistics
+and the 44th annual meeting of the Association for
+Computational Linguistics, pages 1137?1144, Mor-
+ristown, NJ, USA. Association for Computational
+Linguistics.
+Franz Josef Och. 2003. Minimum error rate train-
+ing in statistical machine translation. In ACL ?03:
+Proceedings of the 41st Annual Meeting on Asso-
+ciation for Computational Linguistics, pages 160?
+167, Morristown, NJ, USA. Association for Compu-
+tational Linguistics.
+Taraka Rama and Karthik Gali. 2009. Modeling ma-
+chine transliteration as a phrase based statistical ma-
+chine translation problem. In NEWS ?09: Proceed-
+ings of the 2009 Named Entities Workshop: Shared
+Task on Transliteration, pages 124?127, Morris-
+town, NJ, USA. Association for Computational Lin-
+guistics.
+Tarek Sherif and Grzegorz Kondrak. 2007. Substring-
+based transliteration. In Proceedings of the 45th An-
+nual Meeting of the Association of Computational
+Linguistics, pages 944?951, Prague, Czech Repub-
+lic, June. Association for Computational Linguis-
+tics.
+Praneeth Shishtla, V. Surya Ganesh, Sethuramalingam
+Subramaniam, and Vasudeva Varma. 2009. A
+language-independent transliteration schema using
+character aligned models at news 2009. In NEWS
+?09: Proceedings of the 2009 Named Entities Work-
+shop: Shared Task on Transliteration, pages 40?
+43, Morristown, NJ, USA. Association for Compu-
+tational Linguistics.
+Harshit Surana and Anil Kumar Singh. 2009. Digitiz-
+ing The Legacy of Indian Languages. ICFAI Books,
+Hyderabad.
+Kenji Yamada and Kevin Knight. 2001. A syntax-
+based statistical translation model. pages 523?530.
+84

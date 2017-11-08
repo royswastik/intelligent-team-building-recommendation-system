@@ -1,0 +1,3331 @@
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 1500?1510, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Supervised Text-based Geolocation
+Using Language Models on an Adaptive Grid
+Stephen Roller? Michael Speriosu ? Sarat Rallapalli ?
+Benjamin Wing ? Jason Baldridge ?
+?Department of Computer Science, University of Texas at Austin
+?Department of Linguistics, University of Texas at Austin
+{roller, sarat}@cs.utexas.edu, {speriosu, jbaldrid}@utexas.edu, ben@benwing.com
+Abstract
+The geographical properties of words have re-
+cently begun to be exploited for geolocating
+documents based solely on their text, often in
+the context of social media and online content.
+One common approach for geolocating texts is
+rooted in information retrieval. Given training
+documents labeled with latitude/longitude co-
+ordinates, a grid is overlaid on the Earth and
+pseudo-documents constructed by concatenat-
+ing the documents within a given grid cell;
+then a location for a test document is chosen
+based on the most similar pseudo-document.
+Uniform grids are normally used, but they are
+sensitive to the dispersion of documents over
+the earth. We define an alternative grid con-
+struction using k-d trees that more robustly
+adapts to data, especially with larger training
+sets. We also provide a better way of choosing
+the locations for pseudo-documents. We eval-
+uate these strategies on existing Wikipedia and
+Twitter corpora, as well as a new, larger Twit-
+ter corpus. The adaptive grid achieves com-
+petitive results with a uniform grid on small
+training sets and outperforms it on the large
+Twitter corpus. The two grid constructions
+can also be combined to produce consistently
+strong results across all training sets.
+1 Introduction
+The growth of the Internet in recent years has
+provided unparalleled access to informational re-
+sources. It is often desirable to extract summary
+metadata from such resources, such as the date of
+writing or the location of the author ? yet only a
+small portion of available documents are explicitly
+annotated in this fashion. With sufficient training
+data, however, it is often possible to infer this infor-
+mation directly from a document?s text. For exam-
+ple, clues to the geographic location of a document
+may come from a variety of word features, e.g. to-
+ponyms (Toronto), geographic features (mountain),
+culturally local features (hockey), and stylistic or di-
+alectical differences (cool vs. kewl vs. kool).
+This article focuses on text-based document ge-
+olocation, the prediction of the latitude and lon-
+gitude of a document. Among the uses for this
+are region-based search engines; tracing the sources
+of historical documents; location attribution while
+summarizing large documents; tailoring of ads while
+browsing; phishing detection when a user account is
+accessed from an unexpected location; and ?activist
+mapping? (Cobarrubias, 2009), as in the Ushahidi
+project.1 Geolocation has also been used as a fea-
+ture in automatic news story identification systems
+(Sankaranarayanan et al 2009).
+One of the first works on document geolocation is
+Ding et al(2000), who attempt to automatically de-
+termine the geographic scope of web pages. They
+focus on named locations, e.g. cities and states,
+found in gazetteers. Locations are predicted based
+on toponym detection and heuristic resolution al-
+gorithms. A related, recent effort is Cheng et al
+(2010), who geolocate Twitter users by resolving
+their profile locations against a gazetteer of U.S.
+cities and training a classifier to identify geographi-
+cally local words.
+An alternative to using a discrete set of locations
+from a gazetteer is to use information retrieval (IR)
+techniques on a set of geolocated training docu-
+ments. A new test document is compared with each
+1http://ushahidi.com/
+1500
+training document and a location chosen based on
+the location(s) of the most similar training docu-
+ment(s). For image geolocation, Chen and Grauman
+(2011) perform mean-shift clustering over training
+images to discretize locations, then estimate a test
+image?s location with weighted voting from the k
+most similar documents. For text, both Serdyukov
+et al(2009) and Wing and Baldridge (2011) use a
+similar approach, but compute document similarity
+based on language models rather than image fea-
+tures. Additionally, they group documents via a uni-
+form geodesic grid rather than a clustered set of lo-
+cations. This reduces the number of similarity com-
+putations and removes the need to perform location
+clustering altogether, but introduces a new param-
+eter controlling the granularity of the grid. Kinsella
+et al(2011) predict the locations of tweets and users
+by comparing text in tweets to language models as-
+sociated with zip codes and broader geopolitical en-
+closures. Sadilek et al(2012) discretize by simply
+clustering data points within a small distance thresh-
+old, but only perform geolocation within fixed city
+limits.
+While the above approaches discretize the contin-
+uous surface of the earth, Eisenstein et al(2010)
+predict locations based on Gaussian distributions
+over the earth?s surface as part of a hierarchical
+Bayesian model. This model has many advantages
+(e.g. the ability to compute a complete probability
+distribution over locations), but we suspect it will be
+difficult to scale up to the large document collections
+needed for high accuracy.
+We build on the IR approach with grids while ad-
+dressing some of the shortcomings of a uniform grid.
+Uniform grids are problematic in that they ignore the
+geographic dispersion of documents and forgo the
+possibility of greater-granularity geographic resolu-
+tion in document-rich areas. Instead, we construct
+a grid using a k-d tree, which adapts to the size of
+the training set and the geographic dispersion of the
+documents it contains. This can better benefit from
+more data, since it enables the training set to support
+more pseudo-documents when there is sufficient ev-
+idence to do so, while still ensuring that all pseudo-
+documents contain comparable amounts of data. It
+also has the desirable property of generally requiring
+fewer active cells than a uniform grid, drastically re-
+ducing the computation time required to label a test
+document.
+We show that consistently strong results, robust
+across both Wikipedia and Twitter datasets, are ob-
+tained from the union of the pseudo-documents from
+a uniform and adaptive grid. In addition, a sim-
+ple difference in the choice of location for a given
+grid cell ? the centroid of the training documents
+in the cell, rather than the cell midpoint ? results
+in across-the-board improvements. We also con-
+struct and evaluate on a much larger dataset of ge-
+olocated tweets than has been used in previous pa-
+pers, demonstrating the scalability and robustness of
+our methods and confirming the ability of the adap-
+tive grid to more effectively use larger datasets.
+2 Data
+We work with three datasets: a corpus of geotagged
+Wikipedia articles and two corpora of geotagged
+tweets.
+GEOWIKI is a collection of 1,019,490 geotagged
+English articles from Wikipedia. The dump from
+Wikimedia requires significant processing to obtain
+article text and location, so we rely on the prepro-
+cessed data used by Wing and Baldridge (2011).
+GEOTEXT is a small dataset consisting of
+377,616 messages from 9,475 users tweeting across
+48 American states, compiled by Eisenstein et al
+(2010). A document in this dataset is the concate-
+nation of all tweets by a single user, with a location
+derived from the earliest tweet with specific, GPS-
+assigned latitude/longitude coordinates.
+UTGEO2011 is a new dataset designed to ad-
+dress the sparsity problems resulting from the size
+of the previous dataset. It is based on 390 mil-
+lion tweets collected across the entire globe be-
+tween September 4th and November 29th, 2011, us-
+ing the publicly available Twitter Spritzer feed and
+global search API. Not all collected tweets were
+geotagged. To be comparable to GEOTEXT, we
+discarded tweets outside of North America (out-
+side of the bounding box with latitude/longitude
+corners at (25,?126) and (49,?60)). Following
+Eisenstein et al(2010), we consider all tweets
+of a user concatenated as a single document, and
+use the earliest collected GPS-assigned location as
+the gold location. Users without a gold location
+were discarded. To remove many spammers and
+1501
+robots, we only kept users following 5 to 1000
+people, followed by at least 5 users, and author-
+ing no more than 1000 tweets in the three month
+period. The resulting dataset contains 38 million
+tweets from 449,694 users, or roughly 85 tweets
+per user on average. We randomly selected 10,000
+users each for development and held-out test eval-
+uation. The remaining 429,694 users serve as a
+training set termed UTGEO2011-LARGE. We also
+randomly selected a 10,000 user training subset
+(UTGEO2011-SMALL) to facilitate comparisons
+with GEOTEXT and allow us to investigate the rel-
+ative improvements for different models with more
+training data.
+Our code and the UTGEO2011 data set are both
+available for download.2
+3 Model
+Assume we have a collection d of documents and
+their associated location labels l. These docu-
+ments may be actual texts, or they can be pseudo-
+documents comprised of a number of texts grouped
+via some algorithm (such as the grids discussed in
+the next section).
+For a test document di, its similarity to each la-
+beled document is computed, and the location of the
+most similar document assigned to di. Given an ab-
+stract function sim that can be instantiated with an
+appropriate similarity function (e.g. cosine distance
+or Kullback-Leibler divergence),
+loc(di) = loc(argmax
+dj?d
+sim(di, dj)).
+This is a winner-takes-all strategy, which we follow
+in this paper. In related work on image geoloca-
+tion, Hays and Efros (2008) use the same general
+framework, but compute the location based on the
+k-nearest neighbors (kNN) rather than the top one.
+They compute a distribution from the 120 nearest
+neighbors using mean shift clustering (Comaniciu
+and Meer, 2002) and choose the cluster with the
+most members. This produced slightly better re-
+sults than choosing only the closest image. In future
+work, we will explore the kNN approach to see if it
+is more effective for text geolocation.
+2https://github.com/utcompling/
+textgrounder/wiki/RollerEtAl_EMNLP2012
+Following previous work in document geoloca-
+tion, particularly Serdyukov et al(2009) (hence-
+forth SMvZ) and Wing and Baldridge (2011)
+(henceforth W&B), we geolocate texts using a lan-
+guage modeling approach to information retrieval
+(Ponte and Croft, 1998; Zhai and Lafferty, 2001).
+For each document di, we construct a unigram prob-
+ability distribution ?di over the vocabulary.
+We smooth documents using the pseudo-Good-
+Turing method of W&B, a nonparametric discount-
+ing model that backs off from the unsmoothed distri-
+bution ??di of the document to the unsmoothed distri-
+bution ??D of all documents. A general discounting
+model is as follows:
+P (w|?di) =
+{
+(1? ?di)P (w|??di), if P (w|??di) > 0
+?di
+P (w|??D)
+Udi
+, otherwise,
+where Udi = 1 ?
+?
+w?di
+P (w|??D) is a normaliza-
+tion factor that is precomputed when the distribution
+for di is constructed. The discount factor ?di indi-
+cates how much probability mass to reserve for un-
+seen words. For pseudo-Good-Turing, it is
+?di =
+|w ? di s.t. count(w ? di) = 1|
+|w ? di|
+,
+i.e. the fraction of words seen once in di.
+We experimented with other smoothing methods,
+including Jelinek-Mercer and Dirichlet smoothing.
+A disadvantage of these latter two methods is that
+they have an additional tuning parameter to which
+their performance is highly sensitive, and even with
+optimal parameter settings neither consistently out-
+performed pseudo-Good-Turing. We also found no
+consistent improvement from using interpolation in
+place of backoff.
+We also follow W&B in using Kullback-Leibler
+(KL) divergence as the similarity metric, since it out-
+performed both naive Bayes classification probabil-
+ity and cosine similarity:
+KL(?di ||?dj ) =
+?
+k
+?di(k) log
+?di(k)
+?dj (k)
+.
+The motivation for computing similarity with KL is
+that it is a measure of how well each document in
+the labeled set explains the word distribution found
+in the test document.
+1502
+4 Collapsing Documents with an Adaptive
+Grid
+In the previous section, we used the term ?docu-
+ment? loosely when speaking of training documents.
+A simplistic approach might indeed involve com-
+paring a test document to each training document.
+However, in the winner-takes-all model described
+above, we can rely only on the result of comparing
+with the single best training document, which may
+not contain enough information to make a good pre-
+diction.
+A standard strategy to deal with this problem is
+to collapse groups of geographically nearby docu-
+ments into larger pseudo-documents. This also has
+the advantage of reducing the computation time,
+as fewer training documents need to be compared
+against. Formally, this involves partitioning the
+training documents into a set of sets of documents
+G = {g1 . . . gn}. A collection d? of pseudo-
+documents is formed from this set, such that the
+pseudo-document for a particular group gi is simply
+the concatenation of the documents in the group:
+d?gi =
+?
+dj?gi
+dj .
+A location must be associated with each pseudo-
+document. This can be chosen based on the parti-
+tioning function itself or the locations of the docu-
+ments in each group.
+Both W&B and SMvZ use uniform grids consist-
+ing of cells of equal degree size to partition doc-
+uments. We explore an alternative that uses k-d
+(k-dimensional) trees to construct a non-uniform
+grid that adapts to training sets of different sizes
+more gracefully. It ensures a roughly equal num-
+ber of documents in each cell, which means that all
+pseudo-documents compete on similar footing with
+respect to the amount of training data.
+W&B define the location for a cell to be its ge-
+ographic center, while SMvZ only perform error
+analysis in terms of choosing the correct cell. We
+obtain consistently improved results using the cen-
+troid of the cell?s documents, which takes into ac-
+count where the documents are concentrated.
+4.1 k-d Trees
+A k-d tree is a space-partitioning data structure for
+storing points in k-dimensional space, which groups
+nearby points into buckets. As one moves down the
+tree, the space is split into smaller regions along
+chosen dimensions. In this way, it is a generaliza-
+tion of a binary search tree to multiple dimensions.
+The k-d tree was first introduced by Bentley (1975)
+and has since been applied to numerous problems,
+e.g. Barnes-Hut simulation (Anderson, 1999) and
+nearest-neighbors search (Friedman et al 1977).
+Partitioning geolocated documents using a k-d
+tree provides finer granularity in dense regions and
+coarser granularity elsewhere. For example, doc-
+uments from Queens and Brooklyn may show sig-
+nificant cultural distinctions, while documents sepa-
+rated by the same distance in rural Montana may ap-
+pear culturally identical. A uniform grid with large
+cells will mash Queens and Brooklyn together, while
+small cells will create unnecessarily sparse regions
+in Montana.
+An important parameter for a k-d tree is its bucket
+size, which determines the maximum number of
+points (documents in our case) that a cell may con-
+tain. By varying the bucket size, the cells can be
+made fine- or coarse-grained.
+4.2 Partitioning with a k-d Tree
+For geolocation, we consider the surface of earth to
+be a 2-dimensional space (k=2) over latitude, longi-
+tude pairs. We form a k-d tree by a recursive proce-
+dure over the training data. Initially, all documents
+are placed in the root node of the tree. If the number
+of documents in the node exceeds the bucket size,
+the node is split into two nodes along a chosen split
+dimension and point. This procedure is recursively
+called on each of the new child nodes, and repeats
+until no node is overflowing. The resulting leaves of
+the k-d tree form a patchwork of rectangles which
+cover the entire earth.3
+When splitting an overflowing node, the choice of
+splitting dimension and point can greatly impact the
+structure of the resulting k-d tree. Following Fried-
+man et al(1977), we choose to always split a node
+3We note that the grid ?rectangles? are actually trapezoids
+due to the nature of the latitude/longitude coordinate system.
+We assume the effect of this is negligible, since most documents
+are away from the poles, where distortion is the most extreme.
+1503
+Figure 1: View of North America showing k-d leaves cre-
+ated from GEOWIKI with a bucket size of 600 and the
+MIDPOINT method, as visualized in Google Earth.
+Figure 2: k-d leaves over the New York City and nearby
+areas from the same dataset and parameter settings as in
+Figure 1.
+along the dimension exhibiting the greatest range of
+values. However, there still exist multiple methods
+for determining the split point, i.e. the point separat-
+ing documents into ?left? and ?right? nodes. In this
+paper, we consider two possibilities for selecting this
+point: the MIDPOINT method, and the FRIEDMAN
+method. The latter splits at the median of all the
+points, resulting in an equal number of points in both
+the left and right nodes and a perfectly balanced k-d
+tree. The former splits at the midpoint between the
+two furthest points, allowing for a greater difference
+in the number of points in each bin. For geolocation,
+the FRIEDMAN splitting method will likely lead to
+less sparsity, and therefore more accurate cell selec-
+tion. On the other hand, the MIDPOINT method is
+likely to draw more geographically desirable bound-
+aries.
+Figure 1 shows the leaves of the k-d tree formed
+over North America using the GEOWIKI dataset,
+the MIDPOINT node division method, and a bucket
+size of 600. Figure 2 shows the leaves over New
+York City and its surrounding area for the same
+dataset and settings. More densely populated ar-
+eas of the earth (which in turn tend to have more
+Wikipedia documents associated with them) contain
+smaller and more numerous leaf cells. The cells
+over Manhattan are significantly smaller than those
+of Queens, the Bronx, and East Jersey, even at such
+a coarse bucket size. Though the leaves of the k-d
+tree implicitly cover the entire surface of the earth,
+our illustrations limit the size of each box by its data,
+leaving gaps where no training documents exist.
+4.3 Selecting a Representative Location
+W&B use the geographic center of a cell as the
+geolocation for the pseudo-document it represents.
+However, this ignores the fact that many cells will
+have imbalances in the dispersion of the documents
+they contain ? typically, they will be clumpy, with
+documents clustering around areas of high popula-
+tion or activity. An alternative is to select the cen-
+troid of the locations of all the documents contained
+within a cell. Uniform grids with small cells are
+not especially sensitive to this choice since the abso-
+lute distance between a center or centroid prediction
+will not be great, and empty cells are simply dis-
+carded. Nonetheless, using the centroid has the ben-
+efit of making a uniform grid less sensitive to cell
+size, such that larger cells can be used more reliably
+? especially important when there are few training
+documents.
+In contrast, when choosing representative loca-
+tions for the leaves of a k-d tree, it is quite important
+to use the centroid because the leaves necessarily
+span the entire earth and none are discarded (since
+all have a roughly similar number of documents in
+them). Some areas with low document density are
+thus assigned very large cells, such as those over
+the oceans, as seen in Figures 1 and 2. Using the
+centroid allows these large leaves to be in the mix,
+while still predicting the locations in them that have
+the greatest document density.
+5 Experimental Setup
+Configurations. We experiment with several con-
+figurations of grids and representative locations.
+1504
+0 200 400 600 8002
+00
+250
+300
+350
+Bucket Size
+Mean
+ Erro
+r (km)
+ooo
+o o
+o o
+o o
+o o
+xxx
+x
+x x
+x x x x
+xox MidpointFriedman
+200 400 600 800 1000 1200
+850
+900
+950
+1000
+Bucket Size
+Mean
+ Erro
+r (km)
+MidpointFriedman
+200 400 600 800 1000 1200
+1100
+1120
+1140
+1160
+1180
+Bucket Size
+Mean
+ Erro
+r (km)
+MidpointFriedman
+(a) (b) (c)
+Figure 3: Development set comparisons for (a) GEOWIKI, (b) GEOTEXT, and (c) UTGEO2011-SMALL.
+W&B refers to a uniform grid and geographic-
+center location selection, UNIFCENTROID to a
+uniform grid with centroid location selection,
+KDCENTROID to a k-d tree grid with centroid
+location selection, and UNIFKDCENTROID to
+the union of pseudo-documents constructed by
+UNIFCENTROID and KDCENTROID.
+We also provide two baselines, both of which are
+based on a uniform grid with centroid location selec-
+tion. RANDOM predicts a grid cell chosen at random
+uniformly; MOSTCOMMONCELL always predicts
+the grid cell containing the most training documents.
+Note that a most-common k-d leaf baseline does not
+make sense, as all k-d leaves contain approximately
+the same number of documents.
+Evaluation. We use three metrics to measure ge-
+olocation performance. The output of each exper-
+iment is a predicted coordinate for each test docu-
+ment. For each prediction, we compute the error dis-
+tance along the surface of the earth to the gold coor-
+dinate. We report the mean and median of all such
+distances as in W&B and Eisenstein et al(2011).
+We also report the fraction of error distances less
+than 161 km, corresponding to Cheng et al(2010)?s
+measure of predictions within 100 miles of the true
+location. This third measure can reveal differences
+between models not obvious from just mean and me-
+dian.
+6 Results
+This section provides results for the datasets
+described previously: GEOWIKI, GEOTEXT,
+UTGEO2011-LARGE and UTGEO2011-SMALL.
+We first give details for how we tuned parameters
+and algorithmic choices using the development sets,
+and then provide performance on the test sets based
+on these determinations.
+6.1 Tuning
+The specific parameters are (1) the partition location
+method; (2) the bucket size for k-d partitioning; (3)
+the node division method for k-d partitioning; (4) the
+degree size for uniform grid partitioning. We tune
+with respect to mean error, like W&B.
+Partition Location Method. Development set
+results show that the centroid always performs bet-
+ter than the center for all datasets, typically by a
+wide margin (especially for large partition sizes). To
+save space, we do not provide details, but point the
+reader to the differences in test set results between
+W&B and UNIFCENTROID (which are identical ex-
+cept that the former uses the center and the latter
+uses the centroid) in Tables 1 and 2. All further pa-
+rameter tuning is done using the centroid method.
+k-d Tree Bucket Size. Bucket size should not be
+too large as a proportion of the total number of train-
+ing documents. Larger bucket sizes tend to produce
+larger leaves, so documents in a partition will have
+a higher average distance to the center or centroid
+point. This will result in predictions being made at
+too coarse a granularity, greatly limiting obtainable
+precision even when the correct leaf is chosen.
+Conversely, small bucket sizes lead to fewer train-
+ing documents per partition. A bucket size of one
+reduces to the situation where no pseudo-documents
+are used. While this might work well if location pre-
+diction is done using the kNNs for a test document, it
+1505
+Test dataset GEOWIKI GEOTEXT
+Method Parameters Mean Med. Acc. Parameters Mean Med. Acc.
+RANDOM 0.1? 7056 7145 0.3 5? 2008 1866 1.6
+MOSTCOMMONCELL 0.1? 4265 2193 5.0 5? 1158 757 31.3
+Eisenstein et al- - - - - 845 501 -
+Wing & Baldridge 0.1? 221 11.8 - 5? 967 479 -
+UNIFCENTROID 0.1? 181 11.0 90.3 5? 897 432 35.9
+KDCENTROID B100, MIDPT. 192 22.5 87.9 B530, FRIED. 958 549 35.3
+UNIFKDCENTROID 0.1?, B100, MIDPT. 176 13.4 90.3 5?, B530, FRIED. 890 473 34.1
+Table 1: Performance on the held-out test sets of GEOWIKI and GEOTEXT, comparing to the results of Wing and
+Baldridge (2011) and Eisenstein et al(2011).
+is likely to perform very poorly for the 1NN rule we
+adopt. It would also require efficient similarity com-
+parisons, using techniques such as locality-sensitive
+hashing (Kulis and Grauman, 2009).
+The graphs in Figure 3 show development set per-
+formance when varying bucket size. For GEOWIKI
+and UTGEO2011-LARGE (not shown), increments
+of 100 were used, but for the smaller GEOTEXT
+and UTGEO2011-SMALL, more fine-grained incre-
+ments of 10 were used. In the case of plateaus, as
+was common with the FRIEDMAN method, we chose
+the middle of the plateau as the bucket size. Overall,
+we found optimal bucket sizes of 100 for GEOWIKI,
+530 for GEOTEXT, 460 for UTGEO2011-SMALL,
+and 1050 for UTGEO2011-LARGE. That the
+Wikipedia data requires a smaller bucket size is un-
+surprising: the documents themselves are generally
+longer and there are many more of them, so a small
+bucket size provides good coverage and granularity
+without sacrificing the ability to estimate good lan-
+guage models for each partition.
+Node Division Method. The graphs in Fig-
+ure 3 also display the difference between the
+two splitting methods. MIDPOINT is clearly bet-
+ter for GEOWIKI, while FRIEDMAN is better for
+GEOTEXT in the range of bucket sizes produc-
+ing the best results. FRIEDMAN is best for
+UTGEO2011-LARGE (not shown), but MIDPOINT
+is best for UTGEO2011-SMALL.
+These results only partly confirm our expecta-
+tions. We expected FRIEDMAN to perform bet-
+ter on smaller datasets, as it distributes the doc-
+uments evenly and avoids many sparsity issues.
+We expected MIDPOINT to win on larger datasets,
+where all nodes receive plentiful data and the k-d
+tree would choose more representative geographical
+boundaries.
+Cell Size. Following W&B, we choose a
+cell degree size of 0.1? for GEOWIKI, and a
+cell degree size of 5.0? for GEOTEXT. For
+UTGEO2011-LARGE and UTGEO2011-SMALL,
+we follow the procedure of W&B, trying sizes
+0.1?, 0.5?, 1.0?, 5.0?, and 10.0?, selecting the one
+which performed best on the development set. For
+UTGEO2011-SMALL, this resulted in coarse cells
+of 10.0?, while for UTGEO2011-LARGE, cell sizes
+of 0.1? were best.
+With these tuned parameters, the average num-
+ber of training tokens per k-d leaf was approx-
+imately 26k for GEOWIKI, 197k for GEOTEXT,
+250k for UTGEO2011-SMALL, and 954k for
+UTGEO2011-LARGE.
+6.2 Held-out Test Sets
+Table 1 shows the performance on the test sets of
+GEOWIKI and GEOTEXT of the different configu-
+rations, along with that of W&B and Eisenstein et
+al. (2011) where possible. The results obtained by
+W&B on GEOWIKI are already very strong, but we
+do see a clear improvement by changing from the
+center-based locations for pseudo-documents they
+used to the centroid-based locations we employ:
+mean error drops from 221 km to 181 km, and me-
+dian error from 11.8 km to 11.0 km. Also, we reduce
+the mean error further to 176 km for the configu-
+ration that combines the uniform grid and the k-d
+partitions, though at the cost of increasing median
+error somewhat. The 161 km accuracy is around
+90% for all configurations, indicating that the gen-
+eral language modeling approach we employ is very
+1506
+Test dataset UTGEO2011
+Training dataset UTGEO2011-SMALL UTGEO2011-LARGE
+Method Parameters Mean Med. Acc. Parameters Mean Med. Acc.
+RANDOM 10? 1975 1833 2.3 0.1? 1627 1381 2.0
+MOSTCOMMONCELL 10? 1522 1186 9.3 0.1? 1525 1185 11.8
+Wing & Baldridge 10? 1223 825 3.4 0.1? 956 570 30.9
+UNIFCENTROID 10? 1147 782 12.3 0.1? 956 570 30.9
+KDCENTROID B460, MIDPT. 1098 733 18.1 B1050, FRIED. 860 463 34.6
+UNIFKDCENTROID 10?, B460, MIDPT. 1080 723 18.1 0.1?, B1050, FRIED. 913 532 33.0
+Table 2: Performance on the held-out test set of UTGEO2011 for different configurations trained on
+UTGEO2011-SMALL (comparable in size to GEOTEXT) and UTGEO2011-LARGE. The numbers given for W&B
+were produced from their implementation, and correspond to uniform grid partitioning with locations from centers
+rather than centroids.
+robust for fact-oriented texts that are rich in explicit
+toponyms and geographically relevant named enti-
+ties.
+For GEOTEXT, the results show that the uniform
+grid with centroid locations is the most effective of
+our configurations. It improves on Eisenstein et al
+(2011) by 69 km with respect to median error, but
+has 52 km worse performance than their model with
+respect to mean error. This indicates that our model
+is generally more accurate, but that it is compara-
+tively more wildly off on some documents. Their
+model is a sophisticated one that attempts to build
+detailed models of the geographic linguistic varia-
+tion found in the dataset. Dialectal cues are actually
+the most powerful ones in the GEOTEXT dataset,
+and it seems our general approach of winner-takes-
+all (1NN) hurts performance in this respect, espe-
+cially with a very small training set.
+Table 2 shows the performance on the test set of
+UTGEO2011 with the UTGEO2011-SMALL and
+UTGEO2011-LARGE training sets. (Performance
+for W&B is obtained from their code.4) With
+the small training set, error is worse than with
+GEOTEXT, reflecting the wider geographic scope of
+UTGEO2011. KDCENTROID is much more effec-
+tive than the uniform grids, but combining it with the
+uniform grid in UNIFKDCENTROID edges it out by
+a small amount. More interestingly, KDCENTROID
+is the strongest on all measures when using the large
+training set, beating UNIFCENTROID by an even
+larger margin for mean and median error than with
+4https://bitbucket.org/utcompling/
+textgrounder/wiki/WingBaldridge2011
+the small training set. The bucket size used with the
+large training set is double that for the small one,
+but there are many more leaves created since there
+are 42 times more training documents. With the ex-
+tra data, the model is able to adapt better to the dis-
+persion of documents and still have strong language
+models for each leaf that work well even with our
+greedy winner-takes-all decision method.
+Note that the accuracy measurements for all
+UTGEO2011 experiments are substantially lower
+than those reported by Cheng et al(2010), who
+report a best accuracy within 100 miles of 51%.
+While UTGEO2011-LARGE contains a substan-
+tially larger number of tweets, Cheng et al(2010)
+limit themselves to users with at least 1,000
+tweets, while we have an average of 85 tweets
+per user. Their reported mean error distance of
+862 km (versus our best mean of 860 km on
+UTGEO2011-LARGE) indicates that their perfor-
+mance is hurt by a relatively small number of ex-
+tremely incorrect guesses, as ours appears to be.
+Figure 4 provides a learning curve on
+UTGEO2011?s development set for KDCENTROID.
+Performance improves greatly with more data,
+indicating that GEOTEXT performance would also
+improve with more training data. Parameters, espe-
+cially bucket size, need retuning as data increases,
+which we hope to estimate automatically in future
+work
+Finally, we note that the KDCENTROID
+method was faster than other methods. While
+UNIFCENTROID took nearly 19 hours to com-
+plete the test run on GEOWIKI (approximately
+1507
+0e+00 1e+05 2e+05 3e+05 4e+05
+900
+950
+105
+0
+Training Set Size (# users)
+Mea
+n E
+rror
+ (km
+)
+l
+l
+l
+l
+l
+l
+l
+Figure 4: Learning curve of KDCENTROID on the
+UTGEO2011 development set.
+1.38 seconds per test document), KDCENTROID
+took only 80 minutes (.078 s/doc). Similarly,
+UNIFCENTROID took about 67 minutes to
+run on UTGEO2011-LARGE (0.34 s/doc), but
+KDCENTROID took only 27 minutes (0.014 s/doc).
+Generally, the KDCENTROID partitioning results
+in fewer cells, and therefore fewer KL-divergence
+comparisons. As expected, the UNIFKDCENTROID
+model needs as much time as the two together,
+taking roughly 21 hours for GEOWIKI (1.52 s/doc)
+and 85 minutes for UTGEO2011-LARGE (0.36
+s/doc).
+7 Discussion
+7.1 Error Analysis
+We examine some of the greatest error distances
+to better understand and improve our models. In
+many cases, landmarks in Australia or New Zealand
+are predicted in European locations with similarly-
+named landmarks, or vice versa ? e.g. the Theatre
+Royal, Hobart in Australia is predicted to be in Lon-
+don?s theater district, and the Embassy of Australia,
+Paris is predicted to be in the capital city of Aus-
+tralia. Thus, our model may be inadvertently cap-
+turing what Clements et al(2010) call wormholes,
+places that are related but not necessarily adjacent.
+Some of the other large errors stem from incorrect
+gold labels, in particular due to sign errors in latitude
+or longitude, which can place documents 10,000 or
+more km from their correct locations.
+Word Error Word Error
+paramus 78 6100 130
+ludlow 79 figueroa 133
+355 99 dundas 138
+ctfuuu 101 120th 139
+74th 105 mississauga 140
+5701 105 pulaski 144
+bloomingdale 122 cucina 146
+covina 133 56th 153
+lawrenceville 122 403 157
+ctfuuuu 124 428 161
+Table 3: The 20 words with least average error
+(km) in the UTGEO2011 development set, trained
+on the UTGEO2011-SMALL training set, using the
+KDCENTROID approach with our best parameters. Only
+words that occur in at least 10 documents are shown.
+Word Error Word Error
+seniorpastor 1.1 KS01 2.4
+prebendary 1.6 Keio 2.5
+Wornham 1.7 Vrah 2.5
+Owings 1.9 overspill 2.5
+Londoners 2.0 Oriel 2.5
+Sandringham 2.1 Holywell 2.6
+Sheffield?s 2.2 \?vr&h 2.6
+Oxford?s 2.2 operetta 2.6
+Belair 2.3 Supertram 2.6
+Beckton 2.4 Chanel 2.7
+Table 4: Top 20 words with the least average er-
+ror (km) in the GEOWIKI development set, using the
+UNIFKDCENTROID approach with our best parameters.
+Only words occurring in at least 10 documents are shown.
+7.2 Most Predictive Words
+Our approach relies on the idea that the use of certain
+words correlates with a Twitter user or Wikipedia
+article?s location. To investigate which words tend
+to be good indicators of location, we computed, for
+each word in a development set, the average error
+distance of documents containing that word. Table 3
+gives the 20 words with the least error, among
+those that occur in at least 10 documents (users),
+for the UTGEO2011 development set, trained on
+UTGEO2011-SMALL.
+Many of the best words are town names (paramus,
+ludlow, bloomingdale), street names (74th, figueroa,
+1508
+120th), area codes (403), and street numbers (5701,
+6100). All are highly locatable terms, as we would
+expect. Many of the street addresses are due to
+check-ins with the location-based social networking
+service Foursquare (e.g. the tweet I?m at Starbucks
+(7301 164th Ave NE, Redmond Town Center, Red-
+mond)), where the user is literally broadcasting his
+or her location. The token ctfuuu(u)?an elongation
+of the internet abbreviation ctfu, or cracking the fuck
+up?is a dialectal or stylistic feature highly indica-
+tive of the Washington, D.C. area.
+Similarly, several place names (Wornham, Belair,
+Holywell) appear in GEOWIKI. Operettas are a cul-
+tural phenomenon largely associated with France,
+Germany, and England and particularly with specific
+theaters in these countries. However, other highly
+specific tokens such as KS01 have a very low aver-
+age error because they occur in few documents and
+are thus highly unambiguous indicators of location.
+Other terms, like seniorpastor and \?vr&h, are due
+to extraction errors in the dataset created by W&B,
+and are carried along because of a high correlation
+with specific documents.
+8 Conclusion
+We have shown how to construct an adaptive grid
+with k-d trees that enables robust text geolocation
+and scales well to large training sets. It will be inter-
+esting to consider how it interacts with other strate-
+gies for improving the IR-based approach. For ex-
+ample, the pseudo-document word distributions can
+be smoothed based on nearby documents or on the
+structure of the k-d tree itself. Integrating our system
+with topic models or Bayesian methods would likely
+provide more insight with regard to the most dis-
+criminative and geolocatable words. We also expect
+predicting locations based on multiple most similar
+documents (kNN) to be more effective in predict-
+ing document location, as the second and third most
+similar training documents together may sometimes
+be a better estimation of its distribution than just the
+first alone. Employing k Nearest Neighbors also al-
+lows for more sophisticated methods of location es-
+timation than a single leaf?s centroid. Other possi-
+bilities include constructing multiple k-d trees using
+random subsets of the training data to reduce sensi-
+tivity to the bucket size.
+In this article, we have considered each user in
+isolation. However, Liben-Nowell et al(2005) show
+that roughly 70% of social network links can be de-
+scribed using geographic information and that the
+probability of a social link is inversely proportional
+to geographic distance. Backstrom et al(2010) ver-
+ify these results on a much larger scale using ge-
+olocated Facebook profiles: their algorithm geolo-
+cates users with only the social graph and signif-
+icantly outperforms IP-based geolocation systems.
+Given that both Twitter and Wikipedia have rich,
+linked document/user graphs, a natural extension to
+our work here will be to combine text and network
+prediction for geolocation. Sadilek et al(2012)
+also show that a combination of textual and so-
+cial data can accurately geolocate individual tweets
+when scope is limited to a single city.
+Tweets are temporally ordered and the geographic
+distance between consecutive tweeting events is
+constrained by the author?s movement. For tweet-
+level geolocation, it will be useful to build on work
+in geolocation that considers the temporal dimen-
+sion (Chen and Grauman, 2011; Kalogerakis et al
+2009; Sadilek et al 2012) to make better predictions
+for documents/images that are surrounded by others
+with excellent cues, but which are hard to resolve
+themselves.
+9 Acknowledgments
+We would like to thank Matt Lease and the three
+anonymous reviewers for their feedback. This re-
+search was supported by a grant from the Morris
+Memorial Trust Fund of the New York Community
+Trust.
+References
+Richard J. Anderson. 1999. Tree data structures for
+n-body simulation. SIAM Journal on Computing,
+28(6):1923?1940.
+Lars Backstrom, Eric Sun, and Cameron Marlow. 2010.
+Find me if you can: improving geographical prediction
+with social and spatial proximity. In Proceedings of
+the 19th International Conference on World Wide Web,
+pages 61?70.
+Jon Louis Bentley. 1975. Multidimensional binary
+search trees used for associative searching. Commu-
+nications of the ACM, 18(9):509?517.
+1509
+Chao-Yeh Chen and Kristen Grauman. 2011. Clues from
+the beaten path: Location estimation with bursty se-
+quences of tourist photos. In Proceedings of the IEEE
+Conference on Computer Vision and Pattern Recogni-
+tion, pages 1569?1576.
+Zhiyuan Cheng, James Caverlee, and Kyumin Lee. 2010.
+You are where you tweet: A content-based approach
+to geo-locating twitter users. In Proceedings of the
+19th ACM International Conference on Information
+and Knowledge Management, pages 759?768.
+Martin Clements, Pavel Serdyukov, Arjen P. de Vries, and
+Marcel J.T. Reinders. 2010. Finding wormholes with
+flickr geotags. In Proceedings of the 32nd European
+Conference on Information Retrieval, pages 658?661.
+Sebastian Cobarrubias. 2009. Mapping machines: ac-
+tivist cartographies of the border and labor lands of
+Europe. Ph.D. thesis, University of North Carolina at
+Chapel Hill.
+Dorin Comaniciu and Peter Meer. 2002. Mean shift: a
+robust approach toward feature space analysis. IEEE
+Transactions on Pattern Analysis and Machine Intelli-
+gence, 24(5):603?619.
+Junyan Ding, Luis Gravano, and Narayanan Shivaku-
+mar. 2000. Computing geographical scopes of web
+resources. In Proceedings of the 26th International
+Conference on Very Large Data Bases, pages 545?556.
+Jacob Eisenstein, Brendan O?Connor, Noah A. Smith,
+and Eric P. Xing. 2010. A latent variable model
+for geographic lexical variation. In Proceedings of
+the 2010 Conference on Empirical Methods in Natu-
+ral Language Processing, pages 1277?1287.
+Jacon Eisenstein, Ahmed Ahmed, and Eric P. Xing.
+2011. Sparse additive generative models of text. In
+Proceedings of the 28th International Conference on
+Machine Learning, pages 1041?1048.
+Jerome H. Friedman, Jon Louis Bentley, and Raphael Ari
+Finkel. 1977. An algorithm for finding best matches
+in logarithmic expected time. ACM Transactions on
+Mathematical Software, 3:209?226.
+James Hays and Alexei A. Efros. 2008. im2gps: esti-
+mating geographic information from a single image.
+In Proceedings of the IEEE Conference on Computer
+Vision and Pattern Recognition, pages 1?8.
+Evangelos Kalogerakis, Olga Vesselova, James Hays,
+Alexei Efros, and Aaron Hertzmann. 2009. Image se-
+quence geolocation with human travel priors. In Pro-
+ceedings of the IEEE 12th International Conference on
+Computer Vision, pages 253?260.
+Sheila Kinsella, Vanessa Murdock, and Neil O?Hare.
+2011. ?I?m eating a sandwich in Glasgow?: Model-
+ing locations with tweets. In Proceedings of the 3rd
+International Workshop on Search and Mining User-
+generated Contents, pages 61?68.
+Brian Kulis and Kristen Grauman. 2009. Kernelized
+locality-sensitive hashing for scalable image search.
+In Proceedings of the 12th International Conference
+on Computer Vision, pages 2130?2137.
+David Liben-Nowell, Jasmine Novak, Ravi Kumar, Prab-
+hakar Raghavan, and Andrew Tomkins. 2005. Geo-
+graphic routing in social networks. Proceedings of the
+National Academy of Sciences of the United States of
+America, 102(33):11623?11628.
+Jay M. Ponte and W. Bruce Croft. 1998. A language
+modeling approach to information retrieval. In Pro-
+ceedings of the 21st Annual International ACM SIGIR
+Conference on Research and Development in Informa-
+tion Retrieval, pages 275?281.
+Adam Sadilek, Henry Kautz, and Jeffrey P. Bigham.
+2012. Finding your friends and following them to
+where you are. In Proceedings of the 5th ACM Inter-
+national Conference on Web Search and Data Mining,
+pages 723?732.
+Jagan Sankaranarayanan, Hanan Samet, Benjamin E.
+Teitler, Michael D. Lieberman, and Jon Sperling.
+2009. Twitterstand: news in tweets. In Proceedings
+of the 17th ACM SIGSPATIAL International Confer-
+ence on Advances in Geographic Information Systems,
+pages 42?51.
+Pavel Serdyukov, Vanessa Murdock, and Roelof van
+Zwol. 2009. Placing flickr photos on a map. In Pro-
+ceedings of the 32nd International ACM SIGIR Con-
+ference on Research and Development in Information
+Retrieval, pages 484?491.
+Benjamin Wing and Jason Baldridge. 2011. Simple su-
+pervised document geolocation with geodesic grids.
+In Proceedings of the 49th Annual Meeting of the As-
+sociation for Computational Linguistics: Human Lan-
+guage Technologies, pages 955?964.
+Chengxiang Zhai and John Lafferty. 2001. A study of
+smoothing methods for language models applied to
+ad hoc information retrieval. In Proceedings of the
+24th Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval,
+pages 334?342.
+1510
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 336?348,
+October 25-29, 2014, Doha, Qatar.
+c
+?2014 Association for Computational Linguistics
+Hierarchical Discriminative Classification for Text-Based Geolocation
+Benjamin Wing
+?
+Jason Baldridge
+?
+?
+Department of Linguistics, University of Texas at Austin
+ben@benwing.com, jbaldrid@utexas.edu
+Abstract
+Text-based document geolocation is com-
+monly rooted in language-based infor-
+mation retrieval techniques over geodesic
+grids. These methods ignore the natural
+hierarchy of cells in such grids and fall
+afoul of independence assumptions. We
+demonstrate the effectiveness of using lo-
+gistic regression models on a hierarchy of
+nodes in the grid, which improves upon
+the state of the art accuracy by several
+percent and reduces mean error distances
+by hundreds of kilometers on data from
+Twitter, Wikipedia, and Flickr. We also
+show that logistic regression performs fea-
+ture selection effectively, assigning high
+weights to geocentric terms.
+1 Introduction
+Document geolocation is the identification of the
+location?a specific latitude and longitude?that
+forms the primary focus of a given document. This
+assumes that a document can be adequately associ-
+ated with a single location, which is only valid for
+certain documents, generally of fairly small size.
+Nonetheless, there are many natural situations in
+which such collections arise. For example, a great
+number of articles in Wikipedia have been man-
+ually geotagged; this allows those articles to ap-
+pear in their geographic locations in geobrowsers
+like Google Earth. Images in social networks such
+as Flickr may be geotagged by a camera and their
+textual tags can be treated as documents. Like-
+wise, tweets in Twitter are often geotagged; in this
+case, it is possible to view either an individual
+tweet or the collection of tweets for a given user
+as a document, respectively identifying the loca-
+tion as the place from which the tweet was sent or
+the home location of the user.
+Early work on document geolocation used
+heuristic algorithms, predicting locations based on
+toponyms in the text (named locations, determined
+with the aid of a gazetteer) (Ding et al., 2000;
+Smith and Crane, 2001). More recently, vari-
+ous researchers have used topic models for doc-
+ument geolocation (Ahmed et al., 2013; Hong et
+al., 2012; Eisenstein et al., 2011; Eisenstein et
+al., 2010) or other types of geographic document
+summarization (Mehrotra et al., 2013; Adams and
+Janowicz, 2012; Hao et al., 2010). A number of
+researchers have used metadata of various sorts
+for document or user geolocation, including doc-
+ument links and social network connections. This
+research has sometimes been applied to Wikipedia
+(Overell, 2009) or Facebook (Backstrom et al.,
+2010) but more commonly to Twitter, focusing
+variously on friends and followers (McGee et al.,
+2013; Sadilek et al., 2012), time zone (Mahmud et
+al., 2012), declared location (Hecht et al., 2011),
+or a combination of these (Schulz et al., 2013).
+We tackle document geolocation using super-
+vised methods based on the textual content of
+documents, ignoring their metadata. Metadata-
+based approaches can achieve great accuracy (e.g.
+Schulz et al. (2013) obtain 79% accuracy within
+100 miles for a US-based Twitter corpus, com-
+pared with 49% using our methods on a compa-
+rable corpus), but are very specific to the partic-
+ular corpus and the types of metadata it makes
+available. For Twitter, the metadata includes the
+user?s declared location and time zone, infor-
+mation which greatly simplifies geolocation and
+which is unavailable for other types of corpora,
+such as Wikipedia. In many cases essentially no
+metadata is available at all, as in historical corpora
+in the digital humanities (Lunenfeld et al., 2012),
+such as those in the Perseus project (Crane, 2012).
+Text-based approaches can be applied to all types
+of corpora; metadata can be additionally incorpo-
+rated when available (Han and Cook, 2013).
+We introduce a hierarchical discriminative clas-
+sification method for text-based geotagging. We
+336
+apply this to corpora in three languages (English,
+German and Portuguese). This method scales
+well to large training sets and greatly improves
+results across a wide variety of corpora, beat-
+ing current state-of-the-art results by wide mar-
+gins, including Twitter users (Han et al., 2014,
+henceforth Han14; Roller et al., 2012, henceforth
+Roller12); Wikipedia articles (Roller12; Wing and
+Baldridge, 2011, henceforth WB11); and Flickr
+images (O?Hare and Murdock, 2013, henceforth
+OM13). Importantly, this is the first method that
+improves upon straight uniform-grid Naive Bayes
+on all of these corpora, in contrast with k-d trees
+(Roller12) and the current state-of-the-art tech-
+nique for Twitter users of geographically-salient
+feature selection (Han14).
+We also show, contrary to Han14, that logistic
+regression when properly optimized is more ac-
+curate than state-of-the-art techniques, including
+feature selection, and fast enough to run on large
+corpora. Logistic regression itself very effectively
+picks out words with high geographic significance.
+In addition, because logistic regression does not
+assume feature independence, complex and over-
+lapping features of various sorts can be employed.
+2 Data
+We work with six large datasets: two of geotagged
+tweets, three of Wikipedia articles, and one of
+Flickr photos. One of the two Twitter datasets is
+primarily localized to the United States, while the
+remaining datasets cover the whole world.
+TWUS is a dataset of tweets compiled by
+Roller12. A document in this dataset is the con-
+catenation of all tweets by a single user, as long
+as at least one of the user?s tweets is geotagged
+with specific, GPS-assigned latitude/longitude co-
+ordinates. The earliest such tweet determines the
+user?s location. Tweets outside of a bounding box
+covering the contiguous United States (including
+parts of Canada and Mexico) were discarded, as
+well as users that may be spammers or robots
+(based on the number of followers, followees and
+tweets). The resulting dataset contains 38M tweets
+from 450K users, of which 10,000 each are re-
+served for the development and test sets.
+TWWORLD is a dataset of tweets compiled by
+Han et al. (2012). It was collected in a simi-
+lar fashion to TWUS but differs in that it covers
+the entire Earth instead of primarily the United
+States, and consists only of geotagged tweets.
+Non-English tweets and those not near a city were
+removed, and non-alphabetic, overly short and
+overly infrequent words were filtered. The result-
+ing dataset consists of 1.4M users, with 10,000
+each reserved for the development and test sets.
+ENWIKI13 is a dataset consisting of the 864K
+geotagged articles (out of 14M articles in all) in
+the November 4, 2013 English Wikipedia dump.
+It is comparable to the dataset used in WB11 and
+was processed using an analogous fashion. The
+articles were randomly split 80/10/10 into training,
+development and test sets.
+DEWIKI14 is a similar dataset consisting of the
+324K geotagged articles (out of 1.71M articles in
+all) in the July 5, 2014 German Wikipedia dump.
+PTWIKI14 is a similar dataset consisting of the
+131K geotagged articles (out of 817K articles in
+all) in the June 24, 2014 Portuguese Wikipedia
+dump.
+COPHIR (Bolettieri et al., 2009) is a large
+dataset of images from the photo-sharing social
+network Flickr. It consists of 106M images, of
+which 8.7M are geotagged. Most images contain
+user-provided tags describing them. We follow al-
+gorithms described in OM13 in order to make di-
+rect comparison possible. This involves removing
+photos with empty tag sets and performing bulk
+upload filtering, retaining only one of a set of pho-
+tos from a given user with identical tag sets. The
+resulting reduced set of 2.8M images is then di-
+vided 80/10/10 into training, development and test
+sets. The tag set of each photo is concatenated into
+a single piece of text (in the process losing user-
+supplied tag boundary information in the case of
+multi-word tags).
+Our code and processed corpora are available
+for download.
+1
+3 Supervised models for document
+geolocation
+The dominant approach for text-based geolocation
+comes from language modeling approaches in in-
+formation retrieval (Ponte and Croft, 1998; Man-
+ning et al., 2008). For this general strategy, the
+Earth is sub-divided into a grid, and then each
+training set document is associated with the cell
+that contains it. Some model (typically Naive
+Bayes) is then used to characterize each cell and
+1
+https://github.com/utcompling/
+textgrounder/wiki/WingBaldridge_
+EMNLP2014
+337
+enable new documents to be assigned a latitude
+and longitude based on those characterizations.
+There are several options for constructing the grid
+and for modeling, which we review next.
+3.1 Geodesic grids
+The simplest grid is a uniform rectangular one
+with cells of equal-sized degrees, which was used
+by Serdyukov et al. (2009) for Flickr images and
+WB11 for Twitter and Wikipedia. This has two
+problems. Compared to a grid that takes document
+density into account, it over-represents rural areas
+at the expense of urban areas. Furthermore, the
+rectangles are not equal-area, but shrink in width
+away from the equator (although the shrinkage is
+mild until near the poles). Roller12 tackle the for-
+mer issue by using an adaptive grid based on k-d
+trees, while Dias et al. (2012) handle the latter is-
+sue with an equal-area quaternary triangular mesh.
+An additional issue with geodesic grids is that
+a single metro area may be divided between two
+or more cells. This can introduce a statistical
+bias known as the modifiable areal unit problem
+(Gehlke and Biehl, 1934; Openshaw, 1983). One
+way to mitigate this, implemented in Roller12?s
+code but not investigated in their paper, is to di-
+vide a cell in a k-d tree in such a way as to pro-
+duce the maximum margin between the dividing
+line and the nearest document on each side.
+A more direct method is to use a city-based rep-
+resentation, either with a full set of sufficiently-
+sized cities covering the Earth and taken from
+a comprehensive gazetteer (Han14) or a limited,
+pre-specified set of cities (Kinsella et al., 2011;
+Sadilek et al., 2012). Han14 amalgamate cities
+into nearby larger cities within the same state (or
+equivalent); an even more direct method would
+use census-tract boundaries when available. Dis-
+advantages of these methods are the dependency
+on time-specific population data, making them un-
+suitable for some corpora (e.g. 19th-century doc-
+uments); the difficulty in adjusting grid resolution
+in a principled fashion; and the fact that not all
+documents are near a city (Han14 find that 8% of
+tweets are ?rural? and cannot predicted by their
+model).
+We construct rectangular grids, since they are
+very easy to implement and Dias et al. (2012)?s
+triangular mesh did not yield consistently better
+results over Wikipedia. We use both uniform grids
+and k-d tree grids with midpoint splitting.
+3.2 Naive Bayes
+A geodesic grid of sufficient granularity creates a
+large decision space, when each cell is viewed as
+a label to be predicted by some classifier. This
+situation naturally lends itself to simple, scalable
+language-modeling approaches. For this general
+strategy, each cell is characterized by a pseudo-
+document constructed from the training docu-
+ments that it contains. A test document?s location
+is then chosen based on the cell with the most sim-
+ilar language model according to standard mea-
+sures such as Kullback-Leibler (KL) divergence
+(Zhai and Lafferty, 2001), which seeks the cell
+whose language model is closest to the test doc-
+ument?s, or Naive Bayes (Lewis, 1998), which
+chooses the cell that assigns the highest probabil-
+ity to the test document.
+Han14, Roller12 and WB11 follow this strat-
+egy, using KL divergence in preference to Naive
+Bayes. However, we find that Naive Bayes in con-
+junction with Dirichlet smoothing (Smucker and
+Allan, 2006) works at least as well when appropri-
+ately tuned. Dirichlet smoothing is a type of dis-
+counting model that interpolates between the un-
+smoothed (maximum-likelihood) document distri-
+bution
+?
+?
+d
+i
+of a document d
+i
+and the unsmoothed
+distribution
+?
+?
+D
+over all documents. A general
+interpolation model for the smoothed distribution
+?
+d
+i
+has the following form:
+P (w|?
+d
+i
+) = (1? ?
+d
+i
+)P (w|
+?
+?
+d
+i
+) + ?
+d
+i
+P (w|
+?
+?
+D
+) (1)
+where the discount factor ?
+d
+i
+indicates how much
+probability mass to reserve for unseen words. For
+Dirichlet smoothing, ?
+d
+i
+is set as:
+?
+d
+i
+= 1?
+|d
+i
+|
+|d
+i
+|+m
+(2)
+where |d
+i
+| is the size of the document and m is
+a tunable parameter. This has the effect of re-
+lying more on d
+i
+?s distribution and less on the
+global distribution for larger documents that pro-
+vide more evidence than shorter ones. Naive
+Bayes models are estimated easily, which allows
+them to handle fine-scale grid resolutions with po-
+tentially thousands or even hundreds of thousands
+of non-empty cells to choose among.
+Figure 1 shows a choropleth map of the behav-
+ior of Naive Bayes, plotting the rank of cells for
+338
+Figure 1: Relative Naive Bayes rank of cells for
+ENWIKI13 test document Pennsylvania Avenue
+(Washington, DC), surrounding the true location.
+the test document Pennsylvania Avenue (Washing-
+ton, DC) in ENWIKI13, for a uniform 0.1
+?
+grid.
+The top-ranked cell is the correct one.
+3.3 Logistic regression
+The use of discrete cells over the Earth?s sur-
+face allows any classification strategy to be em-
+ployed, including discriminative classifiers such as
+logistic regression. Logistic regression often pro-
+duces produces better results than generative clas-
+sifiers at the cost of more time-consuming train-
+ing, which limits the size of the problems it may
+be applied to. Training is generally unable to scale
+to encompass several thousand or more distinct la-
+bels, as is the case with fine-scale grids of the sort
+we may employ. Nonetheless we find flat logis-
+tic regression to be effective on most of our large-
+scale corpora, and the hierarchical classification
+strategy discussed in ?4 allows us to take advan-
+tage of logistic regression without incurring such
+a high training cost.
+3.4 Feature selection
+Naive Bayes assumes that features are indepen-
+dent, which penalizes models that must accom-
+modate many features that are poor indicators and
+which can gang up on the good features. Large
+improvements have been obtained by reducing
+the set of words used as features to those that
+are geographically salient. Cheng et al. (2010;
+2013) model word locality using a unimodal dis-
+tribution taken from Backstrom et al. (2008) and
+train a classifier to identify geographically lo-
+cal words based on this distribution. This un-
+fortunately requires a large hand-annotated cor-
+pus for training. Han14 systematically investi-
+gate various feature selection methods for find-
+ing geo-indicative words, such as information gain
+ratio (IGR) (Quinlan, 1993), Ripley?s K statis-
+tic (O?Sullivan and Unwin, 2010) and geographic
+density (Chang et al., 2012), showing significant
+improvements on TWUS and TWWORLD (?2).
+For comparison with Han14, we test against
+an additional baseline: Naive Bayes combined
+with feature selection done using IGR. Following
+Han14, we first eliminate words which occur less
+than 10 times, have non-alphabetic characters in
+them or are shorter than 3 characters. We then
+compute the IGR for the remaining words across
+all cells at a given cell size or bucket size, select
+the top N% for some cutoff percentage N (which
+we vary in increments of 2%), and then run Naive
+Bayes at the same cell size or bucket size.
+4 Hierarchical classification
+To overcome the limitations of discriminative clas-
+sifiers in terms of the maximum number of cells
+they can handle, we introduce hierarchical classifi-
+cation (Silla Jr. and Freitas, 2011) for geolocation.
+Dias et al. (2012) use a simple two-level genera-
+tive hierarchical approach using Naive Bayes, but
+to our knowledge no previous work implements a
+multi-level discriminative hierarchical model with
+beam search for geolocation.
+To construct the hierarchy, we start with a root
+cell c
+root
+that spans the entire Earth and from there
+build a tree of cells at different scales, from coarse
+to fine. A cell at a given level is subdivided to
+create smaller cells at the next level of resolution
+that altogether cover the same area as their parent.
+We use the local classifier per parent approach
+to hierarchical classification (Silla Jr. and Fre-
+itas, 2011) in which an independent classifier is
+learned for every node of the hierarchy above the
+leaf nodes. The probability of any node in the hi-
+erarchy is the product of the probabilities of that
+node and all of its ancestors, up to the root. This
+is defined recursively as:
+P (c
+root
+) = 1.0
+P (c
+j
+) = P (c
+j
+|?c
+j
+)P (?c
+j
+)
+(3)
+where ?c
+j
+indicates c
+j
+?s parent in the hierarchy.
+In addition to allowing one to use many classi-
+fiers that each have a manageable number of out-
+comes, the hierarchical approach naturally lends
+itself to beam search. Rather than computing the
+339
+probability of every leaf cell using equation 3, we
+use a stratified beam search: starting at the root
+cell, keep the b highest-probability cells at each
+level until reaching the leaf node level. With a
+tight beam?which we show to be very effective?
+this dramatically reduces the number of model
+evaluations that must be performed at test time.
+Grid size parameters Two factors determine
+the size of the grids at each level. The first-level
+grid is constructed the same as for Naive Bayes
+or flat logistic regression and is controlled by its
+own parameter. In addition, the subdivision factor
+N determines how we subdivide each cell to get
+from one level to the next. Both factors must be
+optimized appropriately.
+For the uniform grid, we subdivide each cell
+intoNxN subcells. In practice, there may actually
+be fewer subcells, because some of the potential
+subcells may be empty (contain no documents).
+For the k-d grid, if level 1 is created using a
+bucket size B (i.e. we recursively divide cells as
+long as their size exceeds B), then level 2 is cre-
+ated by continuing to recursively divide cells that
+exceed a smaller bucket size B/N . At this point,
+the subcells of a given level-1 cell are the leaf cells
+contained with the cell?s geographic area. The
+construction of level 3 proceeds similarly using
+bucket size B/N
+2
+, etc.
+Note that the subdivision factor has a different
+meaning for uniform and k-d tree grids. Further-
+more, because creating the subdividing cells for a
+given cell involves dividing by N
+2
+for the uniform
+grid but N for the k-d tree grid, greater subdivi-
+sion factors are generally required for the k-d tree
+grid to achieve similar-scale resolution.
+Figure 2 shows the behavior of hierarchical LR
+using k-d trees for the test document Pennsylva-
+nia Avenue (Washington, DC) in ENWIKI13. Af-
+ter ranking the first level, the beam zooms in on
+the top-ranked cells and constructs a finer k-d tree
+under each one (one such subtree is shown in the
+top-right map callout).
+5 Experimental Setup
+Configurations. We experiment with several
+methods for configuring the grid and selecting the
+best cell. For grids, we use either a uniform or
+k-d tree grid. For uniform grids, the main tunable
+parameter is grid size (in degrees), while for k-d
+trees it is bucket size (BK), i.e. the number of doc-
+uments above which a node is divided in two.
+Figure 2: Relative hierarchical LR rank of cells
+for ENWIKI13 test document Pennsylvania Av-
+enue (Washington, DC), surrounding the true lo-
+cation. The first callout simply expands a portion
+of level 1, while the second callout shows a level
+1 cell subdivided down to level 2.
+For cell choice, the options are:
+? NB: Naive Bayes baseline
+? IGR: Naive Bayes using features selected by
+information gain ratio
+? FlatLR: logistic regression model over all
+leaf nodes
+? HierLR: product of logistic regression mod-
+els at each node in a hierarchical grid (eq. 3)
+For Dirichlet smoothing in conjunction with Naive
+Bayes, we set the Dirichlet parameter m =
+1, 000, 000, which we found worked well in pre-
+liminary experiments. For hierarchical classifica-
+tion, there are additional parameters: subdivision
+factor (SF) and beam size (BM) (?4), and hierar-
+chy depth (D) (?6.4). All of our test-set results use
+a depth of three levels.
+Due to its speed and flexibility, we use Vowpal
+Wabbit (Agarwal et al., 2014) for logistic regres-
+sion, estimating parameters with limited-memory
+BFGS (Nocedal, 1980; Byrd et al., 1995). Unless
+otherwise mentioned, we use 26-bit feature hash-
+ing (Weinberger et al., 2009) and 40 passes over
+the data (optimized based on early experiments on
+development data) and turn off the hold-out mech-
+anism. For the subcell classifiers in hierarchical
+classification, which have fewer classes and much
+less data, we use 24-bit features and 12 passes.
+Evaluation. To measure geolocation perfor-
+mance, we use three standard metrics based on er-
+ror distance, i.e. the distance between the correct
+location and the predicted location. These metrics
+are mean and median error distance (Eisenstein et
+340
+al., 2010) and accuracy at 161 km (acc@161), i.e.
+within a 161-km radius, which was introduced by
+Cheng et al. (2010) as a proxy for accuracy within
+a metro area. All of these metrics are indepen-
+dent of cell size, unlike the measure of cell accu-
+racy (fraction of cells correctly predicted) used in
+Serdyukov et al. (2009). Following Han14, we use
+acc@161 on development sets when choosing al-
+gorithmic parameter values such as cell and bucket
+sizes.
+6 Results
+6.1 Twitter
+We show the effect of varying cell size in Table 1
+and k-d tree bucket size in Figure 3. The number
+of non-empty cells is shown for each cell size and
+bucket size. For NB, this is the number of cells
+against which a comparison must be made for each
+test document; for FlatLR, this is the number of
+classes that must be distinguished. For HierLR, no
+figure is given because it varies from level to level
+and from classifier to classifier. For example, with
+a uniform grid and subdivision factor of 3, each
+level-2 subclassifier will have between 1 and 9 la-
+bels to choose among, depending on which cells
+are empty.
+Method
+Cell Size #Class Acc. Mean Med.
+(Deg) (km) @161 (km) (km)
+NB
+0.17
+?
+11,671 36.6 929.5 496.4
+0.50
+?
+2,838 35.4 889.3 466.6
+IGR, CU90% 1.5
+?
+501 45.9 787.5 255.6
+FlatLR
+5
+?
+556 59 35.4 727.8 248.7
+4
+?
+445 99 44.4 718.8 227.9
+3
+?
+334 159 47.3 721.3 186.2
+2.5
+?
+278 208 47.5 743.9 198.9
+2
+?
+223 316 46.9 737.7 209.9
+1.5
+?
+167 501 46.6 762.6 226.9
+1
+?
+111 975 43.0 810.0 303.7
+HierLR, D2, SF2, BM5 4
+?
+? ? 48.6 695.2 182.2
+HierLR, D2, SF2, BM2 3
+?
+? ? 49.0 725.1 174.6
+HierLR, D3, SF2, BM2 3
+?
+? ? 49.0 718.9 173.8
+HierLR, D2, SF2, BM5 2.5
+?
+? ? 48.2 740.9 187.7
+Table 1: Dev set performance for TWUS, with
+uniform grids. HierLR and IGR parameters op-
+timized using acc@161. Best metric numbers for
+a given method are underlined, except that overall
+best numbers are in bold.
+FlatLR does much better than NB and IGR, and
+HierLR is still better. This is despite logistic re-
+gression needing to operate at a much lower res-
+olution.
+2
+Interestingly, uniform-grid 2-level Hi-
+erLR does better at 4
+?
+with a subdivision factor
+2
+The limiting factor for resolution for us was the 24-hour
+per job limit on our computing cluster.
+l
+l
+35
+40
+45
+0 2500 5000 7500 10000Bucket size
+acc
+@16
+1 (pc
+t)
+method
+l HierLR
+FlatLR
+IGR
+NB
+Figure 3: Dev set performance for TWUS, with
+k-d tree grids.
+of 2 than the equivalent FlatLR run at 2
+?
+.
+Table 2 shows the test set results for the vari-
+ous methods and metrics described in ?5, on both
+TWUS and TWWORLD.
+3
+HierLR is the best
+across all metrics; the best acc@161km and me-
+dian error is obtained with a uniform grid, while
+HierLR with k-d trees obtains the best mean error.
+Compared with vanilla NB, our implementa-
+tion of NB using IGR feature selection obtains
+large gains for TWUS and moderate gains for
+TWWORLD, showing that IGR can be an effec-
+tive geolocation method for Twitter. This agrees
+in general with Han14?s findings. We can only
+compare our figures directly with Han14 for k-d
+trees?in this case they use a version of the same
+software we use and report figures within 1% of
+ours for TWUS. Their remaining results are com-
+puted using a city-based grid and an NB imple-
+mentation with add-one smoothing, and are signif-
+icantly worse than our uniform-grid NB and IGR
+figures using Dirichlet smoothing, which is known
+to significantly outperform add-one smoothing
+(Smucker and Allan, 2006). For example, for NB
+they report 30.8% acc@161 for TWUS and 20.0%
+for TWWORLD, compared with our 36.2% and
+30.2% respectively. We suspect an additional rea-
+son for the discrepancy is due to the limitations of
+their city-based grid, which has no tunable param-
+eter to optimize the grid size and requires that test
+instances not near a city be reported as incorrect.
+Our NB figures also beat the KL divergence fig-
+ures reported in Roller12 for TWUS (which they
+term UTGEO2011), perhaps again due to the dif-
+3
+Note that for TWWORLD, it was necessary to modify
+the parameters normally passed to Vowpal Wabbit, moving
+up to 27-bit features and 96 passes, and 24-bit features with
+24 passes in sublevels of HierLR.
+341
+Corpus TWUS TWWORLD
+Method Parameters A@161 Mean Med. Parameters A@161 Mean Med.
+NB Uniform 0.17
+?
+36.2 913.8 476.3 1
+?
+30.2 1690.0 537.2
+NB k-d BK1500 36.2 861.4 444.2 BK500 28.7 1735.0 566.2
+IGR Uniform 1.5
+?
+, CU90% 46.1 770.3 233.9 1
+?
+, CU90% 31.0 2204.8 574.7
+IGR k-d BK2500, CU90% 44.6 792.0 268.6 BK250, CU92% 29.4 2369.6 655.0
+FlatLR Uniform 2.5
+?
+47.2 727.3 195.4 3.7
+?
+32.1 1736.3 500.0
+FlatLR k-d BK4000 47.4 692.2 197.0 BK12000 27.8 1939.5 651.6
+HierLR Uniform 3
+?
+, SF2, BM2 49.2 703.6 170.5 5
+?
+, SF2, BM1 32.7 1714.6 490.0
+HierLR k-d BK4000, SF3, BM1 48.0 686.6 191.4 BK60000, SF5, BM1 31.3 1669.6 509.1
+Table 2: Performance on the test sets of TWUS and TWWORLD for different methods and metrics.
+ference in smoothing methods.
+6.2 Wikipedia
+Table 3 shows results on the test set of ENWIKI13
+for various methods. Table 5 shows the corre-
+sponding results for DEWIKI14 and PTWIKI14.
+In all cases, the best parameters for each method
+were determined using acc@161 on the develop-
+ment set, as above.
+l
+l
+l
+l
+l
+l
+l
+l
+l
+lll
+lll
+lll l
+l l l
+l
+l
+l
+l
+l
+82
+84
+86
+88
+0 50 100 150 200 250K?d subdivision factor
+Acc
+@16
+1 (pc
+t) beam size
+l 1
+2
+Naive Bayes
+Figure 4: Plot of subdivision factor vs. acc@161
+for the ENWIKI13 dev set with 2-level k-d tree
+HierLR, bucket size 1500. Beam sizes above 2
+yield little improvement.
+HierLR is clearly the stand-out winner among
+all methods and metrics, and particularly so for the
+k-d tree grid. This is achieved through a high sub-
+division factor, especially in a 2-level hierarchy,
+where a factor of 36 is best, as shown in Figure 4
+for ENWIKI13. (For a 3-level hierarchy, the best
+subdivision factor is 12.)
+Unlike for TWUS, FlatLR simply cannot com-
+Method Param #Class A@161 Med. Runtime
+FlatLR
+Uniform
+10
+?
+648 19.2 314.1 11h
+8.5
+?
+784 26.5 248.5 16h
+7.5
+?
+933 30.1 232.0 19h
+FlatLR
+k-d
+BK5000 257 57.1 133.5 5h
+BK2500 501 67.5 94.9 9h
+BK1500 825 74.7 69.9 16h
+HierLR
+Uniform
+7.5
+?
+,SF2,BM1 ? 85.2 67.8 23h
+7.5
+?
+,SF3,BM5 ? 86.1 34.2 27h
+HierLR
+k-d
+BK1500,SF5,BM1 ? 88.2 19.6 23h
+BK5000,SF10,BM5 ? 88.4 18.3 14h
+BK1500,SF12,BM2 ? 88.8 15.3 33h
+Table 4: Performance/runtime for FlatLR and 3-
+level HierLR on the ENWIKI13 dev set, with vary-
+ing parameters.
+pete with NB in the larger Wikipedias (ENWIKI13
+and DEWIKI14). ENWIKI13 especially has dense
+coverage across the entire world, whereas TWUS
+only covers the United States and parts of Canada
+and Mexico. Thus, there are a much larger num-
+ber of non-empty cells at a given resolution and
+much coarser resolution required, especially with
+the uniform grid. For example, at 7.5
+?
+there are
+933 non-empty cells, comparable to 1
+?
+for TWUS.
+Table 4 shows the number of classes and runtime
+for FlatLR and HierLR at different parameter val-
+ues. The hierarchical classification approach is
+clearly essential for allowing us to scale the dis-
+criminative approach for a large, dense dataset
+across the whole world.
+Moving from larger to smaller Wikipedias,
+FlatLR becomes more competitive. In particular,
+FlatLR outperforms NB and is close to HierLR for
+PTWIKI14, the smallest of the three (and signifi-
+cantly smaller than TWUS). In this case, the rel-
+atively small size of the dataset and its greater ge-
+ographic specificity (many articles are located in
+Brazil or Portugal) allows for a fine enough reso-
+lution to make FlatLR perform well?comparable
+to or even finer than NB.
+In all of the Wikipedias, NB k-d outperforms
+342
+Corpus ENWIKI13 COPHIR
+Method Parameters A@161 Mean Med. Parameters A@161 Mean Med.
+NB Uniform 1.5
+?
+84.0 326.8 56.3 1.5
+?
+65.0 1553.5 47.9
+NB k-d BK100 84.5 362.3 21.1 BK3500 58.5 1726.9 70.0
+IGR Uniform 1.5
+?
+, CU96% 81.4 401.9 58.2 1.5
+?
+, CU92% 60.8 1683.4 56.7
+IGR k-d BK250, CU98% 80.6 423.9 34.3 BK1500, CU62% 54.7 2908.8 83.5
+FlatLR Uniform 7.5
+?
+25.5 1347.8 259.4 2.0
+?
+60.6 1942.3 73.7
+FlatLR k-d BK1500 74.8 253.2 70.0 BK3000 57.7 1961.4 72.5
+HierLR Uniform 7.5
+?
+, SF3, BM5 86.2 228.3 34.0 7
+?
+, SF4, BM5 65.3 1590.2 16.7
+HierLR k-d BK1500, SF12, BM2 88.9 168.7 15.3 BK100000, SF15, BM5 66.0 1453.3 17.9
+Table 3: Performance on the test sets of ENWIKI13 and COPHIR for different methods and metrics.
+NB uniform, and HierLR outperforms both, but
+by greatly varying amounts, with only a 1% differ-
+ence for DEWIKI14 but 12% for PTWIKI14. It?s
+unclear what causes these variations, although it?s
+worth noting that Roller12?s NB k-d figures on an
+older English Wikipedia corpus were are notice-
+ably higher than our figures: They report 90.3%
+acc@161, compared with our 84.5%. We verified
+that this is due to corpus differences: we obtain
+their performance when we run on their Wikipedia
+corpus. This suggests that the various differences
+may be due to vagaries of the individual corpora,
+e.g. the presence of differing numbers of geo-
+tagged stub articles, which are very short and thus
+hard to geolocate.
+As for IGR, though it is competitive for Twitter,
+it performs badly here?in fact, it is even worse
+than plain Naive Bayes for all three Wikipedias
+(likewise for COPHIR, in the next section).
+6.3 CoPhIR
+Table 3 shows results on the test set of COPHIR
+for various methods, similarly to the ENWIKI13
+results. HierLR is again the clear winner. Unlike
+for ENWIKI13, FlatLR is able to do fairly well.
+IGR performs poorly, especially when combined
+with k-d.
+In general, as can be seen, for COPHIR the
+median figures are very low but the mean figures
+very high, meaning there are many images that can
+be very accurately placed while the remainder are
+very difficult to place. (The former images likely
+have the location mentioned in the tags, while the
+latter do not.)
+For COPHIR, and also TWWORLD, HierLR
+performs best when the root level is significantly
+coarser than the cell or bucket size that is best for
+FlatLR. The best setting for the root level appears
+to be correlated with cell accuracy, which in gen-
+eral increases with larger cell sizes. The intuition
+here is that HierLR works by drilling down from
+a single top-level child of the root cell. Thus, the
+higher the cell accuracy, the greater the fraction
+of test instances that can be improved in this fash-
+ion, and in general the better the ultimate values
+of the main metrics. (The above discussion isn?t
+strictly true for beam sizes above 1, but these tend
+to produce marginal improvements, with little if
+any gain from going above a beam size of 5.) The
+large size of a coarse root-child cell, and corre-
+spondingly poor results for acc@161, can be off-
+set by a high subdivision factor, which does not
+materially slow down the training process.
+Our NB results are not directly comparable with
+OM13?s results on COPHIR because they use var-
+ious cell-based accuracy metrics while we use
+cell-size-independent metrics. The closest to our
+acc@161 metric is their Ac1 metric, which at a
+cell size of 100 km corresponds to a 300km-per-
+side square at the equator, roughly comparable to
+our 161-km-radius circle. They report Ac1 figures
+of 57.7% for term frequency and 65.3% for user
+frequency, which counts the number of distinct
+users in a cell using a given term and is intended to
+offset bias resulting from users who upload a large
+batch of similar photos at a given location. Our
+term frequency figure of 65.0% significantly beats
+theirs, but we found that user frequency actually
+degraded our dev set results by 5%. The reason
+for this discrepancy is unclear.
+6.4 Parameterization variations
+Optimizing for median. Note that better values
+for the other metrics, especially median, can be
+achieved by specifically optimizing for these met-
+rics. In general, the best parameters for median
+are finer-scale than those for acc@161: smaller
+grid sizes and bucket sizes, and greater subdivision
+factors. This is especially revealing in ENWIKI13
+and COPHIR. For example, on the ENWIKI13
+343
+Corpus DEWIKI14 PTWIKI14
+Method Parameters A@161 Mean Med. Parameters A@161 Mean Med.
+NB Uniform 1
+?
+88.4 257.9 35.0 1
+?
+76.6 470.0 48.3
+NB k-d BK25 89.3 192.0 7.6 BK100 77.1 325.0 45.9
+IGR Uniform 2
+?
+, CU82% 87.1 312.9 68.2 2
+?
+, CU54% 71.3 594.6 89.4
+IGR k-d BK50, CU100% 86.0 226.8 10.9 BK100, CU100% 71.3 491.9 57.7
+FlatLR Uniform 5
+?
+55.1 340.4 150.1 2
+?
+88.9 320.0 70.8
+FlatLR k-d BK350 82.0 193.2 24.5 BK25 86.8 320.8 30.0
+HierLR Uniform 7
+?
+, SF3, BM5 88.5 184.8 30.0 7
+?
+, SF2, BM5 88.6 223.5 64.7
+HierLR k-d BK3500, SF25, BM5 90.2 122.5 8.6 BK250, SF12, BM2 89.5 186.6 27.2
+Table 5: Performance on the test sets of DEWIKI14 and PTWIKI14 for different methods and metrics.
+dev set, the ?best? uniform NB parameter of 1.5
+?
+,
+as optimized on acc@161, yields a median error
+of 56.1 km, but an error of just 16.7 km can be
+achieved with the parameter setting 0.25
+?
+(which,
+however, drops acc@161 from 83.8% to 78.3%
+in the process). Similarly, for the COPHIR dev
+set, the optimized uniform 2-level HierLR median
+error of 46.6 km can be reduced to just 8.1 km
+by dropping from 7
+?
+to 3.5
+?
+and bumping up the
+subdivision factor from 4 to 35?again, causing a
+drop in acc@161 from 68.6% to 65.5%.
+Hierarchy depth. We use a 3-level hierarchy
+throughout for the test set results. Evaluation on
+development data showed that 2-level hierarchies
+perform comparably for several data sets, but are
+less effective overall. We did not find improve-
+ments from using more than three levels. When
+using a simple local classifier per parent approach
+as we do, which chains together spines of related
+but independently trained classifiers when assign-
+ing a probability to a leaf cell, most of the ben-
+efit presumably comes from simply enabling lo-
+gistic regression to be used with fine-grained leaf
+cells, overcoming the limitations of FlatLR. Fur-
+ther benefits of the hierarchical approach might be
+achieved with the data-biasing and bottom-up er-
+ror propagation techniques of Bennett and Nguyen
+(2009) or the hierarchical Bayesian approach of
+Gopal et al. (2012), which is able to handle large-
+scale corpora and thousands of classes.
+6.5 Feature Selection
+The main focus of Han14 is identifying geograph-
+ically salient words through feature selection. Lo-
+gistic regression performs feature selection natu-
+rally by assigning higher weights to features that
+better discriminate among the target classes.
+Table 6 shows the top 20 features ranked by fea-
+ture weight for a number of different cells, labeled
+by the largest city in the cell. The features were
+produced using a uniform 5
+?
+grid, trained using
+27-bit features and 40 passes over TWUS. The
+high number of bits per feature were chosen to en-
+sure as few collisions as possible of different fea-
+tures (as it would be impossible to distinguish two
+words that were hashed together).
+Most words are clearly region specific, con-
+sisting of cities, states and abbreviations, sports
+teams (broncos, texans, niners, saints), well-
+known streets (bourbon, folsom), characteristic
+features (desert, bayou, earthquake, temple), local
+brands (whataburger, soopers, heb), local foods
+(gumbo, poutine), and dialect terms (hella, buku).
+Top-IGR words Bottom-IGR words
+lockerby presswiches plan times
+killdeer haubrich party end
+fordville yabbo men twitter
+azilda presswich happy full
+ahauah pozuelo show part
+hutmacher akeley top forget
+cere chewelah extra close
+miramichi computacionales late dead
+alamosa bevilacqua facebook cool
+multiservicios presswiche friday enjoy
+ghibran curtisinn black true
+briaroaks guymon dream found
+joekins dakotamart hey drink
+numerica missoula face pay
+bemidji mimbres finally meet
+amn shingobee easy lost
+roug gottsch time find
+pbtisd uprr live touch
+marcenado hesperus wow birthday
+banerjee racingmason yesterday ago
+Table 7: Top and bottom 40 features selected using
+IGR for TWUS with a uniform 1.5
+?
+grid.
+As a comparison, Table 7 shows the top and bot-
+tom 40 features selected using IGR on the same
+corpus. Unlike for logistic regression, the top IGR
+features are mostly obscure words, only some of
+344
+Salt Lake San Francisco New Orleans Phoenix Denver Houston Montreal Seattle Tulsa Los Angeles
+utah sacramento orleans tucson denver houston montreal seattle tulsa knotts
+slc hella jtfo az colorado antonio mtl portland okc sd
+salt sac prelaw phoenix broncos texans quebec tacoma oklahoma pasadena
+byu niners saints arizona aurora sa magrib wa wichita diego
+provo berkeley louisiana asu amarillo corpus rue vancouver ou ucla
+ut safeway bourbon tempe soopers whataburger habs bellevue kansas disneyland
+utes oakland kmsl scottsdale colfax heb canadian oregon ku irvine
+idaho earthquake uptown phx springs otc ouest seahawks lawrence socal
+orem sf joked chandler centennial utsa mcgill pdx shaki tijuana
+sandy modesto wya fry pueblo mcallen coin uw ks riverside
+rio exploit canal glendale larimer westheimer gmusic puyallup edmond pomona
+ogden stockton metairie desert meadows pearland laval safeway osu turnt
+lds hayward westbank harkins parker jammin poutine huskies stillwater angeles
+temple cal bayou camelback blake mayne boul everett topeka usc
+murray jose houma mesa cherry katy est seatac sooners chargers
+menudito swaaaaggg lawd gilbert siiiiim jamming je ducks straighht oc
+mormon folsom gtf pima coors tsu sherbrooke victoria kc compton
+gateway roseville magazine dbacks englewood marcos pas beaverton manhattan meadowview
+megaplex juiced gumbo mcdowell pikes laredo fkn hella boomer rancho
+lake vallejo buku devils rockies texas centre sounders sooner ventura
+Table 6: Top 20 features selected for various regions using logistic regression on TWUS with a uniform
+5
+?
+grid.
+which have geographic significance, while the bot-
+tom words are quite common. To some extent this
+is a feature of IGR, since it divides by the binary
+entropy of each word, which is directly related
+to its frequency. However, it shows why cutoffs
+around 90% of the original feature set are neces-
+sary to achieve good performance on the Twitter
+corpora. (IGR does not perform well on Wikipedia
+or COPHIR, as shown above.)
+7 Conclusion
+This paper demonstrates that major performance
+improvements to geolocation based only on text
+can be obtained by using a hierarchy of logistic
+regression classifiers. Logistic regression also al-
+lows for the use of complex, interdependent fea-
+tures, beyond the simple unigram models com-
+monly employed. Our preliminary experiments
+did not show noticeable improvements from bi-
+gram or character-based features, but it is pos-
+sible that higher-level features such as morpho-
+logical, part-of-speech or syntactic features could
+yield further performance gains. And, of course,
+these improved text-based models may help de-
+crease error even further when metadata (e.g. time
+zone and declared location) are available.
+An interesting extension of this work is to rely
+upon the natural clustering of related documents.
+Joint modeling of geographic topics and loca-
+tions has been attempted (see ?1), but has gener-
+ally been applied to much smaller corpora than
+those considered here. Skiles (2012) found sig-
+nificant improvements by clustering the training
+documents of large-scale corpora using K-means,
+training separate models from each cluster, and es-
+timating a test document?s location with the clus-
+ter model returning the best overall similarity (e.g.
+through KL divergence). Bergsma et al. (2013)
+likewise cluster tweets using K-means but predict
+location only at the country level. Such methods
+could be combined with hierarchical classification
+to yield further gains.
+Acknowledgments
+We would like to thank Grant Delozier for as-
+sistance in generating choropleth graphs, and the
+three anonymous reviewers for their feedback.
+This research was supported by a grant from the
+Morris Memorial Trust Fund of the New York
+Community Trust.
+References
+Benjamin Adams and Krzysztof Janowicz. 2012. On
+the geo-indicativeness of non-georeferenced text. In
+John G. Breslin, Nicole B. Ellison, James G. Shana-
+han, and Zeynep Tufekci, editors, ICWSM?12: Pro-
+ceedings of the 6th International AAAI Conference
+on Weblogs and Social Media. The AAAI Press.
+Alekh Agarwal, Oliveier Chapelle, Miroslav Dud??k,
+and John Langford. 2014. A reliable effective teras-
+cale linear learning system. Journal of Machine
+Learning Research, 15:1111?1133.
+Amr Ahmed, Liangjie Hong, and Alexander J. Smola.
+2013. Hierarchical geographical modeling of user
+345
+locations from social media posts. In Proceedings
+of the 22nd International Conference on World Wide
+Web, WWW ?13, pages 25?36, Republic and Canton
+of Geneva, Switzerland. International World Wide
+Web Conferences Steering Committee.
+Lars Backstrom, Jon Kleinberg, Ravi Kumar, and Jas-
+mine Novak. 2008. Spatial variation in search en-
+gine queries. In Proceedings of the 17th Interna-
+tional Conference on World Wide Web, WWW ?08,
+pages 357?366, New York, NY, USA. ACM.
+Lars Backstrom, Eric Sun, and Cameron Marlow.
+2010. Find me if you can: improving geographi-
+cal prediction with social and spatial proximity. In
+Proceedings of the 19th international conference on
+World wide web, WWW ?10, pages 61?70, New
+York, NY, USA. ACM.
+Paul N. Bennett and Nam Nguyen. 2009. Refined ex-
+perts: improving classification in large taxonomies.
+In James Allan, Javed A. Aslam, Mark Sanderson,
+ChengXiang Zhai, and Justin Zobel, editors, SIGIR,
+pages 11?18. ACM.
+Shane Bergsma, Mark Dredze, Benjamin Van Durme,
+Theresa Wilson, and David Yarowsky. 2013.
+Broadly improving user classification via
+communication-based name and location clus-
+tering on twitter. In Proceedings of the 2013
+Conference of the North American Chapter of the
+Association for Computational Linguistics: Human
+Language Technologies, pages 1010?1019, Atlanta,
+Georgia, June. Association for Computational
+Linguistics.
+Paolo Bolettieri, Andrea Esuli, Fabrizio Falchi, Clau-
+dio Lucchese, Raffaele Perego, Tommaso Piccioli,
+and Fausto Rabitti. 2009. Cophir: a test col-
+lection for content-based image retrieval. CoRR,
+abs/0905.4627.
+Richard H Byrd, Peihuang Lu, Jorge Nocedal, and
+Ciyou Zhu. 1995. A limited memory algorithm for
+bound constrained optimization. SIAM Journal on
+Scientific Computing, 16(5):1190?1208.
+Hau-Wen Chang, Dongwon Lee, Mohammed Eltaher,
+and Jeongkyu Lee. 2012. @phillies tweeting from
+philly? predicting twitter user locations with spatial
+word usage. In Proceedings of the 2012 Interna-
+tional Conference on Advances in Social Networks
+Analysis and Mining (ASONAM 2012), pages 111?
+118. IEEE Computer Society.
+Zhiyuan Cheng, James Caverlee, and Kyumin Lee.
+2010. You are where you tweet: A content-based ap-
+proach to geo-locating twitter users. In Proceedings
+of the 19th ACM International Conference on In-
+formation and Knowledge Management, pages 759?
+768.
+Zhiyuan Cheng, James Caverlee, and Kyumin Lee.
+2013. A content-driven framework for geolocating
+microblog users. ACM Trans. Intell. Syst. Technol.,
+4(1):2:1?2:27, February.
+Gregory Crane, 2012. The Perseus Project, pages 644?
+653. SAGE Publications, Inc.
+Duarte Dias, Ivo Anast?acio, and Bruno Martins. 2012.
+A Language Modeling Approach for Georeferenc-
+ing Textual Documents. In Proceedings of the Span-
+ish Conference in Information Retrieval.
+Junyan Ding, Luis Gravano, and Narayanan Shivaku-
+mar. 2000. Computing geographical scopes of web
+resources. In Proceedings of the 26th International
+Conference on Very Large Data Bases, VLDB ?00,
+pages 545?556, San Francisco, CA, USA. Morgan
+Kaufmann Publishers Inc.
+Jacob Eisenstein, Brendan O?Connor, Noah A. Smith,
+and Eric P. Xing. 2010. A latent variable model
+for geographic lexical variation. In Proceedings
+of the 2010 Conference on Empirical Methods in
+Natural Language Processing, pages 1277?1287,
+Cambridge, MA, October. Association for Compu-
+tational Linguistics.
+Jacon Eisenstein, Ahmed Ahmed, and Eric P. Xing.
+2011. Sparse additive generative models of text. In
+Proceedings of the 28th International Conference on
+Machine Learning, pages 1041?1048.
+Charles E. Gehlke and Katherine Biehl. 1934. Certain
+effects of grouping upon the size of the correlation
+coefficient in census tract material. Journal of the
+American Statistical Association, 29(185):169?170.
+Siddharth Gopal, Yiming Yang, Bing Bai, and Alexan-
+dru Niculescu-Mizil. 2012. Bayesian models for
+large-scale hierarchical classification. In Peter L.
+Bartlett, Fernando C. N. Pereira, Christopher J. C.
+Burges, Lon Bottou, and Kilian Q. Weinberger, edi-
+tors, NIPS, pages 2420?2428.
+Bo Han and Paul Cook. 2013. A stacking-based ap-
+proach to twitter user geolocation prediction. In In
+Proceedings of the 51st Annual Meeting of the Asso-
+ciation for Computational Linguistics (ACL 2013):
+System Demonstrations, pages 7?12.
+Bo Han, Paul Cook, and Tim Baldwin. 2012. Geoloca-
+tion prediction in social media data by finding loca-
+tion indicative words. In International Conference
+on Computational Linguistics (COLING), page 17,
+Mumbai, India, December.
+Bo Han, Paul Cook, and Tim Baldwin. 2014. Text-
+based twitter user geolocation prediction. Journal
+of Artificial Intelligence Research, 49(1):451?500.
+Qiang Hao, Rui Cai, Changhu Wang, Rong Xiao,
+Jiang-Ming Yang, Yanwei Pang, and Lei Zhang.
+2010. Equip tourists with knowledge mined from
+travelogues. In Proceedings of the 19th interna-
+tional conference on World wide web, WWW ?10,
+pages 401?410, New York, NY, USA. ACM.
+Brent Hecht, Lichan Hong, Bongwon Suh, and Ed H.
+Chi. 2011. Tweets from justin bieber?s heart: The
+dynamics of the location field in user profiles. In
+346
+Proceedings of the SIGCHI Conference on Human
+Factors in Computing Systems, CHI ?11, pages 237?
+246, New York, NY, USA. ACM.
+Liangjie Hong, Amr Ahmed, Siva Gurumurthy,
+Alexander J. Smola, and Kostas Tsioutsiouliklis.
+2012. Discovering geographical topics in the twit-
+ter stream. In Proceedings of the 21st International
+Conference on World Wide Web, WWW ?12, pages
+769?778, New York, NY, USA. ACM.
+Sheila Kinsella, Vanessa Murdock, and Neil O?Hare.
+2011. ?I?m eating a sandwich in Glasgow?: Mod-
+eling locations with tweets. In Proceedings of the
+3rd International Workshop on Search and Mining
+User-generated Contents, pages 61?68.
+David D. Lewis. 1998. Naive (bayes) at forty: The in-
+dependence assumption in information retrieval. In
+Proceedings of the 10th European Conference on
+Machine Learning, ECML ?98, pages 4?15, Lon-
+don, UK, UK. Springer-Verlag.
+Peter Lunenfeld, Anne Burdick, Johanna Drucker,
+Todd Presner, and Jeffrey Schnapp. 2012. Digital
+humanities. MIT Press, Cambridge, MA.
+Jalal Mahmud, Jeffrey Nichols, and Clemens Drews.
+2012. Where is this tweet from? inferring home
+locations of twitter users. In John G. Breslin,
+Nicole B. Ellison, James G. Shanahan, and Zeynep
+Tufekci, editors, ICWSM?12: Proceedings of the 6th
+International AAAI Conference on Weblogs and So-
+cial Media. The AAAI Press.
+Christopher D. Manning, Prabhakar Raghavan, and
+Hinrich Sch?utze. 2008. Introduction to Information
+Retrieval. Cambridge University Press, Cambridge,
+UK.
+Jeffrey McGee, James Caverlee, and Zhiyuan Cheng.
+2013. Location prediction in social media based on
+tie strength. In Proceedings of the 22nd ACM In-
+ternational Conference on Conference on Informa-
+tion and Knowledge Management, CIKM ?13, pages
+459?468, New York, NY, USA. ACM.
+Rishabh Mehrotra, Scott Sanner, Wray Buntine, and
+Lexing Xie. 2013. Improving lda topic models for
+microblogs via tweet pooling and automatic label-
+ing. In Proceedings of the 36th International ACM
+SIGIR Conference on Research and Development in
+Information Retrieval, SIGIR ?13, pages 889?892,
+New York, NY, USA. ACM.
+Jorge Nocedal. 1980. Updating Quasi-Newton Matri-
+ces with Limited Storage. Mathematics of Compu-
+tation, 35(151):773?782.
+Neil O?Hare and Vanessa Murdock. 2013. Modeling
+locations with social media. Information Retrieval,
+16(1):30?62.
+Stan Openshaw. 1983. The modifiable areal unit prob-
+lem. Geo Books.
+David O?Sullivan and David J. Unwin, 2010. Point
+Pattern Analysis, pages 121?155. John Wiley &
+Sons, Inc.
+Simon Overell. 2009. Geographic Information Re-
+trieval: Classification, Disambiguation and Mod-
+elling. Ph.D. thesis, Imperial College London.
+Jay M. Ponte and W. Bruce Croft. 1998. A language
+modeling approach to information retrieval. In Pro-
+ceedings of the 21st annual international ACM SI-
+GIR conference on Research and development in
+information retrieval, SIGIR ?98, pages 275?281,
+New York, NY, USA. ACM.
+J. Ross Quinlan. 1993. C4.5: Programs for Machine
+Learning. Morgan Kaufmann Publishers Inc., San
+Francisco, CA, USA.
+Stephen Roller, Michael Speriosu, Sarat Rallapalli,
+Benjamin Wing, and Jason Baldridge. 2012. Super-
+vised text-based geolocation using language models
+on an adaptive grid. In Proceedings of the 2012 Joint
+Conference on Empirical Methods in Natural Lan-
+guage Processing and Computational Natural Lan-
+guage Learning, EMNLP-CoNLL ?12, pages 1500?
+1510, Stroudsburg, PA, USA. Association for Com-
+putational Linguistics.
+Adam Sadilek, Henry Kautz, and Jeffrey P. Bigham.
+2012. Finding your friends and following them to
+where you are. In Proceedings of the 5th ACM Inter-
+national Conference on Web Search and Data Min-
+ing, pages 723?732.
+Axel Schulz, Aristotelis Hadjakos, Heiko Paulheim,
+Johannes Nachtwey, and Max M?uhlh?auser. 2013.
+A multi-indicator approach for geolocalization of
+tweets. In Emre Kiciman, Nicole B. Ellison, Bernie
+Hogan, Paul Resnick, and Ian Soboroff, editors,
+ICWSM?13: Proceedings of the 7th International
+AAAI Conference on Weblogs and Social Media. The
+AAAI Press.
+Pavel Serdyukov, Vanessa Murdock, and Roelof van
+Zwol. 2009. Placing flickr photos on a map. In
+Proceedings of the 32nd international ACM SIGIR
+conference on Research and development in infor-
+mation retrieval, SIGIR ?09, pages 484?491, New
+York, NY, USA. ACM.
+Carlos N. Silla Jr. and Alex A. Freitas. 2011. A survey
+of hierarchical classification across different appli-
+cation domains. Data Mining and Knowledge Dis-
+covery, 22(1-2):182?196, January.
+Erik David Skiles. 2012. Document geolocation using
+language models built from lexical and geographic
+similarity. Master?s thesis, University of Texas at
+Austin.
+David A. Smith and Gregory Crane. 2001. Disam-
+biguating geographic names in a historical digital
+library. In Proceedings of the 5th European Con-
+ference on Research and Advanced Technology for
+Digital Libraries, ECDL ?01, pages 127?136, Lon-
+don, UK. Springer-Verlag.
+347
+Mark D. Smucker and James Allan. 2006. An inves-
+tigation of Dirichlet prior smoothing?s performance
+advantage. Technical report, University of Mas-
+sachusetts, Amherst.
+Kilian Weinberger, Anirban Dasgupta, John Langford,
+Alex Smola, and Josh Attenberg. 2009. Feature
+hashing for large scale multitask learning. In Pro-
+ceedings of the 26th Annual International Confer-
+ence on Machine Learning, ICML ?09, pages 1113?
+1120, New York, NY, USA. ACM.
+Benjamin Wing and Jason Baldridge. 2011. Sim-
+ple supervised document geolocation with geodesic
+grids. In Proceedings of the 49th Annual Meeting of
+the Association for Computational Linguistics: Hu-
+man Language Technologies, pages 955?964, Port-
+land, Oregon, USA, June. Association for Computa-
+tional Linguistics.
+Chengxiang Zhai and John Lafferty. 2001. Model-
+based feedback in the language modeling approach
+to information retrieval. In Proceedings of the tenth
+international conference on Information and knowl-
+edge management, CIKM ?01, pages 403?410, New
+York, NY, USA. ACM.
+348
+Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics, pages 955?964,
+Portland, Oregon, June 19-24, 2011. c?2011 Association for Computational Linguistics
+Simple Supervised Document Geolocation with Geodesic Grids
+Benjamin P. Wing
+Department of Linguistics
+University of Texas at Austin
+Austin, TX 78712 USA
+ben@benwing.com
+Jason Baldridge
+Department of Linguistics
+University of Texas at Austin
+Austin, TX 78712 USA
+jbaldrid@mail.utexas.edu
+Abstract
+We investigate automatic geolocation (i.e.
+identification of the location, expressed as
+latitude/longitude coordinates) of documents.
+Geolocation can be an effective means of sum-
+marizing large document collections and it is
+an important component of geographic infor-
+mation retrieval. We describe several simple
+supervised methods for document geolocation
+using only the document?s raw text as evi-
+dence. All of our methods predict locations
+in the context of geodesic grids of varying de-
+grees of resolution. We evaluate the methods
+on geotagged Wikipedia articles and Twitter
+feeds. For Wikipedia, our best method obtains
+a median prediction error of just 11.8 kilome-
+ters. Twitter geolocation is more challenging:
+we obtain a median error of 479 km, an im-
+provement on previous results for the dataset.
+1 Introduction
+There are a variety of applications that arise from
+connecting linguistic content?be it a word, phrase,
+document, or entire corpus?to geography. Lei-
+dner (2008) provides a systematic overview of
+geography-based language applications over the
+previous decade, with a special focus on the prob-
+lem of toponym resolution?identifying and disam-
+biguating the references to locations in texts. Per-
+haps the most obvious and far-reaching applica-
+tion is geographic information retrieval (Ding et al,
+2000; Martins, 2009; Andogah, 2010), with ap-
+plications like MetaCarta?s geographic text search
+(Rauch et al, 2003) and NewsStand (Teitler et al,
+2008); these allow users to browse and search for
+content through a geo-centric interface. The Perseus
+project performs automatic toponym resolution on
+historical texts in order to display a map with each
+text showing the locations that are mentioned (Smith
+and Crane, 2001); Google Books also does this
+for some books, though the toponyms are identified
+and resolved quite crudely. Hao et al(2010) use
+a location-based topic model to summarize travel-
+ogues, enrich them with automatically chosen im-
+ages, and provide travel recommendations. Eisen-
+stein et al(2010) investigate questions of dialec-
+tal differences and variation in regional interests in
+Twitter users using a collection of geotagged tweets.
+An intuitive and effective strategy for summa-
+rizing geographically-based data is identification of
+the location?a specific latitude and longitude?that
+forms the primary focus of each document. De-
+termining a single location of a document is only
+a well-posed problem for certain documents, gen-
+erally of fairly small size, but there are a number
+of natural situations in which such collections arise.
+For example, a great number of articles in Wikipedia
+have been manually geotagged; this allows those ar-
+ticles to appear in their geographic locations while
+geobrowsing in an application like Google Earth.
+Overell (2009) investigates the use of Wikipedia
+as a source of data for article geolocation, in addition
+to article classification by category (location, per-
+son, etc.) and toponym resolution. Overell?s main
+goal is toponym resolution, for which geolocation
+serves as an input feature. For document geoloca-
+tion, Overell uses a simple model that makes use
+only of the metadata available (article title, incom-
+ing and outgoing links, etc.)?the actual article text
+955
+is not used at all. However, for many document col-
+lections, such metadata is unavailable, especially in
+the case of recently digitized historical documents.
+Eisenstein et al (2010) evaluate their geographic
+topic model by geolocating USA-based Twitter
+users based on their tweet content. This is essen-
+tially a document geolocation task, where each doc-
+ument is a concatenation of all the tweets for a single
+user. Their geographic topic model receives super-
+vision from many documents/users and predicts lo-
+cations for unseen documents/users.
+In this paper, we tackle document geolocation us-
+ing several simple supervised methods on the textual
+content of documents and a geodesic grid as a dis-
+crete representation of the earth?s surface. Our ap-
+proach is similar to that of Serdyukov et al (2009),
+who geolocate Flickr images using their associated
+textual tags.1 Essentially, the task is cast similarly
+to language modeling approaches in information re-
+trieval (Ponte and Croft, 1998). Discrete cells rep-
+resenting areas on the earth?s surface correspond to
+documents (with each cell-document being a con-
+catenation of all actual documents that are located
+in that cell); new documents are then geolocated to
+the most similar cell according to standard measures
+such as Kullback-Leibler divergence (Zhai and Laf-
+ferty, 2001). Performance is measured both on geo-
+tagged Wikipedia articles (Overell, 2009) and tweets
+(Eisenstein et al, 2010). We obtain high accuracy on
+Wikipedia using KL divergence, with a median error
+of just 11.8 kilometers. For the Twitter data set, we
+obtain a median error of 479 km, which improves
+on the 494 km error of Eisenstein et al An advan-
+tage of our approach is that it is far simpler, is easy
+to implement, and scales straightforwardly to large
+datasets like Wikipedia.
+2 Data
+Wikipedia As of April 15, 2011, Wikipedia has
+some 18.4 million content-bearing articles in 281
+language-specific encyclopedias. Among these, 39
+have over 100,000 articles, including 3.61 mil-
+lion articles in the English-language edition alone.
+Wikipedia articles generally cover a single subject;
+in addition, most articles that refer to geographically
+1We became aware of Serdyukov et al (2009) during the
+writing of the camera-ready version of this paper.
+fixed subjects are geotagged with their coordinates.
+Such articles are well-suited as a source of super-
+vised content for document geolocation purposes.
+Furthermore, the existence of versions in multiple
+languages means that the techniques in this paper
+can easily be extended to cover documents written
+in many of the world?s most common languages.
+Wikipedia?s geotagged articles encompass more
+than just cities, geographic formations and land-
+marks. For example, articles for events (like the
+shooting of JFK) and vehicles (such as the frigate
+USS Constitution) are geotagged. The latter type
+of article is actually quite challenging to geolocate
+based on the text content: though the ship is moored
+in Boston, most of the page discusses its role in var-
+ious battles along the eastern seaboard of the USA.
+However, such articles make up only a small fraction
+of the geotagged articles.
+For the experiments in this paper, we used a full
+dump of Wikipedia from September 4, 2010.2 In-
+cluded in this dump is a total of 10,355,226 articles,
+of which 1,019,490 have been geotagged. Excluding
+various types of special-purpose articles used pri-
+marily for maintaining the site (specifically, redirect
+articles and articles outside the main namespace),
+the dump includes 3,431,722 content-bearing arti-
+cles, of which 488,269 are geotagged.
+It is necessary to process the raw dump to ob-
+tain the plain text, as well as metadata such as geo-
+tagged coordinates. Extracting the coordinates, for
+example, is not a trivial task, as coordinates can
+be specified using multiple templates and in mul-
+tiple formats. Automatically-processed versions of
+the English-language Wikipedia site are provided by
+Metaweb,3 which at first glance promised to signif-
+icantly simplify the preprocessing. Unfortunately,
+these versions still need significant processing and
+they incorrectly eliminate some of the important
+metadata. In the end, we wrote our own code to
+process the raw dump. It should be possible to ex-
+tend this code to handle other languages with little
+difficulty. See Lieberman and Lin (2009) for more
+discussion of a related effort to extract and use the
+geotagged articles in Wikipedia.
+The entire set of articles was split 80/10/10 in
+2http://download.wikimedia.org/enwiki/
+20100904/pages-articles.xml.bz2
+3http://download.freebase.com/wex/
+956
+round-robin fashion into training, development, and
+testing sets after randomizing the order of the arti-
+cles, which preserved the proportion of geotagged
+articles. Running on the full data set is time-
+consuming, so development was done on a subset
+of about 80,000 articles (19.9 million tokens) as a
+training set and 500 articles as a development set.
+Final evaluation was done on the full dataset, which
+includes 390,574 training articles (97.2 million to-
+kens) and 48,589 test articles. A full run with all the
+six strategies described below (three baseline, three
+non-baseline) required about 4 months of computing
+time and about 10-16 GB of RAM when run on a 64-
+bit Intel Xeon E5540 CPU; we completed such jobs
+in under two days (wall clock) using the Longhorn
+cluster at the Texas Advanced Computing Center.
+Geo-tagged Microblog Corpus As a second eval-
+uation corpus on a different domain, we use the
+corpus of geotagged tweets collected and used by
+Eisenstein et al (2010).4 It contains 380,000 mes-
+sages from 9,500 users tweeting within the 48 states
+of the continental USA.
+We use the train/dev/test splits provided with the
+data; for these, the tweets of each user (a feed) have
+been concatenated to form a single document, and
+the location label associated with each document is
+the location of the first tweet by that user. This is
+generally a fair assumption as Twitter users typically
+tweet within a relatively small region. Given this
+setup, we will refer to Twitter users as documents in
+what follows; this keeps the terminology consistent
+with Wikipedia as well. The training split has 5,685
+documents (1.58 million tokens).
+Replication Our code (part of the TextGrounder
+system), our processed version of Wikipedia, and in-
+structions for replicating our experiments are avail-
+able on the TextGrounder website.5
+3 Grid representation for connecting texts
+to locations
+Geolocation involves identifying some spatial re-
+gion with a unit of text?be it a word, phrase, or
+document. The earth?s surface is continuous, so a
+4http://www.ark.cs.cmu.edu/GeoText/
+5http://code.google.com/p/textgrounder/
+wiki/WingBaldridge2011
+natural approach is to predict locations using a con-
+tinuous distribution. For example, Eisenstein et al
+(2010) use Gaussian distributions to model the loca-
+tions of Twitter users in the United States of Amer-
+ica. This appears to work reasonably well for that
+restricted region, but is likely to run into problems
+when predicting locations for anywhere on earth?
+instead, spherical distributions like the von Mises-
+Fisher distribution would need to be employed.
+We take here the simpler alternative of discretiz-
+ing the earth?s surface with a geodesic grid; this al-
+lows us to predict locations with a variety of stan-
+dard approaches over discrete outcomes. There are
+many ways of constructing geodesic grids. Like
+Serdyukov et al (2009), we use the simplest strat-
+egy: a grid of square cells of equal degree, such as
+1? by 1?. This produces variable-size regions that
+shrink latitudinally, becoming progressively smaller
+and more elongated the closer they get towards the
+poles. Other strategies, such as the quaternary trian-
+gular mesh (Dutton, 1996), preserve equal area, but
+are considerably more complex to implement. Given
+that most of the populated regions of interest for us
+are closer to the equator than not and that we use
+cells of quite fine granularity (down to 0.05?), the
+simple grid system was preferable.
+With such a discrete representation of the earth?s
+surface, there are four distributions that form the
+core of all our geolocation methods. The first is a
+standard multinomial distribution over the vocabu-
+lary for every cell in the grid. Given a grid G with
+cells ci and a vocabulary V with words wj , we have
+?cij = P (wj |ci). The second distribution is the
+equivalent distribution for a single test document dk,
+i.e. ?dkj = P (wj |dk). The third distribution is the
+reverse of the first: for a given word, its distribution
+over the earth?s cells, ?ji = P (ci|wj). The final dis-
+tribution is over the cells, ?i = P (ci).
+This grid representation ignores all higher level
+regions, such as states, countries, rivers, and moun-
+tain ranges, but it is consistent with the geocod-
+ing in both the Wikipedia and Twitter datasets.
+Nonetheless, note that the ?ji for words referring
+to such regions is likely to be much flatter (spread
+out) but with most of the mass concentrated in a
+set of connected cells. Those for highly focused
+point-locations will jam up in a few disconnected
+cells?in the extreme case, toponyms like Spring-
+957
+field which are connected to many specific point lo-
+cations around the earth.
+We use grids with cell sizes of varying granular-
+ity d?d for d = 0.1?, 0.5?, 1?, 5?, 10?. For example,
+with d=0.5?, a cell at the equator is roughly 56x55
+km and at 45? latitude it is 39x55 km. At this reso-
+lution, there are a total of 259,200 cells, of which
+35,750 are non-empty when using our Wikipedia
+training set. For comparison, at the equator a cell
+at d=5? is about 557x553 km (2,592 cells; 1,747
+non-empty) and at d=0.1? a cell is about 11.3x10.6
+km (6,480,000 cells; 170,005 non-empty).
+The geolocation methods predict a cell c? for a
+document, and the latitude and longitude of the
+degree-midpoint of the cell is used as the predicted
+location. Prediction error is the great-circle distance
+from these predicted locations to the locations given
+by the gold standard. The use of cell midpoints pro-
+vides a fair comparison for predictions with differ-
+ent cell sizes. This differs from the evaluation met-
+rics used by Serdyukov et al (2009), which are all
+computed relative to a given grid size. With their
+metrics, results for different granularities cannot be
+directly compared because using larger cells means
+less ambiguity when choosing c?. With our distance-
+based evaluation, large cells are penalized by the dis-
+tance from the midpoint to the actual location even
+when that location is in the same cell. Smaller cells
+reduce this penalty and permit the word distributions
+?cij to be much more specific for each cell, but they
+are harder to predict exactly and suffer more from
+sparse word counts compared to courser granular-
+ity. For large datasets like Wikipedia, fine-grained
+grids work very well, but the trade-off between reso-
+lution and sufficient training material shows up more
+clearly for the smaller Twitter dataset.
+4 Supervised models for document
+geolocation
+Our methods use only the text in the documents; pre-
+dictions are made based on the distributions ?, ?, and
+? introduced in the previous section. No use is made
+of metadata, such as links/followers and infoboxes.
+4.1 Supervision
+We acquire ? and ? straightforwardly from the train-
+ing material. The unsmoothed estimate of word wj?s
+probability in a test document dk is:6
+??dkj =
+#(wj , dk)
+?
+wl?V
+#(wl, dk)
+(1)
+Similarly for a cell ci, we compute the unsmoothed
+word distribution by aggregating all of the docu-
+ments located within ci:
+??cij =
+?
+dk?ci
+#(wj , dk)
+?
+dk?ci
+?
+wl?V
+#(wl, dk)
+(2)
+We compute the global distribution ?Dj over the set
+of all documents D in the same fashion.
+The word distribution of document dk backs off
+to the global distribution ?Dj . The probability mass
+?dk reserved for unseen words is determined by the
+empirical probability of having seen a word once in
+the document, motivated by Good-Turing smooth-
+ing. (The cell distributions are treated analogously.)
+That is:7
+?dk =
+|wj ? V s.t.#(wj , dk)=1|
+?
+wj?V
+#(wj , dk)
+(3)
+?(?dk)Dj =
+?Dj
+1? ?
+wl?dk
+?Dl
+(4)
+?dkj =
+{
+?dk?
+(?dk)
+Dj , if ??dkj = 0
+(1??dk)??dkj, o.w.
+(5)
+The distributions over cells for each word simply
+renormalizes the ?cij values to achieve a proper dis-
+tribution:
+?ji =
+?cij
+?
+ci?G
+?cij
+(6)
+A useful aspect of the ? distributions is that they can
+be plotted in a geobrowser using thematic mapping
+6We use #() to indicate the count of an event.
+7?(?dk)Dj is an adjusted version of ?Dj that is normalized over
+the subset of words not found in document dk. This adjustment
+ensures that the entire distribution is properly normalized.
+958
+techniques (Sandvik, 2008) to inspect the spread of
+a word over the earth. We used this as a simple way
+to verify the basic hypothesis that words that do not
+name locations are still useful for geolocation. In-
+deed, the Wikipedia distribution for mountain shows
+high density over the Rocky Mountains, Smokey
+Mountains, the Alps, and other ranges, while beach
+has high density in coastal areas. Words without
+inherent locational properties also have intuitively
+correct distributions: e.g., barbecue has high den-
+sity over the south-eastern United States, Texas, Ja-
+maica, and Australia, while wine is concentrated in
+France, Spain, Italy, Chile, Argentina, California,
+South Africa, and Australia.8
+Finally, the cell distributions are simply the rela-
+tive frequency of the number of documents in each
+cell: ?i = |ci||D| .
+A standard set of stop words are ignored. Also,
+all words are lowercased except in the case of the
+most-common-toponym baselines, where uppercase
+words serve as a fallback in case a toponym cannot
+be located in the article.
+4.2 Kullback-Leibler divergence
+Given the distributions for each cell, ?ci , in the grid,
+we use an information retrieval approach to choose
+a location for a test document dk: compute the sim-
+ilarity between its word distribution ?dk and that of
+each cell, and then choose the closest one. Kullback-
+Leibler (KL) divergence is a natural choice for this
+(Zhai and Lafferty, 2001). For distribution P and Q,
+KL divergence is defined as:
+KL(P ||Q) =
+?
+i
+P (i) log P (i)Q(i) (7)
+This quantity measures how good Q is as an encod-
+ing for P ? the smaller it is the better. The best cell
+c?KL is the one which provides the best encoding for
+the test document:
+c?KL = argmin
+ci?G
+KL(?dk ||?ci) (8)
+The fact that KL is not symmetric is desired here:
+the other direction, KL(?ci||?dk), asks which cell
+8This also acts as an exploratory tool. For example, due to
+a big spike on Cebu Province in the Philippines we learned that
+Cebuanos take barbecue very, very seriously.
+the test document is a good encoding for. With
+KL(?dk ||?ci), the log ratio of probabilities for each
+word is weighted by the probability of the word in
+the test document, ?dkj log
+?dkj
+?cij
+, which means that
+the divergence is more sensitive to the document
+rather than the overall cell.
+As an example for why non-symmetric KL in this
+order is appropriate, consider geolocating a page in
+a densely geotagged cell, such as the page for the
+Washington Monument. The distribution of the cell
+containing the monument will represent the words
+from many other pages having to do with muse-
+ums, US government, corporate buildings, and other
+nearby memorials and will have relatively small val-
+ues for many of the words that are highly indicative
+of the monument?s location. Many of those words
+appear only once in the monument?s page, but this
+will still be a higher value than for the cell and will
+weight the contribution accordingly.
+Rather than computing KL(?dk ||?ci) over the en-
+tire vocabulary, we restrict it to only the words in the
+document to compute KL more efficiently:
+KL(?dk ||?ci) =
+?
+wj?Vdk
+?dkj log
+?dkj
+?cij
+(9)
+Early experiments showed that it makes no differ-
+ence in the outcome to include the rest of the vocab-
+ulary. Note that because ?ci is smoothed, there are
+no zeros, so this value is always defined.
+4.3 Naive Bayes
+Naive Bayes is a natural generative model for the
+task of choosing a cell, given the distributions ?ci
+and ?: to generate a document, choose a cell ci ac-
+cording to ? and then choose the words in the docu-
+ment according to ?ci :
+c?NB = argmax
+ci?G
+PNB(ci|dk)
+= argmax
+ci?G
+P (ci)P (dk|ci)
+P (dk)
+= argmax
+ci?G
+?i
+?
+wj?Vdk
+?#(wj ,dk)cij (10)
+959
+This method maximizes the combination of the like-
+lihood of the document P (dk|ci) and the cell prior
+probability ?i.
+4.4 Average cell probability
+For each word, ?ji gives the probability of each cell
+in the grid. A simple way to compute a distribution
+for a document dk is to take a weighted average of
+the distributions for all words to compute the aver-
+age cell probability (ACP):
+c?ACP = argmax
+ci?G
+PACP (ci|dk)
+= argmax
+ci?G
+?
+wj?Vdk
+#(wj , dk)?ji
+?
+cl?G
+?
+wj?Vdk
+#(wj , dk)?jl
+= argmax
+ci?G
+?
+wj?Vdk
+#(wj , dk)?ji (11)
+This method, despite its conceptual simplicity,
+works well in practice. It could also be easily
+modified to use different weights for words, such
+as TF/IDF or relative frequency ratios between ge-
+olocated documents and non-geolocated documents,
+which we intend to try in future work.
+4.5 Baselines
+There are several natural baselines to use for com-
+parison against the methods described above.
+Random Choose c?rand randomly from a uniform
+distribution over the entire grid G.
+Cell prior maximum Choose the cell with the
+highest prior probability according to ?: c?cpm =
+argmaxci?G ?i.
+Most frequent toponym Identify the most fre-
+quent toponym in the article and the geotagged
+Wikipedia articles that match it. Then identify
+which of those articles has the most incoming links
+(a measure of its prominence), and then choose c?mft
+to be the cell that contains the geotagged location for
+that article. This is a strong baseline method, but can
+only be used with Wikipedia.
+Note that a toponym matches an article (or equiv-
+alently, the article is a candidate for the toponym) ei-
+ther if the toponym is the same as the article?s title,
+0
+20
+0
+40
+0
+60
+0
+80
+0
+10
+00
+12
+00
+14
+00
+grid size (degrees)
+m
+e
+a
+n
+ e
+rr
+o
+r 
+(km
+)
+0.1 0.5 1 5 10
+Most frequent toponym
+Avg. cell probability
+Naive Bayes
+Kullback?Leibler
+Figure 1: Plot of grid resolution in degrees versus mean
+error for each method on the Wikipedia dev set.
+or the same as the title after a parenthetical tag or
+comma-separated higher-level division is removed.
+For example, the toponym Tucson would match ar-
+ticles named Tucson, Tucson (city) or Tucson, Ari-
+zona. In this fashion, the set of toponyms, and the
+list of candidates for each toponym, is generated
+from the set of all geotagged Wikipedia articles.
+5 Experiments
+The approaches described in the previous section
+are evaluated on both the geotagged Wikipedia and
+Twitter datasets. Given a predicted cell c? for a docu-
+ment, the prediction error is the great-circle distance
+between the true location and the center of c?, as de-
+scribed in section 3.
+Grid resolution and thresholding The major pa-
+rameter of all our methods is the grid resolution.
+For both Wikipedia and Twitter, preliminary ex-
+periments on the development set were run to plot
+the prediction error for each method for each level
+of resolution, and the optimal resolution for each
+method was chosen for obtaining test results. For the
+Twitter dataset, an additional parameter is a thresh-
+old on the number of feeds each word occurs in: in
+the preprocessed splits of Eisenstein et al (2010), all
+vocabulary items that appear in fewer than 40 feeds
+are ignored. This thresholding takes away a lot of
+very useful material; e.g. in the first feed, it removes
+960
+Figure 2: Histograms of distribution of error distances (in
+km) for grid size 0.5? for each method on the Wikipedia
+dev set.
+both ?kirkland? and ?redmond? (towns in the East-
+side of Lake Washington near Seattle), very useful
+information for geolocating that user. This suggests
+that a lower threshold would be better, and this is
+borne out by our experiments.
+Figure 1 graphs the mean error of each method for
+different resolutions on the Wikipedia dev set, and
+Figure 2 graphs the distribution of error distances
+for grid size 0.5? for each method on the Wikipedia
+dev set. These results indicate that a grid size even
+smaller than 0.1? might be beneficial. To test this,
+we ran experiments using a grid size of 0.05? and
+0.01? using KL divergence. The mean errors on the
+dev set increased slightly, from 323 km to 348 and
+329 km, respectively, indicating that 0.1? is indeed
+the minimum.
+For the Twitter dataset, we considered both grid
+size and vocabulary threshold. We recomputed the
+distributions using several values for both parame-
+ters and evaluated on the development set. Table 1
+shows mean prediction error using KL divergence,
+for various combinations of threshold and grid size.
+Similar tables were constructed for the other strate-
+gies. Clearly, the larger grid size of 5? is more op-
+timal than the 0.1? best for Wikipedia. This is un-
+surprising, given the small size of the corpus. Over-
+all, there is a less clear trend for the other methods
+Grid size (degrees)
+Thr. 0.1 0.5 1 5 10
+0 1113.1 996.8 1005.1 969.3 1052.5
+2 1018.5 959.5 944.6 911.2 1021.6
+3 1027.6 940.8 954.0 913.6 1026.2
+5 1011.7 951.0 954.2 892.0 1013.0
+10 1011.3 968.8 938.5 929.8 1048.0
+20 1032.5 987.3 966.0 940.0 1070.1
+40 1080.8 1031.5 998.6 981.8 1127.8
+Table 1: Mean prediction error (km) on the Twitter dev
+set for various combinations of vocabulary threshold (in
+feeds) and grid size, using the KL divergence strategy.
+in terms of optimal resolution. Our interpretation
+of this is that there is greater sparsity for the Twit-
+ter dataset, and thus it is more sensitive to arbitrary
+aspects of how different user feeds are captured in
+different cells at different granularities.
+For the non-baseline strategies, a threshold be-
+tween about 2 and 5 was best, although no one value
+in this range was clearly better than another.
+Results Based on the optimal resolutions for each
+method, Table 2 provides the median and mean er-
+rors of the methods for both datasets, when run on
+the test sets. The results clearly show that KL di-
+vergence does the best of all the methods consid-
+ered, with Naive Bayes a close second. Prediction
+on Wikipedia is very good, with a median value of
+11.8 km. Error on Twitter is much higher at 479 km.
+Nonetheless, this beats Eisenstein et al?s (2010) me-
+dian results, though our mean is worse at 967. Us-
+ing the same threshold of 40 as Eisenstein et al, our
+results using KL divergence are slightly worse than
+theirs: median error of 516 km and mean of 986 km.
+The difference between Wikipedia and Twitter is
+unsurprising for several reasons. Wikipedia articles
+tend to use a lot of toponyms and words that corre-
+late strongly with particular places while many, per-
+haps most, tweets discuss quotidian details such as
+what the user ate for lunch. Second, Wikipedia arti-
+cles are generally longer and thus provide more text
+to base predictions on. Finally, there are orders of
+magnitude more training examples for Wikipedia,
+which allows for greater grid resolution and thus
+more precise location predictions.
+961
+Wikipedia Twitter
+Strategy Degree Median Mean Threshold Degree Median Mean
+Kullback-Leibler 0.1 11.8 221 5 5 479 967
+Naive Bayes 0.1 15.5 314 5 5 528 989
+Avg. cell probability 0.1 24.1 1421 2 10 659 1184
+Most frequent toponym 0.5 136 1927 - - - -
+Cell prior maximum 5 2333 4309 N/A 0.1 726 1141
+Random 0.1 7259 7192 20 0.1 1217 1588
+Eisenstein et al - - - 40 N/A 494 900
+Table 2: Prediction error (km) on the Wikipedia and Twitter test sets for each of the strategies using the optimal grid
+resolution and (for Twitter) the optimal threshold, as determined by performance on the corresponding development
+sets. Eisenstein et al (2010) used a fixed Twitter threshold of 40. Threshold makes no difference for cell prior
+maximum.
+Ships One of the most difficult types of Wikipedia
+pages to disambiguate are those of ships that either
+are stored or had sunk at a particular location. These
+articles tend to discuss the exploits of these ships,
+not their final resting places. Location error on these
+is usually quite large. However, prediction is quite
+good for ships that were sunk in particular battles
+which are described in detail on the page; examples
+are the USS Gambier Bay, USS Hammann (DD-
+412), and the HMS Majestic (1895). Another situa-
+tion that gives good results is when a ship is retired
+in a location where it is a prominent feature and is
+thus mentioned in the training set at that location.
+An example is the USS Turner Joy, which is in Bre-
+merton, Washington and figures prominently in the
+page for Bremerton (which is in the training set).
+Another interesting aspect of geolocating ship ar-
+ticles is that ships tend to end up sunk in remote bat-
+tle locations, such that their article is the only one
+located in the cell covering the location in the train-
+ing set. Ship terminology thus dominates such cells,
+with the effect that our models often (incorrectly)
+geolocate test articles about other ships to such loca-
+tions (and often about ships with similar properties).
+This also leads to generally more accurate geoloca-
+tion of HMS ships over USS ships; the former seem
+to have been sunk in more concentrated regions that
+are themselves less spread out globally.
+6 Related work
+Lieberman and Lin (2009) also work with geotagged
+Wikipedia articles, but they do in order so to ana-
+lyze the likely locations of users who edit such ar-
+ticles. Other researchers have investigated the use
+of Wikipedia as a source of data for other super-
+vised NLP tasks. Mihalcea and colleagues have in-
+vestigated the use of Wikipedia in conjunction with
+word sense disambiguation (Mihalcea, 2007), key-
+word extraction and linking (Mihalcea and Csomai,
+2007) and topic identification (Coursey et al, 2009;
+Coursey and Mihalcea, 2009). Cucerzan (2007)
+used Wikipedia to do named entity disambiguation,
+i.e. identification and coreferencing of named enti-
+ties by linking them to the Wikipedia article describ-
+ing the entity.
+Some approaches to document geolocation rely
+largely or entirely on non-textual metadata, which
+is often unavailable for many corpora of interest,
+Nonetheless, our methods could be combined with
+such methods when such metadata is available. For
+example, given that both Wikipedia and Twitter have
+a linked structure between documents, it would be
+possible to use the link-based method given in Back-
+strom et al (2010) for predicting the location of
+Facebook users based on their friends? locations. It
+is possible that combining their approach with our
+text-based approach would provide improvements
+for Facebook, Twitter and Wikipedia datasets. For
+example, their method performs poorly for users
+with few geolocated friends, but results improved
+by combining link-based predictions with IP address
+predictions. The text written users? updates could be
+an additional aid for locating such users.
+962
+7 Conclusion
+We have shown that automatic identification of the
+location of a document based only on its text can be
+performed with high accuracy using simple super-
+vised methods and a discrete grid representation of
+the earth?s surface. All of our methods are simple
+to implement, and both training and testing can be
+easily parallelized. Our most effective geolocation
+strategy finds the grid cell whose word distribution
+has the smallest KL divergence from that of the test
+document, and easily beats several effective base-
+lines. We predict the location of Wikipedia pages
+to a median error of 11.8 km and mean error of 221
+km. For Twitter, we obtain a median error of 479
+km and mean error of 967 km. Using naive Bayes
+and a simple averaging of word-level cell distribu-
+tions also both worked well; however, KL was more
+effective, we believe, because it weights the words
+in the document most heavily, and thus puts less im-
+portance on the less specific word distributions of
+each cell.
+Though we only use text, link-based predictions
+using the follower graph, as Backstrom et al (2010)
+do for Facebook, could improve results on the Twit-
+ter task considered here. It could also help with
+Wikipedia, especially for buildings: for example,
+the page for Independence Hall in Philadelphia links
+to geotagged ?friend? pages for Philadelphia, the
+Liberty Bell, and many other nearby locations and
+buildings. However, we note that we are still pri-
+marily interested in geolocation with only text be-
+cause there are a great many situations in which such
+linked structure is unavailable. This is especially
+true for historical corpora like those made available
+by the Perseus project.9
+The task of identifying a single location for an en-
+tire document provides a convenient way of evaluat-
+ing approaches for connecting texts with locations,
+but it is not fully coherent in the context of docu-
+ments that cover multiple locations. Nonetheless,
+both the average cell probability and naive Bayes
+models output a distribution over all cells, which
+could be used to assign multiple locations. Further-
+more, these cell distributions could additionally be
+used to define a document level prior for resolution
+of individual toponyms.
+9www.perseus.tufts.edu/
+Though we treated the grid resolution as a param-
+eter, the grids themselves form a hierarchy of cells
+containing finer-grained cells. Given this, there are
+a number of obvious ways to combine predictions
+from different resolutions. For example, given a cell
+of the finest grain, the average cell probability and
+naive Bayes models could successively back off to
+the values produced by their coarser-grained con-
+taining cells, and KL divergence could be summed
+from finest-to-coarsest grain. Another strategy for
+making models less sensitive to grid resolution is to
+smooth the per-cell word distributions over neigh-
+boring cells; this strategy improved results on Flickr
+photo geolocation for Serdyukov et al (2009).
+An additional area to explore is to remove the
+bag-of-words assumption and take into account the
+ordering between words. This should have a num-
+ber of obvious benefits, among which are sensitivity
+to multi-word toponyms such as New York, colloca-
+tions such as London, Ontario or London in Ontario,
+and highly indicative terms such as egg cream that
+are made up of generic constituents.
+Acknowledgments
+This research was supported by a grant from the
+Morris Memorial Trust Fund of the New York Com-
+munity Trust and from the Longhorn Innovation
+Fund for Technology. This paper benefited from re-
+viewer comments and from discussion in the Natu-
+ral Language Learning reading group at UT Austin,
+with particular thanks to Matt Lease.
+References
+Geoffrey Andogah. 2010. Geographically Constrained
+Information Retrieval. Ph.D. thesis, University of
+Groningen, Groningen, Netherlands, May.
+Lars Backstrom, Eric Sun, and Cameron Marlow. 2010.
+Find me if you can: improving geographical prediction
+with social and spatial proximity. In Proceedings of
+the 19th international conference on World wide web,
+WWW ?10, pages 61?70, New York, NY, USA. ACM.
+Kino Coursey and Rada Mihalcea. 2009. Topic identi-
+fication using wikipedia graph centrality. In Proceed-
+ings of Human Language Technologies: The 2009 An-
+nual Conference of the North American Chapter of the
+Association for Computational Linguistics, Compan-
+ion Volume: Short Papers, NAACL ?09, pages 117?
+963
+120, Morristown, NJ, USA. Association for Computa-
+tional Linguistics.
+Kino Coursey, Rada Mihalcea, and William Moen. 2009.
+Using encyclopedic knowledge for automatic topic
+identification. In Proceedings of the Thirteenth Con-
+ference on Computational Natural Language Learn-
+ing, CoNLL ?09, pages 210?218, Morristown, NJ,
+USA. Association for Computational Linguistics.
+Silviu Cucerzan. 2007. Large-scale named entity dis-
+ambiguation based on Wikipedia data. In Proceedings
+of the 2007 Joint Conference on Empirical Methods
+in Natural Language Processing and Computational
+Natural Language Learning (EMNLP-CoNLL), pages
+708?716, Prague, Czech Republic, June. Association
+for Computational Linguistics.
+Junyan Ding, Luis Gravano, and Narayanan Shivaku-
+mar. 2000. Computing geographical scopes of web re-
+sources. In Proceedings of the 26th International Con-
+ference on Very Large Data Bases, VLDB ?00, pages
+545?556, San Francisco, CA, USA. Morgan Kauf-
+mann Publishers Inc.
+G. Dutton. 1996. Encoding and handling geospatial data
+with hierarchical triangular meshes. In M.J. Kraak and
+M. Molenaar, editors, Advances in GIS Research II,
+pages 505?518, London. Taylor and Francis.
+Jacob Eisenstein, Brendan O?Connor, Noah A. Smith,
+and Eric P. Xing. 2010. A latent variable model
+for geographic lexical variation. In Proceedings of
+the 2010 Conference on Empirical Methods in Natural
+Language Processing, pages 1277?1287, Cambridge,
+MA, October. Association for Computational Linguis-
+tics.
+Qiang Hao, Rui Cai, Changhu Wang, Rong Xiao, Jiang-
+Ming Yang, Yanwei Pang, and Lei Zhang. 2010.
+Equip tourists with knowledge mined from travel-
+ogues. In Proceedings of the 19th international con-
+ference on World wide web, WWW ?10, pages 401?
+410, New York, NY, USA. ACM.
+Jochen L. Leidner. 2008. Toponym Resolution in Text:
+Annotation, Evaluation and Applications of Spatial
+Grounding of Place Names. Dissertation.Com, Jan-
+uary.
+M. D. Lieberman and J. Lin. 2009. You are where you
+edit: Locating Wikipedia users through edit histories.
+In ICWSM?09: Proceedings of the 3rd International
+AAAI Conference on Weblogs and Social Media, pages
+106?113, San Jose, CA, May.
+Bruno Martins. 2009. Geographically Aware Web Text
+Mining. Ph.D. thesis, University of Lisbon.
+Rada Mihalcea and Andras Csomai. 2007. Wikify!: link-
+ing documents to encyclopedic knowledge. In Pro-
+ceedings of the sixteenth ACM conference on Con-
+ference on information and knowledge management,
+CIKM ?07, pages 233?242, New York, NY, USA.
+ACM.
+Rada Mihalcea. 2007. Using Wikipedia for Auto-
+matic Word Sense Disambiguation. In North Ameri-
+can Chapter of the Association for Computational Lin-
+guistics (NAACL 2007).
+Simon Overell. 2009. Geographic Information Re-
+trieval: Classification, Disambiguation and Mod-
+elling. Ph.D. thesis, Imperial College London.
+Jay M. Ponte and W. Bruce Croft. 1998. A language
+modeling approach to information retrieval. In Pro-
+ceedings of the 21st annual international ACM SIGIR
+conference on Research and development in informa-
+tion retrieval, SIGIR ?98, pages 275?281, New York,
+NY, USA. ACM.
+Erik Rauch, Michael Bukatin, and Kenneth Baker. 2003.
+A confidence-based framework for disambiguating ge-
+ographic terms. In Proceedings of the HLT-NAACL
+2003 workshop on Analysis of geographic references
+- Volume 1, HLT-NAACL-GEOREF ?03, pages 50?54,
+Stroudsburg, PA, USA. Association for Computational
+Linguistics.
+Bjorn Sandvik. 2008. Using KML for thematic mapping.
+Master?s thesis, The University of Edinburgh.
+Pavel Serdyukov, Vanessa Murdock, and Roelof van
+Zwol. 2009. Placing flickr photos on a map. In Pro-
+ceedings of the 32nd international ACM SIGIR con-
+ference on Research and development in information
+retrieval, SIGIR ?09, pages 484?491, New York, NY,
+USA. ACM.
+David A. Smith and Gregory Crane. 2001. Disam-
+biguating geographic names in a historical digital li-
+brary. In Proceedings of the 5th European Confer-
+ence on Research and Advanced Technology for Digi-
+tal Libraries, ECDL ?01, pages 127?136, London, UK.
+Springer-Verlag.
+B. E. Teitler, M. D. Lieberman, D. Panozzo, J. Sankara-
+narayanan, H. Samet, and J. Sperling. 2008. News-
+Stand: A new view on news. In GIS?08: Proceedings
+of the 16th ACM SIGSPATIAL International Confer-
+ence on Advances in Geographic Information Systems,
+pages 144?153, Irvine, CA, November.
+Chengxiang Zhai and John Lafferty. 2001. Model-based
+feedback in the language modeling approach to infor-
+mation retrieval. In Proceedings of the tenth interna-
+tional conference on Information and knowledge man-
+agement, CIKM ?01, pages 403?410, New York, NY,
+USA. ACM.
+964

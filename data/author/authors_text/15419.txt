@@ -1,0 +1,3375 @@
+Proceedings of the 2010 Conference on Empirical Methods in Natural Language Processing, pages 34?44,
+MIT, Massachusetts, USA, 9-11 October 2010. c?2010 Association for Computational Linguistics
+Turbo Parsers: Dependency Parsing by Approximate Variational Inference
+Andre? F. T. Martins?? Noah A. Smith? Eric P. Xing?
+?School of Computer Science
+Carnegie Mellon University
+Pittsburgh, PA 15213, USA
+{afm,nasmith,epxing}@cs.cmu.edu
+Pedro M. Q. Aguiar?
+?Instituto de Sistemas e Robo?tica
+Instituto Superior Te?cnico
+Lisboa, Portugal
+aguiar@isr.ist.utl.pt
+Ma?rio A. T. Figueiredo?
+?Instituto de Telecomunicac?o?es
+Instituto Superior Te?cnico
+Lisboa, Portugal
+mtf@lx.it.pt
+Abstract
+We present a unified view of two state-of-the-
+art non-projective dependency parsers, both
+approximate: the loopy belief propagation
+parser of Smith and Eisner (2008) and the re-
+laxed linear program of Martins et al (2009).
+By representing the model assumptions with
+a factor graph, we shed light on the optimiza-
+tion problems tackled in each method. We also
+propose a new aggressive online algorithm to
+learn the model parameters, which makes use
+of the underlying variational representation.
+The algorithm does not require a learning rate
+parameter and provides a single framework for
+a wide family of convex loss functions, includ-
+ing CRFs and structured SVMs. Experiments
+show state-of-the-art performance for 14 lan-
+guages.
+1 Introduction
+Feature-rich discriminative models that break local-
+ity/independence assumptions can boost a parser?s
+performance (McDonald et al, 2006; Huang, 2008;
+Finkel et al, 2008; Smith and Eisner, 2008; Martins
+et al, 2009; Koo and Collins, 2010). Often, infer-
+ence with such models becomes computationally in-
+tractable, causing a demand for understanding and
+improving approximate parsing algorithms.
+In this paper, we show a formal connection be-
+tween two recently-proposed approximate inference
+techniques for non-projective dependency parsing:
+loopy belief propagation (Smith and Eisner, 2008)
+and linear programming relaxation (Martins et al,
+2009). While those two parsers are differently moti-
+vated, we show that both correspond to inference in
+a factor graph, and both optimize objective functions
+over local approximations of the marginal polytope.
+The connection is made clear by writing the explicit
+declarative optimization problem underlying Smith
+and Eisner (2008) and by showing the factor graph
+underlying Martins et al (2009). The success of
+both approaches parallels similar approximations in
+other fields, such as statistical image processing and
+error-correcting coding. Throughtout, we call these
+turbo parsers.1
+Our contributions are not limited to dependency
+parsing: we present a general method for inference
+in factor graphs with hard constraints (?2), which
+extends some combinatorial factors considered by
+Smith and Eisner (2008). After presenting a geo-
+metric view of the variational approximations un-
+derlying message-passing algorithms (?3), and clos-
+ing the gap between the two aforementioned parsers
+(?4), we consider the problem of learning the model
+parameters (?5). To this end, we propose an ag-
+gressive online algorithm that generalizes MIRA
+(Crammer et al, 2006) to arbitrary loss functions.
+We adopt a family of losses subsuming CRFs (Laf-
+ferty et al, 2001) and structured SVMs (Taskar et
+al., 2003; Tsochantaridis et al, 2004). Finally, we
+present a technique for including features not at-
+tested in the training data, allowing for richer mod-
+els without substantial runtime costs. Our experi-
+ments (?6) show state-of-the-art performance on de-
+pendency parsing benchmarks.
+1The name stems from ?turbo codes,? a class of high-
+performance error-correcting codes introduced by Berrou et al
+(1993) for which decoding algorithms are equivalent to running
+belief propagation in a graph with loops (McEliece et al, 1998).
+34
+2 Structured Inference and Factor Graphs
+Denote by X a set of input objects from which we
+want to infer some hidden structure conveyed in an
+output set Y. Each input x ? X (e.g., a sentence)
+is associated with a set of candidate outputs Y(x) ?
+Y (e.g., parse trees); we are interested in the case
+where Y(x) is a large structured set.
+Choices about the representation of elements of
+Y(x) play a major role in algorithm design. In
+many problems, the elements of Y(x) can be rep-
+resented as discrete-valued vectors of the form y =
+?y1, . . . , yI?, each yi taking values in a label set Yi.
+For example, in unlabeled dependency parsing, I is
+the number of candidate dependency arcs (quadratic
+in the sentence length), and each Yi = {0, 1}. Of
+course, the yi are highly interdependent.
+Factor Graphs. Probabilistic models like CRFs
+(Lafferty et al, 2001) assume a factorization of the
+conditional distribution of Y ,
+Pr(Y = y | X = x) ?
+?
+C?C ?C(x,yC), (1)
+where each C ? {1, . . . , I} is a factor, C is the set
+of factors, each yC , ?yi?i?C denotes a partial out-
+put assignment, and each ?C is a nonnegative po-
+tential function that depends on the output only via
+its restriction to C. A factor graph (Kschischang
+et al, 2001) is a convenient representation for the
+factorization in Eq. 1: it is a bipartite graph Gx com-
+prised of variable nodes {1, . . . , I} and factor nodes
+C ? C, with an edge connecting the ith variable
+node and a factor node C iff i ? C. Hence, the fac-
+tor graph Gx makes explicit the direct dependencies
+among the variables {y1, . . . , yI}.
+Factor graphs have been used for several NLP
+tasks, such as dependency parsing, segmentation,
+and co-reference resolution (Sutton et al, 2007;
+Smith and Eisner, 2008; McCallum et al, 2009).
+Hard and Soft Constraint Factors. It may be
+the case that valid outputs are a proper subset of
+Y1 ? ? ? ? ? YI?for example, in dependency pars-
+ing, the entries of the output vector y must jointly
+define a spanning tree. This requires hard constraint
+factors that rule out forbidden partial assignments
+by mapping them to zero potential values. See Ta-
+ble 1 for an inventory of hard constraint factors used
+in this paper. Factors that are not of this special kind
+are called soft factors, and have strictly positive po-
+tentials. We thus have a partition C = Chard ? Csoft.
+We let the soft factor potentials take the form
+?C(x,yC) , exp(?>?C(x,yC)), where ? ? R
+d
+is a vector of parameters (shared across factors) and
+?C(x,yC) is a local feature vector. The conditional
+distribution of Y (Eq. 1) thus becomes log-linear:
+Pr?(y|x) = Zx(?)
+?1 exp(?>?(x,y)), (2)
+where Zx(?) ,
+?
+y??Y(x) exp(?
+>?(x,y?)) is the
+partition function, and the features decompose as:
+?(x,y) ,
+?
+C?Csoft
+?C(x,yC). (3)
+Dependency Parsing. Smith and Eisner (2008)
+proposed a factor graph representation for depen-
+dency parsing (Fig. 1). The graph has O(n2) vari-
+able nodes (n is the sentence length), one per candi-
+date arc a , ?h,m? linking a head h and modifier
+m. Outputs are binary, with ya = 1 iff arc a belongs
+to the dependency tree. There is a hard factor TREE
+connected to all variables, that constrains the overall
+arc configurations to form a spanning tree. There is a
+unary soft factor per arc, whose log-potential reflects
+the score of that arc. There are also O(n3) pair-
+wise factors; their log-potentials reflect the scores
+of sibling and grandparent arcs. These factors cre-
+ate loops, thus calling for approximate inference.
+Without them, the model is arc-factored, and ex-
+act inference in it is well studied: finding the most
+probable parse tree takes O(n3) time with the Chu-
+Liu-Edmonds algorithm (McDonald et al, 2005),2
+and computing posterior marginals for all arcs takes
+O(n3) time via the matrix-tree theorem (Smith and
+Smith, 2007; Koo et al, 2007).
+Message-passing algorithms. In general
+factor graphs, both inference problems?
+obtaining the most probable output (the MAP)
+argmaxy?Y(x) Pr?(y|x), and computing the
+marginals Pr?(Yi = yi|x)?can be addressed
+with the belief propagation (BP) algorithm (Pearl,
+1988), which iteratively passes messages between
+variables and factors reflecting their local ?beliefs.?
+2There is a faster but more involvedO(n2) algorithm due to
+Tarjan (1977).
+35
+A general binary factor: ?C(v1, . . . , vn) =
+?
+1 v1, . . . , vn ? SC
+0 otherwise,
+where SC ? {0, 1}n.
+?Message-induced distribution: ? , ?mj?C?j=1,...,n ? Partition function: ZC(?) ,
+P
+?v1,...,vn??SC
+Qn
+i=1m
+vi
+i?C
+?Marginals: MARGi(?) , Pr?{Vi = 1|?V1, . . . , Vn? ? SC} ?Max-marginals: MAX-MARGi,b(?) , maxv?SC Pr?(v|vi = b)
+? Sum-prod.: mC?i = m
+?1
+i?C ? MARGi(?)/(1? MARGi(?)) ?Max-prod.: mC?i = m
+?1
+i?C ? MAX-MARGi,1(?)/MAX-MARGi,0(?)
+? Local agreem. constr.: z ? conv SC , where z = ??i(1)?ni=1 ? Entropy: HC = logZC(?)?
+Pn
+i=1 MARGi(?) logmi?C
+TREE ?TREE(?ya?a?A) =
+?
+1 y ? Ytree (i.e., {a ? A | ya = 1} is a directed spanning tree)
+0 otherwise,
+where A is the set of candidate arcs.
+? Partition function Ztree(?) and marginals ?MARGa(?)?a?A computed via the matrix-tree theorem, with ? , ?ma?TREE?a?A
+? Sum-prod.: mTREE?a = m
+?1
+a?TREE ? MARGa(?)/(1? MARGa(?))
+?Max-prod.: mTREE?a = m
+?1
+a?TREE ? MAX-MARGa,1(?)/MAX-MARGa,0(?), where MAX-MARGa,b(?) , maxy?Ytree Pr?(y|ya = b)
+? Local agreem. constr.: z ? Ztree, where Ztree , convYtree is the arborescence polytope
+? Entropy: Htree = logZtree(?)?
+P
+a?A MARGa(?) logma?TREE
+XOR (?one-hot?) ?XOR(v1, . . . , vn) =
+?
+1
+Pn
+i=1 vi = 1
+0 otherwise.
+? Sum-prod.: mXOR?i =
+?P
+j 6=imj?XOR
+??1
+?Max-prod.: mXOR?i =
+`
+maxj 6=imj?XOR
+??1
+? Local agreem. constr.:
+P
+i zi = 1, zi ? [0, 1],?i ?HXOR = ?
+P
+i(mi?XOR/
+P
+j mj?XOR) log(mi?XOR/
+P
+j mj?XOR)
+OR ?OR(v1, . . . , vn) =
+?
+1
+Pn
+i=1 vi ? 1
+0 otherwise.
+? Sum-prod.: mOR?i =
+?
+1?
+Q
+j 6=i(1 +mj?OR)
+?1
+??1
+?Max-prod.: mOR?i = max{1,minj 6=im
+?1
+j?OR}
+? Local agreem. constr.:
+P
+i zi ? 1, zi ? [0, 1],?i
+OR-WITH-OUTPUT ?OR-OUT(v1, . . . , vn) =
+?
+1 vn =
+Wn?1
+i=1 vi
+0 otherwise.
+? Sum-prod.: mOR-OUT?i =
+( ?
+1? (1?m?1n?OR-OUT)
+Q
+j 6=i,n(1 +mj?OR-OUT)
+?1
+??1
+i < n
+Q
+j 6=n(1 +mj?OR-OUT)? 1 i = n.
+?Max-prod.: mOR-OUT?i =
+(
+min mn?OR-OUT
+Q
+j 6=i,n max{1,mj?OR-OUT},max{1,minj 6=i,nm
+?1
+j?OR-OUT}
+o
+i < n
+Q
+j 6=n max{1,mj?OR-OUT}min{1,maxj 6=nmj?OR-OUT} i = n.
+Table 1: Hard constraint factors, their potentials, messages, and entropies. The top row shows expressions for a
+general binary factor: each outgoing message is computed from incoming marginals (in the sum-product case), or
+max-marginals (in the max-product case); the entropy of the factor (see ?3) is computed from these marginals and the
+partition function; the local agreement constraints (?4) involve the convex hull of the set SC of allowed configurations
+(see footnote 5). The TREE, XOR, OR and OR-WITH-OUTPUT factors allow tractable computation of all these quantities
+(rows 2?5). Two of these factors (TREE and XOR) had been proposed by Smith and Eisner (2008); we provide further
+information (max-product messages, entropies, and local agreement constraints). Factors OR and OR-WITH-OUTPUT
+are novel to the best of our knowledge. This inventory covers many cases, since the above formulae can be extended
+to the case where some inputs are negated: just replace the corresponding messages by their reciprocal, vi by 1? vi,
+etc. This allows building factors NAND (an OR factor with negated inputs), IMPLY (a 2-input OR with the first input
+negated), and XOR-WITH-OUTPUT (an XOR factor with the last input negated).
+In sum-product BP, the messages take the form:3
+Mi?C(yi) ?
+?
+D 6=CMD?i(yi) (4)
+MC?i(yi) ?
+?
+yC?yi
+?C(yC)
+?
+j 6=iMj?C(yj). (5)
+In max-product BP, the summation in Eq. 5 is re-
+placed by a maximization. Upon convergence, vari-
+able and factor beliefs are computed as:
+?i(yi) ?
+?
+CMC?i(yi) (6)
+?C(yC) ? ?C(yC)
+?
+iMi?C(yi). (7)
+BP is exact when the factor graph is a tree: in the
+sum-product case, the beliefs in Eqs. 6?7 correspond
+3We employ the standard ? notation, where a summa-
+tion/maximization indexed by yC ? yi means that it is over
+all yC with the i-th component held fixed and set to yi.
+to the true marginals, and in the max-product case,
+maximizing each ?i(yi) yields the MAP output. In
+graphs with loops, BP is an approximate method, not
+guaranteed to converge, nicknamed loopy BP. We
+highlight a variational perspective of loopy BP in ?3;
+for now we consider algorithmic issues. Note that
+computing the factor-to-variable messages for each
+factorC (Eq. 5) requires a summation/maximization
+over exponentially many configurations. Fortu-
+nately, for all the hard constraint factors in rows 3?5
+of Table 1, this computation can be done in linear
+time (and polynomial for the TREE factor)?this ex-
+tends results presented in Smith and Eisner (2008).4
+4The insight behind these speed-ups is that messages on
+binary-valued potentials can be expressed as MC?i(yi) ?
+36
+TREE
+1
+ARC
+(T,RE)
+SIB
+(T1RE1RE)1 2
+SIB
+(T1RE1RE)1 3
+SIB
+(T1RE1RE)2 3GRAND
+(A,T1RE)1
+2
+ARC
+(T,RE) 3
+ARC
+(T,RE)ARC(A,T)
+Figure 1: Factor graph corresponding to the dependency
+parsing model of Smith and Eisner (2008) with sibling
+and grandparent features. Circles denote variable nodes,
+and squares denote factor nodes. Note the loops created
+by the inclusion of pairwise factors (GRAND and SIB).
+In Table 1 we present closed-form expressions
+for the factor-to-variable message ratios mC?i ,
+MC?i(1)/MC?i(0) in terms of their variable-to-
+factor counterparts mi?C , Mi?C(1)/Mi?C(0);
+these ratios are all that is necessary when the vari-
+ables are binary. Detailed derivations are presented
+in an extended version of this paper (Martins et al,
+2010b).
+3 Variational Representations
+Let Px , {Pr?(.|x) | ? ? Rd} be the family of all
+distributions of the form in Eq. 2. We next present
+an alternative parametrization for the distributions in
+Px in terms of factor marginals. We will see that
+each distribution can be seen as a point in the so-
+called marginal polytope (Wainwright and Jordan,
+2008); this will pave the way for the variational rep-
+resentations to be derived next.
+Parts and Output Indicators. A part is a pair
+?C,yC?, where C is a soft factor and yC a partial
+output assignment. We let R = {?C,yC? | C ?
+Csoft,yC ?
+?
+i?C Yi} be the set of all parts. Given
+an output y? ? Y(x), a part ?C,yC? is said to be ac-
+tive if it locally matches the output, i.e., if yC = y?C .
+Any output y? ? Y(x) can be mapped to a |R|-
+dimensional binary vector ?(y?) indicating which
+parts are active, i.e., [?(y?)]?C,yC? = 1 if yC = y
+?
+C
+Pr{?C(YC) = 1|Yi = yi} and MC?i(yi) ?
+max?C(yC)=1 Pr{YC = yC |Yi = yi}, respectively for the
+sum-product and max-product cases; these probabilities are in-
+duced by the messages in Eq. 4: for an event A ?
+Q
+i?C Yi,
+Pr{YC ? A} ,
+P
+yC
+I(yC ? A)
+Q
+i?CMi?C(yi).
+and 0 otherwise; ?(y?) is called the output indicator
+vector. This mapping allows decoupling the feature
+vector in Eq. 3 as the product of an input matrix and
+an output vector:
+?(x,y) =
+?
+C?Csoft
+?C(x,yC) = F(x)?(y), (8)
+where F(x) is a d-by-|R| matrix whose columns
+contain the part-local feature vectors ?C(x,yC).
+Observe, however, that not every vector in {0, 1}|R|
+corresponds necessarily to a valid output in Y(x).
+Marginal Polytope. Moving to vector representa-
+tions of outputs leads naturally to a geometric view
+of the problem. The marginal polytope is the convex
+hull5 of all the ?valid? output indicator vectors:
+M(Gx) , conv{?(y) | y ? Y(x)}.
+Note that M(Gx) only depends on the factor graph
+Gx and the hard constraints (i.e., it is independent of
+the parameters ?). The importance of the marginal
+polytope stems from two facts: (i) each vertex of
+M(Gx) corresponds to an output in Y(x); (ii) each
+point in M(Gx) corresponds to a vector of marginal
+probabilities that is realizable by some distribution
+(not necessarily in Px) that factors according to Gx.
+Variational Representations. We now describe
+formally how the points in M(Gx) are linked to the
+distributions in Px. We extend the ?canonical over-
+complete parametrization? case, studied by Wain-
+wright and Jordan (2008), to our scenario (common
+in NLP), where arbitrary features are allowed and
+the parameters are tied (shared by all factors). Let
+H(Pr?(.|x)) , ?
+?
+y?Y(x) Pr?(y|x) log Pr?(y|x)
+denote the entropy of Pr?(.|x), and E?[.] the ex-
+pectation under Pr?(.|x). The component of ? ?
+M(Gx) indexed by part ?C,yC? is denoted ?C(yC).
+Proposition 1. There is a map coupling each distri-
+bution Pr?(.|x) ? Px to a unique ? ? M(Gx) such
+that E?[?(Y )] = ?. Define H(?) , H(Pr?(.|x))
+if some Pr?(.|x) is coupled to ?, and H(?) = ??
+if no such Pr?(.|x) exists. Then:
+1. The following variational representation for the
+log-partition function (mentioned in Eq. 2) holds:
+logZx(?) = max
+??M(Gx)
+?>F(x)? +H(?). (9)
+5The convex hull of {z1, . . . , zk} is the set of points that can
+be written as
+Pk
+i=1 ?izi, where
+Pk
+i=1 ?i = 1 and each ?i ? 0.
+37
+Parameter?space Factor?log-potentials?
+space???????
+Marginal?polytope?
+Figure 2: Dual parametrization of the distributions in
+Px. Our parameter space (left) is first linearly mapped to
+the space of factor log-potentials (middle). The latter is
+mapped to the marginal polytope M(Gx) (right). In gen-
+eral only a subset of M(Gx) is reachable from our param-
+eter space. Any distribution in Px can be parametrized by
+a vector ? ? Rd or by a point ? ?M(Gx).
+2. The problem in Eq. 9 is convex and its solution
+is attained at the factor marginals, i.e., there is a
+maximizer ?? s.t. ??C(yC) = Pr?(YC = yC |x)
+for each C ? C. The gradient of the log-partition
+function is? logZx(?) = F(x)??.
+3. The MAP y? , argmaxy?Y(x) Pr?(y|x) can be
+obtained by solving the linear program
+?? , ?(y?) = argmax
+??M(Gx)
+?>F(x)?. (10)
+A proof of this proposition can be found in Mar-
+tins et al (2010a). Fig. 2 provides an illustration of
+the dual parametrization implied by Prop. 1.
+4 Approximate Inference & Turbo Parsing
+We now show how the variational machinery just
+described relates to message-passing algorithms and
+provides a common framework for analyzing two re-
+cent dependency parsers. Later (?5), Prop. 1 is used
+constructively for learning the model parameters.
+4.1 Loopy BP as a Variational Approximation
+For general factor graphs with loops, the marginal
+polytope M(Gx) cannot be compactly specified and
+the entropy term H(?) lacks a closed form, render-
+ing exact optimizations in Eqs. 9?10 intractable. A
+popular approximate algorithm for marginal infer-
+ence is sum-product loopy BP, which passes mes-
+sages as described in ?2 and, upon convergence,
+computes beliefs via Eqs. 6?7. Were loopy BP exact,
+these beliefs would be the true marginals and hence
+a point in the marginal polytope M(Gx). However,
+this need not be the case, as elucidated by Yedidia et
+al. (2001) and others, who first analyzed loopy BP
+from a variational perspective. The following two
+approximations underlie loopy BP:
+? The marginal polytope M(Gx) is approximated by
+the local polytope L(Gx). This is an outer bound;
+its name derives from the fact that it only imposes
+local agreement constraints ?i, yi ? Yi, C ? C:
+?
+yi
+?i(yi) = 1,
+?
+yC?yi
+?C(yC) = ?i(yi). (11)
+Namely, it is characterized by L(Gx) , {? ?
+R|R|+ | Eq. 11 holds ?i, yi ? Yi, C ? C}. The
+elements of L(Gx) are called pseudo-marginals.
+Clearly, the true marginals satisfy Eq. 11, and
+therefore M(Gx) ? L(Gx).
+? The entropy H is replaced by its Bethe approx-
+imation HBethe(? ) ,
+?I
+i=1(1 ? di)H(? i) +?
+C?CH(?C), where di = |{C | i ? C}| is the
+number of factors connected to the ith variable,
+H(? i) , ?
+?
+yi
+?i(yi) log ?i(yi) and H(?C) ,
+?
+?
+yC
+?C(yC) log ?C(yC).
+Any stationary point of sum-product BP is a lo-
+cal optimum of the variational problem in Eq. 9
+with M(Gx) replaced by L(Gx) and H replaced by
+HBethe (Yedidia et al, 2001). Note however that
+multiple optima may exist, since HBethe is not nec-
+essarily concave, and that BP may not converge.
+Table 1 shows closed form expressions for the
+local agreement constraints and entropies of some
+hard-constraint factors, obtained by invoking Eq. 7
+and observing that ?C(yC) must be zero if configu-
+ration yC is forbidden. See Martins et al (2010b).
+4.2 Two Dependency Turbo Parsers
+We next present our main contribution: a formal
+connection between two recent approximate depen-
+dency parsers, which at first sight appear unrelated.
+Recall that (i) Smith and Eisner (2008) proposed a
+factor graph (Fig. 1) in which they run loopy BP,
+and that (ii) Martins et al (2009) approximate pars-
+ing as the solution of a linear program. Here, we
+fill the blanks in the two approaches: we derive ex-
+plicitly the variational problem addressed in (i) and
+we provide the underlying factor graph in (ii). This
+puts the two approaches side-by-side as approximate
+methods for marginal and MAP inference. Since
+both rely on ?local? approximations (in the sense
+38
+of Eq. 11) that ignore the loops in their graphical
+models, we dub them turbo parsers by analogy with
+error-correcting turbo decoders (see footnote 1).
+Turbo Parser #1: Sum-Product Loopy BP. The
+factor graph depicted in Fig. 1?call it Gx?includes
+pairwise soft factors connecting sibling and grand-
+parent arcs.6 We next characterize the local polytope
+L(Gx) and the Bethe approximationHBethe inherent
+in Smith and Eisner?s loopy BP algorithm.
+Let A be the set of candidate arcs, and P ?
+A2 the set of pairs of arcs that have factors. Let
+? = ??A, ?P ? with ?A = ??a?a?A and ?P =
+??ab??a,b??P . Since all variables are binary, we may
+write, for each a ? A, ?a(1) = za and ?a(0) =
+1 ? za, where za is a variable constrained to [0, 1].
+Let zA , ?za?a?A; the local agreement constraints
+at the TREE factor (see Table 1) are written as zA ?
+Ztree(x), where Ztree(x) is the arborescence poly-
+tope, i.e., the convex hull of all incidence vectors
+of dependency trees (Martins et al, 2009). It is
+straightforward to write a contingency table and ob-
+tain the following local agreement constraints at the
+pairwise factors:
+?ab(1, 1) = zab, ?ab(0, 0) = 1? za ? zb + zab
+?ab(1, 0) = za ? zab, ?ab(0, 1) = zb ? zab.
+Noting that all these pseudo-marginals are con-
+strained to the unit interval, one can get rid of all
+variables ?ab and write everything as
+za ? [0, 1], zb ? [0, 1], zab ? [0, 1],
+zab ? za, zab ? zb, zab ? za + zb ? 1,
+(12)
+inequalities which, along with zA ? Ztree(x), de-
+fine the local polytope L(Gx). As for the factor en-
+tropies, start by noting that the TREE-factor entropy
+Htree can be obtained in closed form by computing
+the marginals z?A and the partition function Zx(?)
+(via the matrix-tree theorem) and recalling the vari-
+ational representation in Eq. 9, yielding Htree =
+logZx(?)? ?>F(x)z?A. Some algebra allows writ-
+ing the overall Bethe entropy approximation as:
+HBethe(? ) = Htree(zA)?
+?
+?a,b??P
+Ia;b(za, zb, zab), (13)
+where we introduced the mutual information asso-
+ciated with each pairwise factor, Ia;b(za, zb, zab) =
+6Smith and Eisner (2008) also proposed other variants with
+more factors, which we omit for brevity.
+TRE1
+ACTRTE(
+TRE1
+A1TRTE(
+,)SIARTE(
+,)SIB23GRNDARTE(
+TRE1AATTE( TRE1AAT1TE(
+,)SI
+AATE(
+TRE1BNDRS)AATE(
+)
+AATR(TRE1AATRTE(
+TRE1BG,RGDB)AATRTE(
+)ACTR(
+)A1TR(
+GRDB,)DS
+AR(
+E
+E
+E
+Figure 3: Details of the factor graph underlying the parser
+of Martins et al (2009). Dashed circles represent auxil-
+iary variables. See text and Table 1.
+?
+ya,yb
+?ab(ya, yb) log
+?ab(ya,yb)
+?a(ya)?b(yb)
+. The approximate
+variational expression becomes logZx(?) ?
+maxz ?
+>F(x)z +Htree(zA)?
+?
+?a,b??P
+Ia;b(za, zb, zab)
+s.t. zab ? za, zab ? zb,
+zab ? za + zb ? 1, ??a, b? ? P,
+zA ? Ztree,
+(14)
+whose maximizer corresponds to the beliefs re-
+turned by the Smith and Eisner?s loopy BP algorithm
+(if it converges).
+Turbo Parser #2: LP-Relaxed MAP. We now
+turn to the concise integer LP formulation of Mar-
+tins et al (2009). The formulation is exact but NP-
+hard, and so an LP relaxation is made there by drop-
+ping the integer constraints. We next construct a fac-
+tor graph G?x and show that the LP relaxation corre-
+sponds to an optimization of the form in Eq. 10, with
+the marginal polytope M(G?x) replaced by L(G
+?
+x).
+G?x includes the following auxiliary variable
+nodes: path variables ?pij?i=0,...,n,j=1,...,n, which
+indicate whether word j descends from i in the de-
+pendency tree, and flow variables ?fka ?a?A,k=1,...,n,
+which evaluate to 1 iff arc a ?carries flow? to k,
+i.e., iff there is a path from the root to k that passes
+through a. We need to seed these variables imposing
+p0k = pkk = 1,?k, f
+h
+?h,m? = 0, ?h,m; (15)
+i.e., any word descends from the root and from it-
+self, and arcs leaving a word carry no flow to that
+39
+word. This can be done with unary hard constraint
+factors. We then replace the TREE factor in Fig. 1 by
+the factors shown in Fig. 3:
+? O(n) XOR factors, each connecting all arc vari-
+ables of the form {?h,m?}h=0,...,n. These ensure
+that each word has exactly one parent. Each factor
+yields a local agreement constraint (see Table 1):
+?n
+h=0 z?h,m? = 1, m ? {1, . . . , n} (16)
+? O(n3) IMPLY factors, each expressing that if an
+arc carries flow, then that arc must be active. Such
+factors are OR factors with the first input negated,
+hence, the local agreement constraints are:
+fka ? za, a ? A, k ? {1, . . . , n}. (17)
+? O(n2) XOR-WITH-OUTPUT factors, which im-
+pose the constraint that each path variable pmk is
+active if and only if exactly one incoming arc in
+{?h,m?}h=0,...,n carries flow to k. Such factors
+are XOR factors with the last input negated, and
+hence their local constraints are:
+pmk =
+?n
+h=0 f
+k
+?h,m?, m, k ? {1, . . . , n} (18)
+? O(n2) XOR-WITH-OUTPUT factors to impose the
+constraint that words don?t consume other words?
+commodities; i.e., if h 6= k and k 6= 0, then there
+is a path from h to k iff exactly one outgoing arc
+in {?h,m?}m=1,...,n carries flow to k:
+phk =
+?n
+m=1 f
+k
+?h,m?, h, k ? {0, . . . , n}, k /? {0, h}.
+(19)
+L(G?x) is thus defined by the constraints in Eq. 12
+and 15?19. The approximate MAP problem, that
+replaces M(G?x) by L(G
+?
+x) in Eq. 10, thus becomes:
+maxz,f ,p ?
+>F(x)z
+s.t. Eqs. 12 and 15?19 are satisfied.
+(20)
+This is exactly the LP relaxation considered by Mar-
+tins et al (2009) in their multi-commodity flow
+model, for the configuration with siblings and grand-
+parent features.7 They also considered a config-
+uration with non-projectivity features?which fire
+if an arc is non-projective.8 That configuration
+can also be obtained here if variables {n?h,m?} are
+7To be precise, the constraints of Martins et al (2009) are
+recovered after eliminating the path variables, via Eqs. 18?19.
+8An arc ?h,m? is non-projective if there is some word in its
+span not descending from h (Kahane et al, 1998).
+added to indicate non-projective arcs and OR-WITH-
+OUTPUT hard constraint factors are inserted to en-
+force n?h,m? = z?h,m??
+?
+min(h,m)<j<min(h,m) ?phj .
+Details are omitted for space.
+In sum, although the approaches of Smith and Eis-
+ner (2008) and Martins et al (2009) look very dif-
+ferent, in reality both are variational approximations
+emanating from Prop. 1, respectively for marginal
+and MAP inference. However, they operate on dis-
+tinct factor graphs, respectively Figs. 1 and 3.9
+5 Online Learning
+Our learning algorithm is presented in Alg. 1. It is a
+generalized online learner that tackles `2-regularized
+empirical risk minimization of the form
+min??Rd
+?
+2???
+2 + 1m
+?m
+i=1 L(?;xi,yi), (21)
+where each ?xi,yi? is a training example, ? ? 0 is
+the regularization constant, and L(?;x,y) is a non-
+negative convex loss. Examples include the logistic
+loss used in CRFs (? log Pr?(y|x)) and the hinge
+loss of structured SVMs (maxy??Y(x) ?
+>(?(x,y?)?
+?(x,y)) + `(y?,y) for some cost function `). These
+are both special cases of the family defined in Fig. 4,
+which also includes the structured perceptron?s loss
+(? ? ?, ? = 0) and the softmax-margin loss of
+Gimpel and Smith (2010; ? = ? = 1).
+Alg. 1 is closely related to stochastic or online
+gradient descent methods, but with the key advan-
+tage of not needing a learning rate hyperparameter.
+We sketch the derivation of Alg. 1; full details can
+be found in Martins et al (2010a). On the tth round,
+one example ?xt,yt? is considered. We seek to solve
+min?,? ?m2 ?? ? ?t?
+2 + ?
+s.t. L(?;xt,yt) ? ?, ? ? 0,
+(23)
+9Given what was just exposed, it seems appealing to try
+max-product loopy BP on the factor graph of Fig. 1, or sum-
+product loopy BP on the one in Fig. 3. Both attempts present se-
+rious challenges: the former requires computing messages sent
+by the tree factor, which requires O(n2) calls to the Chu-Liu-
+Edmonds algorithm and hence O(n5) time. No obvious strat-
+egy seems to exist for simultaneous computation of all mes-
+sages, unlike in the sum-product case. The latter is even more
+challenging, as standard sum-product loopy BP has serious is-
+sues in the factor graph of Fig. 3; we construct in Martins et al
+(2010b) a simple example with a very poor Bethe approxima-
+tion. This might be fixed by using other variants of sum-product
+BP, e.g., ones in which the entropy approximation is concave.
+40
+L?,?(?;x,y) , 1? log
+?
+y??Y(x) exp
+[
+?
+(
+?>
+(
+?(x,y?)? ?(x,y)
+)
++ ?`(y?,y)
+)]
+(22)
+Figure 4: A family of loss functions including as particular cases the ones used in CRFs, structured SVMs, and the
+structured perceptron. The hyperparameter ? is the analogue of the inverse temperature in a Gibbs distribution, while
+? scales the cost. For any choice of ? > 0 and ? ? 0, the resulting loss function is convex in ?, since, up to a scale
+factor, it is the composition of the (convex) log-sum-exp function with an affine map.
+Algorithm 1 Aggressive Online Learning
+1: Input: {?xi,yi?}mi=1, ?, number of epochs K
+2: Initialize ?1 ? 0; set T = mK
+3: for t = 1 to T do
+4: Receive instance ?xt, yt? and set ?t = ?(yt)
+5: Solve Eq. 24 to obtain ??t and L?,?(?t, xt,yt)
+6: Compute?L?,?(?t, xt,yt)=F(xt)(??t??t)
+7: Compute ?t = min
+{
+1
+?m ,
+L?,?(?t;xt,yt)
+??L?,?(?t;xt,yt)?2
+}
+8: Return ?t+1 = ?t ? ?t?L?,?(?t;xt,yt)
+9: end for
+10: Return the averaged model ?? ? 1T
+?T
+t=1 ?t.
+which trades off conservativeness (stay close to the
+most recent solution ?t) and correctness (keep the
+loss small). Alg. 1?s lines 7?8 are the result of tak-
+ing the first-order Taylor approximation of L around
+?t, which yields the lower bound L(?;xt,yt) ?
+L(?t;xt,yt) + (? ? ?t)>?L(?t;xt,yt), and plug-
+ging that linear approximation into the constraint of
+Eq. 23, which gives a simple Euclidean projection
+problem (with slack) with a closed-form solution.
+The online updating requires evaluating the loss
+and computing its gradient. Both quantities can
+be computed using the variational expression in
+Prop. 1, for any loss L?,?(?;x,y) in Fig. 4.10 Our
+only assumption is that the cost function `(y?,y)
+can be written as a sum over factor-local costs; let-
+ting ? = ?(y) and ?? = ?(y?), this implies
+`(y?,y) = p>?? + q for some p and q which are
+constant with respect to ??.11 Under this assump-
+tion, L?,?(?;x,y) becomes expressible in terms of
+the log-partition function of a distribution whose
+log-potentials are set to ?(F(x)>? + ?p). From
+Eq. 9 and after some algebra, we finally obtain
+L?,?(?;x,y) =
+10Our description also applies to the (non-differentiable)
+hinge loss case, when ? ? ?, if we replace all instances of
+?the gradient? in the text by ?a subgradient.?
+11For the Hamming cost, this holds with p = 1 ? 2? and
+q = 1>?. See Taskar et al (2006) for other examples.
+max
+???M(Gx)
+?>F(x)(????)+
+1
+?
+H(??)+?(p>??+q).
+(24)
+Let ?? be a maximizer in Eq. 24; from the second
+statement of Prop. 1 we obtain ?L?,?(?;x,y) =
+F(x)(????). When the inference problem in Eq. 24
+is intractable, approximate message-passing algo-
+rithms like loopy BP still allow us to obtain approx-
+imations of the loss L?,? and its gradient.
+For the hinge loss, we arrive precisely at the max-
+loss variant of 1-best MIRA (Crammer et al, 2006).
+For the logistic loss, we arrive at a new online learn-
+ing algorithm for CRFs that resembles stochastic
+gradient descent but with an automatic step size that
+follows from our variational representation.
+Unsupported Features. As datasets grow, so do
+the sets of features, creating further computational
+challenges. Often only ?supported? features?those
+observed in the training data?are included, and
+even those are commonly eliminated when their fre-
+quencies fall below a threshold. Important infor-
+mation may be lost as a result of these expedi-
+ent choices. Formally, the supported feature set
+is Fsupp ,
+?m
+i=1 supp?(xi,yi), where suppu ,
+{j |uj 6= 0} denotes the support of vector u. Fsupp
+is a subset of the complete feature set, comprised of
+those features that occur in some candidate output,
+Fcomp ,
+?m
+i=1
+?
+y?i?Y(xi)
+supp?(xi,y?i). Features
+in Fcomp\Fsupp are called unsupported.
+Sha and Pereira (2003) have shown that training a
+CRF-based shallow parser with the complete feature
+set may improve performance (over the supported
+one), at the cost of 4.6 times more features. De-
+pendency parsing has a much higher ratio (around
+20 for bilexical word-word features, as estimated in
+the Penn Treebank), due to the quadratic or faster
+growth of the number of parts, of which only a few
+are active in a legal output. We propose a simple
+strategy for handling Fcomp efficiently, which can
+be applied for those losses in Fig. 4 where ? = ?.
+(e.g., the structured SVM and perceptron). Our pro-
+cedure is the following: keep an active set F contain-
+41
+CRF (TURBO PARS. #1) SVM (TURBO PARS. #2) SVM (TURBO #2)
+ARC-FACT. SEC. ORD. ARC-FACT. SEC. ORD. |F| |F||Fsupp| +NONPROJ., COMPL.
+ARABIC 78.28 79.12 79.04 79.42 6,643,191 2.8 80.02 (-0.14)
+BULGARIAN 91.02 91.78 90.84 92.30 13,018,431 2.1 92.88 (+0.34) (?)
+CHINESE 90.58 90.87 91.09 91.77 28,271,086 2.1 91.89 (+0.26)
+CZECH 86.18 87.72 86.78 88.52 83,264,645 2.3 88.78 (+0.44) (?)
+DANISH 89.58 90.08 89.78 90.78 7,900,061 2.3 91.50 (+0.68)
+DUTCH 82.91 84.31 82.73 84.17 15,652,800 2.1 84.91 (-0.08)
+GERMAN 89.34 90.58 89.04 91.19 49,934,403 2.5 91.49 (+0.32) (?)
+JAPANESE 92.90 93.22 93.18 93.38 4,256,857 2.2 93.42 (+0.32)
+PORTUGUESE 90.64 91.00 90.56 91.50 16,067,150 2.1 91.87 (-0.04)
+SLOVENE 83.03 83.17 83.49 84.35 4,603,295 2.7 85.53 (+0.80)
+SPANISH 83.83 85.07 84.19 85.95 11,629,964 2.6 87.04 (+0.50) (?)
+SWEDISH 87.81 89.01 88.55 88.99 18,374,160 2.8 89.80 (+0.42)
+TURKISH 76.86 76.28 74.79 76.10 6,688,373 2.2 76.62 (+0.62)
+ENGLISH NON-PROJ. 90.15 91.08 90.66 91.79 57,615,709 2.5 92.13 (+0.12)
+ENGLISH PROJ. 91.23 91.94 91.65 92.91 55,247,093 2.4 93.26 (+0.41) (?)
+Table 2: Unlabeled attachment scores, ignoring punctuation. The leftmost columns show the performance of arc-
+factored and second-order models for the CRF and SVM losses, after 10 epochs with 1/(?m) = 0.001 (tuned on the
+English Non-Proj. dev.-set). The rightmost columns refer to a model to which non-projectivity features were added,
+trained under the SVM loss, that handles the complete feature set. Shown is the total number of features instantiated,
+the multiplicative factor w.r.t. the number of supported features, and the accuracies (in parenthesis, we display the
+difference w.r.t. a model trained with the supported features only). Entries marked with ? are the highest reported in
+the literature, to the best of our knowledge, beating (sometimes slightly) McDonald et al (2006), Martins et al (2008),
+Martins et al (2009), and, in the case of English Proj., also the third-order parser of Koo and Collins (2010), which
+achieves 93.04% on that dataset (their experiments in Czech are not comparable, since the datasets are different).
+ing all features that have been instantiated in Alg. 1.
+At each round, run lines 4?5 as usual, using only
+features in F. Since the other features have not been
+used before, they have a zero weight, hence can be
+ignored. When ? = ?, the variational problem in
+Eq. 24 consists of a MAP computation and the solu-
+tion corresponds to one output y?t ? Y(xt). Only the
+parts that are active in y?t but not in yt, or vice-versa,
+will have features that might receive a nonzero up-
+date. Those parts are reexamined for new features
+and the active set F is updated accordingly.
+6 Experiments
+We trained non-projective dependency parsers for
+14 languages, using datasets from the CoNLL-X
+shared task (Buchholz and Marsi, 2006) and two
+datasets for English: one from the CoNLL-2008
+shared task (Surdeanu et al, 2008), which contains
+non-projective arcs, and another derived from the
+Penn Treebank applying the standard head rules of
+Yamada and Matsumoto (2003), in which all parse
+trees are projective.12 We implemented Alg. 1,
+12We used the provided train/test splits for all datasets. For
+English, we used the standard test partitions (section 23 of the
+Wall Street Journal). We did not exploit the fact that some
+datasets only contain projective trees and have unique roots.
+which handles any loss function L?,? .13 When ? <
+?, Turbo Parser #1 and the loopy BP algorithm of
+Smith and Eisner (2008) is used; otherwise, Turbo
+Parser #2 is used and the LP relaxation is solved with
+CPLEX. In both cases, we employed the same prun-
+ing strategy as Martins et al (2009).
+Two different feature configurations were first
+tried: an arc-factored model and a model with
+second-order features (siblings and grandparents).
+We used the same arc-factored features as McDon-
+ald et al (2005) and second-order features that con-
+join words and lemmas (at most two), parts-of-
+speech tags, and (if available) morphological infor-
+mation; this was the same set of features as in Mar-
+tins et al (2009). Table 2 shows the results obtained
+in both configurations, for CRF and SVM loss func-
+tions. While in the arc-factored case performance is
+similar, in second-order models there seems to be a
+consistent gain when the SVM loss is used. There
+are two possible reasons: first, SVMs take the cost
+function into consideration; second, Turbo Parser #2
+is less approximate than Turbo Parser #1, since only
+the marginal polytope is approximated (the entropy
+function is not involved).
+13The code is available at http://www.ark.cs.cmu.edu/
+TurboParser.
+42
+? 1 1 1 1 3 5 ?
+? 0 (CRF) 1 3 5 1 1 1 (SVM)
+ARC-F. 90.15 90.41 90.38 90.53 90.80 90.83 90.66
+2 ORD. 91.08 91.85 91.89 91.51 92.04 91.98 91.79
+Table 3: Varying ? and ?: neither the CRF nor the
+SVM is optimal. Results are UAS on the English Non-
+Projective dataset, with ? tuned with dev.-set validation.
+The loopy BP algorithm managed to converge for
+nearly all sentences (with message damping). The
+last three columns show the beneficial effect of un-
+supported features for the SVM case (with a more
+powerful model with non-projectivity features). For
+most languages, unsupported features convey help-
+ful information, which can be used with little extra
+cost (on average, 2.5 times more features are instan-
+tiated). A combination of the techniques discussed
+here yields parsers that are in line with very strong
+competitors?for example, the parser of Koo and
+Collins (2010), which is exact, third-order, and con-
+strains the outputs to be projective, does not outper-
+form ours on the projective English dataset.14
+Finally, Table 3 shows results obtained for differ-
+ent settings of ? and ?. Interestingly, we observe
+that higher scores are obtained for loss functions that
+are ?between? SVMs and CRFs.
+7 Related Work
+There has been recent work studying efficient com-
+putation of messages in combinatorial factors: bi-
+partite matchings (Duchi et al, 2007), projective
+and non-projective arborescences (Smith and Eis-
+ner, 2008), as well as high order factors with count-
+based potentials (Tarlow et al, 2010), among others.
+Some of our combinatorial factors (OR, OR-WITH-
+OUTPUT) and the analogous entropy computations
+were never considered, to the best of our knowledge.
+Prop. 1 appears in Wainwright and Jordan (2008)
+for canonical overcomplete models; we adapt it here
+for models with shared features. We rely on the vari-
+ational interpretation of loopy BP, due to Yedidia et
+al. (2001), to derive the objective being optimized
+by Smith and Eisner?s loopy BP parser.
+Independently of our work, Koo et al (2010)
+14This might be due to the fact that Koo and Collins (2010)
+trained with the perceptron algorithm and did not use unsup-
+ported features. Experiments plugging the perceptron loss
+(? ? ?, ? ? 0) into Alg. 1 yielded worse performance than
+with the hinge loss.
+recently proposed an efficient dual decomposition
+method to solve an LP problem similar (but not
+equal) to the one in Eq. 20,15 with excellent pars-
+ing performance. Their parser is also an instance
+of a turbo parser since it relies on a local approxi-
+mation of a marginal polytope. While one can also
+use dual decomposition to address our MAP prob-
+lem, the fact that our model does not decompose as
+nicely as the one in Koo et al (2010) would likely
+result in slower convergence.
+8 Conclusion
+We presented a unified view of two recent approxi-
+mate dependency parsers, by stating their underlying
+factor graphs and by deriving the variational prob-
+lems that they address. We introduced new hard con-
+straint factors, along with formulae for their mes-
+sages, local belief constraints, and entropies. We
+provided an aggressive online algorithm for training
+the models with a broad family of losses.
+There are several possible directions for future
+work. Recent progress in message-passing algo-
+rithms yield ?convexified? Bethe approximations
+that can be used for marginal inference (Wainwright
+et al, 2005), and provably convergent max-product
+variants that solve the relaxed LP (Globerson and
+Jaakkola, 2008). Other parsing formalisms can be
+handled with the inventory of factors shown here?
+among them, phrase-structure parsing.
+Acknowledgments
+The authors would like to thank the reviewers for their
+comments, and Kevin Gimpel, David Smith, David Son-
+tag, and Terry Koo for helpful discussions. A. M. was
+supported by a grant from FCT/ICTI through the CMU-
+Portugal Program, and also by Priberam Informa?tica.
+N. S. was supported in part by Qatar NRF NPRP-08-485-
+1-083. E. X. was supported by AFOSR FA9550010247,
+ONR N000140910758, NSF CAREER DBI-0546594,
+NSF IIS-0713379, and an Alfred P. Sloan Fellowship.
+M. F. and P. A. were supported by the FET programme
+(EU FP7), under the SIMBAD project (contract 213250).
+15The difference is that the model of Koo et al (2010)
+includes features that depend on consecutive siblings?
+making it decompose into subproblems amenable to dynamic
+programming?while we have factors for all pairs of siblings.
+43
+References
+C. Berrou, A. Glavieux, and P. Thitimajshima. 1993.
+Near Shannon limit error-correcting coding and decod-
+ing. In Proc. of ICC, volume 93, pages 1064?1070.
+S. Buchholz and E. Marsi. 2006. CoNLL-X shared task
+on multilingual dependency parsing. In CoNLL.
+K. Crammer, O. Dekel, J. Keshet, S. Shalev-Shwartz,
+and Y. Singer. 2006. Online passive-aggressive al-
+gorithms. JMLR, 7:551?585.
+J. Duchi, D. Tarlow, G. Elidan, and D. Koller. 2007.
+Using combinatorial optimization within max-product
+belief propagation. NIPS, 19.
+J. R. Finkel, A. Kleeman, and C. D. Manning. 2008. Effi-
+cient, feature-based, conditional random field parsing.
+Proc. of ACL.
+K. Gimpel and N. A. Smith. 2010. Softmax-margin
+crfs: Training log-linear models with loss functions.
+In Proc. of NAACL.
+A. Globerson and T. Jaakkola. 2008. Fixing max-
+product: Convergent message passing algorithms for
+MAP LP-relaxations. NIPS, 20.
+L. Huang. 2008. Forest reranking: Discriminative pars-
+ing with non-local features. In Proc. of ACL.
+S. Kahane, A. Nasr, and O. Rambow. 1998. Pseudo-
+projectivity: a polynomially parsable non-projective
+dependency grammar. In Proc. of COLING.
+T. Koo and M. Collins. 2010. Efficient third-order de-
+pendency parsers. In Proc. of ACL.
+T. Koo, A. Globerson, X. Carreras, and M. Collins. 2007.
+Structured prediction models via the matrix-tree theo-
+rem. In Proc. of EMNLP.
+T. Koo, A. M. Rush, M. Collins, T. Jaakkola, and D. Son-
+tag. 2010. Dual decomposition for parsing with non-
+projective head automata. In Proc. of EMNLP.
+F. R. Kschischang, B. J. Frey, and H. A. Loeliger. 2001.
+Factor graphs and the sum-product algorithm. IEEE
+Trans. Inf. Theory, 47(2):498?519.
+J. Lafferty, A. McCallum, and F. Pereira. 2001. Con-
+ditional random fields: Probabilistic models for seg-
+menting and labeling sequence data. In Proc. of ICML.
+A. F. T. Martins, D. Das, N. A. Smith, and E. P. Xing.
+2008. Stacking dependency parsers. In EMNLP.
+A. F. T. Martins, N. A. Smith, and E. P. Xing. 2009.
+Concise integer linear programming formulations for
+dependency parsing. In Proc. of ACL-IJCNLP.
+A. F. T. Martins, K. Gimpel, N. A. Smith, E. P. Xing,
+P. M. Q. Aguiar, and M. A. T. Figueiredo. 2010a.
+Learning structured classifiers with dual coordinate
+descent. Technical Report CMU-ML-10-109.
+A. F. T. Martins, N. A. Smith, E. P. Xing, P. M. Q. Aguiar,
+and M. A. T. Figueiredo. 2010b. Turbo parsers:
+Dependency parsing by approximate variational infer-
+ence (extended version).
+A. McCallum, K. Schultz, and S. Singh. 2009. Fac-
+torie: Probabilistic programming via imperatively de-
+fined factor graphs. In NIPS.
+R. T. McDonald, F. Pereira, K. Ribarov, and J. Hajic.
+2005. Non-projective dependency parsing using span-
+ning tree algorithms. In Proc. of HLT-EMNLP.
+R. McDonald, K. Lerman, and F. Pereira. 2006. Multi-
+lingual dependency analysis with a two-stage discrim-
+inative parser. In Proc. of CoNLL.
+R. J. McEliece, D. J. C. MacKay, and J. F. Cheng. 1998.
+Turbo decoding as an instance of Pearl?s ?belief prop-
+agation? algorithm. IEEE Journal on Selected Areas
+in Communications, 16(2).
+J. Pearl. 1988. Probabilistic Reasoning in Intelligent
+Systems: Networks of Plausible Inference. Morgan
+Kaufmann.
+F. Sha and F. Pereira. 2003. Shallow parsing with condi-
+tional random fields. In Proc. of HLT-NAACL.
+D. A. Smith and J. Eisner. 2008. Dependency parsing by
+belief propagation. In Proc. of EMNLP.
+D. A. Smith and N. A. Smith. 2007. Probabilistic models
+of nonprojective dependency trees. In EMNLP.
+M. Surdeanu, R. Johansson, A. Meyers, L. Ma`rquez, and
+J. Nivre. 2008. The CoNLL-2008 shared task on
+joint parsing of syntactic and semantic dependencies.
+CoNLL.
+C. Sutton, A. McCallum, and K. Rohanimanesh. 2007.
+Dynamic conditional random fields: Factorized prob-
+abilistic models for labeling and segmenting sequence
+data. JMLR, 8:693?723.
+R. E. Tarjan. 1977. Finding optimum branchings. Net-
+works, 7(1):25?36.
+D. Tarlow, I. E. Givoni, and R. S. Zemel. 2010. HOP-
+MAP: Efficient message passing with high order po-
+tentials. In Proc. of AISTATS.
+B. Taskar, C. Guestrin, and D. Koller. 2003. Max-margin
+Markov networks. In NIPS.
+B. Taskar, S. Lacoste-Julien, and M. I. Jordan. 2006.
+Structured prediction, dual extragradient and Bregman
+projections. JMLR, 7:1627?1653.
+I. Tsochantaridis, T. Hofmann, T. Joachims, and Y. Altun.
+2004. Support vector machine learning for interdepen-
+dent and structured output spaces. In Proc. of ICML.
+M. J. Wainwright and M. I. Jordan. 2008. Graphical
+Models, Exponential Families, and Variational Infer-
+ence. Now Publishers.
+M. J. Wainwright, T.S. Jaakkola, and A.S. Willsky. 2005.
+A new class of upper bounds on the log partition func-
+tion. IEEE Trans. Inf. Theory, 51(7):2313?2335.
+H. Yamada and Y. Matsumoto. 2003. Statistical depen-
+dency analysis with support vector machines. In Proc.
+of IWPT.
+J. S. Yedidia, W. T. Freeman, and Y. Weiss. 2001. Gen-
+eralized belief propagation. In NIPS.
+44
+Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing, pages 238?249,
+Edinburgh, Scotland, UK, July 27?31, 2011. c?2011 Association for Computational Linguistics
+Dual Decomposition with Many Overlapping Components
+Andre? F. T. Martins?? Noah A. Smith? Pedro M. Q. Aguiar? Ma?rio A. T. Figueiredo?
+?School of Computer Science, Carnegie Mellon University, Pittsburgh, PA 15213, USA
+?Instituto de Sistemas e Robo?tica, Instituto Superior Te?cnico, Lisboa, Portugal
+?Instituto de Telecomunicac?o?es, Instituto Superior Te?cnico, Lisboa, Portugal
+{afm,nasmith}@cs.cmu.edu, aguiar@isr.ist.utl.pt, mtf@lx.it.pt
+Abstract
+Dual decomposition has been recently pro-
+posed as a way of combining complemen-
+tary models, with a boost in predictive power.
+However, in cases where lightweight decom-
+positions are not readily available (e.g., due to
+the presence of rich features or logical con-
+straints), the original subgradient algorithm
+is inefficient. We sidestep that difficulty by
+adopting an augmented Lagrangian method
+that accelerates model consensus by regular-
+izing towards the averaged votes. We show
+how first-order logical constraints can be han-
+dled efficiently, even though the correspond-
+ing subproblems are no longer combinatorial,
+and report experiments in dependency pars-
+ing, with state-of-the-art results.
+1 Introduction
+The last years have witnessed increasingly accurate
+models for syntax, semantics, and machine transla-
+tion (Chiang, 2007; Finkel et al, 2008; Petrov and
+Klein, 2008; Smith and Eisner, 2008; Martins et
+al., 2009a; Johansson and Nugues, 2008; Koo et al,
+2010). The predictive power of such models stems
+from their ability to break locality assumptions. The
+resulting combinatorial explosion typically demands
+some form of approximate decoding, such as sam-
+pling, heuristic search, or variational inference.
+In this paper, we focus on parsers built from lin-
+ear programming relaxations, the so-called ?turbo
+parsers? (Martins et al, 2009a; Martins et al, 2010).
+Rush et al (2010) applied dual decomposition as
+a way of combining models which alone permit
+efficient decoding, but whose combination is in-
+tractable. This results in a relaxation of the origi-
+nal problem that is elegantly solved with the sub-
+gradient algorithm. While this technique has proven
+quite effective in parsing (Koo et al, 2010; Auli
+and Lopez, 2011) as well as machine translation
+(Rush and Collins, 2011), we show here that its
+success is strongly tied to the ability of finding a
+?good? decomposition, i.e., one involving few over-
+lapping components (or slaves). With many compo-
+nents, the subgradient algorithm exhibits extremely
+slow convergence (cf. Fig. 2). Unfortunately, a
+lightweight decomposition is not always at hand, ei-
+ther because the problem does not factor in a natural
+way, or because one would like to incorporate fea-
+tures that cannot be easily absorbed in few tractable
+components. Examples include features generated
+by statements in first-order logic, features that vio-
+late Markov assumptions, or history features such as
+the ones employed in transition-based parsers.
+To tackle the kind of problems above, we adopt
+DD-ADMM (Alg. 1), a recently proposed algorithm
+that accelerates dual decomposition (Martins et al,
+2011). DD-ADMM retains the modularity of the
+subgradient-based method, but it speeds up consen-
+sus by regularizing each slave subproblem towards
+the averaged votes obtained in the previous round
+(cf. Eq. 14). While this yields more involved sub-
+problems (with a quadratic term), we show that ex-
+act solutions can still be efficiently computed for
+all cases of interest, by using sort operations. As
+a result, we obtain parsers that can handle very rich
+features, do not require specifying a decomposition,
+and can be heavily parallelized. We demonstrate the
+success of the approach by presenting experiments
+in dependency parsing with state-of-the-art results.
+2 Background
+2.1 Structured Prediction
+Let x ? X be an input object (e.g., a sentence), from
+which we want to predict a structured output y ?
+Y (e.g., a parse tree). The output set Y is assumed
+too large for exhaustive search to be tractable. We
+assume to have a model that assigns a score f(y) to
+each candidate output, based on which we predict
+y? = arg max
+y?Y
+f(y). (1)
+238
+Designing the model must obey certain practical
+considerations. If efficiency is the major concern,
+a simple model is usually chosen so that Eq. 1 can
+be solved efficiently, at the cost of limited expressive
+power. If we care more about accuracy, a model with
+richer features and more involved score functions
+may be designed. Decoding, however, will be more
+expensive, and approximations are often necessary.
+A typical source of intractability comes from the
+combinatorial explosion inherent in the composition
+of two or more tractable models (Bar-Hillel et al,
+1964; Tromble and Eisner, 2006). Recently, Rush
+et al (2010) have proposed a dual decomposition
+framework to address NLP problems in which the
+global score decomposes as f(y) = f1(z1)+f2(z2),
+where z1 and z2 are two overlapping ?views? of the
+output, so that Eq. 1 becomes:
+maximize f1(z1) + f2(z2)
+w.r.t. z1 ? Y1, z2 ? Y2
+s.t. z1 ? z2.
+(2)
+Above, the notation z1 ? z2 means that z1 and
+z2 ?agree on their overlaps,? and an isomorphism
+Y ' {?z1, z2? ? Y1?Y2 | z1 ? z2} is assumed. We
+next formalize these notions and proceed to compo-
+sitions of an arbitrary number of models. Of special
+interest is the unexplored setting where this number
+is very large and each component very simple.
+2.2 Decomposition into Parts
+A crucial step in the design of structured predictors
+is that of decomposing outputs into parts (Taskar et
+al., 2003). We assume the following setup:
+Basic parts. We let R be a set of basic parts, such
+that each element y ? Y can be identified with a
+subset of R. The exact meaning of a ?basic part?
+is problem dependent. For example, in dependency
+parsing, R can be the set of all possible dependency
+arcs (see Fig. 1); in phrase-based parsing, it can be
+the set of possible spans; in sequence labeling, it can
+be the set of possible labels at each position. Our
+only assumption is that we can ?read out? y from
+the basic parts it contains. For convenience, we rep-
+resent y as a binary vector, y = ?y(r)?r?R, where
+y(r) = 1 if part r belongs to y, and 0 otherwise.
+Decomposition. We generalize the decomposition
+in Eq. 2 by considering sets Y1, . . . ,YS for S ? 2.
+Figure 1: Parts used by our parser. Arcs are the ba-
+sic parts: any dependency tree can be ?read out? from
+the arcs it contains. Consecutive siblings and grandpar-
+ent parts introduce horizontal and vertical Markovization
+(McDonald et al, 2006; Carreras, 2007). We break the
+horizontal Markov assumption via all siblings parts and
+the vertical one through parts which indicate a directed
+path between two words. Inspired by transition-based
+parsers, we also adopt head bigram parts, which look at
+the heads attached to consecutive words. Finally, we fol-
+low Martins et al (2009a) and have parts which indicate
+if an arc is non-projective (i.e., if it spans words that do
+not descend from its head).
+Each Ys is associated with its own set of parts Rs, in
+the same sense as above; we represent the elements
+of Ys as binary vectors zs = ?zs(r)?r?Rs . Examples
+are vectors indicating a tree structure, a sequence,
+or an assignment of variables to a factor, in which
+case it may happen that only some binary vectors
+are legal. Some parts in Rs are basic, while others
+are not. We denote by R?s = Rs ? R the subset of
+the ones that are. In addition, we assume that:
+? R1, . . . ,RS jointly cover R, i.e., R ? ?Ss=1 Rs;
+? Only basic parts may overlap, i.e., Rs ? Rt ?
+R, ?s, t ? {1, . . . , S};
+? Each zs ? Ys is completely defined by its entries
+indexed by elements of R?s, from which we can
+guess the ones in Rs \ R?s. This implies that each
+y ? Y has a unique decomposition ?z1, . . . , zS?.
+Fig. 1 shows several parts used in dependency pars-
+ing models; in phrase-based parsing, these could be
+spans and production rules anchored in the surface
+string; in sequence labeling, they can be unigram,
+bigram, and trigram labels.1
+1There is a lot of flexibility about how to decompose the
+model into S components: each set Rs can correspond to a sin-
+239
+Global consistency. We want to be able to read
+out y ? Y by ?gluing? together the components
+?z1, . . . , zS?. This is only meaningful if they are
+?globally consistent,? a notion which we make pre-
+cise. Two components zs ? Ys and zt ? Yt are said
+to be consistent (denoted zs ? zt) if they agree on
+their overlaps, i.e., if zs(r) = zt(r), ?r ? Rs ? Rt.
+A complete assignment ?z1, . . . , zS? is globally con-
+sistent if all pairs of components are consistent. This
+is equivalent to the existence of a witness vector
+?u(r)?r?R such that zs(r) = u(r), ?s, r ? R?s.
+With this setup, assuming that the score function
+decomposes as f(z) = ?Ss=1 fs(zs), the decoding
+problem (which extends Eq. 2 for S ? 2) becomes:
+P : maximize
+?S
+s=1 fs(zs)w.r.t. zs ? Ys, ?s
+?u(r)?r?R ? R|R|,
+s.t. zs(r) = u(r), ?s, r ? R?s.
+(3)
+We call the equality constraints expressed in the last
+line the ?agreement constraints.? It is these con-
+straints that complicate the problem, which would
+otherwise be exactly separable into S subproblems.
+The dual decomposition method (Komodakis et al,
+2007; Rush et al, 2010) builds an approximation by
+dualizing out these constraints, as we describe next.
+2.3 Dual Decomposition
+We describe dual decomposition in a slightly differ-
+ent manner than Rush et al (2010): we will first
+build a relaxation of P (called P ?), in which the en-
+tire approximation is enclosed. Then, we dualize P ?,
+yielding problem D. In the second step, the duality
+gap is zero, i.e., P ? and D are equivalent.2
+Relaxation. For each s ? {1, . . . , S} we consider
+the convex hull of Ys,
+Zs =
+{ ?
+zs?Ys
+p(zs)zs
+???? p(zs) ? 0,
+?
+zs?Ys
+p(zs) = 1
+}
+.
+(4)
+gle factor in a factor graph (Smith and Eisner, 2008), or to a
+entire subgraph enclosing several factors (Koo et al, 2010), or
+even to a formula in Markov logic (Richardson and Domingos,
+2006). In these examples, the basic parts may correspond to
+individual variable-value pairs.
+2Instead of following the path P ? P ? ? D, Rush et al
+(2010) go straight from P to D via a Lagrangian relaxation.
+The two formulations are equivalent for linear score functions.
+We have that Ys = Zs ? Z|Rs|; hence, problem P
+(Eq. 3) is equivalent to one in which each Ys is re-
+placed by Zs and the z-variables are constrained to
+be integer. By dropping the integer constraints, we
+obtain the following relaxed problem:
+P ? : maximize
+?S
+s=1 fs(zs)w.r.t. zs ? Zs, ?s
+?u(r)?r?R ? R|R|,
+s.t. zs(r) = u(r), ?s, r ? R?s.
+(5)
+If the score functions fs are convex, P ? becomes a
+convex program (unlike P , which is discrete); being
+a relaxation, it provides an upper bound of P .
+Lagrangian. Introducing a Lagrange multiplier
+?s(r) for each agreement constraint in Eq. 5, one
+obtains the Lagrangian function
+L(z, u, ?) =
+?S
+s=1
+(
+fs(zs) +
+?
+r?R?s ?s(r)zs(r)
+)
+??r?R
+(?
+s:r?R?s ?s(r)
+)
+u(r), (6)
+and the dual problem (the master)
+D : minimize
+?S
+s=1 gs(?s)w.r.t. ? = ??1, . . . , ?S?
+s.t. ?s:r?R?s ?s(r) = 0, ?r ? R,
+(7)
+where the gs(?s) are the solution values of the fol-
+lowing subproblems (the slaves):
+maximize fs(zs) +
+?
+r?R?s ?s(r)zs(r)w.r.t. zs ? Zs. (8)
+We assume that strong duality holds (w.r.t. Eqs. 5?
+7), hence we have P ? P ? = D.3
+Solving the dual. Why is the dual formulation D
+(Eqs. 7?8) more appealing than P ? (Eq. 5)? The an-
+swer is that the components 1, . . . , S are now de-
+coupled, which makes things easier provided each
+slave subproblem (Eq. 8) can be solved efficiently.
+In fact, this is always a concern in the mind of
+the model?s designer when she chooses a decom-
+position (the framework that we describe in ?3,
+in some sense, alleviates her from this concern).
+If the score functions are linear, i.e., of the form
+fs(zs) =
+?
+r?Rs ?s(r)zs(r) for some vector ?s =
+??s(r)?r?Rs , then Eq. 8 becomes a linear program,
+for which a solution exists at a vertex of Zs (which
+3This is guaranteed if the score functions fs are linear.
+240
+in turn is an element of Ys). Depending on the struc-
+ture of the problem, Eq. 8 may be solved by brute
+force, dynamic programming, or specialized combi-
+natorial algorithms (Rush et al, 2010; Koo et al,
+2010; Rush and Collins, 2011).
+Applying the projected subgradient method (Ko-
+modakis et al, 2007; Rush et al, 2010) to the mas-
+ter problem (Eq. 7) yields a remarkably simple algo-
+rithm, which at each round t solves the subproblems
+in Eq. 8 for s = 1, . . . , S, and then gathers these
+solutions (call them zt+1s ) to compute an ?averaged?
+vote for each basic part,
+ut+1(r) = 1?(r)
+?
+s:r?R?s zt+1s (r), (9)
+where ?(r) = |{s : r ? Rs}| is the number of com-
+ponents which contain part r. An update of the La-
+grange variables follows,
+?t+1s (r) = ?ts(r)? ?t(zt+1s (r)? ut+1(r)), (10)
+where ?t is a stepsize. Intuitively, the algorithm
+pushes for a consensus among the slaves (Eq. 9),
+via an adjustment of the Lagrange multipliers which
+takes into consideration deviations from the aver-
+age (Eq. 10). The subgradient method is guaran-
+teed to converge to the solution of D (Eq. 7), for
+suitably chosen stepsizes (Shor, 1985; Bertsekas et
+al., 1999); it also provides a certificate of optimal-
+ity in case the relaxation is tight (i.e., P = D) and
+the exact solution has been found. However, con-
+vergence is slow when S is large (as we will show
+in the experimental section), and no certificates are
+available when there is a relaxation gap (P < P ?).
+In the next section, we describe the DD-ADMM al-
+gorithm (Martins et al, 2011), which does not have
+these drawbacks and shares a similar simplicity.
+3 Alternating Directions Method
+There are two reasons why subgradient-based dual
+decomposition is not completely satisfying:
+? it may take a long time to reach a consensus;
+? it puts all its resources in solving the dual problem
+D, and does not attempt to make progress in the
+primal P ?, which is closer to our main concern.4
+4Our main concern is P ; however solving P ? is often a
+useful step towards that goal, either because a good rounding
+scheme exists, or because one may build tighter relaxations to
+approach P (Sontag et al, 2008; Rush and Collins, 2011).
+Taking a look back at the relaxed primal problem
+P ? (Eq. 5), we see that any primal feasible solution
+must satisfy the agreement constraints. This sug-
+gests that penalizing violations of these constraints
+could speed up consensus.
+Augmented Lagrangian. By adding a penalty
+term to Eq. 6, we obtain the augmented Lagrangian
+function (Hestenes, 1969; Powell, 1969):
+A?(z, u, ?) = L(z, u, ?)?
+?
+2
+S?
+s=1
+?
+r?R?s
+(zs(r)? u(r))2,
+(11)
+where the parameter ? ? 0 controls the intensity
+of the penalty. Augmented Lagrangian methods
+are well-known in the optimization community (see,
+e.g., Bertsekas et al (1999), ?4.2). They alternate
+updates to the ?-variables, while seeking to maxi-
+mize A? with respect to z and u. In our case, how-
+ever, this joint maximization poses difficulties, since
+the penalty term couples the two variables. The al-
+ternating directions method of multipliers (ADMM),
+coined by Gabay and Mercier (1976) and Glowinski
+and Marroco (1975), sidesteps this issue by perform-
+ing alternate maximizations,
+zt+1 = arg max
+z
+A?(z, ut, ?t), (12)
+ut+1 = arg max
+u
+A?(zt+1, u, ?t), (13)
+followed by an update of the Lagrange multipliers
+as in Eq. 10. Recently, ADMM has attracted inter-
+est, being applied in a variety of problems; see the
+recent book by Boyd et al (2011) for an overview.
+As derived in the App. A, the u-updates in Eq. 13
+have a closed form, which is precisely the averag-
+ing operation performed by the subgradient method
+(Eq. 9). We are left with the problem of comput-
+ing the z-updates. Like in the subgradient approach,
+the maximization in Eq. 12 can be separated into S
+independent slave subproblems, which now take the
+form:
+maximize fs(zs) +
+?
+r?R?s ?s(r)zs(r)
+??2
+?
+r?R?s(zs(r)? ut(r))2w.r.t. zs ? Zs(x).
+(14)
+Comparing Eq. 8 and Eq. 14, we observe that the
+only difference is the presence in the latter of a
+241
+quadratic term which regularizes towards the pre-
+vious averaged votes ut(r). Because of this term,
+the solution of Eq. 14 for linear score functions may
+not be at a vertex (in contrast to the subgradient
+method). We devote ?4 to describing exact and effi-
+cient ways of solving the problem in Eq. 14 for im-
+portant, widely used slaves. Before going into de-
+tails, we mention another advantage of ADMM over
+the subgradient algorithm: it knows when to stop.
+Primal and dual residuals. Recall that the sub-
+gradient method provides optimality certificates
+when the relaxation is tight (P = P ?) and an ex-
+act solution of P has been found. While this is good
+enough when tight relaxations are frequent, as in the
+settings explored by Rush et al (2010), Koo et al
+(2010), and Rush and Collins (2011), it is hard to
+know when to stop when a relaxation gap exists.
+We would like to have similar guarantees concern-
+ing the relaxed primal P ?.5 A general weakness of
+subgradient algorithms is that they do not have this
+capacity, and so are usually stopped by specifying a
+maximum number of iterations. In contrast, ADMM
+allows to keep track of primal and dual residuals
+(Boyd et al, 2011). This allows providing certifi-
+cates not only for the exact solution of P (when the
+relaxation is tight), but also to terminate when a near
+optimal solution of the relaxed problem P ? has been
+found. The primal residual rtP measures the amount
+by which the agreement constraints are violated:
+rtP =
+?S
+s=1
+?
+r?R?s(zts(r)? ut(r))2?
+r?R ?(r)
+; (15)
+the dual residual rtD is the amount by which a dual
+optimality condition is violated (see Boyd et al
+(2011), p.18, for details). It is computed via:
+rtD =
+?
+r?R ?(r)(ut(r)? ut?1(r))2?
+r?R ?(r)
+, (16)
+Our stopping criterion is thus that these two residu-
+als are below a threshold, e.g., 1 ? 10?3. The com-
+plete algorithm is depicted as Alg. 1. As stated in
+5This problem is more important than it may look. Problems
+with many slaves tend to be less exact, hence relaxation gaps
+are frequent. Also, when decoding is embedded in training, it is
+useful to obtain the fractional solution of the relaxed primal P
+(rather than an approximate integer solution). See Kulesza and
+Pereira (2007) and Martins et al (2009b) for details.
+Algorithm 1 ADMM-based Dual Decomposition
+1: input: score functions ?fs(.)?Ss=1, parameters ?, ?,
+thresholds P and D.
+2: initialize t? 1
+3: initialize u1(r)? 0.5 and ?1s(r)? 0, ?s, ?r ? R?s
+4: repeat
+5: for each s = 1, . . . , S do
+6: make a zs-update, yielding zt+1s (Eq. 14)
+7: end for
+8: make a u-update, yielding ut+1 (Eq. 9)
+9: make a ?-update, yielding ?t+1 (Eq. 10)
+10: t? t+ 1
+11: until rt+1P < P and rt+1D < D (Eqs. 15?16)
+12: output: relaxed primal and dual solutions u, z, ?
+Martins et al (2011), convergence to the solution of
+P ? is guaranteed with a fixed stepsize ?t = ??, with
+? ? [1, 1.618] (Glowinski and Le Tallec, 1989, Thm.
+4.2). In our experiments, we set ? = 1.5, and adapt
+? as described in (Boyd et al, 2011, p.20).6
+4 Solving the Subproblems
+In this section, we address the slave subproblems of
+DD-ADMM (Eq. 14). We show how these subprob-
+lems can be solved efficiently for several important
+cases that arise in NLP applications. Throughout,
+we assume that the score functions fs are linear, i.e.,
+they can be written as fs(zs) = ?r?Rs ?s(r)zs(r).This is the case whenever a linear model is used, in
+which case ?s(r) = 1?(r)w ? ?(x, r), where w is a
+weight vector and ?(x, r) is a feature vector. It is
+also the scenario studied in previous work in dual
+decomposition (Rush et al, 2010). Under this as-
+sumption, and discarding constant terms, the slave
+subproblem in Eq. 14 becomes:
+max
+zs?Zs
+?
+r?Rs\R?s
+?s(r)zs(r)?
+?
+2
+?
+r?R?s
+(zs(r)? as(r))2.
+(17)
+where as(r) = ut(r)+??1(?s(r)+?ts(r)). Since Zs
+is a polytope, Eq. 17 is a quadratic program, which
+can be solved with a general purpose solver. How-
+ever, that does not exploit the structure of Zs and is
+inefficient when |Rs| is large. We next show that for
+many cases, a closed-form solution is available and
+6Briefly, we initialize ? = 0.03 and then increase/decrease
+? by a factor of 2 whenever the primal residual becomes > 10
+times larger/smaller than the dual residual.
+242
+can be computed inO(|Rs|) time, up to log factors.7
+Pairwise Factors. This is the case where RPAIR =
+{r1, r2, r12}, where r1 and r2 are basic parts and
+r12 is their conjunction, i.e., we have YPAIR =
+{?z1, z2, z12? | z12 = z1 ? z2}. This factor is use-
+ful to make conjunctions of variables participate in
+the score function (see e.g. the grandparent, sibling,
+and head bigram parts in Fig. 1). The convex hull
+of YPAIR is the polytope ZPAIR = {?z1, z2, z12? ?
+[0, 1]3 | z12 ? z1, z12 ? z2, z12 ? z1 + z2 ? 1}, as
+shown by Martins et al (2010). In this case, problem
+(17) can be written as
+max ?12z12 ? ?2 [(z1 ? a1)2 + (z2 ? a2)2]w.r.t. ?z1, z2, z12? ? [0, 1]3
+s.t. z12 ? z1, z12 ? z2, z12 ? z1 + z2 ? 1
+(18)
+and has a closed form solution (see App. B).
+Uniqueness Quantification and XOR. Many
+problems involve constraining variables to take a
+single value: for example, in dependency parsing,
+a modifier can only take one head. This can be
+expressed as the statement ?!y : Q(y) in first-order
+logic,8 or as a one-hot XOR factor in a factor
+graph (Smith and Eisner, 2008; Martins et al,
+2010). In this case, RXOR = {r1, . . . , rn}, and
+YXOR = {?z1, . . . , zn? ? {0, 1}n |
+?n
+i=1 zi = 1}.
+The convex hull of YXOR is ZXOR = {?z1, . . . , zn? ?
+[0, 1]n | ?ni=1 zi = 1}. Assume for the sake of
+simplicity that all parts in RXOR are basic.9 Up to a
+constant, the slave subproblem becomes:
+minimize 12
+?n
+i=1(zi ? ai)2w.r.t. ?z1, . . . , zn? ? [0, 1]n
+s.t. ?ni zi = 1.
+(19)
+This is the problem of projecting onto the probabil-
+ity simplex, which can be done in O(n log n) time
+via a sort operation (see App. C).10
+7This matches the asymptotic time that would be necessary
+to solve the corresponding problems in the subgradient method,
+for which algorithms are straightforward to derive. The point is
+that with ADMM fewer instances of these subproblems need to
+be solved, due to faster convergence of the master problem.
+8The symbol ?! means ?there is one and only one.?
+9A similar derivation can be made otherwise.
+10Also common is the need for constraining existence of ?at
+most one? element. This can be reduced to uniqueness quantifi-
+cation by adding a dummy NULL label.
+Existential Quantification and OR. Sometimes,
+only existence is required, not necessarily unique-
+ness. This can be expressed with disjunctions, ex-
+istential quantifiers in first-order logic (?y : Q(y)),
+or as a OR factor. In this case, ROR = {r1, . . . , rn},
+YOR = {?z1, . . . , zn? ? {0, 1}n |
+?n
+i=1 zi = 1},
+and the convex hull is ZOR = {?z1, . . . , zn? ?
+[0, 1]n | ?ni=1 zi ? 1} (see Tab. 1 in Martins et al
+(2010)). The slave subproblem becomes:
+minimize 12
+?n
+i=1(zi ? ai)2w.r.t. ?z1, . . . , zn? ? [0, 1]n
+s.t. ?ni zi ? 1.
+(20)
+We derive a procedure in App. D to compute this
+projection in O(n log n) runtime, also with a sort.
+Negations. The two cases above can be extended
+to allow some of their inputs to be negated. By a
+change of variables in Eqs. 19?20 it is possible to
+reuse the same black box that solves those problems.
+The procedure is as follows:
+1. For i = 1, . . . , n, set a?i = 1?ai if the ith variable
+is negated, and a?i = ai otherwise.
+2. Obtain ?z?1, . . . , z?n? as the solution of Eqs. 19 or
+20 providing ?a?1, . . . , a?n? as input.
+3. For i = 1, . . . , n, set zi = 1?z?i if the ith variable
+is negated, and zi = z?i otherwise.
+The ability to handle negated variables adds a
+great degree of flexibility. From De Morgan?s
+laws, we can now handle conjunctions and impli-
+cations (since ?ni=1Qi(x) ? R(x) is equivalent to?n
+i=1 ?Qi(x) ?R(x)).
+Logical Variable Assignments. All previous ex-
+amples involve taking a group of existing variables
+and defining a constraint. Alternatively, we may
+want to define a new variable which is the result of
+an operation involving other variables. For exam-
+ple, R(x) := ?!y : Q(x, y). This corresponds to the
+XOR-WITH-OUTPUT factor in Martins et al (2010).
+Interestingly, this can be expressed as a XOR where
+R(x) is negated (i.e., either ?R(x) holds or exactly
+one y satisfies Q(x, y), but not both).
+A more difficult problem is that of the OR-WITH-
+OUTPUT factor, expressed by the formula R(x) :=
+?y : Q(x, y). We have ROR-OUT = {r0, . . . , rn},
+and YOR-OUT = {?z0, . . . , zn? ? {0, 1}n | z0 =
+243
+# Slaves Runtime Description
+Tree ?!h : arc(h,m), m 6= 0 O(n) O(n logn) Each non-root word has a head
+flow(h,m, k)? arc(h,m) O(n3) O(1) Only active arcs may carry flow
+path(m, d) := ?!h : flow(h,m, d), m 6= 0 O(n2) O(n logn)
+path(h, d) := ?!m : flow(h,m, d) O(n2) O(n logn) Paths and flows are consistent
+path(0,m) := TRUE, flow(h,m,m) := TRUE (see Martins et al (2010))
+All siblings sibl(h,m, s) := arc(h,m) ? arc(h, s) O(n3) O(1) By definition
+Grandp. grand(g, h,m) := arc(g, h) ? arc(h,m) O(n3) O(1) By definition
+Head Bigram bigram(b, h,m) := arc(b,m? 1) ? arc(h,m), m 6= 0 O(n3) O(1) By definition
+Consec. Sibl. lastsibl(h,m,m) := arc(h,m)
+?!m ? [h, k] : lastsibl(h,m, k) O(n2) O(n logn) Head automaton model
+lastsibl(h,m, k) := lastsibl(h,m, k + 1) (see supplementary material)
+? nextsibl(h,m, k + 1) O(n3) O(1)
+arc(h,m) := ?!s ? [h,m] : nextsibl(h, s,m) O(n2) O(n logn)
+Nonproj. Arc nonproj(h,m) := arc(h,m) ? ?k ? [h,m] : ?path(h, k) O(n2) O(n logn) By definition
+Table 1: First-order logic formulae underlying our dependency parser. The basic parts are the predicate variables
+arc(h,m) (indicating an arc linking head h to modifier m), path(a, d) (indicating a directed path from ancestor
+a to descendant d), nextsibl(h,m, s) (indicating that ?h,m? and ?h, s? are consecutive siblings), nonproj(h,m)
+(indicating that ?h,m? is a non-projective arc), as well as the auxiliary variables flow(h,m, d) (indicating that arc
+?h,m? carries flow to d), and lastsibl(h,m, k) (indicating that, up to position k, the last seen modifier of h occurred
+at position m). The non-basic parts are the pairwise factors sibl(h,m, s), grand(g, h,m), and bigram(b, h,m); as
+well as each logical formula. Columns 3?4 indicate the number of parts of each kind, and the time complexity for
+solving each subproblem. For a sentence of length n, there are O(n3) parts and the total complexity is O(n3 log n).
+?n
+i=1 zi}. The convex hull of YOR-OUT is the follow-
+ing set: ZOR-OUT = {?z0, . . . , zn? ? [0, 1]n | z0 ??n
+i=1 zi, z0 ? zi, ?i = 1, . . . , n} (Martins et al,
+2010, Tab.1). The slave subproblem is:
+minimize 12
+?n
+i=0(zi ? ai)2w.r.t. ?z0, . . . , zn? ? [0, 1]n
+s.t. z0 ??ni=1 zi; z0 ? zi, ?i = 1, . . . , n.(21)
+The problem in Eq. 21 is more involved than the
+ones in Eqs. 19?20. Yet, there is still an efficient
+procedure with runtime O(n log n) (see App. E).
+By using the result above for negated variables, we
+are now endowed with a procedure for many other
+cases, such that AND-WITH-OUTPUT and formu-
+las with universal quantifiers (e.g., R(x) := ?y :
+Q(x, y)). Up to a log-factor, the runtimes will be
+linear in the number of predicates.
+Larger Slaves. The only disadvantage of DD-
+ADMM in comparison with the subgradient algo-
+rithm is that there is not an obvious way of solving
+the subproblem in Eq. 14 exactly for large combi-
+natorial factors, such as the TREE constraint in de-
+pendency parsing, or a sequence model. Hence, our
+method seems to be more suitable for decomposi-
+tions which involve ?simple slaves,? even if their
+number is large. However, this does not rule out the
+possibility of using this method otherwise. Eckstein
+and Bertsekas (1992) show that the ADMM algo-
+rithm may still converge when the z-updates are in-
+exact. Hence the method may still work if the slaves
+are solved numerically up to some accuracy. We de-
+fer this to future investigation.
+5 Experiments: Dependency Parsing
+We used 14 datasets with non-projective depen-
+dencies from the CoNLL-2006 and CoNLL-2008
+shared tasks (Buchholz and Marsi, 2006; Surdeanu
+et al, 2008). We also used a projective English
+dataset derived from the Penn Treebank by applying
+the standard head rules of Yamada and Matsumoto
+(2003).11 We did not force the parser to output pro-
+jective trees or unique roots for any of the datasets;
+everything is learned from the data. We trained by
+running 10 iterations of the cost-augmented MIRA
+algorithm (Crammer et al, 2006) with LP-relaxed
+decoding, as in Martins et al (2009b). Follow-
+ing common practice (Charniak and Johnson, 2005;
+Carreras et al, 2008), we employed a coarse-to-fine
+procedure to prune away unlikely candidate arcs, as
+described by Koo and Collins (2010). To ensure
+valid parse trees at test time, we rounded fractional
+11As usual, we train on sections ?02?21, use ?22 as validation
+data, and test on ?23. We ran SVMTool (Gime?nez and Marquez,
+2004) to obtain automatic part-of-speech tags for ?22?23.
+244
+solutions as described in Martins et al (2009a) (yet,
+solutions were integral most of the time).
+The parts used in our full model are the ones
+depicted in Fig. 1. Note that a subgradient-based
+method could handle some of those parts efficiently
+(arcs, consecutive siblings, grandparents, and head
+bigrams) by composing arc-factored models, head
+automata, and a sequence labeler. However, no
+lightweight decomposition seems possible for incor-
+porating parts for all siblings, directed paths, and
+non-projective arcs. Tab. 1 shows the first-order
+logical formulae that encode the constraints in our
+model. Each formula gives rise to a subproblem
+which is efficiently solvable (see ?4). By ablating
+some of rows of Tab. 1 we recover known methods:
+? Resorting to the tree and consecutive sibling for-
+mulae gives one of the models in Koo et al
+(2010), with the same linear relaxation (a proof
+of this fact is included in App. F);
+? Resorting to tree, all siblings, grandparent, and
+non-projective arcs, recovers a multi-commodity
+flow configuration proposed by Martins et al
+(2009a); the relaxation is also the same.12
+The experimental results are shown in Tab. 2.
+For comparison, we include the best published re-
+sults for each dataset (at the best of our knowledge),
+among transition-based parsers (Nivre et al, 2006;
+Huang and Sagae, 2010), graph-based parsers (Mc-
+Donald et al, 2006; Koo and Collins, 2010), hybrid
+methods (Nivre and McDonald, 2008; Martins et al,
+2008), and turbo parsers (Martins et al, 2010; Koo
+et al, 2010). Our full model achieved the best re-
+ported scores for 7 datasets. The last two columns
+show a consistent improvement (with the exceptions
+of Chinese and Arabic) when using the full set of
+features over a second order model with grandparent
+and consecutive siblings, which is our reproduction
+of the model of Koo et al (2010).13
+12Although Martins et al (2009a) also incorporated consec-
+utive siblings in one of their configurations, our constraints are
+tighter than theirs. See App. F.
+13Note however that the actual results of Koo et al (2010)
+are higher than our reproduction, as can be seen in the second
+column. The differences are due to the features that were used
+and on the way the models were trained. The cause is not search
+error: exact decoding with an ILP solver (CPLEX) revealed no
+significant difference with respect to our G+CS column. We
+leave further analysis for future work.
+Best known UAS G+CS Full
+Arabic 80.18 [Ma08] 81.12 81.10 (-0.02)
+Bulgar. 92.88 [Ma10] 93.04 93.50 (+0.46)
+Chinese 91.89 [Ma10] 91.05 90.62 (-0.43)
+Czech 88.78 [Ma10] 88.80 89.46 (+0.66)
+English 92.57 [Ko10] 92.45 92.68 (+0.23)
+Danish 91.78 [Ko10] 91.70 91.86 (+0.16)
+Dutch 85.81 [Ko10] 84.77 85.53 (+0.76)
+German 91.49 [Ma10] 91.29 91.89 (+0.60)
+Japane. 93.42 [Ma10] 93.62 93.72 (+0.10)
+Portug. 93.03 [Ko10] 92.05 92.29 (+0.24)
+Slovene 86.21 [Ko10] 86.09 86.95 (+0.86)
+Spanish 87.04 [Ma10] 85.99 86.74 (+0.75)
+Swedish 91.36 [Ko10] 89.94 90.16 (+0.22)
+Turkish 77.55 [Ko10] 76.24 76.64 (+0.40)
+PTB ?23 93.04 [KC10] 92.19 92.53 (+0.34)
+Table 2: Unlabeled attachment scores, excluding punc-
+tuation. In the second column, [Ma08] denotes Martins
+et al (2008), [KC10] is Koo and Collins (2010), [Ma10]
+is Martins et al (2010), and [Ko10] is Koo et al (2010).
+In columns 3?4, ?Full? is our full model, and ?G+CS? is
+our reproduction of the model of Koo et al (2010), i.e.,
+the same as ?Full? but with all features ablated excepted
+for grandparents and consecutive siblings.
+AF +G+CS +AS +NP Full
+PTB ?22 91.02 92.13 92.32 92.36 92.41
+PTB ?23 91.36 92.19 92.41 92.50 92.53
+Table 3: Feature ablation experiments. AF is an arc-
+factored model; +G+CS adds grandparent and consec-
+utive siblings; +AS adds all-siblings; +NP adds non-
+projective arcs; Full adds the bigram and directed paths.
+Feature ablation and error analysis. We con-
+ducted a simple ablation study by training several
+models on the English PTB with different sets of
+features. Tab. 3 shows the results. As expected, per-
+formance keeps increasing as we use models with
+greater expressive power. We show some concrete
+examples in App. G of sentences that the full model
+parsed correctly, unlike less expressive models.
+Convergence speed and optimality. Fig. 2 com-
+pares the performance of DD-ADMM and the sub-
+gradient algorithms in the validation section of the
+PTB.14 For the second order model, the subgradient
+14The learning rate in the subgradient method was set as ?t =
+?0/(1+Nincr(t)), as in Koo et al (2010), whereNincr(t) is the
+number of dual increases up to the tth iteration, and ?0 is chosen
+to maximize dual decrease after 20 iterations (in a per sentence
+basis). Those preliminary iterations are not plotted in Fig. 2.
+245
+method has more slaves than in Koo et al (2010):
+it has a slave imposing the TREE constraint (whose
+subproblems consists on finding a minimum span-
+ning tree) and several for the all-sibling parts, yield-
+ing an average number of 310.5 and a maximum
+of 4310 slaves. These numbers are still manage-
+able, and we observe that a ?good? UAS is achieved
+relatively quickly. The ADMM method has many
+more slaves due to the multicommodity flow con-
+straints (average 1870.8, maximum 65446), yet it
+attains optimality sooner, as can be observed in the
+right plot. For the full model, the subgradient-based
+method becomes extremely slow, and the UAS score
+severely degrades (after 1000 iterations it is 2%
+less than the one obtained with the ADMM-based
+method, with very few instances having been solved
+to optimality). The reason is the number of slaves:
+in this configuration and dataset the average number
+of slaves per instance is 3327.4, and the largest num-
+ber is 113207. On the contrary, the ADMM method
+keeps a robust performance, with a large fraction of
+optimality certificates in early iterations.
+Runtime and caching strategies. Despite its suit-
+ability to problems with many overlapping compo-
+nents, our parser is still 1.6 times slower than Koo
+et al (2010) (0.34 against 0.21 sec./sent. in PTB
+?23), and is far beyond the speed of transition-based
+parsers (e.g., Huang and Sagae (2010) take 0.04
+sec./sent. on the same data, although accuracy is
+lower, 92.1%). Our implementation, however, is not
+fully optimized. We next describe how considerable
+speed-ups are achieved by caching the subproblems,
+following a strategy similar to Koo et al (2010).
+Fig. 3 illustrates the point. After a few iterations,
+many variables u(r) see a consensus being achieved
+(i.e., ut(r) = zt+1s (r),?s) and enter an idle state:
+they are left unchanged by the u-update in Eq. 9,
+and so do the Lagrange variables ?t+1s (r) (Eq. 10).
+If by iteration t all variables in a subproblem s are
+idle, then zt+1s (r) = zts(r), hence the subproblem
+does not need to be resolved.15 Fig. 3 shows that
+15Even if not all variables are idle in s, caching may still be
+useful: note that the z-updates in Eq. 14 tend to be sparse for the
+subproblems described in ?4 (these are Euclidean projections
+onto polytopes with 0/1 vertices, which tend to hit corners). An-
+other trick that may accelerate the algorithm is warm-starting:
+since many subproblems involve a sort operation, storing the
+sorted indexes may speedup the next round.
+200 400 600 800 1000Iterations0
+20
+40
+60
+80
+100
+% ac
+tive
+Full ADMM% active msgs% active subproblems% active vars
+Figure 3: Fraction of active variables, subproblems and
+messages along DD-ADMM iterations (full model). The
+number of active messages denotes the total number of
+variables (active or not) that participate in an active factor.
+10-3 10-2 10-1 100 101Time ADMM (sec.)
+10-3
+10-2
+10-1
+100
+101
+Time
+ CPLE
+X (se
+c.)
+Elapsed Times
+Figure 4: Runtimes of DD-ADMM and CPLEX on PTB
+?22 (each point is a sentence). Average runtimes are
+0.362 (DD-ADMM) and 0.565 sec./sent. (CPLEX).
+many variables and subproblems are left untouched
+after the first few rounds.
+Finally, Fig. 4 compares the runtimes of our im-
+plementation of DD-ADMM with those achieved by
+a state-of-the-art LP solver, CPLEX, in its best per-
+forming configuration: the simplex algorithm ap-
+plied to the dual LP. We observe that DD-ADMM
+is faster in some regimes but slower in others. For
+short sentences (< 15 words), DD-ADMM tends to
+be faster. For longer sentences, CPLEX is quite ef-
+fective as it uses good heuristics for the pivot steps
+in the simplex algorithm; however, we observed that
+it sometimes gets trapped on large problems. Note
+also that DD-ADMM is not fully optimized, and that
+it is much more amenable to parallelization than the
+simplex algorithm, since it is composed of many in-
+dependent slaves. This suggests potentially signifi-
+cant speed-ups in multi-core environments.
+6 Related Work
+Riedel and Clarke (2006) first formulated depen-
+dency parsing as an integer program, along with
+logical constraints. The multicommodity flow for-
+246
+0 200 400 600 800 1000Iterations85
+8687
+8889
+9091
+92
+UAS 
+(%)
+Accuracy
+ADMM FullSubgrad FullADMM Sec OrdSubgrad Sec Ord
+0 200 400 600 800 1000Iterations0
+20
+40
+60
+80
+100
+Cert
+ifica
+tes (
+%)
+Stopping Criteria
+ADMM Full (Tol<0.001)ADMM Full (Exact)Subgrad Full (Exact)ADMM Sec Ord (Tol<0.001)ADMM Sec Ord (Exact)Subgrad Sec Ord (Exact)
+Figure 2: UAS including punctuation (left) and fraction of optimality certificates (right) accross iterations of the
+subgradient and DD-ADMM algorithms, in PTB ?22. ?Full? is our full model; ?Sec Ord? is a second-order model
+with grandparents and all siblings, for which the subgradient method uses a coarser decomposition with a TREE factor.
+Since subgradient and DD-ADMM are solving the same problems, the solid lines (as the dashed ones) would meet in
+the limit, however subgradient converges very slowly for the full model. The right plot shows optimality certificates
+for both methods, indicating that an exact solution of P has been found; for DD-ADMM we also plot the fraction of
+instances that converged to an accurate solution of P ? (primal and dual residuals < 10?3) and hence can be stopped.
+mulation was introduced by Martins et al (2009a),
+along with some of the parts considered here. Koo
+et al (2010) proposed a subgradient-based dual de-
+composition method that elegantly combines head
+automata with maximum spanning tree algorithms;
+these parsers, as well as the loopy belief propagation
+method of Smith and Eisner (2008), are all instances
+of turbo parsers (Martins et al, 2010).
+DD-ADMM has been proposed and theoretically
+analyzed by Martins et al (2011) for problems rep-
+resentable as factor graphs. The general ADMM
+method has a long-standing history in optimization
+(Hestenes, 1969; Powell, 1969; Glowinski and Mar-
+roco, 1975; Gabay and Mercier, 1976; Boyd et al,
+2011). Other methods have been recently proposed
+to accelerate dual decomposition, such as Jojic et al
+(2010) and Meshi and Globerson (2011) (the latter
+applying ADMM in the dual rather than the primal).
+While our paper shows limitations of the sub-
+gradient method when there are many overlapping
+components, this method may still be advantageous
+over ADMM in problems that are nicely decom-
+posable, since it often allows reusing existing com-
+binatorial machinery. Yet, the scenario we con-
+sider here is realistic in NLP, where we often have
+to deal with not-lightly-decomposable constrained
+problems (e.g., exploiting linguistic knowledge).
+7 Conclusion
+We have introduced new feature-rich turbo parsers.
+Since exact decoding is intractable, we solve an LP
+relaxation through a recently proposed consensus al-
+gorithm, DD-ADMM, which is suitable for prob-
+lems with many overlapping components. We study
+the empirical runtime and convergence properties of
+DD-ADMM, complementing the theoretical treat-
+ment in Martins et al (2011). DD-ADMM com-
+pares favourably against the subgradient method in
+several aspects: it is faster to reach a consensus, it
+has better stopping conditions, and it works better
+in non-lightweight decompositions. While its slave
+subproblems are more involved, we derived closed-
+form solutions for many cases of interest, such as
+first-order logic formulas and combinatorial factors.
+DD-ADMM may be useful in other frameworks
+involving logical constraints, such as the models
+for compositional semantics presented by Liang
+et al (2011). Non-logical constraints may also
+yield efficient subproblems, e.g., the length con-
+straints in summarization and compression (Clarke
+and Lapata, 2008; Martins and Smith, 2009; Berg-
+Kirkpatrick et al, 2011). Finally, DD-ADMM can
+be adapted to tighten its relaxations towards exact
+decoding, as in Sontag et al (2008) and Rush and
+Collins (2011). We defer this for future work.
+Acknowledgments
+We thank all reviewers for their comments, Eric Xing for
+helpful discussions, and Terry Koo and Sasha Rush for
+answering questions about their parser and for providing
+code. A. M. was supported by a FCT/ICTI grant through
+the CMU-Portugal Program, and by Priberam. This
+work was partially supported by the FET programme
+(EU FP7), under the SIMBAD project (contract 213250).
+N. S. was supported by NSF CAREER IIS-1054319.
+247
+References
+M. Auli and A. Lopez. 2011. A Comparison of Loopy
+Belief Propagation and Dual Decomposition for Inte-
+grated CCG Supertagging and Parsing. In Proc. of
+ACL.
+Y. Bar-Hillel, M. Perles, and E. Shamir. 1964. On for-
+mal properties of simple phrase structure grammars.
+Language and Information: Selected Essays on their
+Theory and Application, pages 116?150.
+Taylor Berg-Kirkpatrick, Dan Gillick, and Dan Klein.
+2011. Jointly learning to extract and compress. In
+Proc. of ACL.
+D. Bertsekas, W. Hager, and O. Mangasarian. 1999.
+Nonlinear programming. Athena Scientific.
+D.P. Bertsekas, A. Nedic, and A.E. Ozdaglar. 2003. Con-
+vex analysis and optimization. Athena Scientific.
+S. Boyd, N. Parikh, E. Chu, B. Peleato, and J. Eckstein.
+2011. Distributed Optimization and Statistical Learn-
+ing via the Alternating Direction Method of Multipli-
+ers. Now Publishers (to appear).
+J.P. Boyle and R.L. Dykstra. 1986. A method for find-
+ing projections onto the intersections of convex sets in
+Hilbert spaces. In Advances in order restricted statis-
+tical inference, pages 28?47. Springer Verlag.
+S. Buchholz and E. Marsi. 2006. CoNLL-X shared task
+on multilingual dependency parsing. In CoNLL.
+X. Carreras, M. Collins, and T. Koo. 2008. TAG, Dy-
+namic Programming, and the Perceptron for Efficient,
+Feature-rich Parsing. In CONLL.
+X. Carreras. 2007. Experiments with a higher-order pro-
+jective dependency parser. In CoNLL.
+E. Charniak and M. Johnson. 2005. Coarse-to-fine n-
+best parsing and MaxEnt discriminative reranking. In
+Proc. ACL, pages 173?180. Association for Computa-
+tional Linguistics Morristown, NJ, USA.
+D. Chiang. 2007. Hierarchical phrase-based translation.
+computational linguistics, 33(2):201?228.
+J. Clarke and M. Lapata. 2008. Global Inference for Sen-
+tence Compression An Integer Linear Programming
+Approach. JAIR, 31:399?429.
+K. Crammer, O. Dekel, J. Keshet, S. Shalev-Shwartz, and
+Y. Singer. 2006. Online Passive-Aggressive Algo-
+rithms. JMLR, 7:551?585.
+J. Duchi, S. Shalev-Shwartz, Y. Singer, and T. Chandra.
+2008. Efficient projections onto the L1-ball for learn-
+ing in high dimensions. In ICML.
+J. Eckstein and D. Bertsekas. 1992. On the Douglas-
+Rachford splitting method and the proximal point al-
+gorithm for maximal monotone operators. Mathemat-
+ical Programming, 55(1):293?318.
+J. R. Finkel, A. Kleeman, and C. D. Manning. 2008. Effi-
+cient, feature-based, conditional random field parsing.
+Proceedings of ACL-08: HLT, pages 959?967.
+D. Gabay and B. Mercier. 1976. A dual algorithm for
+the solution of nonlinear variational problems via finite
+element approximation. Computers and Mathematics
+with Applications, 2(1):17?40.
+J. Gime?nez and L. Marquez. 2004. Svmtool: A gen-
+eral pos tagger generator based on support vector ma-
+chines. In Proc. of LREC.
+R. Glowinski and P. Le Tallec. 1989. Augmented La-
+grangian and operator-splitting methods in nonlinear
+mechanics. Society for Industrial Mathematics.
+R. Glowinski and A. Marroco. 1975. Sur
+l?approximation, par e?le?ments finis d?ordre un, et la
+re?solution, par penalisation-dualite?, d?une classe de
+proble`mes de Dirichlet non line?aires. Rev. Franc. Au-
+tomat. Inform. Rech. Operat., 9:41?76.
+M. Hestenes. 1969. Multiplier and gradient methods.
+Jour. Optim. Theory and Applic., 4:302?320.
+L. Huang and K. Sagae. 2010. Dynamic programming
+for linear-time incremental parsing. In Proc. of ACL,
+pages 1077?1086.
+R. Johansson and P. Nugues. 2008. Dependency-based
+Semantic Role Labeling of PropBank. In EMNLP.
+V. Jojic, S. Gould, and D. Koller. 2010. Accelerated dual
+decomposition for MAP inference. In ICML.
+N. Komodakis, N. Paragios, and G. Tziritas. 2007.
+MRF optimization via dual decomposition: Message-
+passing revisited. In ICCV.
+T. Koo and M. Collins. 2010. Efficient third-order de-
+pendency parsers. In Proc. of ACL, pages 1?11.
+T. Koo, A. M. Rush, M. Collins, T. Jaakkola, and D. Son-
+tag. 2010. Dual decomposition for parsing with non-
+projective head automata. In EMNLP.
+A. Kulesza and F. Pereira. 2007. Structured Learning
+with Approximate Inference. NIPS.
+P. Liang, M.I. Jordan, and D. Klein. 2011. Learning
+dependency-based compositional semantics. In Proc.
+Association for Computational Linguistics (ACL).
+A. F. T. Martins and N. A. Smith. 2009. Summarization
+with a joint model for sentence extraction and com-
+pression. In NAACL-HLT Workshop on Integer Linear
+Programming for NLP.
+A. F. T. Martins, D. Das, N. A. Smith, and E. P. Xing.
+2008. Stacking dependency parsers. In EMNLP.
+A. F. T. Martins, N. A. Smith, and E. P. Xing. 2009a.
+Concise integer linear programming formulations for
+dependency parsing. In ACL-IJCNLP.
+A. F. T. Martins, N. A. Smith, and E. P. Xing. 2009b.
+Polyhedral outer approximations with application to
+natural language parsing. In ICML.
+A. F. T. Martins, N. A. Smith, E. P. Xing, M. A. T.
+Figueiredo, and P. M. Q. Aguiar. 2010. Turbo parsers:
+Dependency parsing by approximate variational infer-
+ence. In EMNLP.
+248
+A. F. T. Martins, M. A. T. Figueiredo, P. M. Q. Aguiar,
+N. A. Smith, and E. P. Xing. 2011. An Augmented
+Lagrangian Approach to Constrained MAP Inference.
+In ICML.
+R. McDonald, K. Lerman, and F. Pereira. 2006. Multi-
+lingual dependency analysis with a two-stage discrim-
+inative parser. In CoNLL.
+O. Meshi and A. Globerson. 2011. An Alternating Direc-
+tion Method for Dual MAP LP Relaxation. In ECML
+PKDD.
+J. Nivre and R. McDonald. 2008. Integrating graph-
+based and transition-based dependency parsers. In
+ACL-HLT.
+J. Nivre, J. Hall, J. Nilsson, G. Eryig?it, and S. Marinov.
+2006. Labeled pseudo-projective dependency parsing
+with support vector machines. In Procs. of CoNLL.
+S. Petrov and D. Klein. 2008. Sparse multi-scale gram-
+mars for discriminative latent variable parsing. In
+Proc. of EMNLP.
+M. Powell. 1969. A method for nonlinear constraints in
+minimization problems. In R. Fletcher, editor, Opti-
+mization, pages 283?298. Academic Press.
+M. Richardson and P. Domingos. 2006. Markov logic
+networks. Machine Learning, 62(1):107?136.
+S. Riedel and J. Clarke. 2006. Incremental integer linear
+programming for non-projective dependency parsing.
+In EMNLP.
+A. M. Rush and M. Collins. 2011. Exact decoding of
+syntactic translation models through lagrangian relax-
+ation. In ACL.
+A. Rush, D. Sontag, M. Collins, and T. Jaakkola. 2010.
+On dual decomposition and linear programming relax-
+ations for natural language processing. In EMNLP.
+N. Shor. 1985. Minimization methods for non-
+differentiable functions. Springer.
+D. Smith and J. Eisner. 2008. Dependency parsing by
+belief propagation. In EMNLP.
+D. Sontag, T. Meltzer, A. Globerson, Y. Weiss, and
+T Jaakkola. 2008. Tightening LP relaxations for MAP
+using message-passing. In UAI.
+M. Surdeanu, R. Johansson, A. Meyers, L. Ma`rquez, and
+J. Nivre. 2008. The CoNLL-2008 shared task on
+joint parsing of syntactic and semantic dependencies.
+CoNLL.
+B. Taskar, C. Guestrin, and D. Koller. 2003. Max-margin
+Markov networks. In NIPS.
+R.W. Tromble and J. Eisner. 2006. A fast finite-state
+relaxation method for enforcing global constraints on
+sequence decoding. In Proc. of NAACL, pages 423?
+430.
+M. Wainwright and M. Jordan. 2008. Graphical Models,
+Exponential Families, and Variational Inference. Now
+Publishers.
+H. Yamada and Y. Matsumoto. 2003. Statistical de-
+pendency analysis with support vector machines. In
+IWPT.
+249
+Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing, pages 1500?1511,
+Edinburgh, Scotland, UK, July 27?31, 2011. c?2011 Association for Computational Linguistics
+Structured Sparsity in Structured Prediction
+Andre? F. T. Martins?? Noah A. Smith? Pedro M. Q. Aguiar? Ma?rio A. T. Figueiredo?
+?School of Computer Science, Carnegie Mellon University, Pittsburgh, PA 15213, USA
+?Instituto de Sistemas e Robo?tica, Instituto Superior Te?cnico, Lisboa, Portugal
+?Instituto de Telecomunicac?o?es, Instituto Superior Te?cnico, Lisboa, Portugal
+{afm,nasmith}@cs.cmu.edu, aguiar@isr.ist.utl.pt, mtf@lx.it.pt
+Abstract
+Linear models have enjoyed great success in
+structured prediction in NLP. While a lot of
+progress has been made on efficient train-
+ing with several loss functions, the problem
+of endowing learners with a mechanism for
+feature selection is still unsolved. Common
+approaches employ ad hoc filtering or L1-
+regularization; both ignore the structure of the
+feature space, preventing practicioners from
+encoding structural prior knowledge. We fill
+this gap by adopting regularizers that promote
+structured sparsity, along with efficient algo-
+rithms to handle them. Experiments on three
+tasks (chunking, entity recognition, and de-
+pendency parsing) show gains in performance,
+compactness, and model interpretability.
+1 Introduction
+Models for structured outputs are in demand across
+natural language processing, with applications in in-
+formation extraction, parsing, and machine transla-
+tion. State-of-the-art models usually involve linear
+combinations of features and are trained discrim-
+inatively; examples are conditional random fields
+(Lafferty et al, 2001), structured support vector
+machines (Altun et al, 2003; Taskar et al, 2003;
+Tsochantaridis et al, 2004), and the structured per-
+ceptron (Collins, 2002a). In all these cases, the un-
+derlying optimization problems differ only in the
+choice of loss function; choosing among them has
+usually a small impact on predictive performance.
+In this paper, we are concerned with model se-
+lection: which features should be used to define the
+prediction score? The fact that models with few
+features (?sparse? models) are desirable for several
+reasons (compactness, interpretability, good gener-
+alization) has stimulated much research work which
+has produced a wide variety of methods (Della Pietra
+et al, 1997; Guyon and Elisseeff, 2003; McCallum,
+2003). Our focus is on methods which embed this
+selection into the learning problem via the regular-
+ization term. We depart from previous approaches
+in that we seek to make decisions jointly about all
+candidate features, and we want to promote sparsity
+patterns that go beyond the mere cardinality of the
+set of features. For example, we want to be able to
+select entire feature templates (rather than features
+individually), or to make the inclusion of some fea-
+tures depend on the inclusion of other features.
+We achieve the goal stated above by employ-
+ing regularizers which promote structured sparsity.
+Such regularizers are able to encode prior knowl-
+edge and guide the selection of features by model-
+ing the structure of the feature space. Lately, this
+type of regularizers has received a lot of attention
+in computer vision, signal processing, and compu-
+tational biology (Zhao et al, 2009; Kim and Xing,
+2010; Jenatton et al, 2009; Obozinski et al, 2010;
+Jenatton et al, 2010; Bach et al, 2011). Eisenstein
+et al (2011) employed structured sparsity in com-
+putational sociolinguistics. However, none of these
+works have addressed structured prediction. Here,
+we combine these two levels of structure: struc-
+ture in the output space, and structure in the feature
+space. The result is a framework that allows build-
+ing structured predictors with high predictive power,
+while reducing manual feature engineering. We ob-
+tain models that are interpretable, accurate, and of-
+ten much more compact than L2-regularized ones.
+Compared with L1-regularized models, ours are of-
+ten more accurate and yield faster runtime.
+1500
+2 Structured Prediction
+We address structured prediction problems, which
+involve an input set X (e.g., sentences) and an out-
+put set Y, assumed large and structured (e.g., tags or
+parse trees). We assume that each x ? X has a set
+of candidate outputs Y(x) ? Y. We consider linear
+models, in which predictions are made according to
+y? = arg maxy?Y(x) ? ? ?(x, y), (1)
+where ?(x, y) ? RD is a vector of features, and ? ?
+RD is the vector of corresponding weights. Let D =
+{?xi, yi?}Ni=1 be a training sample. We assume a cost
+function is defined such that c(y?, y) is the cost of
+predicting y? when the true output is y; our goal is to
+learn ? with small expected cost on unseen data. To
+achieve this goal, linear models are usually trained
+by solving a problem of the form
+?? = arg min? ?(?) + 1N
+?N
+i=1 L(?, xi, yi), (2)
+where ? is a regularizer and L is a loss function.
+Examples of losses are: the negative conditional log-
+likelihood used in CRFs (Lafferty et al, 2001),
+LCRF(?, x, y) = ? logP?(y|x), (3)
+where P?(y|x) ? exp(? ? ?(x, y)) is a log-linear
+model; the margin rescaled loss of structured SVMs
+(Taskar et al, 2003; Tsochantaridis et al, 2004),
+LSVM(?, x, y) = max
+y??Y(x)
+? ? ??(y?) + c(y?, y), (4)
+where ??(y?) = ?(x, y?)??(x, y); and the loss un-
+derlying the structured perceptron (Collins, 2002a),
+LSP(?, x, y) = maxy??Y(x) ? ? ??(y?). (5)
+Empirical comparison among these loss functions
+can be found in the literature (see, e.g., Martins et al,
+2010, who also consider interpolations of the losses
+above). In practice, it has been observed that the
+choice of loss has far less impact than the model de-
+sign and choice of features. Hence, in this paper,
+we focus our attention on the regularization term in
+Eq. 2. We specifically address ways in which this
+term can be used to help design the model by pro-
+moting structured sparsity. While this has been a
+topic of intense research in signal processing and
+computational biology (Jenatton et al, 2009; Liu
+and Ye, 2010; Bach et al, 2011), it has not yet re-
+ceived much attention in the NLP community, where
+the choice of regularization for supervised learning
+has essentially been limited to the following:
+? L2-regularization (Chen and Rosenfeld, 2000):
+?L2? (?) , ?2???22 = ?2
+?D
+d=1 ?2d; (6)
+? L1-regularization (Kazama and Tsujii, 2003;
+Goodman, 2004):
+?L1? (?) , ????1 = ??Dd=1 |?d|. (7)
+The latter is known as ?Lasso,? as popularized by
+Tibshirani (1996) in the context of sparse regres-
+sion. In the two cases above, ? and ? are nonneg-
+ative coefficients controlling the intensity of the reg-
+ularization. ?L2? usually leads to easier optimizationand robust performance; ?L1? encourages sparser
+models, where only a few features receive nonzero
+weights; see Gao et al (2007) for an empirical com-
+parison. More recently, Petrov and Klein (2008b)
+applied L1 regularization for structure learning in
+phrase-based parsing; a comparison with L2 appears
+in Petrov and Klein (2008a). Elastic nets interpolate
+between L1 and L2, having been proposed by Zou
+and Hastie (2005) and used by Lavergne et al (2010)
+to regularize CRFs.
+Neither of the regularizers just described ?looks?
+at the structure of the feature space, since they all
+treat each dimension independently?we call them
+unstructured regularizers, as opposed to the struc-
+tured ones that we next describe.
+3 Structured Sparsity
+We are interested in regularizers that share with ?L1?
+the ability to promote sparsity, so that they can be
+used for selecting features. In addition, we want to
+endow the feature space RD with additional struc-
+ture, so that features are not penalized individually
+(as in the L1-case) but collectively, encouraging en-
+tire groups of features to be discarded. The choice of
+groups will allow encoding prior knowledge regard-
+ing the kind of sparsity patterns that are intended in
+the model. This can be achieved with group-Lasso
+regularization, which we next describe.
+1501
+3.1 The Group Lasso
+To capture the structure of the feature space, we
+group our D features into M groups G1, . . . , GM ,
+where each Gm ? {1, . . . , D}. Ahead, we dis-
+cuss meaningful ways of choosing group decompo-
+sitions; for now, let us assume a sensible choice is
+obvious to the model designer. Denote by ?m =
+??d?d?Gm the subvector of those weights that cor-
+respond to the features in the m-th group, and let
+d1, . . . , dM be nonnegative scalars (one per group).
+We consider the following group-Lasso regularizers:
+?GLd =
+?M
+m=1 dm??m?2. (8)
+These regularizers were first proposed by Bakin
+(1999) and Yuan and Lin (2006) in the context of re-
+gression. If d1 = . . . = dM , ?GLd becomes the ?L1
+norm of the L2 norms.? Interestingly, this is also
+a norm, called the mixed L2,1-norm.1 These regu-
+larizers subsume the L1 and L2 cases, which corre-
+spond to trivial choices of groups:
+? If each group is a singleton, i.e., M = D and
+Gd = {?d}, and d1 = . . . = dM = ? , we recover
+L1-regularization (cf. Eqs. 7?8).
+? If there is a single group spanning all the features,
+i.e., M = 1 and G1 = {1, . . . , D}, then the right
+hand side of Eq. 8 becomes d1???2. This is equiv-
+alent to L2 regularization.2
+We next present some non-trivial examples con-
+cerning different topologies of G = {G1, . . . , GM}.
+Non-overlapping groups. Let us first consider
+the case where G is a partition of the feature
+space: the groups cover all the features (?mGm =
+{1, . . . , D}), and they do not overlap (Ga?Gb = ?,
+?a 6= b). Then, ?GLd is termed a non-overlapping
+group-Lasso regularizer. It encourages sparsity pat-
+terns in which entire groups are discarded. A ju-
+dicious choice of groups can lead to very compact
+1In the statistics literature, such mixed-norm regularizers,
+which group features and then apply a separate norm for each
+group, are called composite absolute penalties (Zhao et al,
+2009); other norms besides L2,1 can be used, such as L?,1
+(Quattoni et al, 2009; Wright et al, 2009; Eisenstein et al,
+2011).
+2Note that Eqs. 8 and 6 do not become exactly the same: in
+Eq. 6, the L2 norm is squared. However it can be shown that
+both regularizers lead to identical learning problems (Eq. 2) up
+to a transformation of the regularization constant.
+models and pinpoint relevant groups of features.
+The following examples lie in this category:
+? The two cases above (L1 and L2 regularization).
+? Label-based groups. In multi-label classification,
+where Y = {1, . . . , L}, features are typically de-
+signed as conjunctions of input features with la-
+bel indicators, i.e., they take the form ?(x, y) =
+?(x)? ey, where ?(x) ? RDX , ey ? RL has all
+entries zero except the y-th entry, which is 1, and
+? denotes the Kronecker product. Hence ?(x, y)
+can be reshaped as aDX -by-Lmatrix, and we can
+let each group correspond to a row. In this case,
+all groups have the same size and we typically set
+d1 = . . . = dM . A similar design can be made
+for sequence labeling problems, by considering a
+similar grouping for the unigram features.3
+? Template-based groups. In NLP, features are com-
+monly designed via templates. For example, a
+template such as w0 ? p0 ? p?1 denotes the word
+in the current position (w0) conjoined with its
+part-of-speech (p0) and that of the previous word
+(p?1). This template encloses many features cor-
+responding to different instantiantions of w0, p0,
+and p?1. In ?5, we learn feature templates from
+the data, by associating each group to a feature
+template, and letting that group contain all fea-
+tures that are instantiations of this template. Since
+groups have different sizes, it is a good idea to
+let dm increase with the group size, so that larger
+groups pay a larger penalty for being included.
+Tree-structured groups. More generally, we may
+let the groups in G overlap but be nested, i.e., we may
+want them to form a hierarchy (two distinct groups
+either have empty intersection or one is contained in
+the other). This induces a partial order on G (the set
+inclusion relation ?), endowing it with the structure
+of a partially ordered set (poset).
+A convenient graphical representation of the poset
+?G,?? is its Hasse diagram. Each group is a node
+in the diagram, and an arc is drawn from group Ga
+to group Gb if Gb ? Ga and there is no b? s.t.
+Gb ? Gb? ? Ga. When the groups are nested, this
+diagram is a forest (a union of directed trees). The
+corresponding regularizer enforces sparsity patterns
+3The same idea is also used in multitask learning, where
+labels correspond to tasks (Caruana, 1997).
+1502
+where a group of features is only selected if all its
+ancestors are also selected.4 Hence, entire subtrees
+in the diagram can be pruned away. Examples are:
+? The elastic net. The diagram of G has a root node
+for G1 = {1, . . . , D} and D leaf nodes, one per
+each singleton group (see Fig. 1).
+? The sparse group-Lasso. This regularizer was
+proposed by Friedman et al (2010):
+?SGLd,? (?) =
+?M ?
+m=1 (dm??m?2 + ?m??m?1) ,
+(9)
+where the total number of groups is M = M ? +
+D, and the components ?1, . . . ,?M ? are non-
+overlapping. This regularizer promotes sparsity
+at both group and feature levels (i.e., it eliminates
+entire groups and sparsifies within each group).
+Graph-structured groups. In general, the groups
+in G may overlap without being nested. In this case,
+the Hasse diagram of G is a directed acyclic graph
+(DAG). As in the tree-structured case, a group of
+features is only selected if all its ancestors are also
+selected. Based on this property, Jenatton et al
+(2009) suggested a way of reverse engineering the
+groups from the desired sparsity pattern. We next
+describe a strategy for coarse-to-fine feature tem-
+plate selection that directly builds on that idea.
+Suppose that we are given M feature templates
+T = {T1, . . . , TM} which are partially ordered ac-
+cording to some criterion, such that if Ta  Tb we
+would like to include Tb in our model only if Ta
+is also included. This criterion could be a measure
+of coarseness: we may want to let coarser part-of-
+speech features precede finer lexical features, e.g.,
+p0 ? p1  w0 ? w1, or conjoined features come af-
+ter their elementary parts, e.g., p0  p0 ? p1. The
+order does not need to be total, so some templates
+may not be comparable (e.g., we may want p0 ? p?1
+and p0 ? p1 not to be comparable). To achieve
+the sparsity pattern encoded in ?T,?, we choose
+G = ?G1, . . . , GM ? as follows: let I(Ta) be the
+set of features that are instantiations of template Ta;
+then define Ga = ?b:ab I(Tb), for a = 1, . . . ,M .
+It is easy to see that ?G,?? and ?T,? are isomorph
+posets (their Hasse diagrams have the same shape;
+4We say that a group of features Gm is selected if some fea-
+ture in Gm (but not necessarily all) has a nonzero weight.
+see Fig. 1). The result is a ?coarse-to-fine? regular-
+izer, which prefers to select feature templates that
+are coarser before zooming into finer features.
+3.2 Bayesian Interpretation
+The prior knowledge encoded in the group-Lasso
+regularizer (Eq. 8) comes with a Bayesian inter-
+pretation, as we next describe. In a probabilistic
+model (e.g. in the CRF case, where L = LCRF),
+the optimization problem in Eq. 2 can be seen as
+maximum a posteriori estimation of ?, where the
+regularization term ?(?) corresponds to the neg-
+ative log of a prior distribution (call it p(?)). It
+is well-known that L2-regularization corresponds to
+choosing independent zero-mean Gaussian priors,
+?d ? N(0, ??1), and that L1-regularization results
+from adopting zero-mean Laplacian priors, p(?d) ?
+exp(? |?d|).
+Figueiredo (2002) provided an alternative inter-
+pretation of L1-regularization in terms of a two-
+level hierarchical Bayes model, which happens to
+generalize to the non-overlapping group-Lasso case,
+where ? = ?GLd . As in the L2-case, we also assume
+that each parameter receives a zero-mean Gaussian
+prior, but now with a group-specific variance ?m,
+i.e., ?m ? N(0, ?mI) for m = 1, . . . ,M . This
+reflects the fact that some groups should have their
+feature weights shrunk more towards zero than oth-
+ers. The variances ?m ? 0 are not pre-specified but
+rather generated by a one-sided exponential hyper-
+prior p(?m|dm) ? exp(?d2m?m/2). It can be shown
+that after marginalizing out ?m, we obtain
+p(?m|dm) =
+? ?
+0
+p(?m|?m)p(?m|dm)d?m
+? exp (?dm??m?) . (10)
+Hence, the non-overlapping group-Lasso corre-
+sponds to the following two-level hierachical Bayes
+model: independently for each m = 1, . . . ,M ,
+?m ? Exp(d2m/2), ?m ? N(0, ?mI). (11)
+3.3 Prox-operators
+Before introducing our learning algorithm for han-
+dling group-Lasso regularization, we need to define
+the concept of a ?-proximity operator. This is the
+function prox? : RD ? RD defined as follows:
+prox?(?) = arg min?? 12??? ? ??2 + ?(??). (12)
+1503
+Figure 1: Hasse diagrams of several group-
+based regularizers. For all tree-structured
+cases, we use the same plate notation that
+is traditionally used in probabilistic graphical
+models. The rightmost diagram represents a
+coarse-to-fine regularizer: each node is a tem-
+plate involving contiguous sequences of words
+(w) and POS tags (p); the symbol order ? 
+p  w induces a template order (Ta  Tb
+iff at each position i [Ta]i  [Tb]i). Digits
+below each node are the group indices where
+each template belongs.
+Proximity operators generalize Euclidean projec-
+tions and have many interesting properties; see Bach
+et al (2011) for an overview. By requiring zero to be
+a subgradient of the objective function in Eq. 12, we
+obtain the following closed expression (called soft-
+thresholding) for the ?L1? -proximity operator:
+[prox?L1? (?)]d =
+?
+?
+?
+?d ? ? if ?d > ?
+0 if |?d| ? ?
+?d + ? if ?d < ?? .
+(13)
+For the non-overlapping group Lasso case, the prox-
+imity operator is given by
+[prox?GLd (?)]m =
+{
+0 if ??m?2 ? dm
+??m?2?dm
+??m?2 ?m otherwise.
+(14)
+which can be seen as a generalization of Eq. 13: if
+the L2-norm of the m-th group is less than dm, the
+entire group is discarded; otherwise it is scaled so
+that its L2-norm decreases by an amount of dm.
+When groups overlap, the proximity operator
+lacks a closed form. When G is tree-structured, it
+can still be efficiently computed by a recursive pro-
+cedure (Jenatton et al, 2010). When G is not tree-
+structured, no specialized procedure is known, and a
+convex optimizer is necessary to solve Eq. 12.
+4 Online Prox-Grad Algorithm
+We now turn our attention to efficient ways of han-
+dling group-Lasso regularizers. Several fast and
+scalable algorithms having been proposed for train-
+ing L1-regularized CRFs, based on quasi-Newton
+optimization (Andrew and Gao, 2007), coordinate
+descent (Sokolovska et al, 2010; Lavergne et al,
+2010), and stochastic gradients (Carpenter, 2008;
+Langford et al, 2009; Tsuruoka et al, 2009). The
+algorithm that we use in this paper (Alg. 1) extends
+the stochastic gradient methods for group-Lasso reg-
+ularization; a similar algorithm was used by Martins
+et al (2011) for multiple kernel learning.
+Alg. 1 addresses the learning problem in Eq. 2 by
+alternating between online (sub-)gradient steps with
+respect to the loss term, and proximal steps with
+respect to the regularizer. Proximal-gradient meth-
+ods are very popular in sparse modeling, both in
+batch (Liu and Ye, 2010; Bach et al, 2011) and on-
+line (Duchi and Singer, 2009; Xiao, 2009) settings.
+The reason we have chosen the algorithm of Martins
+et al (2011) is that it effectively handles overlap-
+ping groups, without the need of evaluating prox?
+(which, as seen in ?3.3, can be costly if G is not tree-
+structured). To do so, it decomposes ? as
+?(?) = ?Jj=1 ?j?j(?) (15)
+for some J ? 1, and nonnegative ?1, . . . , ?J ; each
+?j-proximal operator is assumed easy to compute.
+Such a decomposition always exists: if G does not
+have overlapping groups, take J = 1. Otherwise,
+find J ? M disjoint sets G1, . . . ,GJ such that?J
+j=1 Gj = G and the groups on each Gj are non-
+overlapping. The proximal steps are then applied
+sequentially, one per each ?j . Overall, Alg. 1 satis-
+fies the following important requirements:
+? Computational efficiency. Each gradient step at
+round t is linear in the number of features that
+fire for that instance and independent of the total
+number of features D. Each proximal step is lin-
+ear in the number of groupsM , and does not need
+be to performed every round (as we will see later).
+1504
+Algorithm 1 Online Sparse Prox-Grad Algorithm
+1: input: D, ??j?Jj=1, T , gravity sequence
+???jt?Jj=1?Tt=1, stepsize sequence ??t?Tt=1
+2: initialize ? = 0
+3: for t = 1 to T do
+4: take training pair ?xt, yt? ? D
+5: ? ? ? ? ?t?L(?;xt, yt) (gradient step)
+6: for j = 1 to J do
+7: ? = prox?t?jt?j (?) (proximal step)
+8: end for
+9: end for
+10: output: ?
+? Memory efficiency. Only a small active set of fea-
+tures (those that have nonzero weights) need to
+be maintained. Entire groups of features can be
+deleted after each proximal step. Furthermore,
+only the features which correspond to nonzero en-
+tries in the gradient vector need to be inserted in
+the active set; for some losses (LSVM and LSP)
+many irrelevant features are never instantianted.
+? Convergence. With high probability, Alg. 1 pro-
+duces an -accurate solution after T ? O(1/2)
+rounds, for a suitable choice of stepsizes and hold-
+ing ?jt constant, ?jt = ?j (Martins et al, 2011).
+This result can be generalized to any sequence
+??jt?Tt=1 such that ?j = 1T
+?T
+t=1 ?jt.
+We next describe several algorithmic ingredients
+that make Alg. 1 effective in sparse modeling.
+Budget-Driven Shrinkage. Alg. 1 requires the
+choice of a ?gravity sequence.? We follow Lang-
+ford et al (2009) and set ??jt?Jj=1 to zero for all t
+which is not a multiple of some prespecified integer
+K; this way, proximal steps need only be performed
+eachK rounds, yielding a significant speed-up when
+the number of groups M is large. A direct adop-
+tion of the method of Langford et al (2009) would
+set ?jt = K?j for those rounds; however, we have
+observed that such a strategy makes the number of
+groups vary substantially in early epochs. We use a
+different strategy: for each Gj , we specify a budget
+of Bj ? 0 groups (this may take into consideration
+practical limitations, such as the available memory).
+If t is a multiple of K, we set ?jt as follows:
+1. If Gj does not have more than Bj nonzero
+groups, set ?jt = 0 and do nothing.
+2. Otherwise, sort the groups in Gj by decreasing
+order of their L2-norms. Check the L2-norms
+of the Bj-th and Bj+1-th entries in the list and
+set ?jt as the mean of these two divided by ?t.
+3. Apply a ?t?jt?j-proximal step using Eq. 14.
+At the end of this step, no more than Bj groups
+will remain nonzero.5
+If the average of the gravity steps converge,
+limT?? 1T
+?T
+t=1 ?jt ? ?j , then the limit points
+?j implicitly define the regularizer, via ? =?J
+j=1 ?j?j .6 Hence, we have shifted the control of
+the amount of regularization to the budget constants
+Bj , which unlike the ?j have a clear meaning and
+can be chosen under practical considerations.
+Space and Time Efficiency. The proximal steps
+in Alg. 1 have a scaling effect on each group, which
+affects all features belonging to that group (see
+Eq. 14). We want to avoid explicitly updating each
+feature in the active set, which could be time con-
+suming. We mention two strategies that can be used
+for the non-overlapping group Lasso case.
+? The first strategy is suitable when M is large and
+only a few groups ( M ) have features that fire
+in each round; this is the case, e.g., of label-based
+groups (see ?3.1). It consists of making lazy up-
+dates (Carpenter, 2008), i.e., to delay the update
+of all features in a group until at least one of
+them fires; then apply a cumulative penalty. The
+amount of the penalty can be computed if one as-
+signs a timestamp to each group.
+? The second strategy is suitable when M is small
+and some groups are very populated; this is the
+typical case of template-based groups (?3.1). Two
+operations need to be performed: updating each
+feature weight (in the gradient steps), and scaling
+entire groups (in the proximal steps). We adapt
+a trick due to Shalev-Shwartz et al (2007): repre-
+sent the weight vector of them-th group, ?m, by a
+5When overlaps exist (e.g. the coarse-to-fine case), we spec-
+ify a total pseudo-budget B ignoring the overlaps, which in-
+duces budgets B1, . . . , BJ which sum to B. The number of
+actually selected groups may be less than B, however, since in
+this case some groups can be shrunk more than once. Other
+heuristics are possible.
+6The convergence assumption can be sidestepped by freez-
+ing the ?j after a fixed number of iterations.
+1505
+triple ??m, cm, ?m? ? R|Gm|?R+?R+, such that
+?m = cm?m and ??m?2 = ?m. This representa-
+tion allows performing the two operations above
+in constant time, and it keeps track of the group
+L2-norms, necessary in the proximal updates.
+For sufficient amounts of regularization, our al-
+gorithm has a low memory footprint. Only features
+that, at some point, intervene in the gradient com-
+puted in line 5 need to be instantiated; and all fea-
+tures that receive zero weights after some proximal
+step can be deleted from the model (cf. Fig. 2).
+Sparseptron and Debiasing. Although Alg. 1 al-
+lows to simultaneously select features and learn the
+model parameters, it has been observed in the sparse
+modeling literature that Lasso-like regularizers usu-
+ally have a strong bias which may harm predictive
+performance. A post-processing stage is usually
+taken (called debiasing), in which the model is re-
+fitted without any regularization and using only the
+selected features (Wright et al, 2009). If a final de-
+biasing stage is to be performed, Alg. 1 only needs
+to worry about feature selection, hence it is appeal-
+ing to choose a loss function that makes this pro-
+cedure as simple as possible. Examining the input
+of Alg. 1, we see that both a gravity and a stepsize
+sequence need to be specified. The former can be
+taken care of by using budget-driven shrinkage, as
+described above. The stepsize sequence can be set
+as ?t = ?0/
+?
+dt/Ne, which ensures convergence,
+however ?0 requires tuning. Fortunately, for the
+structured perceptron loss LSP (Eq. 5), Alg. 1 is in-
+dependent of ?0, up to a scaling of ?, which does not
+affect predictions (see Eq. 1).7 We call the instanti-
+ation of Alg. 1 with a group-Lasso regularizer and
+the loss LSP the sparseptron. Overall, we propose
+the following two-stage approach:
+1. Run the sparsepton for a few epochs and dis-
+card the features with zero weights.
+2. Refit the model without any regularization and
+using the loss L which one wants to optimize.
+7To see why this is the case, note that both gradient and
+proximal updates come scaled by ?0; and that the gradient of
+the loss is?LSP(?, xt, yt) = ?(xt, y?t)? ?(xt, yt), where y?t
+is the prediction under the current model, which is insensitive to
+the scaling of ?. This independence on ?0 does not hold when
+the loss is LSVM or LCRF.
+5 Experiments
+We present experiments in three structured predic-
+tion tasks for several group choices.
+Text Chunking. We use the English dataset pro-
+vided in the CoNLL 2000 shared task (Sang and
+Buchholz, 2000), which consists of 8,936 training
+and 2,012 testing sentences (sections 15?18 and 20
+of the WSJ.) The input observations are the token
+words and their POS tags; we want to predict the
+sequences of IOB tags representing phrase chunks.
+We built 96 contextual feature templates as follows:
+? Up to 5-grams of POS tags, in windows of 5 to-
+kens on the left and 5 tokens on the right;
+? Up to 3-grams of words, in windows of 3 tokens
+on the left and 3 tokens on the right;
+? Up to 2-grams of word shapes, in windows of
+2 tokens on the left and 2 tokens on the right.
+Each shape replaces characters by their types
+(case sensitive letters, digits, and punctuation),
+and deletes repeated types?e.g., Confidence
+and 2,664,098 are respectively mapped to Aa
+and 0,0+,0+ (Collins, 2002b).
+We defined unigram features by conjoining these
+templates with each of the 22 output labels. An ad-
+ditional template was defined to account for label
+bigrams?features in this template do not look at the
+input string, but only at consecutive pairs of labels.8
+We evaluate the ability of group-Lasso regular-
+ization to perform feature template selection. To
+do that, we ran 5 epochs of the sparseptron algo-
+rithm with template-based groups and budget-driven
+shrinkage (budgets of 10, 20, 30, 40, and 50 tem-
+plates were tried). For each group Gm, we set dm =
+log2 |Gm|, which is the average number of bits nec-
+essary to encode a feature in that group, if all fea-
+tures were equiprobable. We set K = 1000 (the
+number of instances between consecutive proximal
+steps). Then, we refit the model with 10 iterations
+of the max-loss 1-best MIRA algorithm (Crammer
+et al, 2006).9 Table 1 compares the F1 scores and
+8State-of-the-art models use larger output contexts, such as
+label trigrams and 4-grams. We resort to bigram labels as we
+are mostly interested in identifying relevant unigram templates.
+9This variant optimizes theLSVM loss (Martins et al, 2010).
+For the refitting, we used unregularized MIRA. For the baseline
+1506
+Table 1: Results for
+text chunking.
+MIRA Group Lasso B = 10 B = 20 B = 30 B = 40 B = 50
+F1 (%) 93.10 92.99 93.28 93.59 93.42 93.40
+model size (# features) 5,300,396 71,075 158,844 389,065 662,018 891,378
+MIRA Lasso C = 0.1 C = 0.5 C = 1 Group-Lasso B = 100 B = 200 B = 300
+Spa. dev/test 70.38/74.09 69.19/71.9 70.75/72.38 71.7/74.03 71.79/73.62 72.08/75.05 71.48/73.3
+8,598,246 68,565 1,017,769 1,555,683 83,036 354,872 600,646
+Dut. dev/test 69.15/71.54 64.07/66.35 66.82/69.42 70.43/71.89 69.48/72.83 71.03/73.33 71.2/72.59
+5,727,004 164,960 565,704 953,668 128,320 447,193 889,660
+Eng. dev/test 83.95/79.81 80.92/76.95 82.58/78.84 83.38/79.35 85.62/80.26 85.86/81.47 85.03/80.91
+8,376,901 232,865 870,587 1,114,016 255,165 953,178 1,719,229
+Table 2: Results for named entity recognition. Each cell shows F1 (%) and the number of features.
+0 5 10 150
+2
+4
+6 x 10
+6
+# Epochs
+# F
+eatu
+res
+ 
+ 
+MIRA
+Sparceptron + MIRA (B=30)
+Figure 2: Memory footprints of the MIRA and sparsep-
+tron algorithms in text chunking. The oscillation in the
+first 5 epochs (bottom line) comes from the proximal
+steps each K = 1000 rounds. The features are then
+frozen and 10 epochs of unregularized MIRA follow.
+Overall, the sparseptron requires < 7.5% of the memory
+as the MIRA baseline.
+the model sizes obtained with the several budgets
+against those obtained by running 15 iterations of
+MIRA with the original set of features. Note that
+the total number of iterations is the same; yet, the
+group-Lasso approach has a much smaller memory
+footprint (see Fig. 2) and yields much more com-
+pact models. The small memory footprint comes
+from the fact that Alg. 1 may entertain a large num-
+ber of features without ever instantiating all of them.
+The predictive power is comparable (although some
+choices of budget yield slightly better scores for the
+group-Lasso approach).10
+Named Entity Recognition. We experiment with
+the Spanish, Dutch, and English datasets pro-
+vided in the CoNLL 2002/2003 shared tasks (Sang,
+2002; Sang and De Meulder, 2003). For Span-
+ish, we use the POS tags provided by Car-
+(described next), we used L2-regularized MIRA and tuned the
+regularization constant with cross-validation.
+10We also tried label-based group-Lasso and sparse group-
+Lasso (?3.1), with less impressive results (omitted for space).
+reras (http://www.lsi.upc.es/?nlp/tools/
+nerc/nerc.html); for English, we ignore the syn-
+tactic chunk tags provided with the dataset. Hence,
+all datasets have the same sort of input observations
+(words and POS) and all have 9 output labels. We
+use the feature templates described above plus some
+additional ones (yielding a total of 452 templates):
+? Up to 3-grams of shapes, in windows of size 3;
+? For prefix/suffix sizes of 1, 2, 3, up to 3-grams of
+word prefixes/suffixes, in windows of size 3;
+? Up to 5-grams of case, punctuation, and digit in-
+dicators, in windows of size 5.
+As before, an additional feature template was de-
+fined to account for label bigrams. We do feature
+template selection (same setting as before) for bud-
+get sizes of 100, 200, and 300. We compare with
+both MIRA (using all the features) and the sparsep-
+tron with a standard Lasso regularizer ?L1? , for sev-
+eral values of C = 1/(?N). Table 2 shows the re-
+sults. We observe that template-based group-Lasso
+wins both in terms of accuracy and compactness.
+Note also that the ability to discard feature tem-
+plates (rather than individual features) yields faster
+test runtime than models regularized with the stan-
+dard Lasso: fewer templates will need to be instan-
+tiated, with a speed-up in score computation.
+Multilingual Dependency Parsing. We trained
+non-projective dependency parsers for 6 languages
+using the CoNLL-X shared task datasets (Buchholz
+and Marsi, 2006): Arabic, Danish, Dutch, Japanese,
+Slovene, and Spanish. We chose the languages with
+the smallest datasets, because regularization is more
+important when data is scarce. The output to be pre-
+dicted from each input sentence is the set of depen-
+dency links, which jointly define a spanning tree.
+1507
+2 4 6 8 10 12
+x 106
+76.5
+77
+77.5
+78
+78.5
+Number of Features
+UA
+S (%
+)
+Arabic
+ 
+ 
+0 5 10 15
+x 106
+89
+89.2
+89.4
+89.6
+89.8
+90 Danish
+0 2 4 6 8
+x 106
+92
+92.5
+93
+93.5 Japanese
+0 2 4 6 8 10
+x 106
+81
+82
+83
+84 Slovene
+0 0.5 1 1.5 2
+x 107
+82
+82.5
+83
+83.5
+84 Spanish
+0 5 10 15
+x 106
+74
+74.5
+75
+75.5
+76 Turkish
+ 
+ 
+Group?LassoGroup?Lasso (C2F)LassoFilter?based (IG)
+Figure 3: Comparison between non-overlapping group-Lasso, coarse-to-fine group-Lasso (C2F), and a filter-based
+method based on information gain for selecting feature templates in multilingual dependency parsing. The x-axis is
+the total number of features at different regularization levels, and the y-axis is the unlabeled attachment score. The
+plots illustrate how accurate the parsers are as a function of the model sparsity achieved, for each method. The standard
+Lasso (which does not select templates, but individual features) is also shown for comparison.
+We use arc-factored models, for which exact infer-
+ence is tractable (McDonald et al, 2005). We de-
+fined M = 684 feature templates for each candi-
+date arc by conjoining the words, shapes, lemmas,
+and POS of the head and the modifier, as well as
+the contextual POS, and the distance and direction
+of attachment. We followed the same two-stage
+approach as before, and compared with a baseline
+which selects feature templates by ranking them ac-
+cording to the information gain criterion. This base-
+line assigns a score to each template Tm which re-
+flects an empirical estimate of the mutual informa-
+tion between Tm and the binary variable A that indi-
+cates the presence/absence of a dependency link:
+IGm ,
+?
+f?Tm
+?
+a?{0,1}
+P (f, a) log2
+P (f, a)
+P (f)P (a) , (16)
+where P (f, a) is the joint probability of feature f
+firing and an arc being active (a = 1) or innactive
+(a = 0), and P (f) and P (a) are the corresponding
+marginals. All probabilities are estimated from the
+empirical counts of events observed in the data.
+The results are plotted in Fig. 3, for budget sizes
+of 200, 300, and 400. We observe that for all
+but one language (Spanish is the exception), non-
+overlapping group-Lasso regularization is more ef-
+fective at selecting feature templates than the in-
+formation gain criterion, and slightly better than
+coarse-to-fine group-Lasso. For completeness, we
+also display the results obtained with a standard
+Lasso regularizer. Table 3 shows what kind of
+feature templates were most selected for each lan-
+guage. Some interesting patterns can be observed:
+morphologically-rich languages with small datasets
+(such as Turkish and Slovene) seem to avoid lexi-
+cal features, arguably due to potential for overfitting;
+in Japanese, contextual POS appear to be specially
+relevant. It should be noted, however, that some
+of these patterns may be properties of the datasets
+rather than of the languages themselves.
+6 Related Work
+A variant of the online proximal gradient algorithm
+used in this paper was proposed by Martins et al
+1508
+Ara. Dan. Jap. Slo. Spa. Tur.
+Bilexical ++ + +
+Lex.? POS + +
+POS? Lex. ++ + + + +
+POS? POS ++ +
+Middle POS ++ ++ ++ ++ ++ ++
+Shape ++ ++ ++ ++
+Direction + + + + +
+Distance ++ + + + + +
+Table 3: Variation of feature templates that were selected
+accross languages. Each line groups together similar tem-
+plates, involving lexical, contextual POS, word shape in-
+formation, as well as attachment direction and length.
+Empty cells denote that very few or none of the templates
+in that category was selected; + denotes that some were
+selected; ++ denotes that most or all were selected.
+(2011), along with a theoretical analysis. The fo-
+cus there, however, was multiple kernel learning,
+hence overlapping groups were not considered in
+their experiments. Budget-driven shrinkage and the
+sparseptron are novel techniques, at the best of our
+knowledge. Apart from Martins et al (2011), the
+only work we are aware of which combines struc-
+tured sparsity with structured prediction is Schmidt
+and Murphy (2010); however, their goal is to pre-
+dict the structure of graphical models, while we
+are mostly interested in the structure of the feature
+space. Schmidt and Murphy (2010) used to gener-
+ative models, while our approach emphasizes dis-
+criminative learning.
+Mixed norm regularization has been used for a
+while in statistics as a means to promote structured
+sparsity. Group Lasso is due to Bakin (1999) and
+Yuan and Lin (2006), after which a string of variants
+and algorithms appeared (Bach, 2008; Zhao et al,
+2009; Jenatton et al, 2009; Friedman et al, 2010;
+Obozinski et al, 2010). The flat (non-overlapping)
+case has tight links with learning formalisms such
+as multiple kernel learning (Lanckriet et al, 2004)
+and multi-task learning (Caruana, 1997). The tree-
+structured case has been addressed by Kim and Xing
+(2010), Liu and Ye (2010) and Mairal et al (2010),
+along with L?,1 and L2,1 regularization. Graph-
+structured groups are discussed in Jenatton et al
+(2010), along with a DAG representation. In NLP,
+mixed norms have been used recently by Grac?a et al
+(2009) in posterior regularization, and by Eisenstein
+et al (2011) in a multi-task regression problem.
+7 Conclusions
+In this paper, we have explored two levels of struc-
+ture in NLP problems: structure on the outputs, and
+structure on the feature space. We have shown how
+the latter can be useful in model design, through the
+use of regularizers which promote structured spar-
+sity. We propose an online algorithm with mini-
+mal memory requirements for exploring large fea-
+ture spaces. Our algorithm, which specializes into
+the sparseptron, yields a mechanism for selecting
+entire groups of features. We apply sparseptron
+for selecting feature templates in three structured
+prediction tasks, with advantages over filter-based
+methods, L1, and L2 regularization in terms of per-
+formance, compactness, and model interpretability.
+Acknowledgments
+We would like to thank all reviewers for their comments,
+Eric Xing for helpful discussions, and Slav Petrov for his
+comments on a draft version of this paper. A. M. was sup-
+ported by a FCT/ICTI grant through the CMU-Portugal
+Program, and also by Priberam. This work was partially
+supported by the FET programme (EU FP7), under the
+SIMBAD project (contract 213250). N. S. was supported
+by NSF CAREER IIS-1054319.
+References
+Y. Altun, I. Tsochantaridis, and T. Hofmann. 2003. Hid-
+den Markov support vector machines. In Proc. of
+ICML.
+G. Andrew and J. Gao. 2007. Scalable training of
+L1-regularized log-linear models. In Proc. of ICML.
+ACM.
+F. Bach, R. Jenatton, J. Mairal, and G. Obozinski. 2011.
+Convex optimization with sparsity-inducing norms. In
+Optimization for Machine Learning. MIT Press.
+F. Bach. 2008. Exploring large feature spaces with hier-
+archical multiple kernel learning. NIPS, 21.
+S. Bakin. 1999. Adaptive regression and model selec-
+tion in data mining problems. Ph.D. thesis, Australian
+National University.
+S. Buchholz and E. Marsi. 2006. CoNLL-X shared
+task on multilingual dependency parsing. In Proc. of
+CoNLL.
+B. Carpenter. 2008. Lazy sparse stochastic gradient de-
+scent for regularized multinomial logistic regression.
+Technical report, Technical report, Alias-i.
+R. Caruana. 1997. Multitask learning. Machine Learn-
+ing, 28(1):41?75.
+1509
+S. F. Chen and R. Rosenfeld. 2000. A survey of
+smoothing techniques for maximum entropy models.
+IEEE Transactions on Speech and Audio Processing,
+8(1):37?50.
+M. Collins. 2002a. Discriminative training methods for
+hidden Markov models: theory and experiments with
+perceptron algorithms. In Proc. of EMNLP.
+M. Collins. 2002b. Ranking algorithms for named-entity
+extraction: Boosting and the voted perceptron. In
+Proc. of ACL.
+K. Crammer, O. Dekel, J. Keshet, S. Shalev-Shwartz, and
+Y. Singer. 2006. Online Passive-Aggressive Algo-
+rithms. JMLR, 7:551?585.
+S. Della Pietra, V. Della Pietra, and J. Lafferty. 1997.
+Inducing features of random fields. IEEE Transac-
+tions on Pattern Analysis and Machine Intelligence,
+19:380?393.
+J. Duchi and Y. Singer. 2009. Efficient online and batch
+learning using forward backward splitting. JMLR,
+10:2873?2908.
+J. Eisenstein, N. A. Smith, and E. P. Xing. 2011. Discov-
+ering sociolinguistic associations with structured spar-
+sity. In Proc. of ACL.
+M.A.T. Figueiredo. 2002. Adaptive sparseness using Jef-
+freys? prior. Advances in Neural Information Process-
+ing Systems.
+J. Friedman, T. Hastie, and R. Tibshirani. 2010. A note
+on the group lasso and a sparse group lasso. Unpub-
+lished manuscript.
+J. Gao, G. Andrew, M. Johnson, and K. Toutanova. 2007.
+A comparative study of parameter estimation methods
+for statistical natural language processing. In Proc. of
+ACL.
+J. Goodman. 2004. Exponential priors for maximum en-
+tropy models. In Proc. of NAACL.
+J. Grac?a, K. Ganchev, B. Taskar, and F. Pereira. 2009.
+Posterior vs. parameter sparsity in latent variable mod-
+els. Advances in Neural Information Processing Sys-
+tems.
+I. Guyon and A. Elisseeff. 2003. An introduction to vari-
+able and feature selection. Journal of Machine Learn-
+ing Research, 3:1157?1182.
+R. Jenatton, J.-Y. Audibert, and F. Bach. 2009. Struc-
+tured variable selection with sparsity-inducing norms.
+Technical report, arXiv:0904.3523.
+R. Jenatton, J. Mairal, G. Obozinski, and F. Bach. 2010.
+Proximal methods for sparse hierarchical dictionary
+learning. In Proc. of ICML.
+J. Kazama and J. Tsujii. 2003. Evaluation and exten-
+sion of maximum entropy models with inequality con-
+straints. In Proc. of EMNLP.
+S. Kim and E.P. Xing. 2010. Tree-guided group lasso for
+multi-task regression with structured sparsity. In Proc.
+of ICML.
+J. Lafferty, A. McCallum, and F. Pereira. 2001. Con-
+ditional random fields: Probabilistic models for seg-
+menting and labeling sequence data. In Proc. of ICML.
+G. R. G. Lanckriet, N. Cristianini, P. Bartlett, L. El
+Ghaoui, and M. I. Jordan. 2004. Learning the kernel
+matrix with semidefinite programming. JMLR, 5:27?
+72.
+J. Langford, L. Li, and T. Zhang. 2009. Sparse online
+learning via truncated gradient. JMLR, 10:777?801.
+T. Lavergne, O. Cappe?, and F. Yvon. 2010. Practical
+very large scale CRFs. In Proc. of ACL.
+J. Liu and J. Ye. 2010. Moreau-Yosida regularization for
+grouped tree structure learning. In Advances in Neural
+Information Processing Systems.
+J. Mairal, R. Jenatton, G. Obozinski, and F. Bach. 2010.
+Network flow algorithms for structured sparsity. In
+Advances in Neural Information Processing Systems.
+A. F. T. Martins, N. A. Smith, E. P. Xing, P. M. Q. Aguiar,
+and M. A. T. Figueiredo. 2010. Turbo parsers: Depen-
+dency parsing by approximate variational inference.
+In Proc. of EMNLP.
+A. F. T. Martins, M. A. T. Figueiredo, P. M. Q. Aguiar,
+N. A. Smith, and E. P. Xing. 2011. Online learning of
+structured predictors with multiple kernels. In Proc. of
+AISTATS.
+A. McCallum. 2003. Efficiently inducing features of
+conditional random fields. In Proc. of UAI.
+R. T. McDonald, F. Pereira, K. Ribarov, and J. Hajic.
+2005. Non-projective dependency parsing using span-
+ning tree algorithms. In Proc. of HLT-EMNLP.
+G. Obozinski, B. Taskar, and M.I. Jordan. 2010. Joint co-
+variate selection and joint subspace selection for multi-
+ple classification problems. Statistics and Computing,
+20(2):231?252.
+S. Petrov and D. Klein. 2008a. Discriminative log-linear
+grammars with latent variables. Advances in Neural
+Information Processing Systems, 20:1153?1160.
+S. Petrov and D. Klein. 2008b. Sparse multi-scale gram-
+mars for discriminative latent variable parsing. In
+Proc. of EMNLP.
+A. Quattoni, X. Carreras, M. Collins, and T. Darrell.
+2009. An efficient projection for l1,? regularization.
+In Proc. of ICML.
+E.F.T.K. Sang and S. Buchholz. 2000. Introduction to the
+CoNLL-2000 shared task: Chunking. In Proceedings
+of CoNLL-2000 and LLL-2000.
+E.F.T.K. Sang and F. De Meulder. 2003. Introduction to
+the CoNLL-2003 shared task: Language-independent
+named entity recognition. In Proc. of CoNLL.
+E.F.T.K. Sang. 2002. Introduction to the CoNLL-
+2002 shared task: Language-independent named entity
+recognition. In Proc. of CoNLL.
+1510
+M. Schmidt and K. Murphy. 2010. Convex structure
+learning in log-linear models: Beyond pairwise poten-
+tials. In Proc. of AISTATS.
+S. Shalev-Shwartz, Y. Singer, and N. Srebro. 2007. Pe-
+gasos: Primal estimated sub-gradient solver for SVM.
+In ICML.
+N. Sokolovska, T. Lavergne, O. Cappe?, and F. Yvon.
+2010. Efficient learning of sparse conditional random
+fields for supervised sequence labelling. IEEE Journal
+of Selected Topics in Signal Processing, 4(6):953?964.
+B. Taskar, C. Guestrin, and D. Koller. 2003. Max-margin
+Markov networks. In Advances in Neural Information
+Processing Systems.
+R. Tibshirani. 1996. Regression shrinkage and selection
+via the lasso. Journal of the Royal Statistical Society
+B., pages 267?288.
+I. Tsochantaridis, T. Hofmann, T. Joachims, and Y. Altun.
+2004. Support vector machine learning for interdepen-
+dent and structured output spaces. In ICML.
+Y. Tsuruoka, J. Tsujii, and S. Ananiadou. 2009. Stochas-
+tic gradient descent training for l1-regularized log-
+linear models with cumulative penalty. In Proc. of
+ACL.
+S.J. Wright, R. Nowak, and M.A.T. Figueiredo. 2009.
+Sparse reconstruction by separable approximation.
+IEEE Transactions on Signal Processing, 57(7):2479?
+2493.
+L. Xiao. 2009. Dual averaging methods for regular-
+ized stochastic learning and online optimization. In
+Advances in Neural Information Processing Systems.
+M. Yuan and Y. Lin. 2006. Model selection and estima-
+tion in regression with grouped variables. Journal of
+the Royal Statistical Society (B), 68(1):49.
+P. Zhao, G. Rocha, and B. Yu. 2009. Grouped and hi-
+erarchical model selection through composite absolute
+penalties. Annals of Statistics, 37(6A):3468?3497.
+H. Zou and T. Hastie. 2005. Regularization and vari-
+able selection via the elastic net. Journal of the Royal
+Statistical Society Series B (Statistical Methodology),
+67(2):301?320.
+1511

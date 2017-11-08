@@ -1,0 +1,3264 @@
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 402?411, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Locally Training the Log-Linear Model for SMT
+Lemao Liu1, Hailong Cao1, Taro Watanabe2, Tiejun Zhao1, Mo Yu1, CongHui Zhu1
+1School of Computer Science and Technology
+Harbin Institute of Technology, Harbin, China
+2National Institute of Information and Communication Technology
+3-5 Hikari-dai, Seika-cho, Soraku-gun, Kyoto, Japan
+{lmliu,hailong,tjzhao,yumo,chzhu}@mtlab.hit.edu.cn
+taro.watanabe@nict.go.jp
+Abstract
+In statistical machine translation, minimum
+error rate training (MERT) is a standard
+method for tuning a single weight with regard
+to a given development data. However, due to
+the diversity and uneven distribution of source
+sentences, there are two problems suffered by
+this method. First, its performance is highly
+dependent on the choice of a development set,
+which may lead to an unstable performance
+for testing. Second, translations become in-
+consistent at the sentence level since tuning is
+performed globally on a document level. In
+this paper, we propose a novel local training
+method to address these two problems. Un-
+like a global training method, such as MERT,
+in which a single weight is learned and used
+for all the input sentences, we perform training
+and testing in one step by learning a sentence-
+wise weight for each input sentence. We pro-
+pose efficient incremental training methods to
+put the local training into practice. In NIST
+Chinese-to-English translation tasks, our lo-
+cal training method significantly outperforms
+MERT with the maximal improvements up to
+2.0 BLEU points, meanwhile its efficiency is
+comparable to that of the global method.
+1 Introduction
+Och and Ney (2002) introduced the log-linear model
+for statistical machine translation (SMT), in which
+translation is considered as the following optimiza-
+tion problem:
+e?(f ;W ) = arg max
+e
+P(e|f ;W )
+= arg max
+e
+exp
+{
+W ? h(f, e)
+}
+?
+e? exp
+{
+W ? h(f, e?)
+}
+= arg max
+e
+{
+W ? h(f, e)
+}
+, (1)
+where f and e (e?) are source and target sentences,
+respectively. h is a feature vector which is scaled
+by a weight W . Parameter estimation is one of
+the most important components in SMT, and var-
+ious training methods have been proposed to tune
+W . Some methods are based on likelihood (Och and
+Ney, 2002; Blunsom et al2008), error rate (Och,
+2003; Zhao and Chen, 2009; Pauls et al2009; Gal-
+ley and Quirk, 2011), margin (Watanabe et al2007;
+Chiang et al2008) and ranking (Hopkins and May,
+2011), and among which minimum error rate train-
+ing (MERT) (Och, 2003) is the most popular one.
+All these training methods follow the same
+pipeline: they train only a single weight on a given
+development set, and then use it to translate all the
+sentences in a test set. We call them a global train-
+ing method. One of its advantages is that it allows us
+to train a single weight offline and thereby it is effi-
+cient. However, due to the diversity and uneven dis-
+tribution of source sentences(Li et al2010), there
+are some shortcomings in this pipeline.
+Firstly, on the document level, the performance of
+these methods is dependent on the choice of a devel-
+opment set, which may potentially lead to an unsta-
+ble translation performance for testing. As referred
+in our experiment, the BLEU points on NIST08 are
+402
+ Source  Candidate Translation   
+i  
+i
+f  j  
+ij
+e  h  score  
+1 ? ? ?? ? 1 I am students . <2, 1> 0.5 
+  2 I was students . <1,1> 0.2 
+2 ?? ?? ? ? 1 week several today ? <1,2> 0.3 
+  2 today several weeks . <3,2> 0.1 
+ 
+(a) (b)
+2 21 2 222,0 ( , ) ( , )h f e h f e? ? ?? ?
+2 22 2 212,0 ( , ) ( , )h f e h f e? ?? ?1 11 1 11, 0 ( , ) ( , )h f e h f e? ?? ?
+1 12 1 111,0 ( , ) ( , )h f e h f e? ? ?? ?
+2 22 2 21( , ) ( , )h f e h f e?
+1 11 1 12( , ) ( , )h f e h f e?
+<-2,0>
+<-1,0>
+<1,0>
+<2,0>
+0h1h
+. .* *
+2 21 2 22( , ) ( , )h f e h f e?
+1 12 1 11( , ) ( , )h f e h f e?
+Figure 1: (a). An Example candidate space of dimensionality two. score is a evaluation metric of e. (b). The non-
+linearly separable classification problem transformed from (a) via tuning as ranking (Hopkins and May, 2011). Since
+score of e11 is greater than that of e12, ?1, 0? corresponds to a possitive example denoted as ???, and ??1, 0? corre-
+sponds to a negative example denoted as ?*?. Since the transformed classification problem is not linearly separable,
+there does not exist a single weight which can obtain e11 and e21 as translation results meanwhile. However, one can
+obtain e11 and e21 with weights: ?1, 1? and ??1, 1?, respectively.
+19.04 when the Moses system is tuned on NIST02
+by MERT. However, its performance is improved to
+21.28 points when tuned on NIST06. The automatic
+selection of a development set may partially address
+the problem. However it is inefficient since tuning
+requires iteratively decoding an entire development
+set, which is impractical for an online service.
+Secondly, translation becomes inconsistent on the
+sentence level (Ma et al2011). Global training
+method such as MERT tries to optimize the weight
+towards the best performance for the whole set, and
+it can not necessarily always obtain good translation
+for every sentence in the development set. The rea-
+son is that different sentences may need different
+optimal weights, and MERT can not find a single
+weight to satisfy all of the sentences. Figure 1(a)
+shows such an example, in which a development set
+contains two sentences f1 and f2 with translations e
+and feature vectors h. When we tune examples in
+Figure 1(a) by MERT, it can be regarded as a non-
+linearly separable classification problem illustrated
+in Figure 1(b). Therefore, there exists no single
+weightW which simultaneously obtains e11 and e21
+as translation for f1 and f2 via Equation (1). How-
+ever, we can achieve this with two weights: ?1, 1?
+for f1 and ??1, 1? for f2.
+In this paper, inspired by KNN-SVM (Zhang et
+al., 2006), we propose a local training method,
+which trains sentence-wise weights instead of a sin-
+gle weight, to address the above two problems.
+Compared with global training methods, such as
+MERT, in which training and testing are separated,
+our method works in an online fashion, in which
+training is performed during testing. This online
+fashion has an advantage in that it can adapt the
+weights for each of the test sentences, by dynam-
+ically tuning the weights on translation examples
+which are similar to these test sentences. Similar
+to the method of development set automatical selec-
+tion, the local training method may also suffer the
+problem of efficiency. To put it into practice, we
+propose incremental training methods which avoid
+retraining and iterative decoding on a development
+set.
+Our local training method has two advantages:
+firstly, it significantly outperforms MERT, especially
+when test set is different from the development set;
+secondly, it improves the translation consistency.
+Experiments on NIST Chinese-to-English transla-
+tion tasks show that our local training method sig-
+nificantly gains over MERT, with the maximum im-
+provements up to 2.0 BLEU, and its efficiency is
+comparable to that of the global training method.
+2 Local Training and Testing
+The local training method (Bottou and Vapnik,
+1992) is widely employed in computer vision
+(Zhang et al2006; Cheng et al2010). Compared
+with the global training method which tries to fit
+a single weight on the training data, the local one
+learns weights based on the local neighborhood in-
+formation for each test example. It is superior to
+403
+the global one when the data sets are not evenly
+distributed (Bottou and Vapnik, 1992; Zhang et al
+2006).
+Algorithm 1 Naive Local Training Method
+Input: T = {ti}Ni=1(test set), K (retrieval size),
+Dev(development set), D(retrieval data)
+Output: Translation results of T
+1: for all sentence ti such that 1 ? i ? N do
+2: Retrieve the training examples Di with size
+K for ti from D according to a similarity;
+3: Train a local weight W i based on Dev and
+Di;
+4: Decode ti with W i;
+5: end for
+Suppose T be a test set, Dev a development set,
+and D a retrieval data. The local training in SMT
+is described in the Algorithm 1. For each sentence
+ti in test set, training examples Di is retrieved from
+D using a similarity measure (line 2), a weight W i
+is optimized on Dev and Di (line 3)1, and, finally,
+ti is decoded with W i for testing (line 4). At the
+end of this algorithm, it returns the translation re-
+sults for T . Note that weights are adapted for each
+test sentence ti in line 3 by utilizing the translation
+examples Di which are similar to ti. Thus, our local
+training method can be considered as an adaptation
+of translation weights.
+Algorithm 1 suffers a problem of training effi-
+ciency in line 3. It is impractical to train a weight
+W i on Dev and Di from scratch for every sen-
+tence, since iteratively decodingDev andDi is time
+consuming when we apply MERT. To address this
+problem, we propose a novel incremental approach
+which is based on a two-phase training.
+On the first phase, we use a global training
+method, like MERT, to tune a baseline weight on
+the development set Dev in an offline manner. On
+the second phase, we utilize the retrieved examples
+to incrementally tune sentence-wise local weights
+based on the baseline weight. This method can
+not only consider the common characteristics learnt
+from the Dev, but also take into account the knowl-
+1Usually, the quality of development set Dev is high, since
+it is manually produced with multiple references. This is the
+main reason why Dev is used as a part of new development set
+to train W i.
+edge for each individual sentence learnt from sim-
+ilar examples during testing. On the phase of in-
+cremental training, we perform decoding only once
+for retrieved examples Di, though several rounds of
+decoding are possible and potentially better if one
+does not seriously care about training speed. Fur-
+thermore, instead of on-the-fly decoding, we decode
+the retrieval data D offline using the parameter from
+our baseline weight and its nbest translation candi-
+dates are saved with training examples to increase
+the training efficiency.
+Algorithm 2 Local Training Method Based on In-
+cremental Training
+Input: T = {ti}Ni=1 (test set), K (retrieval size),
+Dev (development set),
+D = {?fs, rs?}s=Ss=1 (retrieval data),
+Output: Translation results of T
+1: Run global Training (such as MERT) on Dev to
+get a baseline weight Wb; // Phase 1
+2: Decode each sentence in D to get
+D = {?fs, cs, rs?}s=Ss=1 ;
+3: for all sentence ti such that 1 ? i ? N do
+4: Retrieve K training examples Di =
+{?f ij , c
+i
+j , r
+i
+j?}
+j=K
+j=1 for ti from D according to
+a similarity;
+5: Incrementally train a local weight W i based
+on Wb and Di; // Phase 2
+6: Decode ti with W i;
+7: end for
+The two-phase local training algorithm is de-
+scribed in Algorithm 2, where cs and rs denote the
+translation candidate set and reference set for each
+sentence fs in retrieval data, respectively, and K is
+the retrieval size. It globally trains a baseline weight
+Wb (line 1), and decodes each sentence in retrieval
+data D with the weight Wb (line 2). For each sen-
+tence ti in test set T , it first retrieves training exam-
+ples Di from D (line 4), and then it runs local train-
+ing to tune a local weight W i (line 5) and performs
+testing with W i for ti (line 6). Please note that the
+two-phase training contains global training in line 1
+and local training in line 5.
+From Algorithm 2, one can see that our method is
+effective even if the test set is unknow, for example,
+in the scenario of online translation services, since
+the global training on development set and decoding
+404
+on retrieval data can be performed offline.
+In the next two sections, we will discuss the de-
+tails about the similarity metric in line 4 and the in-
+cremental training in line 5 of Algorithm 2.
+3 Acquiring Training Examples
+In line 4 of Algorithm 2, to retrieve training exam-
+ples for the sentence ti , we first need a metric to
+retrieve similar translation examples. We assume
+that the metric satisfy the property: more similar the
+test sentence and translation examples are, the better
+translation result one obtains when decoding the test
+sentence with the weight trained on the translation
+examples.
+The metric we consider here is derived from
+an example-based machine translation. To retrieve
+translation examples for a test sentence, (Watanabe
+and Sumita, 2003) defined a metric based on the
+combination of edit distance and TF-IDF (Manning
+and Schu?tze, 1999) as follows:
+dist(f1, f2) = ? ? edit-dist(f1, f2)+
+(1? ?)? tf-idf(f1, f2), (2)
+where ?(0 ? ? ? 1) is an interpolation weight,
+fi(i = 1, 2) is a word sequence and can be also
+considered as a document. In this paper, we extract
+similar examples from training data. Like example-
+based translation in which similar source sentences
+have similar translations, we assume that the optimal
+translation weights of the similar source sentences
+are closer.
+4 Incremental Training Based on
+Ultraconservative Update
+Compared with retraining mode, incremental train-
+ing can improve the training efficiency. In the field
+of machine learning research, incremental training
+has been employed in the work (Cauwenberghs and
+Poggio, 2001; Shilton et al2005), but there is lit-
+tle work for tuning parameters of statistical machine
+translation. The biggest difficulty lies in that the fea-
+ture vector of a given training example, i.e. transla-
+tion example, is unavailable until actually decoding
+the example, since the derivation is a latent variable.
+In this section, we will investigate the incremental
+training methods in SMT scenario.
+Following the notations in Algorithm 2, Wb is
+the baseline weight, Di = {?f ij , c
+i
+j , r
+i
+j?}
+K
+j=1 denotes
+training examples for ti. For the sake of brevity, we
+will drop the index i, Di = {?fj , cj , rj?}Kj=1, in the
+rest of this paper. Our goal is to find an optimal
+weight, denoted by W i, which is a local weight and
+used for decoding the sentence ti. Unlike the global
+method which performs tuning on the whole devel-
+opment set Dev +Di as in Algorithm 1, W i can be
+incrementally learned by optimizing onDi based on
+Wb. We employ the idea of ultraconservative update
+(Crammer and Singer, 2003; Crammer et al2006)
+to propose two incremental methods for local train-
+ing in Algorithm 2 as follows.
+Ultraconservative update is an efficient way to
+consider the trade-off between the progress made on
+development set Dev and the progress made on Di.
+It desires that the optimal weight W i is not only
+close to the baseline weight Wb, but also achieves
+the low loss over the retrieved examples Di. The
+idea of ultraconservative update can be formalized
+as follows:
+min
+W
+{
+d(W,Wb) + ? ? Loss(D
+i,W )
+}
+, (3)
+where d(W,Wb) is a distance metric over a pair
+of weights W and Wb. It penalizes the weights
+far away from Wb and it is L2 norm in this paper.
+Loss(Di,W ) is a loss function of W defined on Di
+and it evaluates the performance of W over Di. ?
+is a positive hyperparameter. If Di is more similar
+to the test sentence ti, the better performance will be
+achieved for the larger ?. In particular, ifDi consists
+of only a single sentence ti, the best performance
+will be obtained when ? goes to infinity.
+4.1 Margin Based Ultraconservative Update
+MIRA(Crammer and Singer, 2003; Crammer et al
+2006) is a form of ultraconservative update in (3)
+whoseLoss is defined as hinge loss based on margin
+over the pairwise translation candiates in Di. It tries
+to minimize the following quadratic program:
+1
+2
+||W ?Wb||
+2+
+?
+K
+K?
+j=1
+max
+1?n?|cj |
+(
+`jn?W ??h(fj , ejn)
+)
+with
+?h(fj , ejn) = h(fj , ej?)? h(fj , ejn), (4)
+405
+where h(fj , e) is the feature vector of candidate e,
+ejn is a translation member of fj in cj , ej? is the
+oracle one in cj , `jn is a loss between ej? and ejn
+and it is the same as referred in (Chiang et al2008),
+and |cj | denotes the number of members in cj .
+Different from (Watanabe et al2007; Chiang
+et al2008) employing the MIRA to globally train
+SMT, in this paper, we apply MIRA as one of local
+training method for SMT and we call it as margin
+based ultraconservative update (MBUU for shortly)
+to highlight its advantage of incremental training in
+line 5 of Algorithm 2.
+Further, there is another difference between
+MBUU and MIRA in (Watanabe et al2007; Chi-
+ang et al2008). MBUU is a batch update mode
+which updates the weight with all training examples,
+but MIRA is an online one which updates with each
+example (Watanabe et al2007) or part of examples
+(Chiang et al2008). Therefore, MBUU is more ul-
+traconservative.
+4.2 Error Rate Based Ultraconservative
+Update
+Instead of taking into account the margin-based
+hinge loss between a pair of translations as the Loss
+in (3), we directly optimize the error rate of trans-
+lation candidates with respect to their references in
+Di. Formally, the objective function of error rate
+based ultraconservative update (EBUU) is as fol-
+lows:
+1
+2
+?W ?Wb?
+2 +
+?
+K
+K?
+j=1
+Error(rj ; e?(fj ;W )), (5)
+where e?(fj ;W ) is defined in Equation (1), and
+Error(rj , e) is the sentence-wise minus BLEU (Pa-
+pineni et al2002) of a candidate e with respect to
+rj .
+Due to the existence of L2 norm in objective
+function (5), the optimization algorithm MERT can
+not be applied for this question since the exact line
+search routine does not hold here. Motivated by
+(Och, 2003; Smith and Eisner, 2006), we approxi-
+mate the Error in (5) by the expected loss, and then
+derive the following function:
+1
+2
+?W?Wb?
+2+
+?
+K
+K?
+j=1
+?
+e
+Error(rj ; e)P?(e|fj ;W ),
+(6)
+Systems NIST02 NIST05 NIST06 NIST08
+Moses 30.39 26.31 25.34 19.07
+Moses hier 33.68 26.94 26.28 18.65
+In-Hiero 31.24 27.07 26.32 19.03
+Table 1: The performance comparison of the baseline In-
+Hiero VS Moses and Moses hier.
+with
+P?(e|fj ;W ) =
+exp[?W ? h(fj , e)]
+?
+e??cj exp[?W ? h(fj , e
+?)]
+, (7)
+where ? > 0 is a real number valued smoother. One
+can see that, in the extreme case, for ? ? ?, (6)
+converges to (5).
+We apply the gradient decent method to minimize
+the function (6), as it is smooth with respect to ?.
+Since the function (6) is non-convex, the solution
+obtained by gradient descent method may depend on
+the initial point. In this paper, we set the initial point
+as Wb in order to achieve a desirable solution.
+5 Experiments and Results
+5.1 Setting
+We conduct our experiments on the Chinese-to-
+English translation task. The training data is FBIS
+corpus consisting of about 240k sentence pairs. The
+development set is NIST02 evaluation data, and the
+test datasets are NIST05, NIST06,and NIST08.
+We run GIZA++ (Och and Ney, 2000) on the
+training corpus in both directions (Koehn et al
+2003) to obtain the word alignment for each sen-
+tence pair. We train a 4-gram language model on
+the Xinhua portion of the English Gigaword cor-
+pus using the SRILM Toolkits (Stolcke, 2002) with
+modified Kneser-Ney smoothing (Chen and Good-
+man, 1998). In our experiments the translation per-
+formances are measured by case-insensitive BLEU4
+metric (Papineni et al2002) and we use mteval-
+v13a.pl as the evaluation tool. The significance test-
+ing is performed by paired bootstrap re-sampling
+(Koehn, 2004).
+We use an in-house developed hierarchical
+phrase-based translation (Chiang, 2005) as our base-
+line system, and we denote it as In-Hiero. To ob-
+tain satisfactory baseline performance, we tune In-
+Hiero system for 5 times using MERT, and then se-
+406
+Methods Steps Seconds
+Global method Decoding 2.0
+Local method Retrieval +0.6
+Local training +0.3
+Table 2: The efficiency of the local training and testing
+measured by sentence averaged runtime.
+Methods NIST05 NIST06 NIST08
+Global MERT 27.07 26.32 19.03
+Local MBUU 27.75+ 27.88+ 20.84+
+EBUU 27.85+ 27.99+ 21.08+
+Table 3: The performance comparison of local train-
+ing methods (MBUU and EBUU) and a global method
+(MERT). NIST05 is the set used to tune ? for MBUU and
+EBUU, and NIST06 and NIST08 are test sets. + means
+the local method is significantly better than MERT with
+p < 0.05.
+lect the best-performing one as our baseline for the
+following experiments. As Table 1 indicates, our
+baseline In-Hiero is comparable to the phrase-based
+MT (Moses) and the hierarchical phrase-based MT
+(Moses hier) implemented in Moses, an open source
+MT toolkit2 (Koehn et al2007). Both of these sys-
+tems are with default setting. All three systems are
+trained by MERT with 100 best candidates.
+To compare the local training method in Algo-
+rithm 2, we use a standard global training method,
+MERT, as the baseline training method. We do not
+compare with Algorithm 1, in which retraining is
+performed for each input sentence, since retraining
+for the whole test set is impractical given that each
+sentence-wise retraining may take some hours or
+even days. Therefore, we just compare Algorithm
+2 with MERT.
+5.2 Runtime Results
+To run the Algorithm 2, we tune the baseline weight
+Wb on NIST02 by MERT3. The retrieval data is set
+as the training data, i.e. FBIS corpus, and the re-
+trieval size is 100. We translate retrieval data with
+Wb to obtain their 100 best translation candidates.
+We use the simple linear interpolated TF-IDF met-
+ric with ? = 0.1 in Section 3 as the retrieval metric.
+2See web: http://www.statmt.org
+3Wb is exactly the weight of In-Hiero in Table 1.
+NIST05 NIST06 NIST08
+NIST02 0.665 0.571 0.506
+Table 4: The similarity of development and three test
+datasets.
+For an efficient tuning, the retrieval process is par-
+allelized as follows: the examples are assigned to 4
+CPUs so that each CPU accepts a query and returns
+its top-100 results, then all these top-100 results are
+merged into the final top-100 retrieved examples to-
+gether with their translation candidates. In our ex-
+periments, we employ the two incremental training
+methods, i.e. MBUU and EBUU. Both of the hyper-
+parameters ? are tuned on NIST05 and set as 0.018
+and 0.06 for MBUU and EBUU, respectively. In
+the incremental training step, only one CPU is em-
+ployed.
+Table 2 depicts that testing each sentence with lo-
+cal training method takes 2.9 seconds, which is com-
+parable to the testing time 2.0 seconds with global
+training method4. This shows that the local method
+is efficient. Further, compared to the retrieval, the
+local training is not the bottleneck. Actually, if we
+use LSH technique (Andoni and Indyk, 2008) in re-
+trieval process, the local method can be easily scaled
+to a larger training data.
+5.3 Results and Analysis
+Table 3 shows the main results of our local train-
+ing methods. The EBUU training method signifi-
+cantly outperforms the MERT baseline, and the im-
+provement even achieves up to 2.0 BLEU points on
+NIST08. We can also see that EBUU and MBUU are
+comparable on these three test sets. Both of these
+two local training methods achieve significant im-
+provements over the MERT baseline, which proves
+the effectiveness of our local training method over
+global training method.
+Although both local methods MBUU and EBUU
+achieved improvements on all the datasets, their
+gains on NIST06 and NIST08 are significantly
+higher than those achieved on NIST05 test dataset.
+We conjecture that, the more different a test set and
+a development set are, the more potential improvem-
+4The runtime excludes the time of tuning and decoding on D
+in Algorithm 2, since both of them can be performanced offline.
+407
+0 . 0 0 0 . 0 2 0 . 0 4 0 . 0 6 0 . 0 8 0 . 1 01 82 02 2
+2 42 62 8  
+ 
+ N I S T 0 5 N I S T 0 6 N I S T 0 8BLEU l
+Figure 2: The peformance of EBUU for different ? over
+all the test datasets. The horizontal axis denotes the val-
+ues of ? in function (6), and the vertical one denotes the
+BLEU points.
+Metthods Dev NIST08
+NIST02 19.03
+MERT NIST05 20.06
+NIST06 21.28
+EBUU NIST02 21.08
+Table 5: The comparison of MERT with different de-
+velopment datasets and local training method based on
+EBUU.
+nts local training has for the sentences in this test set.
+To test our hypothesis, we measured the similarity
+between the development set and a test set by the
+average value5 of accumulated TF-IDF scores of de-
+velopment dataset and each sentence in test datasets.
+Table 4 shows that NIST06 and NIST08 are more
+different from NIS02 than NIST05, thus, this is po-
+tentially the reason why local training is more effec-
+tive on NIST06 and NIST08.
+As mentioned in Section 1, the global training
+methods such as MERT are highly dependent on de-
+velopment sets, which can be seen in Table 5. There-
+fore, the translation performance will be degraded if
+one chooses a development data which is not close
+5Instead of using the similarity between two documents de-
+velopment and test datasets, we define the similarity as the av-
+erage similarity of the development set and the sentences in test
+set. The reason is that it reduces its dependency on the number
+of sentences in test dataset, which may cause a bias.
+Methods Number Percents
+MERT 1735 42.3%
+EBUU 1606 39.1%
+Table 6: The statistics of sentences with 0.0 sentence-
+level BLEU points over three test datasets.
+to the test data. We can see that, with the help of the
+local training, we still gain much even if we selected
+an unsatisfactory development data.
+As also mentioned in Section 1, the global meth-
+ods do not care about the sentence level perfor-
+mance. Table 6 depicts that there are 1735 sentences
+with zero BLEU points in all the three test datasets
+for MERT. Besides obtaining improvements on doc-
+ument level as referred in Table 3, the local training
+methods can also achieve consistent improvements
+on sentence level and thus can improve the users?
+experiences.
+The hyperparameters ? in both MBUU (4) and
+EBUU (6) has an important influence on transla-
+tion performance. Figure 2 shows such influence
+for EBUU on the test datasets. We can see that, the
+performances on all these datasets improve as ? be-
+comes closer to 0.06 from 0, and the performance
+continues improving when ? passes over 0.06 on
+NIST08 test set, where the performance constantly
+improves up to 2.6 BLEU points over baseline. As
+mentioned in Section 4, if the retrieved examples are
+very similar to the test sentence, the better perfor-
+mance will be achieved with the larger ?. There-
+fore, it is reasonable that the performances improved
+when ? increased from 0 to 0.06. Further, the turn-
+ing point appearing at 0.06 proves that the ultra-
+conservative update is necessary. We can also see
+that the performance on NIST08 consistently im-
+proves and achieves the maximum gain when ? ar-
+rives at 0.1, but those on both NIST05 and NIST06
+achieves the best when it arrives at 0.06. This
+phenomenon can also be interpreted in Table 4 as
+the lowest similarity between the development and
+NIST08 datasets.
+Generally, the better performance may be
+achieved when more examples are retrieved. Actu-
+ally, in Table 7 there seems to be little dependency
+between the numbers of examples retrieved and the
+translation qualities, although they are positively re-
+408
+Retrieval Size NIST05 NIST06 NIST08
+40 27.66 27.81 20.87
+70 27.77 27.93 21.08
+100 27.85 27.99 21.08
+Table 7: The performance comparison by varying re-
+trieval size in Algorithm 2 based on EBUU.
+Methods NIST05 NIST06 NIST08
+MERT 27.07 26.32 19.03
+EBUU 27.85 27.99 21.08
+Oracle 29.46 29.35 22.09
+Table 8: The performance of Oracle of 2-best results
+which consist of 1-best resluts of MERT and 1-best
+resluts of EBUU.
+lated approximately.
+Table 8 presents the performance of the oracle
+translations selected from the 1-best translation re-
+sults of MERT and EBUU. Clearly, there exists more
+potential improvement for local training method.
+6 Related Work
+Several works have proposed discriminative tech-
+niques to train log-linear model for SMT. (Och and
+Ney, 2002; Blunsom et al2008) used maximum
+likelihood estimation to learn weights for MT. (Och,
+2003; Moore and Quirk, 2008; Zhao and Chen,
+2009; Galley and Quirk, 2011) employed an eval-
+uation metric as a loss function and directly opti-
+mized it. (Watanabe et al2007; Chiang et al2008;
+Hopkins and May, 2011) proposed other optimiza-
+tion objectives by introducing a margin-based and
+ranking-based indirect loss functions.
+All the methods mentioned above train a single
+weight for the whole development set, whereas our
+local training method learns a weight for each sen-
+tence. Further, our translation framework integrates
+the training and testing into one unit, instead of treat-
+ing them separately. One of the advantages is that it
+can adapt the weights for each of the test sentences.
+Our method resorts to some translation exam-
+ples, which is similar as example-based translation
+or translation memory (Watanabe and Sumita, 2003;
+He et al2010; Ma et al2011). Instead of using
+translation examples to construct translation rules
+for enlarging the decoding space, we employed them
+to discriminatively learn local weights.
+Similar to (Hildebrand et al2005; Lu? et al
+2007), our method also employes IR methods to re-
+trieve examples for a given test set. Their methods
+utilize the retrieved examples to acquire translation
+model and can be seen as the adaptation of trans-
+lation model. However, ours uses the retrieved ex-
+amples to tune the weights and thus can be consid-
+ered as the adaptation of tuning. Furthermore, since
+ours does not change the translation model which
+needs to run GIZA++ and it incrementally trains lo-
+cal weights, our method can be applied for online
+translation service.
+7 Conclusion and Future Work
+This paper proposes a novel local training frame-
+work for SMT. It has two characteristics, which
+are different from global training methods such as
+MERT. First, instead of training only one weight for
+document level, it trains a single weight for sentence
+level. Second, instead of considering the training
+and testing as two separate units, we unify the train-
+ing and testing into one unit, which can employ the
+information of test sentences and perform sentence-
+wise local adaptation of weights.
+Local training can not only alleviate the prob-
+lem of the development data selection, but also re-
+duce the risk of sentence-wise bad translation re-
+sults, thus consistently improve the translation per-
+formance. Experiments show gains up to 2.0 BLEU
+points compared with a MERT baseline. With the
+help of incremental training methods, the time in-
+curred by local training was negligible and the local
+training and testing totally took 2.9 seconds for each
+sentence.
+In the future work, we will further investigate the
+local training method, since there are more room for
+improvements as observed in our experiments. We
+will test our method on other translation models and
+larger training data6.
+Acknowledgments
+We would like to thank Hongfei Jiang and Shujie
+Liu for many valuable discussions and thank three
+6Intuitionally, when the corpus of translation examples is
+larger, the retrieval results in Algorithm 2 are much similar as
+the test sentence. Therefore our method may favor this.
+409
+anonymous reviewers for many valuable comments
+and helpful suggestions. This work was supported
+by National Natural Science Foundation of China
+(61173073,61100093), and the Key Project of the
+National High Technology Research and Develop-
+ment Program of China (2011AA01A207), and the
+Fundamental Research Funds for Central Univer-
+sites (HIT.NSRIF.2013065).
+References
+Alexandr Andoni and Piotr Indyk. 2008. Near-optimal
+hashing algorithms for approximate nearest neighbor
+in high dimensions. Commun. ACM, 51(1):117?122,
+January.
+Phil Blunsom, Trevor Cohn, and Miles Osborne. 2008.
+A discriminative latent variable model for statisti-
+cal machine translation. In Proceedings of ACL,
+pages 200?208, Columbus, Ohio, June. Association
+for Computational Linguistics.
+Le?on Bottou and Vladimir Vapnik. 1992. Local learning
+algorithms. Neural Comput., 4:888?900, November.
+G. Cauwenberghs and T. Poggio. 2001. Incremental
+and decremental support vector machine learning. In
+Advances in Neural Information Processing Systems
+(NIPS*2000), volume 13.
+Stanley F Chen and Joshua Goodman. 1998. An empir-
+ical study of smoothing techniques for language mod-
+eling. In Technical Report TR-10-98. Harvard Univer-
+sity.
+Haibin Cheng, Pang-Ning Tan, and Rong Jin. 2010. Ef-
+ficient algorithm for localized support vector machine.
+IEEE Trans. on Knowl. and Data Eng., 22:537?549,
+April.
+David Chiang, Yuval Marton, and Philip Resnik. 2008.
+Online large-margin training of syntactic and struc-
+tural translation features. In Proceedings of the Con-
+ference on Empirical Methods in Natural Language
+Processing, EMNLP ?08, pages 224?233, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+David Chiang. 2005. A hierarchical phrase-based model
+for statistical machine translation. In Proceedings of
+the 43rd Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?05, pages 263?270, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Koby Crammer and Yoram Singer. 2003. Ultraconser-
+vative online algorithms for multiclass problems. J.
+Mach. Learn. Res., 3:951?991, March.
+Koby Crammer, Ofer Dekel, Joseph Keshet, Shai Shalev-
+Shwartz, and Yoram Singer. 2006. Online passive-
+aggressive algorithms. J. Mach. Learn. Res., 7:551?
+585, December.
+Michel Galley and Chris Quirk. 2011. Optimal search
+for minimum error rate training. In Proceedings of
+the 2011 Conference on Empirical Methods in Natural
+Language Processing, pages 38?49, Edinburgh, Scot-
+land, UK., July. Association for Computational Lin-
+guistics.
+Yifan He, Yanjun Ma, Josef van Genabith, and Andy
+Way. 2010. Bridging smt and tm with translation
+recommendation. In Proceedings of the 48th Annual
+Meeting of the Association for Computational Linguis-
+tics, pages 622?630, Uppsala, Sweden, July. Associa-
+tion for Computational Linguistics.
+S. Hildebrand, M. Eck, S. Vogel, and Alex Waibel. 2005.
+Adaptation of the translation model for statistical ma-
+chine translation based on information retrieval. In
+Proceedings of EAMT. Association for Computational
+Linguistics.
+Mark Hopkins and Jonathan May. 2011. Tuning as rank-
+ing. In Proceedings of the 2011 Conference on Empir-
+ical Methods in Natural Language Processing, pages
+1352?1362, Edinburgh, Scotland, UK., July. Associa-
+tion for Computational Linguistics.
+Philipp Koehn, Franz Josef Och, and Daniel Marcu.
+2003. Statistical phrase-based translation. In Proc.
+of HLT-NAACL. ACL.
+Philipp Koehn, Hieu Hoang, Alexandra Birch, Chris
+Callison-Burch, Marcello Federico, Nicola Bertoldi,
+Brooke Cowan, Wade Shen, Christine Moran, Richard
+Zens, Chris Dyer, Ondr?ej Bojar, Alexandra Con-
+stantin, and Evan Herbst. 2007. Moses: open source
+toolkit for statistical machine translation. In Proceed-
+ings of the 45th Annual Meeting of the ACL on Inter-
+active Poster and Demonstration Sessions, ACL ?07,
+pages 177?180, Stroudsburg, PA, USA. Association
+for Computational Linguistics.
+Philipp Koehn. 2004. Statistical significance tests for
+machine translation evaluation. In Proc. of EMNLP.
+ACL.
+Mu Li, Yinggong Zhao, Dongdong Zhang, and Ming
+Zhou. 2010. Adaptive development data selection for
+log-linear model in statistical machine translation. In
+Proceedings of the 23rd International Conference on
+Computational Linguistics, COLING ?10, pages 662?
+670, Stroudsburg, PA, USA. Association for Compu-
+tational Linguistics.
+Yajuan Lu?, Jin Huang, and Qun Liu. 2007. Improving
+statistical machine translation performance by train-
+ing data selection and optimization. In Proceedings
+of the 2007 Joint Conference on Empirical Methods
+in Natural Language Processing and Computational
+Natural Language Learning (EMNLP-CoNLL), pages
+410
+343?350, Prague, Czech Republic, June. Association
+for Computational Linguistics.
+Yanjun Ma, Yifan He, Andy Way, and Josef van Gen-
+abith. 2011. Consistent translation using discrim-
+inative learning - a translation memory-inspired ap-
+proach. In Proceedings of the 49th Annual Meeting
+of the Association for Computational Linguistics: Hu-
+man Language Technologies, pages 1239?1248, Port-
+land, Oregon, USA, June. Association for Computa-
+tional Linguistics.
+Christopher D. Manning and Hinrich Schu?tze. 1999.
+Foundations of statistical natural language process-
+ing. MIT Press, Cambridge, MA, USA.
+Robert C. Moore and Chris Quirk. 2008. Random
+restarts in minimum error rate training for statistical
+machine translation. In Proceedings of the 22nd Inter-
+national Conference on Computational Linguistics -
+Volume 1, COLING ?08, pages 585?592, Stroudsburg,
+PA, USA. Association for Computational Linguistics.
+Franz Josef Och and Hermann Ney. 2000. Improved
+statistical alignment models. In Proceedings of the
+38th Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?00, pages 440?447, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Franz Josef Och and Hermann Ney. 2002. Discrimi-
+native training and maximum entropy models for sta-
+tistical machine translation. In Proceedings of the
+40th Annual Meeting on Association for Computa-
+tional Linguistics, ACL ?02, pages 295?302, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Franz Josef Och. 2003. Minimum error rate training in
+statistical machine translation. In Proceedings of the
+41st Annual Meeting of the Association for Compu-
+tational Linguistics, pages 160?167, Sapporo, Japan,
+July. Association for Computational Linguistics.
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-
+Jing Zhu. 2002. Bleu: a method for automatic eval-
+uation of machine translation. In Proceedings of 40th
+Annual Meeting of the Association for Computational
+Linguistics, pages 311?318, Philadelphia, Pennsylva-
+nia, USA, July. Association for Computational Lin-
+guistics.
+Adam Pauls, John Denero, and Dan Klein. 2009. Con-
+sensus training for consensus decoding in machine
+translation. In Proceedings of the 2009 Conference on
+Empirical Methods in Natural Language Processing,
+pages 1418?1427, Singapore, August. Association for
+Computational Linguistics.
+Alistair Shilton, Marimuthu Palaniswami, Daniel Ralph,
+and Ah Chung Tsoi. 2005. Incremental training of
+support vector machines. IEEE Transactions on Neu-
+ral Networks, 16(1):114?131.
+Andreas Stolcke. 2002. Srilm - an extensible language
+modeling toolkit. In Proc. of ICSLP.
+Taro Watanabe and Eiichiro Sumita. 2003. Example-
+based decoding for statistical machine translation. In
+Proc. of MT Summit IX, pages 410?417.
+Taro Watanabe, Jun Suzuki, Hajime Tsukada, and Hideki
+Isozaki. 2007. Online large-margin training for sta-
+tistical machine translation. In Proceedings of the
+2007 Joint Conference on Empirical Methods in Nat-
+ural Language Processing and Computational Natu-
+ral Language Learning (EMNLP-CoNLL), pages 764?
+773, Prague, Czech Republic, June. Association for
+Computational Linguistics.
+Hao Zhang, Alexander C. Berg, Michael Maire, and Ji-
+tendra Malik. 2006. Svm-knn: Discriminative near-
+est neighbor classification for visual category recog-
+nition. In Proceedings of the 2006 IEEE Computer
+Society Conference on Computer Vision and Pattern
+Recognition - Volume 2, CVPR ?06, pages 2126?2136,
+Washington, DC, USA. IEEE Computer Society.
+Bing Zhao and Shengyuan Chen. 2009. A simplex
+armijo downhill algorithm for optimizing statistical
+machine translation decoding parameters. In Proceed-
+ings of Human Language Technologies: The 2009 An-
+nual Conference of the North American Chapter of the
+Association for Computational Linguistics, Compan-
+ion Volume: Short Papers, NAACL-Short ?09, pages
+21?24, Stroudsburg, PA, USA. Association for Com-
+putational Linguistics.
+411
+Proceedings of NAACL-HLT 2013, pages 563?568,
+Atlanta, Georgia, 9?14 June 2013. c?2013 Association for Computational Linguistics
+Compound Embedding Features for Semi-supervised Learning   Mo Yu1, Tiejun Zhao1, Daxiang Dong2, Hao Tian2 and Dianhai Yu2 Harbin Institute of Technology, Harbin, China Baidu Inc., Beijing, China {yumo,tjzhao}@mtlab.hit.edu.cn {dongdaxiang,tianhao,yudianhai}@baidu.com      Abstract 
+To solve data sparsity problem, recently there has been a trend in discriminative methods of NLP to use representations of lexical items learned from unlabeled data as features. In this paper, we investigated the usage of word representations learned by neural language models, i.e. word embeddings. The direct us-age has disadvantages such as large amount of computation, inadequacy with dealing word ambiguity and rare-words, and the problem of linear non-separability. To overcome these problems, we instead built compound features from continuous word embeddings based on clustering. Experiments showed that the com-pound features not only improved the perfor-mances on several NLP tasks, but also ran faster, suggesting the potential of embeddings.  
+1 Introduction Supervised learning methods have achieved great successes in the field of Natural Language Pro-cessing (NLP). However, in practice most methods are usually limited by the problem of data sparsity, since it is impossible to obtain sufficient labeled data for all NLP tasks. In these situations semi-supervised learning can help to make use of both labeled data and easy-to-obtain unlabeled data. The semi-supervised framework that is widely applied to NLP is to first learn word representa-tions, which are feature vectors of lexical items, from unlabeled data and then plug them into a su-pervised system. These methods are very effective in utilizing large-scale unlabeled data and have successfully improved performances of state-of-
+the-art supervised systems on a variety of tasks (Koo et al, 2008; Huang and Yates, 2009; T?ck-str?m et al, 2012).  With the development of neural language mod-els (NLM) (Bengio et al, 2003; Mnih and Hinton, 2009), recently researchers become interested in word representations (also called word embed-dings) learned by these models. Word embeddings are dense low dimensional real-valued vectors. They are composed of some latent features, which are expected to capture useful syntactic and seman-tic properties. Word embeddings are usually served as the first layer in deep learning systems for NLP (Collobert and Weston, 2008; Socher et al, 2011a, 2011b) and help these systems perform compara-bly with the state-of-the-art models based on hand-crafted features. They also have been directly added as features to the state-of-the-art models of chunking and NER, and have achieved significant improvements (Turian et al 2010). Although the direct usage of continuous embed-dings has been proved to be an effective method for enhancing the state-of-the-art supervised mod-els, it has some disadvantages, which made them be out-performed by simpler Brown cluster fea-tures (Turian et al 2010) and made them computa-tionally complicated. Firstly, embeddings of rare words are insufficiently trained since they are only updated few times and are close to their random initial values. As shown in (Turian et al 2010), this is the main reason that models with embedding features made more errors than those with Brown cluster features. Secondly, in NLMs, each word has its unique representation, so it is difficult to represent different senses for ambiguous words. Thirdly, word embeddings are unsuitable for linear models in some tasks as will be proved in Section 
+563
+4.2. This is possibly because in these tasks, either the target labels are correlated with combinations of different dimensions of word embeddings, or discriminative information may be coded in differ-ent intervals in the same dimension. So treating embeddings directly as inputs to a linear model could not fully utilize them. Moreover, since em-beddings are dense vectors, it will introduce large amount of computations when they are directly used as inputs, making the method impractical. In this paper, we first introduced the idea of clustering embeddings to overcome the last two disadvantages discussed above. The high-dimensional cluster features make samples from different classes better separated by linear models. And models with these features can still run fast because the clusters are sparse and discrete.  Second, we proposed the compound features based on clustering. Compound features, which are conjunctive features of neighboring words, have been widely used in NLP models for improving the performances because they are more discriminative. Compound features of embeddings can also help a model to better predict labels associated with rare-words and ambiguous words, because compound features composed of embeddings of nearby words can help to better describe the property of these words. Compound features are difficult to build on dense embeddings. However they are easy to in-duce from the sparse embedding clusters proposed in this paper.   Experiments on chunking and NER showed that based on the same embeddings, the compound fea-tures managed to achieve better performances. Moreover, we proposed analyses to reveal the rea-sons for the improvements of embedding-clusters and compound features. They suggest that these features can better deal with rare-words and word ambiguity, and are more suitable for linear models. In addition, although Brown clustering was con-sidered better in (Turian et al2010), our experi-ment results and comparisons showed that our compound features from embedding clustering is at least comparable with those from Brown clustering. Since embeddings can greatly benefit from the im-provement and developing of deep learning in the future, we believe that our proposed method has a large space of performance growth and will benefit more applications in NLP. In the rest of the paper, Section 2 introduces how compound embedding features were obtained. 
+Section 3 gives experimental results. In Section 4, we give analysis about the advantages of com-pound features. Section 5 gives the conclusions. 2 Clustering of Word Embeddings  
+2.1 Learning Word Embeddings Word embeddings in this paper were trained by NLMs (Bengio et al, 2003). The model predicts the scores of probabilities of words given their context information in the sentences. It first con-verts the current word and its context words (e.g. n-1 words before it as in n-gram models) into em-beddings. Then these embeddings are put together and propagate forward on the network to compute the score of current word. After minimizing the loss on training data, embeddings are learned and can be further used as smoothing representations for words. 2.2 Clustering of embeddings In order to get compound features of embeddings, we first induce discrete clusters from the embed-dings. Concretely, the k-means clustering algo-rithm is used. Each word is treated as a single sample. A cluster is represented as the mean of the embeddings of words assigned to it. Similarities between words and clusters are measured by Eu-clidean distance. As discussed and experimented later, different numbers of ks contain information of different granularity. So we combine clustering results achieved by different ks as features to better utilize the embeddings. 2.3 Compound features Based on embedding clusters, more powerful com-pound features can be built. Compound features are conjunctions between basic features of words and their contexts, which are widely used in NLP. Koo et al (2008) also observed that compound features of Brown clusters achieved more im-provements on parsing.     It is also necessary to build compound embed-ding features since they can better deal with rare-words and ambiguous words. For example, alt-hough embedding of a rare-word is not fully trained and hence inaccurate, embeddings of its context words can still be accurate as long as they 
+564
+are not rare and are fully trained. So we could uti-lize the combination of embeddings before and after the word to predict its tag correctly. We con-ducted analysis to verify our theory in Section4. We combined the compound features together with other state-of-the-art human-craft features in supervised models. Examples of the resulted fea-ture templates in chunking and NER are shown in Table 1 & 2. The feature 
+1101 ccyy ??  in the last row is an example of compound feature made up of the embedding clusters of words before and af-ter current word. Compound feature extraction can similarly be applied to form compound features of Brown clusters. For example, Brown clusters can replace embedding clusters in 3th row of Table 1. Words }1,0{,1}2:2{, , ???? iiiii www  POS }2,1{,1}2:2{, , ????? iiiii ppp  Cluster 11}1,0{,1}2:2{, ,, ccccc iiiii ?????  Transition },,,{ 1100001 cccpwyy ??  Table 1: Chunking features. Cluster features are suitable for both Brown clusters and embedding clusters. Sym-bol iy is the tag predicted on word iw . Words }1,0{,1}2:2{, , ???? iiiii www  Pre/suffix 1: }4:1{,0:1 }4:2{,0 , ?? ?? iiii ww  Orthography ( ) ( )00 , wCapwHyp  POS }2,1{,1}2:2{, , ????? iiiii ppp  Chunking }2,1{,1}2:2{, , ????? iiiii bbb  Cluster 11}1,0{,1}2:2{, ,, ccccc iiiii ?????  Transition },,,{ 1100001 cccpwyy ??  Table 2: NER features. Hyp indicates if word contains hyphen and Cap indicates if first letter is capitalized.  3 Experiments 
+3.1 Experimental settings We tested our compound features on the same chunking (CoNLL2000) and NER (CoNLL2003) tasks in (Turian et al, 2010). The Brown cluster features were used for comparison, which shared the same feature template used by clusters of em-beddings. To compare with the work of (Turian et al 2010), which aimed to solve the same problem but using embedding directly, we used the same word embeddings (CW 50) and Brown clusters (1000 clusters) they provided. The embeddings in (Turian et al 2010) are trained on RCV corpus, while the CoNLL2000 data is a part of the WSJ corpus. Since we believe that word representations 
+trained on similar domain may better help to im-prove the results, we also used embeddings and Brown clusters trained on unlabeled WSJ data from (Nivre et al 2007) for comparison. Moreover, we wish to find out whether our method extends well to languages other than Eng-lish. So we conducted experiments on Chinese NER, where large amount of training data exists, which makes improving accuracies more difficult. We used data from People?s Daily (Jan.-Jun. 1998) and converted them following the style of Penn CTB (Xue et al 2005). Data from April was cho-sen as test set (1,309,616 words in 55,177 sentenc-es), others for training (6,119,063 words in 255,951 sentences). The Chinese word representa-tions were trained on Chinese Wikipedia until March 2011. The features used in Chinese NER are similar to those in English, except for the or-thography, pre/suffixes, and chunking features. We did little pre-processing work for the train-ing of word representations on WSJ data. The da-tasets were tokenized and capital words were kept. For training of Chinese Wikipedia, we retained the bodies of all articles and replaced words with fre-quencies lower than 10 as an ?UK_WORD? token. On each dataset, we induced embeddings with 64 dimensions based on 7-gram models and 1000 Brown clusters. The method in (Schwenk, 2007) was used to accelerate the training processes of NLMs. All the NLMs were trained for 5 epochs.  For clustering of embeddings we choose k=500 and 2500 since such combination performed best on development set as shown in the next section. We chose the Sofia-ml toolkit (Sculley 2010) for clustering of embeddings in order to save time. In the experiments CRF models were used and were optimized by ASGD (implemented by L?on Bottou). For comparison we re-implemented the direct usage of embeddings in (Turian et al 2010) with CRFsuite (Okazaki, 2007) since their features contain continuous values. 3.2 Performances Table 3 shows the chunking results. The results reported in (Turian et al 2010) were denoted as ?direct?. Based on the same word representations, our compound features got better performances in all cases. The embedding features trained on unla-beled WSJ data yield further improvements, show-
+565
+ing that word representations from similar domains can better help the supervised tasks. System Direct Compound Baseline 93.75 +Embedding (RCV) 94.10 94.19 +Brown (RCV) 94.11 94.24 +Brown&Emb (RCV) 94.35 94.42 +Embedding (WSJ) 94.20 94.37 +Brown (WSJ) 94.25 94.36 +Brown&Emb (WSJ) 94.43 94.58 Table 3:  F1-scores of chunking In the experiments of NER, first we evaluated how the numbers of clusters k will affect the per-formances on development set (Figure 1). The re-sults showed that both the cluster features (excluding all compound embedding features) and compound features could achieve better results than direct usage of the same embeddings. It also showed that the performances did not vary much when k was between 500 and 3000. When k=2500, the result was a little higher than others. We finally chose combination of k=500 and 2500, which achieved best results on development set.  
+ Figure 1: Relation between numbers of clusters k and performances on development set. The performances of NER on test set are shown in Table 4. Our baseline is slightly lower than that in (Turian et al 2010), because the first-order CRF cannot utilize context information of NE tags. Despite of this, same conclusions with chunking held.  System Direct Compound Baseline 83.78 +Embedding 87.38 88.46 +Brown 88.14 88.23 +Brown&Embedding 88.85 89.06 Table 4:  F1-scores of English NER on test data Performances on Chinese NER are shown in Table 5. Similar results were observed as in Eng-lish NER, showing that our method extends to oth-er languages as well. 
+System Direct Compound Baseline 88.24 +Embedding 89.98 90.37 +Brown 90.24 90.55 +Brown&Embedding 90.66 90.96 Table 5:  F1-scores of Chinese NER on test data Above results gave evidences that although clus-tering embeddings may lose some information, the derived compound features did have better perfor-mances. The compound features can also improve the performances of Brown clusters, but not as much as they did on embeddings. And the combi-nation of embedding-clusters and Brown-clusters could further improve the performances, since they made use of different type of context information.  The compound features also reduced the time cost of using embedding features. For example, the time for tagging one sentence in English NER was reduced from 5.6 ms to 1.6 ms, shown in Table 6. Embedding Time (ms) Baseline 1.2 Embeddings (direct) 5.6 Embeddings (compound) 1.6 Table 6:  Running time of different features  4 Analysis  Our compound embedding features greatly out-performed the direct usage of same embeddings on English NER. In this section we conducted anal-yses to show the reasons for the improvements. 4.1 Rare-words and ambiguous words To show the compound features have stronger abil-ities to handle rare words, we counted the numbers of errors made on words with different frequencies on unlabeled data. Here the word frequencies are from the results of Brown clustering provided by (Turian et al 2010). We compared our compound embedding features with direct usage of embed-dings as well as Brown clusters, which is believed to work better on rare words. Figure 2(a) shows that the compound features indeed resulted in few-er errors than the two baseline methods in most cases. Errors of embeddings occurred on words with frequencies lower than 2K and those in the range of 16 to 256 were reduced by 10.55% and 24.44%, respectively. Our compound features also reduced the errors caused by ambiguous words, as shown in Figure 
+566
+2(b), where the numbers of senses for a word are measured by the numbers of different POS tags it has in Penn Treebank. 12.1% of the errors on am-biguous words were reduced, comparing to 8.4% of the errors on unambiguous ones. 
+ (a) 
+ (b) Figure 2: Errors incurred on words with different fre-quencies (a) and ambiguous words (b) in NER. 4.2 Linear separability of embeddings Another reason for the good performances of com-pound features on NER is that they made linear models better separate named entities (NEs) and non-NEs, which are more difficult to be linearly separated when embeddings are directly used as features. Here we designed an experiment to prove this. Based on training data of CoNLL2003, a clas-sification task was built to tell whether a word be-longs to NE or not. Linear SVM and a non-linear model Multilayer Perceptron (MLP) were used to build the classifiers. As shown in Table 7, when embeddings were directly used as features, MLP performed much better than linear SVM. And the linear model was under-fitting on this task since it had similar accuracies on both training set and de-velopment set. Above observations showed that linear models could not separate NEs and non-NEs well in the space of embeddings. When clusters of embeddings were used as fea-tures, the accuracies of linear models increased even when there were only one or two non-zero 
+features for each sample. At the same time the per-formances of MLP decreased because of the loss of information during clustering. The gaps between accuracies of linear models and non-linear ones decreased in the spaces of clusters, showing that cluster features are more suitable for linear models. At last, the compound features made the linear model out-perform all non-linear ones, since extra context information could be utilized. Embeddings Models Accuracy   direct linear 94.38  direct MLP 96.87  cluster 1000 linear 95.31  cluster 1000 MLP 95.32  cluster 500+2500 linear 96.10  cluster 500+2500 MLP 96.02  compound linear 97.30 Table 7:  Performances of linear and non-linear models on development set with different embedding features. 5 Conclusion and perspectives In this paper, we first introduced the idea of clus-tering embeddings and then proposed the com-pound features based on clustering, in order to overcome the disadvantages of the direct usage of continuous embeddings. Experiments showed that the compound features built on the same original word representation features (either embeddings or Brown clusters) achieve better performances on the same tasks. Further analyses showed that the com-pound features reduced errors on rare-words and ambiguous words and could be better utilized by linear models. The usage of word embeddings also has some limitations, e.g. they are weak in capturing struc-tural information of languages, which is necessary in NLP. In the future, we will research on task-specific representations for sub-structures, such as phrases and sub-trees based on word embeddings and documents representations (Xu et al, 2012). Acknowledgments We would like to thank Dr. Hua Wu, Haifeng Wang, Jie Zhou and Rui Zhang for many discus-sions and thank the anonymous reviewers for their valuable suggestions.  This work was supported by National Natural Science Foundation of China (61173073), and the Key Project of the National High Technology Research and Development Pro-gram of China (2011AA01A207). 
+567
+References  Bengio, Y., Ducharme, R., Vincent, P., and Jauvin, C. (2003). A neural probabilistic language models. The Journal of Machine Learning Research, 3:1137?1155. Collobert, R. and Weston, J. (2008). A unified architecture for natural language processing: Deep neural networks with multitask learning. In Proceedings of the 25th international conference on Machine learning, pages 160?167. ACM. Finkel, J., Grenager, T., and Manning, C. (2005). Incorporating non-local information into information extraction systems by gibbs sampling. In Proceedings of the 43rd Annual Meeting on Association for Computational Linguistics, pages 363?370. Association for Computational Linguistics. Huang, F. and Yates, A. (2009). Distributional representations for handling sparsity in supervised sequence labeling. In Proceedings of the Joint Conference of the 47th Annual Meeting of the ACL and the 4th International Joint Conference on Natural Language Processing of the AFNLP: Volume 1-Volume 1, pages 495?503. Association for Computational Linguistics. Koo, T., Carreras, X., and Collins, M. (2008). Simple semi-supervised dependency parsing.  In Proceed-ings of Association for Computational Linguistics, pages 595?603. Association for Computational Linguistics. Mnih, A. and Hinton, G. E. (2009). A scalable hierarchical distributed language model. Advances in neural information processing systems, 21:1081?1088. Nivre, J., Hall, J., K?bler, S., McDonald, R., Nilsson, J., Riedel, S., and Yuret, D. (2007). The CoNLL 2007 shared task on dependency parsing. In Proceedings of the CoNLL Shared Task Session of EMNLP-CoNLL, pages 915?932. Okazaki, N. (2007). Crfsuite: a fast implementation of conditional random fields (crfs). URL http://www.chokkan.org/software/crfsuite. Schwenk, H. (2007). Continuous space language models. Computer Speech & Language, 21(3):492?518. Sculley, D. (2010). Web-scale k-means clustering. In Proceedings of the 19th international conference on World Wide Web, pages 1177?1178. ACM. Socher, R., Huang, E., Pennington, J., Ng, A., and Manning, C. (2011a). Dynamic pooling and unfolding recursive auto-encoders for paraphrase 
+detection. Advances in Neural Information Processing Systems, 24:801?809. Socher, R., Pennington, J., Huang, E., Ng, A., and Manning, C. (2011b). Semi-supervised recursive auto-encoders for predicting sentiment distributions. In Proceedings of the Conference on Empirical Methods in Natural Language Processing, pages 151?161. Association for Computational Linguistics. T?ckstr?m, O., McDonald, R., and Uszkoreit, J. (2012). Cross-lingual word clusters for direct transfer of linguistic structure. In Proceedings of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 477?487, Montr?al, Canada, June 3-8, 2012. Turian, J., Ratinov, L., and Bengio, Y. (2010). Word representations: a simple and general method for semi-supervised learning. In Annual Meeting-Association For Computational Linguistics. Urbana, 51:61801. Xu, Z., Chen, M., Weinberger, K., and Sha, F. An alternative text representation to TF-IDF and Bag-of-Words. In Proceedings of 21st ACM Conf. of Information and Knowledge Management (CIKM), Hawaii, 2012. Xue, N., Xia, F., Chiou, F., and Palmer, M. (2005). The penn chinese treebank: Phrase structure annotation of a large corpus. Natural Language Engineering, 11(2):207. 
+568
+Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics, pages 151?160,
+Portland, Oregon, June 19-24, 2011. c?2011 Association for Computational Linguistics
+Target-dependent Twitter Sentiment Classification 
+ 
+ 
+Long Jiang1   Mo Yu2   Ming Zhou1   Xiaohua Liu1   Tiejun Zhao2 
+1 Microsoft Research Asia 2 School of Computer Science & Technology 
+Beijing, China Harbin Institute of Technology 
+ Harbin, China 
+{longj,mingzhou,xiaoliu}@microsoft.com {yumo,tjzhao}@mtlab.hit.edu.cn 
+ 
+  
+  
+ 
+ 
+Abstract 
+Sentiment analysis on Twitter data has attract-
+ed much attention recently. In this paper, we 
+focus on target-dependent Twitter sentiment 
+classification; namely, given a query, we clas-
+sify the sentiments of the tweets as positive, 
+negative or neutral according to whether they 
+contain positive, negative or neutral senti-
+ments about that query. Here the query serves 
+as the target of the sentiments. The state-of-
+the-art approaches for solving this problem 
+always adopt the target-independent strategy, 
+which may assign irrelevant sentiments to the 
+given target. Moreover, the state-of-the-art 
+approaches only take the tweet to be classified 
+into consideration when classifying the senti-
+ment; they ignore its context (i.e., related 
+tweets). However, because tweets are usually 
+short and more ambiguous, sometimes it is not 
+enough to consider only the current tweet for 
+sentiment classification. In this paper, we pro-
+pose to improve target-dependent Twitter sen-
+timent classification by 1) incorporating 
+target-dependent features; and 2) taking relat-
+ed tweets into consideration. According to the 
+experimental results, our approach greatly im-
+proves the performance of target-dependent 
+sentiment classification. 
+1 Introduction 
+Twitter, as a micro-blogging system, allows users 
+to publish tweets of up to 140 characters in length 
+to tell others what they are doing, what they are 
+thinking, or what is happening around them. Over 
+the past few years, Twitter has become very popu-
+lar. According to the latest Twitter entry in Wik-
+ipedia, the number of Twitter users has climbed to 
+190 million and the number of tweets published on 
+Twitter every day is over 65 million1.  
+As a result of the rapidly increasing number of 
+tweets, mining people?s sentiments expressed in 
+tweets has attracted more and more attention. In 
+fact, there are already many web sites built on the 
+Internet providing a Twitter sentiment search ser-
+vice, such as Tweetfeel2 , Twendz3 , and Twitter 
+Sentiment4. In those web sites, the user can input a 
+sentiment target as a query, and search for tweets 
+containing positive or negative sentiments towards 
+the target. The problem needing to be addressed 
+can be formally named as Target-dependent Sen-
+timent Classification of Tweets; namely, given a 
+query, classifying the sentiments of the tweets as 
+positive, negative or neutral according to whether 
+they contain positive, negative or neutral senti-
+ments about that query. Here the query serves as 
+the target of the sentiments. 
+The state-of-the-art approaches for solving this 
+problem, such as (Go et al, 20095; Barbosa and 
+Feng, 2010), basically follow (Pang et al, 2002), 
+who utilize machine learning based classifiers for 
+the sentiment classification of texts. However, their 
+classifiers actually work in a target-independent 
+way: all the features used in the classifiers are in-
+dependent of the target, so the sentiment is decided 
+no matter what the target is. Since (Pang et al, 
+2002) (or later research on sentiment classification 
+                                                          
+1 http://en.wikipedia.org/wiki/Twitter 
+2 http://www.tweetfeel.com/ 
+3 http://twendz.waggeneredstrom.com/ 
+4 http://twittersentiment.appspot.com/ 
+5 The algorithm used in Twitter Sentiment 
+151
+of product reviews) aim to classify the polarities of 
+movie (or product) reviews and each movie (or 
+product) review is assumed to express sentiments 
+only about the target movie (or product), it is rea-
+sonable for them to adopt the target-independent 
+approach. However, for target-dependent sentiment 
+classification of tweets, it is not suitable to exactly 
+adopt that approach. Because people may mention 
+multiple targets in one tweet or comment on a tar-
+get in a tweet while saying many other unrelated 
+things in the same tweet, target-independent ap-
+proaches are likely to yield unsatisfactory results:  
+1. Tweets that do not express any sentiments 
+to the given target but express sentiments 
+to other things will be considered as being 
+opinionated about the target. For example, 
+the following tweet expresses no sentiment 
+to Bill Gates but is very likely to be classi-
+fied as positive about Bill Gates by target-
+independent approaches. 
+"People everywhere love Windows & vista. 
+Bill Gates" 
+2. The polarities of some tweets towards the 
+given target are misclassified because of 
+the interference from sentiments towards 
+other targets in the tweets. For example, 
+the following tweet expresses a positive 
+sentiment to Windows 7 and a negative 
+sentiment to Vista. However, with target-
+independent sentiment classification, both 
+of the targets would get positive polarity. 
+?Windows 7 is much better than Vista!? 
+In fact, it is easy to find many such cases by 
+looking at the output of Twitter Sentiment or other 
+Twitter sentiment analysis web sites. Based on our 
+manual evaluation of Twitter Sentiment output, 
+about 40% of errors are because of this (see Sec-
+tion 6.1 for more details).  
+In addition, tweets are usually shorter and more 
+ambiguous than other sentiment data commonly 
+used for sentiment analysis, such as reviews and 
+blogs. Consequently, it is more difficult to classify 
+the sentiment of a tweet only based on its content. 
+For instance, for the following tweet, which con-
+tains only three words, it is difficult for any exist-
+ing approaches to classify its sentiment correctly. 
+?First game: Lakers!? 
+However, relations between individual tweets 
+are more common than those in other sentiment 
+data. We can easily find many related tweets of a 
+given tweet, such as the tweets published by the 
+same person, the tweets replying to or replied by 
+the given tweet, and retweets of the given tweet. 
+These related tweets provide rich information 
+about what the given tweet expresses and should 
+definitely be taken into consideration for classify-
+ing the sentiment of the given tweet. 
+In this paper, we propose to improve target-
+dependent sentiment classification of tweets by 
+using both target-dependent and context-aware 
+approaches. Specifically, the target-dependent ap-
+proach refers to incorporating syntactic features 
+generated using words syntactically connected 
+with the given target in the tweet to decide whether 
+or not the sentiment is about the given target. For 
+instance, in the second example, using syntactic 
+parsing, we know that ?Windows 7? is connected 
+to ?better? by a copula, while ?Vista? is connected 
+to ?better? by a preposition. By learning from 
+training data, we can probably predict that ?Win-
+dows 7? should get a positive sentiment and 
+?Vista? should get a negative sentiment.  
+In addition, we also propose to incorporate the 
+contexts of tweets into classification, which we call 
+a context-aware approach. By considering the sen-
+timent labels of the related tweets, we can further 
+boost the performance of the sentiment classifica-
+tion, especially for very short and ambiguous 
+tweets. For example, in the third example we men-
+tioned above, if we find that the previous and fol-
+lowing tweets published by the same person are 
+both positive about the Lakers, we can confidently 
+classify this tweet as positive. 
+The remainder of this paper is structured as fol-
+lows. In Section 2, we briefly summarize related 
+work. Section 3 gives an overview of our approach. 
+We explain the target-dependent and context-
+aware approaches in detail in Sections 4 and 5 re-
+spectively. Experimental results are reported in 
+Section 6 and Section 7 concludes our work. 
+2 Related Work  
+In recent years, sentiment analysis (SA) has be-
+come a hot topic in the NLP research community. 
+A lot of papers have been published on this topic. 
+152
+2.1 Target-independent SA 
+Specifically, Turney (2002) proposes an unsuper-
+vised method for classifying product or movie re-
+views as positive or negative. In this method, 
+sentimental phrases are first selected from the re-
+views according to predefined part-of-speech pat-
+terns. Then the semantic orientation score of each 
+phrase is calculated according to the mutual infor-
+mation values between the phrase and two prede-
+fined seed words. Finally, a review is classified 
+based on the average semantic orientation of the 
+sentimental phrases in the review. 
+In contrast, (Pang et al, 2002) treat the senti-
+ment classification of movie reviews simply as a 
+special case of a topic-based text categorization 
+problem and investigate three classification algo-
+rithms: Naive Bayes, Maximum Entropy, and Sup-
+port Vector Machines. According to the 
+experimental results, machine learning based clas-
+sifiers outperform the unsupervised approach, 
+where the best performance is achieved by the 
+SVM classifier with unigram presences as features. 
+2.2 Target-dependent SA 
+Besides the above mentioned work for target-
+independent sentiment classification, there are also 
+several approaches proposed for target-dependent 
+classification, such as (Nasukawa and Yi, 2003; 
+Hu and Liu, 2004; Ding and Liu, 2007). (Nasuka-
+wa and Yi, 2003) adopt a rule based approach, 
+where rules are created by humans for adjectives, 
+verbs, nouns, and so on. Given a sentiment target 
+and its context, part-of-speech tagging and de-
+pendency parsing are first performed on the con-
+text. Then predefined rules are matched in the 
+context to determine the sentiment about the target. 
+In (Hu and Liu, 2004), opinions are extracted from 
+product reviews, where the features of the product 
+are considered opinion targets. The sentiment 
+about each target in each sentence of the review is 
+determined based on the dominant orientation of 
+the opinion words appearing in the sentence. 
+As mentioned in Section 1, target-dependent 
+sentiment classification of review sentences is 
+quite different from that of tweets. In reviews, if 
+any sentiment is expressed in a sentence containing 
+a feature, it is very likely that the sentiment is 
+about the feature. However, the assumption does 
+not hold in tweets. 
+2.3 SA of Tweets 
+As Twitter becomes more popular, sentiment anal-
+ysis on Twitter data becomes more attractive. (Go 
+et al, 2009; Parikh and Movassate, 2009; Barbosa 
+and Feng, 2010; Davidiv et al, 2010) all follow the 
+machine learning based approach for sentiment 
+classification of tweets. Specifically, (Davidiv et 
+al., 2010) propose to classify tweets into multiple 
+sentiment types using hashtags and smileys as la-
+bels. In their approach, a supervised KNN-like 
+classifier is used. In contrast, (Barbosa and Feng, 
+2010) propose a two-step approach to classify the 
+sentiments of tweets using SVM classifiers with 
+abstract features. The training data is collected 
+from the outputs of three existing Twitter senti-
+ment classification web sites. As mentioned above, 
+these approaches work in a target-independent way, 
+and so need to be adapted for target-dependent sen-
+timent classification. 
+3 Approach Overview  
+The problem we address in this paper is target-
+dependent sentiment classification of tweets. So 
+the input of our task is a collection of tweets con-
+taining the target and the output is labels assigned 
+to each of the tweets. Inspired by (Barbosa and 
+Feng, 2010; Pang and Lee, 2004), we design a 
+three-step approach in this paper:  
+1. Subjectivity classification as the first step 
+to decide if the tweet is subjective or neu-
+tral about the target;  
+2. Polarity classification as the second step to 
+decide if the tweet is positive or negative 
+about the target if it is classified as subjec-
+tive in Step 1;  
+3. Graph-based optimization as the third step 
+to further boost the performance by taking 
+the related tweets into consideration.  
+In each of the first two steps, a binary SVM 
+classifier is built to perform the classification. To 
+train the classifiers, we use SVM-Light 6  with a 
+linear kernel; the default setting is adopted in all 
+experiments. 
+                                                          
+6 http://svmlight.joachims.org/ 
+153
+3.1 Preprocessing 
+In our approach, rich feature representations are 
+used to distinguish between sentiments expressed 
+towards different targets. In order to generate such 
+features, much NLP work has to be done before-
+hand, such as tweet normalization, POS tagging, 
+word stemming, and syntactic parsing.  
+In our experiments, POS tagging is performed 
+by the OpenNLP POS tagger7. Word stemming is 
+performed by using a word stem mapping table 
+consisting of about 20,000 entries. We also built a 
+simple rule-based model for tweet normalization 
+which can correct simple spelling errors and varia-
+tions into normal form, such as ?gooood? to 
+?good? and ?luve? to ?love?. For syntactic parsing 
+we use a Maximum Spanning Tree dependency 
+parser (McDonald et al, 2005). 
+3.2 Target-independent Features 
+Previous work (Barbosa and Feng, 2010; Davidiv 
+et al, 2010) has discovered many effective features 
+for sentiment analysis of tweets, such as emoticons, 
+punctuation, prior subjectivity and polarity of a 
+word. In our classifiers, most of these features are 
+also used. Since these features are all generated 
+without considering the target, we call them target-
+independent features. In both the subjectivity clas-
+sifier and polarity classifier, the same target-
+independent feature set is used. Specifically, we 
+use two kinds of target-independent features: 
+1. Content features, including words, punctu-
+ation, emoticons, and hashtags (hashtags 
+are provided by the author to indicate the 
+topic of the tweet). 
+2. Sentiment lexicon features, indicating how 
+many positive or negative words are in-
+cluded in the tweet according to a prede-
+fined lexicon. In our experiments, we use 
+the lexicon downloaded from General In-
+quirer8. 
+4 Target-dependent Sentiment Classifica-
+tion  
+Besides target-independent features, we also incor-
+porate target-dependent features in both the subjec-
+                                                          
+7 http://opennlp.sourceforge.net/projects.html 
+8 http://www.wjh.harvard.edu/~inquirer/ 
+tivity classifier and polarity classifier. We will ex-
+plain them in detail below. 
+4.1 Extended Targets 
+It is quite common that people express their senti-
+ments about a target by commenting not on the 
+target itself but on some related things of the target. 
+For example, one may express a sentiment about a 
+company by commenting on its products or tech-
+nologies. To express a sentiment about a product, 
+one may choose to comment on the features or 
+functionalities of the product. It is assumed that 
+readers or audiences can clearly infer the sentiment 
+about the target based on those sentiments about 
+the related things. As shown in the tweet below, 
+the author expresses a positive sentiment about 
+?Microsoft? by expressing a positive sentiment 
+directly about ?Microsoft technologies?. 
+?I am passionate about Microsoft technologies 
+especially Silverlight.? 
+In this paper, we define those aforementioned 
+related things as Extended Targets. Tweets ex-
+pressing positive or negative sentiments towards 
+the extended targets are also regarded as positive 
+or negative about the target. Therefore, for target-
+dependent sentiment classification of tweets, the 
+first thing is identifying all extended targets in the 
+input tweet collection.  
+In this paper, we first regard all noun phrases, 
+including the target, as extended targets for sim-
+plicity. However, it would be interesting to know 
+under what circumstances the sentiment towards 
+the target is truly consistent with that towards its 
+extended targets. For example, a sentiment about 
+someone?s behavior usually means a sentiment 
+about the person, while a sentiment about some-
+one?s colleague usually has nothing to do with the 
+person. This could be a future work direction for 
+target-dependent sentiment classification. 
+In addition to the noun phrases including the 
+target, we further expand the extended target set 
+with the following three methods:  
+1. Adding mentions co-referring to the target 
+as new extended targets. It is common that 
+people use definite or demonstrative noun 
+phrases or pronouns referring to the target 
+in a tweet and express sentiments directly 
+on them. For instance, in ?Oh, Jon Stewart. 
+How I love you so.?, the author expresses 
+154
+a positive sentiment to ?you? which actual-
+ly refers to ?Jon Stewart?. By using a sim-
+ple co-reference resolution tool adapted 
+from (Soon et al, 2001), we add all the 
+mentions referring to the target into the ex-
+tended target set. 
+2. Identifying the top K nouns and noun 
+phrases which have the strongest associa-
+tion with the target. Here, we use 
+Pointwise Mutual Information (PMI) to 
+measure the association. 
+)()(
+),(log),( tpwp
+twptwPMI ?
+ 
+Where p(w,t), p(w), and p(t) are probabili-
+ties of w and t co-occurring, w appearing, 
+and t appearing in a tweet respectively. In 
+the experiments, we estimate them on a 
+tweet corpus containing 20 million tweets. 
+We set K = 20 in the experiments based on 
+empirical observations. 
+3. Extracting head nouns of all extended tar-
+gets, whose PMI values with the target are 
+above some predefined threshold, as new 
+extended targets. For instance, suppose we 
+have found ?Microsoft Technologies? as 
+the extended target, we will further add 
+?technologies? into the extended target set 
+if the PMI value for ?technologies? and 
+?Microsoft? is above the threshold. Simi-
+larly, we can find ?price? as the extended 
+targets for ?iPhone? from ?the price of 
+iPhone? and ?LoveGame? for ?Lady Ga-
+ga? from ?LoveGame by Lady Gaga?. 
+4.2 Target-dependent Features 
+Target-dependent sentiment classification needs to 
+distinguish the expressions describing the target 
+from other expressions. In this paper, we rely on 
+the syntactic parse tree to satisfy this need. Specif-
+ically, for any word stem wi in a tweet which has 
+one of the following relations with the given target 
+T or any from the extended target set, we generate 
+corresponding target-dependent features with the 
+following rules:  
+? wi is a transitive verb and T (or any of the 
+extended target) is its object; we generate a 
+feature wi _arg2. ?arg? is short for ?argu-
+ment?. For example, for the target iPhone 
+in ?I love iPhone?, we generate 
+?love_arg2? as a feature. 
+? wi is a transitive verb and T (or any of the 
+extended target) is its subject; we generate 
+a feature wi_arg1 similar to Rule 1. 
+? wi is a intransitive verb and T (or any of the 
+extended target) is its subject; we generate 
+a feature wi_it_arg1. 
+?  wi is an adjective or noun and T (or any of 
+the extended target) is its head; we gener-
+ate a feature wi_arg1. 
+?  wi is an adjective or noun and it (or its 
+head) is connected by a copula with T (or 
+any of the extended target); we generate a 
+feature wi_cp_arg1. 
+? wi is an adjective or intransitive verb ap-
+pearing alone as a sentence and T (or any 
+of the extended target) appears in the pre-
+vious sentence; we generate a feature 
+wi_arg. For example, in ?John did that. 
+Great!?, ?Great? appears alone as a sen-
+tence, so we generate ?great_arg? for the 
+target ?John?. 
+? wi is an adverb, and the verb it modifies 
+has T (or any of the extended target) as its 
+subject; we generate a feature arg1_v_wi. 
+For example, for the target iPhone in the 
+tweet ?iPhone works better with the Cell-
+Band?, we will generate the feature 
+?arg1_v_well?. 
+Moreover, if any word included in the generated 
+target-dependent features is modified by a nega-
+tion9, then we will add a prefix ?neg-? to it in the 
+generated features. For example, for the target iPh-
+one in the tweet ?iPhone does not work better with 
+the CellBand?, we will generate the features 
+?arg1_v_neg-well? and ?neg-work_it_arg1?. 
+To overcome the sparsity of target-dependent 
+features mentioned above, we design a special bi-
+nary feature indicating whether or not the tweet 
+contains at least one of the above target-dependent 
+features. Target-dependent features are binary fea-
+tures, each of which corresponds to the presence of 
+the feature in the tweet. If the feature is present, the 
+entry will be 1; otherwise it will be 0. 
+                                                          
+9 Seven negations are used in the experiments: not, no, never, 
+n?t, neither, seldom, hardly. 
+155
+5 Graph-based Sentiment Optimization  
+As we mentioned in Section 1, since tweets are 
+usually shorter and more ambiguous, it would be 
+useful to take their contexts into consideration 
+when classifying the sentiments. In this paper, we 
+regard the following three kinds of related tweets 
+as context for a tweet. 
+1. Retweets. Retweeting in Twitter is essen-
+tially the forwarding of a previous message. 
+People usually do not change the content 
+of the original tweet when retweeting. So 
+retweets usually have the same sentiment 
+as the original tweets.  
+2. Tweets containing the target and published 
+by the same person. Intuitively, the tweets 
+published by the same person within a 
+short timeframe should have a consistent 
+sentiment about the same target.  
+3. Tweets replying to or replied by the tweet 
+to be classified.  
+Based on these three kinds of relations, we can 
+construct a graph using the input tweet collection 
+of a given target. As illustrated in Figure 1, each 
+circle in the graph indicates a tweet. The three 
+kinds of edges indicate being published by the 
+same person (solid line), retweeting (dash line), 
+and replying relations (round dotted line) respec-
+tively. 
+ 
+ 
+ 
+Figure 1. An example graph of tweets about a target 
+ 
+If we consider that the sentiment of a tweet only 
+depends on its content and immediate neighbors, 
+we can leverage a graph-based method for senti-
+ment classification of tweets. Specifically, the 
+probability of a tweet belonging to a specific sen-
+timent class can be computed with the following 
+formula: 
+??
+)(
+))(())(|()|(),|(
+dN
+dNpdNcpcpGcp ??
+ 
+Where c is the sentiment label of a tweet which 
+belongs to {positive, negative, neutral}, G is the 
+tweet graph, N(d) is a specific assignment of sen-
+timent labels to all immediate neighbors of the 
+tweet, and ? is the content of the tweet. 
+We can convert the output scores of a tweet by 
+the subjectivity and polarity classifiers into proba-
+bilistic form and use them to approximate p(c| ?). 
+Then a relaxation labeling algorithm described in 
+(Angelova and Weikum, 2006) can be used on the 
+graph to iteratively estimate p(c|?,G) for all tweets. 
+After the iteration ends, for any tweet in the graph, 
+the sentiment label that has the maximum p(c| ?,G) 
+is considered the final label. 
+6 Experiments  
+Because there is no annotated tweet corpus public-
+ly available for evaluation of target-dependent 
+Twitter sentiment classification, we have to create 
+our own. Since people are most interested in sen-
+timents towards celebrities, companies and prod-
+ucts, we selected 5 popular queries of these kinds: 
+{Obama, Google, iPad, Lakers, Lady Gaga}. For 
+each of those queries, we downloaded 400 English 
+tweets10 containing the query using the Twitter API.  
+We manually classify each tweet as positive, 
+negative or neutral towards the query with which it 
+is downloaded. After removing duplicate tweets, 
+we finally obtain 459 positive, 268 negative and 
+1,212 neutral tweets. 
+Among the tweets, 100 are labeled by two hu-
+man annotators for inter-annotator study. The re-
+sults show that for 86% of them, both annotators 
+gave identical labels. Among the 14 tweets which 
+the two annotators disagree on, only 1 case is a 
+positive-negative disagreement (one annotator con-
+siders it positive while the other negative), and the 
+other 13 are all neutral-subjective disagreement. 
+This probably indicates that it is harder for humans 
+to decide if a tweet is neutral or subjective than to 
+decide if it is positive or negative. 
+                                                          
+10 In this paper, we use sentiment classification of English 
+tweets as a case study; however, our approach is applicable to 
+other languages as well. 
+156
+6.1 Error Analysis of Twitter Sentiment Out-
+put 
+We first analyze the output of Twitter Sentiment 
+(TS) using the five test queries. For each query, we 
+randomly select 20 tweets labeled as positive or 
+negative by TS. We also manually classify each 
+tweet as positive, negative or neutral about the cor-
+responding query. Then, we analyze those tweets 
+that get different labels from TS and humans. Fi-
+nally we find two major types of error: 1) Tweets 
+which are totally neutral (for any target) are classi-
+fied as subjective by TS; 2) sentiments in some 
+tweets are classified correctly but the sentiments 
+are not truly about the query. The two types take 
+up about 35% and 40% of the total errors, respec-
+tively.  
+The second type is actually what we want to re-
+solve in this paper. After further checking those 
+tweets of the second type, we found that most of 
+them are actually neutral for the target, which 
+means that the dominant error in Twitter Sentiment 
+is classifying neutral tweets as subjective. Below 
+are several examples of the second type where the 
+bolded words are the targets. 
+ ?No debate needed, heat can't beat lakers or 
+celtics? (negative by TS but positive by human) 
+?why am i getting spams from weird people ask-
+ing me if i want to chat with lady gaga? (positive 
+by TS but neutral by human) 
+?Bringing iPhone and iPad apps into cars? 
+http://www.speakwithme.com/ will be out soon and 
+alpha is awesome in my car.? (positive by TS but 
+neutral by human) 
+?Here's a great article about Monte Veronese 
+cheese. It's in Italian so just put the url into Google 
+translate and enjoy http://ow.ly/3oQ77? (positive 
+by TS but neutral by human) 
+6.2 Evaluation of Subjectivity Classification 
+We conduct several experiments to evaluate sub-
+jectivity classifiers using different features. In the 
+experiments, we consider the positive and negative 
+tweets annotated by humans as subjective tweets 
+(i.e., positive instances in the SVM classifiers), 
+which amount to 727 tweets. Following (Pang et 
+al., 2002), we balance the evaluation data set by 
+randomly selecting 727 tweets from all neutral 
+tweets annotated by humans and consider them as 
+objective tweets (i.e., negative instances in the 
+classifiers). We perform 10-fold cross-validations 
+on the selected data. Following (Go et al, 2009; 
+Pang et al, 2002), we use accuracy as a metric in 
+our experiments. The results are listed below. 
+ 
+Features Accuracy (%) 
+Content features 61.1 
++ Sentiment lexicon features 63.8 
++ Target-dependent features 68.2 
+Re-implementation of (Bar-
+bosa and Feng, 2010) 
+60.3 
+ 
+Table 1. Evaluation of subjectivity classifiers. 
+ 
+As shown in Table 1, the classifier using only 
+the content features achieves an accuracy of 61.1%. 
+Adding sentiment lexicon features improves the 
+accuracy to 63.8%. Finally, the best performance 
+(68.2%) is achieved by combining target-
+dependent features and other features (t-test: p < 
+0.005). This clearly shows that target-dependent 
+features do help remove many sentiments not truly 
+about the target. We also re-implemented the 
+method proposed in (Barbosa and Feng, 2010) for 
+comparison. From Table 1, we can see that all our 
+systems perform better than (Barbosa and Feng, 
+2010) on our data set. One possible reason is that 
+(Barbosa and Feng, 2010) use only abstract fea-
+tures while our systems use more lexical features. 
+To further evaluate the contribution of target ex-
+tension, we compare the system using the exact 
+target and all extended targets with that using only 
+the exact target. We also eliminate the extended 
+targets generated by each of the three target exten-
+sion methods and reevaluate the performances. 
+ 
+Target Accuracy (%) 
+Exact target 65.6 
++ all extended targets 68.2 
+- co-references 68.0 
+- targets found by PMI 67.8 
+- head nouns 67.3 
+ 
+Table 2. Evaluation of target extension methods. 
+ 
+As shown in Table 2, without extended targets, 
+the accuracy is 65.6%, which is still higher than 
+those using only target-independent features. After 
+adding all extended targets, the accuracy is im-
+proved significantly to 68.2% (p < 0.005), which 
+suggests that target extension does help find indi-
+157
+rectly expressed sentiments about the target. In 
+addition, all of the three methods contribute to the 
+overall improvement, with the head noun method 
+contributing most. However, the other two meth-
+ods do not contribute significantly.  
+6.3 Evaluation of Polarity Classification  
+Similarly, we conduct several experiments on posi-
+tive and negative tweets to compare the polarity 
+classifiers with different features, where we use 
+268 negative and 268 randomly selected positive 
+tweets. The results are listed below. 
+ 
+Features Accuracy (%) 
+Content features 78.8 
++ Sentiment lexicon features 84.2 
++ Target-dependent features 85.6 
+Re-implementation of (Bar-
+bosa and Feng, 2010) 
+83.9 
+ 
+Table 3. Evaluation of polarity classifiers. 
+ 
+From Table 3, we can see that the classifier us-
+ing only the content features achieves the worst 
+accuracy (78.8%). Sentiment lexicon features are 
+shown to be very helpful for improving the per-
+formance. Similarly, we re-implemented the meth-
+od proposed by (Barbosa and Feng, 2010) in this 
+experiment. The results show that our system using 
+both content features and sentiment lexicon fea-
+tures performs slightly better than (Barbosa and 
+Feng, 2010). The reason may be same as that we 
+explained above. 
+Again, the classifier using all features achieves 
+the best performance. Both the classifiers with all 
+features and with the combination of content and 
+sentiment lexicon features are significantly better 
+than that with only the content features (p < 0.01). 
+However, the classifier with all features does not 
+significantly outperform that using the combina-
+tion of content and sentiment lexicon features. We 
+also note that the improvement by target-dependent 
+features here is not as large as that in subjectivity 
+classification. Both of these indicate that target-
+dependent features are more useful for improving 
+subjectivity classification than for polarity classifi-
+cation. This is consistent with our observation in 
+Subsection 6.2 that most errors caused by incorrect 
+target association are made in subjectivity classifi-
+cation. We also note that all numbers in Table 3 
+are much bigger than those in Table 1, which sug-
+gests that subjectivity classification of tweets is 
+more difficult than polarity classification. 
+Similarly, we evaluated the contribution of tar-
+get extension for polarity classification. According 
+to the results, adding all extended targets improves 
+the accuracy by about 1 point. However, the con-
+tributions from the three individual methods are 
+not statistically significant. 
+6.4 Evaluation of Graph-based Optimization  
+As seen in Figure 1, there are several tweets which 
+are not connected with any other tweets. For these 
+tweets, our graph-based optimization approach will 
+have no effect. The following table shows the per-
+centages of the tweets in our evaluation data set 
+which have at least one related tweet according to 
+various relation types.  
+ 
+Relation type Percentage 
+Published by the same person11 41.6 
+Retweet 23.0 
+Reply 21.0 
+All 66.2 
+ 
+Table 4. Percentages of tweets having at least one relat-
+ed tweet according to various relation types. 
+ 
+According to Table 4, for 66.2% of the tweets 
+concerning the test queries, we can find at least one 
+related tweet. That means our context-aware ap-
+proach is potentially useful for most of the tweets. 
+To evaluate the effectiveness of our context-
+aware approach, we compared the systems with 
+and without considering the context.  
+ 
+System Accuracy 
+F1-score (%) 
+pos neu neg 
+Target-dependent 
+sentiment classifier 
+66.0 57.5 70.1 66.1 
++Graph-based op-
+timization 
+68.3 63.5 71.0 68.5 
+ 
+Table 5. Effectiveness of the context-aware approach. 
+ 
+As shown in Table 5, the overall accuracy of the 
+target-dependent classifiers over three classes is 
+66.0%. The graph-based optimization improves the 
+performance by over 2 points (p < 0.005), which 
+clearly shows that the context information is very 
+                                                          
+11 We limit the time frame from one week before to one week 
+after the post time of the current tweet. 
+158
+useful for classifying the sentiments of tweets. 
+From the detailed improvement for each sentiment 
+class, we find that the context-aware approach is 
+especially helpful for positive and negative classes. 
+ 
+Relation type Accuracy (%) 
+Published by the same person 67.8 
+Retweet 66.0 
+Reply 67.0 
+ 
+Table 6. Contribution comparison between relations. 
+ 
+We further compared the three types of relations 
+for context-aware sentiment classification; the re-
+sults are reported in Table 6. Clearly, being pub-
+lished by the same person is the most useful 
+relation for sentiment classification, which is con-
+sistent with the percentage distribution of the 
+tweets over relation types; using retweet only does 
+not help. One possible reason for this is that the 
+retweets and their original tweets are nearly the 
+same, so it is very likely that they have already got 
+the same labels in previous classifications. 
+7 Conclusions and Future Work 
+Twitter sentiment analysis has attracted much at-
+tention recently. In this paper, we address target-
+dependent sentiment classification of tweets. Dif-
+ferent from previous work using target-
+independent classification, we propose to incorpo-
+rate syntactic features to distinguish texts used for 
+expressing sentiments towards different targets in a 
+tweet. According to the experimental results, the 
+classifiers incorporating target-dependent features 
+significantly outperform the previous target-
+independent classifiers.  
+In addition, different from previous work using 
+only information on the current tweet for sentiment 
+classification, we propose to take the related tweets 
+of the current tweet into consideration by utilizing 
+graph-based optimization. According to the exper-
+imental results, the graph-based optimization sig-
+nificantly improves the performance. 
+As mentioned in Section 4.1, in future we would 
+like to explore the relations between a target and 
+any of its extended targets. We are also interested 
+in exploring relations between Twitter accounts for 
+classifying the sentiments of the tweets published 
+by them. 
+Acknowledgments 
+We would like to thank Matt Callcut for refining 
+the language of this paper, and thank Yuki Arase 
+and the anonymous reviewers for many valuable 
+comments and helpful suggestions. We would also 
+thank Furu Wei and Xiaolong Wang for their help 
+with some of the experiments and the preparation 
+of the camera-ready version of the paper. 
+References  
+Ralitsa Angelova, Gerhard Weikum. 2006. Graph-based 
+text classification: learn from your neighbors. SIGIR 
+2006: 485-492 
+Luciano Barbosa and Junlan Feng. 2010. Robust Senti-
+ment Detection on Twitter from Biased and Noisy 
+Data. Coling 2010. 
+Christopher Burges. 1998. A Tutorial on Support Vector 
+Machines for Pattern Recognition. Data Mining and 
+Knowledge Discovery, 2(2):121-167. 
+Yejin Choi, Claire Cardie, Ellen Riloff, and Siddharth 
+Patwardhan S. 2005. Identifying sources of opinions 
+with conditional random fields and extraction pat-
+terns. In Proc. of the 2005 Human Language Tech-
+nology Conf. and Conf. on Empirical Methods in 
+Natural Language Processing (HLT/EMNLP 2005). 
+pp. 355-362 
+Dmitry Davidiv, Oren Tsur and Ari Rappoport. 2010. 
+Enhanced Sentiment Learning Using Twitter Hash-
+tags and Smileys. Coling 2010. 
+Xiaowen Ding and Bing Liu. 2007. The Utility of Lin-
+guistic Rules in Opinion Mining. SIGIR-2007 (poster 
+paper), 23-27 July 2007, Amsterdam.  
+Alec Go, Richa Bhayani, Lei Huang. 2009. Twitter Sen-
+timent Classification using Distant Supervision. 
+Vasileios Hatzivassiloglou and Kathleen.R. McKeown. 
+2002. Predicting the semantic orientation of adjec-
+tives. In Proceedings of the 35th ACL and the 8th 
+Conference of the European Chapter of the ACL. 
+Minqing Hu and Bing Liu. 2004. Mining and summariz-
+ing customer reviews. In Proceedings of the ACM 
+SIGKDD International Conference on Knowledge 
+Discovery & Data Mining (KDD-2004, full paper), 
+Seattle, Washington, USA, Aug 22-25, 2004. 
+Thorsten Joachims. Making Large-scale Support Vector 
+Machine Learning Practical. In B. Sch?olkopf, C. J. 
+C. Burges, and A. J. Smola, editors, Advances in 
+kernel methods: support vector learning, pages 169-
+184. MIT Press, Cambridge, MA, USA, 1999. 
+159
+Soo-Min Kim and Eduard Hovy 2006. Extracting opi-
+nions, opinion holders, and topics expressed in online 
+news media text, In Proc. of ACL Workshop on Sen-
+timent and Subjectivity in Text, pp.1-8, Sydney, Aus-
+tralia.  
+Ryan McDonald, F. Pereira, K. Ribarov, and J. Haji?c. 
+2005. Non-projective dependency parsing using 
+spanning tree algorithms. In Proc. HLT/EMNLP. 
+Tetsuya Nasukawa, Jeonghee Yi. 2003. Sentiment anal-
+ysis: capturing favorability using natural language 
+processing. In Proceedings of K-CAP. 
+Bo Pang, Lillian Lee. 2004. A Sentimental Education: 
+Sentiment Analysis Using Subjectivity Summariza-
+tion Based on Minimum Cuts. In Proceedings of 
+ACL 2004. 
+Bo Pang, Lillian Lee, Shivakumar Vaithyanathan. 2002. 
+Thumbs up? Sentiment Classification using Machine 
+Learning Techniques.  
+Ravi Parikh and Matin Movassate. 2009. Sentiment 
+Analysis of User-Generated Twitter Updates using 
+Various Classification Techniques. 
+Wee. M. Soon, Hwee. T. Ng, and Danial. C. Y. Lim. 
+2001. A Machine Learning Approach to Coreference 
+Resolution of Noun Phrases. Computational Linguis-
+tics, 27(4):521?544. 
+Peter D. Turney. 2002. Thumbs Up or Thumbs Down? 
+Semantic Orientation Applied to Unsupervised Clas-
+sification of Reviews. In proceedings of ACL 2002. 
+Janyce Wiebe. 2000. Learning subjective adjectives 
+from corpora. In Proceedings of AAAI-2000. 
+Theresa Wilson, Janyce Wiebe, Paul Hoffmann. 2005. 
+Recognizing Contextual Polarity in Phrase-Level 
+Sentiment Analysis. In Proceedings of NAACL 2005. 
+160
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 312?317,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+Cross-lingual Projections between Languages from Different Families
+Mo Yu1 Tiejun Zhao1 Yalong Bai1 Hao Tian2 Dianhai Yu2
+1School of Computer Science and Technology, Harbin Institute of Technology, Harbin, China
+{yumo,tjzhao,ylbai}@mtlab.hit.edu.cn
+2Baidu Inc., Beijing, China
+{tianhao,yudianhai}@baidu.com
+Abstract
+Cross-lingual projection methods can ben-
+efit from resource-rich languages to im-
+prove performances of NLP tasks in
+resources-scarce languages. However,
+these methods confronted the difficulty of
+syntactic differences between languages
+especially when the pair of languages
+varies greatly. To make the projection
+method well-generalize to diverse lan-
+guages pairs, we enhance the projec-
+tion method based on word alignments
+by introducing target-language word rep-
+resentations as features and proposing a
+novel noise removing method based on
+these word representations. Experiments
+showed that our methods improve the per-
+formances greatly on projections between
+English and Chinese.
+1 Introduction
+Most NLP studies focused on limited languages
+with large sets of annotated data. English and
+Chinese are examples of these resource-rich lan-
+guages. Unfortunately, it is impossible to build
+sufficient labeled data for all tasks in all lan-
+guages. To address NLP tasks in resource-scarce
+languages, cross-lingual projection methods were
+proposed, which make use of existing resources
+in resource-rich language (also called source lan-
+guage) to help NLP tasks in resource-scarce lan-
+guage (also named as target language).
+There are several types of projection methods.
+One intuitive and effective method is to build a
+common feature space for all languages, so that
+the model trained on one language could be di-
+rectly used on other languages (McDonald et al,
+2011; Ta?ckstro?m et al, 2012). We call it di-
+rect projection, which becomes very popular re-
+cently. The main limitation of these methods is
+that target language has to be similar to source
+language. Otherwise the performance will de-
+grade especially when the orders of phrases be-
+tween source and target languages differ a lot.
+Another common type of projection methods
+map labels from resource-rich language sentences
+to resource-scarce ones in a parallel corpus us-
+ing word alignment information (Yarowsky et al,
+2001; Hwa et al, 2005; Das and Petrov, 2011).
+We refer them as projection based on word align-
+ments in this paper. Compared to other types of
+projection methods, this type of methods is more
+robust to syntactic differences between languages
+since it trained models on the target side thus fol-
+lowing the topology of the target language.
+This paper aims to build an accurate projec-
+tion method with strong generality to various pairs
+of languages, even when the languages are from
+different families and are typologically divergent.
+As far as we know, only a few works focused
+on this topic (Xia and Lewis 2007; Ta?ckstro?m
+et al, 2013). We adopted the projection method
+based on word alignments since it is less affected
+by language differences. However, such methods
+also have some disadvantages. Firstly, the models
+trained on projected data could only cover words
+and cases appeared in the target side of parallel
+corpus, making it difficult to generalize to test data
+in broader domains. Secondly, the performances
+of these methods are limited by the accuracy of
+word alignments, especially when words between
+two languages are not one-one aligned. So the ob-
+tained labeled data contains a lot of noises, making
+the models built on them less accurate.
+This paper aims to build an accurate projection
+method with strong generality to various pairs of
+languages. We built the method on top of projec-
+tion method based on word alignments because of
+its advantage of being less affected by syntactic
+differences, and proposed two solutions to solve
+the above two difficulties of this type of methods.
+312
+Firstly, we introduce Brown clusters of target
+language to make the projection models cover
+broader cases. Brown clustering is a kind of word
+representations, which assigns word with similar
+functions to the same cluster. They can be ef-
+ficiently learned on large-scale unlabeled data in
+target language, which is much easier to acquire
+even when the scales of parallel corpora of minor
+languages are limited. Brown clusters have been
+first introduced to the field of cross-lingual projec-
+tions in (Ta?ckstro?m et al, 2012) and have achieved
+great improvements on projection between Euro-
+pean languages. However, their work was based
+on the direct projection methods so that it do not
+work very well between languages from different
+families as will be shown in Section 3.
+Secondly, to reduce the noises in projection, we
+propose a noise removing method to detect and
+correct noisy projected labels. The method was
+also built on Brown clusters, based on the assump-
+tion that instances with similar representations of
+Brown clusters tend to have similar labels. As far
+as we know, no one has done any research on re-
+moving noises based on the space of word repre-
+sentations in the field of NLP.
+Using above techniques, we achieved a projec-
+tion method that adapts well on different language
+pairs even when the two languages differ enor-
+mously. Experiments of NER and POS tagging
+projection from English to Chinese proved the ef-
+fectiveness of our methods.
+In the rest of our paper, Section 2 describes the
+proposed cross-lingual projection method. Evalu-
+ations are in Section 3. Section 4 gives concluding
+remarks.
+2 Proposed Cross-lingual Projection
+Methods
+In this section, we first briefly introduce the cross-
+lingual projection method based on word align-
+ments. Then we describe how the word represen-
+tations (Brown clusters) were used in the projec-
+tion method. Section 2.3 describes the noise re-
+moving methods.
+2.1 Projection based on word alignments
+In this paper we consider cross-lingual projec-
+tion based on word alignment, because we want
+to build projection methods that can be used be-
+tween language pairs with large differences. Fig-
+ure 1 shows the procedure of cross-lingual projec-
+tion methods, taking projection of NER from En-
+glish to Chinese as an example. Here English is
+the resource-rich language and Chinese is the tar-
+get language. First, sentences from the source side
+of the parallel corpus are labeled by an accurate
+model in English (e.g., ?Rongji Zhu? and ?Gan
+Luo? were labeled as ?PER?), since the source
+language has rich resources to build accurate NER
+models. Then word alignments are generated from
+the parallel corpus and serve as a bridge, so that
+unlabeled words in the target language will get the
+same labels with words aligning to them in the
+source language, e.g. the first word ??(??)??
+in Chinese gets the projected label ?PER?, since it
+is aligned to ?Rongji? and ?Zhu?. In this way, la-
+bels in source language sentences are projected to
+the target sentences.
+... ...
+... ...O inspected
+??
+(O)O have
+?
+(O)O others
+?? (O)O and
+PER Yi ? (O)
+PER Wu ?? (PER)
+O ,
+PER Gan
+? (O)
+PER Luo
+?(??)? (PER)
+O ,
+PER Rongji
+PER Zhu
+Figure 1: An example of projection of NER. La-
+bels of Chinese sentence (right) in brackets are
+projected from the source sentence.
+From the projection procedure we can see that a
+labeled dataset of target language is built based on
+the projected labels from source sentences. The
+projected dataset has a large size, but with a lot
+of noises. With this labeled dataset, models of the
+target language can be trained in a supervised way.
+Then these models can be used to label sentences
+in target language. Since the models are trained
+on the target language, this projection approach is
+less affected by language differences, comparing
+with direct projection methods.
+2.2 Word Representation features for
+Cross-lingual Projection
+One disadvantage of above method is that the cov-
+erage of projected labeled data used for training
+313
+Words wi,i?{?2:2}, wi?1/wi,i?{0,1}
+Cluster ci,i?{?2:2}, ci?1/ci,i?{?1,2}, c?1/c1
+Transition y?1/y0/{w0, c0, c?1/c1}
+Table 1: NER features. ci is the cluster id of wi.
+target language models are limited by the cover-
+age of parallel corpora. For example in Figure 1,
+some Chinese politicians in 1990?s will be learned
+as person names, but some names of recent politi-
+cians such as ?Obama?, which did not appeared in
+the parallel corpus, would not be recognized.
+To broader the coverage of the projected data,
+we introduced word representations as features.
+Same or similar word representations will be as-
+signed to words appearing in similar contexts,
+such as person names. Since word representations
+are trained on large-scale unlabeled sentences in
+target language, they cover much more words than
+the parallel corpus does. So the information of a
+word in projected labeled data will apply to other
+words with the same or similar representations,
+even if they did not appear in the parallel data.
+In this work we use Brown clusters as word rep-
+resentations on target languages. Brown clustering
+assigns words to hierarchical clusters according to
+the distributions of words before and after them.
+Taking NER as an example, the feature template
+may contain features shown in Table 1. The cluster
+id of the word to predict (c0) and those of context
+words (ci, i ? {?2,?1, 1, 2}), as well as the con-
+junctions of these clusters were used as features in
+CRF models in the same way the traditional word
+features were used. Since Brown clusters are hi-
+erarchical, the cluster for each word can be rep-
+resented as a binary string. So we also use prefix
+of cluster IDs as features, in order to compensate
+for clusters containing small number of words. For
+languages lacking of morphological changes, such
+as Chinese, there are no pre/suffix or orthography
+features. However the cluster features are always
+available for any languages.
+2.3 Noise Removing in Word Representation
+Space
+Another disadvantage of the projection method is
+that the accuracy of projected labels is badly af-
+fected by non-literate translation and word align-
+ment errors, making the data contain many noises.
+For example in Figure 1, the word ???(Wu Yi)?
+was not labeled as a named entity since it was
+not aligned to any words in English due to the
+alignment errors. A more accurate model will be
+trained if such noises can be reduced.
+A direct way to remove the noises is to mod-
+ify the label of a word to make it consistent with
+the majority of labels assigned to the same word in
+the parallel corpus. The method is limited when a
+word with low frequency has many of its appear-
+ances incorrectly labeled because of alignment er-
+rors. In this situation the noises are impossible to
+remove according to the word itself. The error in
+Figure 1 is an example of this case since the other
+few occurrences of the word ???(Wu Yi)? also
+happened to fail to get the correct label.
+Such difficulties can be easily solved when we
+turned to the space of Brown clusters, based on
+the observation that words in a same cluster tend
+to have same labels. For example in Figure 1, the
+word ???(Wu Yi)?, ??(??)?(Zhu Rongji)?
+and ???(Luo Gan)? are in the same cluster, be-
+cause they are all names of Chinese politicians
+and usually appear in similar contexts. Having ob-
+served that a large portion of words in this cluster
+are person names, it is reasonable to modified the
+label of ???(Wu Yi)? to ?PER?.
+The space of clusters is also less sparse so it is
+also possible to use combination of the clusters to
+help noise removing, in order to utilize the context
+information of data instances. For example, we
+could represent a instance as bigram of the cluster
+of target word and that of the previous word. And
+it is reasonable that its label should be same with
+other instances with the same cluster bigrams.
+The whole noise removing method can be rep-
+resented as following: Suppose a target word wi
+was assigned label yi during projection with prob-
+ability of alignment pi. From the whole projected
+labeled data, we can get the distribution pw(y) for
+the word wi, the distribution pc(y) for its cluster
+ci and the distribution pb(y) for the bigram ci?1ci.
+We choose y?i = y?, which satisfies
+y? = argmaxy(?y,yipi + ?x?{w,c,b}px(y)) (1)
+?y,yi is an indicator function, which is 1 when
+y equals to yi. In practices, we set pw/c/b(y) to 0
+for the ys that make the probability less than 0.5.
+With the noise removing method, we can build a
+more accurate labeled dataset based on the pro-
+jected data and then use it for training models.
+314
+3 Experimental Results
+3.1 Data Preparation
+We took English as resource-rich language and
+used Chinese to imitate resource-scarce lan-
+guages, since the two languages differ a lot. We
+conducted experiments on projections of NER and
+POS tagging. The resource-scarce languages were
+assumed to have no training data. For the NER
+experiments, we used data from People?s Daily
+(April. 1998) as test data (55,177 sentences). The
+data was converted following the style of Penn
+Chinese Treebank (CTB) (Xue et al, 2005). For
+evaluation of projection of POS tagging, we used
+the test set of CTB. Since English and Chinese
+have different annotation standards, labels in the
+two languages were converted to the universal
+POS tag set (Petrov et al, 2011; Das and Petrov,
+2011) so that the labels between the source and tar-
+get languages were consistent. The universal tag
+set made the task of POS tagging easier since the
+fine-grained types are no more cared.
+The Brown clusters were trained on Chinese
+Wikipedia. The bodies of all articles are retained
+to induce 1000 clusters using the algorithm in
+(Liang, 2005) . Stanford word segmentor (Tseng
+et al, 2005) was used for Chinese word segmenta-
+tion. When English Brown clusters were in need,
+we trained the word clusters on the tokenized En-
+glish Wikipedia.
+We chose LDC2003E14 as the parallel corpus,
+which contains about 200,000 sentences. GIZA++
+(Och and Ney, 2000) was used to generate word
+alignments. It is easier to obtain similar amount
+of parallel sentences between English and minor
+languages, making the conclusions more general
+for problems of projection in real applications.
+3.2 Performances of NER Projection
+Table 2 shows the performances of NER projec-
+tion. We re-implemented the direct projection
+method with projected clusters in (Ta?ckstro?m et
+al., 2012). Although their method was proven to
+work well on European language pairs, the results
+showed that projection based on word alignments
+(WA) worked much better since the source and tar-
+get languages are from different families.
+After we add the clusters trained on Chinese
+Wikipedia as features as in Section 2.2, a great
+improvement of about 9 points on the average F1-
+score of the three entity types was achieved, show-
+ing that the word representation features help to
+System avgPrec
+avg
+Rec
+avg
+F1
+Direct projection 47.48 28.12 33.91
+Proj based on WA 71.6 37.84 47.66
++clusters(from en) 63.96 46.59 53.75
++clusters(ch wiki) 73.44 47.63 56.60
+Table 2: Performances of NER projection.
+recall more named entities in the test set. The per-
+formances of all three categories of named entities
+were improved greatly after adding word repre-
+sentation features. Larger improvements were ob-
+served on person names (14.4%). One of the rea-
+sons for the improvements is that in Chinese, per-
+son names are usually single words. Thus Brown-
+clustering method can learn good word representa-
+tions for those entities. Since in test set, most enti-
+ties that are not covered are person names, Brown
+clusters helped to increase the recall greatly.
+In (Ta?ckstro?m et al, 2012), Brown clusters
+trained on the source side were projected to the
+target side based on word alignments. Rather than
+building a same feature space for both the source
+language and the target language as in (Ta?ckstro?m
+et al, 2012), we tried to use the projected clus-
+ters as features in projection based on word align-
+ments. In this way the two methods used exactly
+the same resources. In the experiments, we tried
+to project clusters trained on English Wikipedia
+to Chinese words. They improved the perfor-
+mance by about 6.1% and the result was about
+20% higher than that achieved by the direct pro-
+jection method, showing that even using exactly
+the same resources, the proposed method out-
+performed that in (Ta?ckstro?m et al, 2012) much
+on diverse language pairs.
+Next we studied the effects of noise removing
+methods. Firstly, we removed noises according to
+Eq(1), which yielded another huge improvement
+of about 6% against the best results based on clus-
+ter features. Moreover, we conducted experiments
+to see the effects of each of the three factors. The
+results show that both the noise removing methods
+based on words and on clusters achieved improve-
+ments between 1.5-2 points. The method based on
+bigram features got the largest improvement of 3.5
+points. It achieved great improvement on person
+names. This is because a great proportion of the
+vocabulary was made up of person names, some of
+which are mixed in clusters with common nouns.
+315
+While noise removing method based on clusters
+failed to recognize them as name entities, cluster
+bigrams will make use of context information to
+help the discrimination of these mixed clusters.
+System PER LOC ORG AVG
+By Eq(1) 59.77 55.56 72.26 62.53
+By clusters 49.75 53.10 72.46 58.44
+By words 49.00 54.69 70.59 58.09
+By bigrams 58.39 55.01 66.88 60.09
+Table 3: Performances of noise removing methods
+3.3 Performances of POS Projection
+In this section we test our method on projection
+of POS tagging from English to Chinese, to show
+that our methods can well extend to other NLP
+tasks. Unlike named entities, POS tags are asso-
+ciated with single words. When one target word
+is aligned to more than one words with different
+POS tags on the source side, it is hard to decide
+which POS tag to choose. So we only retained the
+data labeled by 1-to-1 alignments, which also con-
+tain less noises as pointed out by (Hu et al, 2011).
+The same feature template as in the experiments
+of NER was used for training POS taggers.
+The results are listed in Table 4. Because of the
+great differences between English and Chinese,
+projection based on word alignments worked bet-
+ter than direct projection did. After adding word
+cluster features and removing noises, an error re-
+duction of 12.7% was achieved.
+POS tagging projection can benefit more from
+our noise removing methods than NER projection
+could, i.e. noise removing gave rise to a higher
+improvement (2.7%) than that achieved by adding
+cluster features on baseline system (1.5%). One
+possible reason is that our noise removing meth-
+ods assume that labels are associated with single
+words, which is more suitable for POS tagging.
+Methods Accuracy
+Direct projection (Ta?ckstro?m) 62.71
+Projection based on WA 66.68
++clusters (ch wiki) 68.23
++cluster(ch)&noise removing 70.92
+Table 4: Performances of POS tagging projection.
+4 Conclusion and perspectives
+In this paper we introduced Brown clusters of
+target languages to cross-lingual projection and
+proposed methods for removing noises on pro-
+jected labels. Experiments showed that both the
+two techniques could greatly improve the perfor-
+mances and could help the projection method well
+generalize to languages differ a lot.
+Note that although projection methods based on
+word alignments are less affected by syntactic dif-
+ferences, the topological differences between lan-
+guages still remain an importance reason for the
+limitation of performances of cross-lingual projec-
+tion. In the future we will try to make use of repre-
+sentations of sub-structures to deal with syntactic
+differences in more complex tasks such as projec-
+tion of dependency parsing. Future improvements
+also include combining the direct projection meth-
+ods based on joint feature representations with the
+proposed method as well as making use of pro-
+jected data from multiple languages.
+Acknowledgments
+We would like to thank the anonymous review-
+ers for their valuable comments and helpful sug-
+gestions. This work was supported by National
+Natural Science Foundation of China (61173073),
+and the Key Project of the National High Technol-
+ogy Research and Development Program of China
+(2011AA01A207).
+References
+P.F. Brown, P.V. Desouza, R.L. Mercer, V.J.D. Pietra,
+and J.C. Lai. 1992. Class-based n-gram mod-
+els of natural language. Computational linguistics,
+18(4):467?479.
+D. Das and S. Petrov. 2011. Unsupervised part-of-
+speech tagging with bilingual graph-based projec-
+tions. In Proceedings of the 49th Annual Meeting of
+the Association for Computational Linguistics: Hu-
+man Language Technologies, pages 600?609.
+P.L. Hu, M. Yu, J. Li, C.H. Zhu, and T.J. Zhao.
+2011. Semi-supervised learning framework for
+cross-lingual projection. In Web Intelligence
+and Intelligent Agent Technology (WI-IAT), 2011
+IEEE/WIC/ACM International Conference on, vol-
+ume 3, pages 213?216. IEEE.
+R. Hwa, P. Resnik, A. Weinberg, C. Cabezas, and
+O. Kolak. 2005. Bootstrapping parsers via syntactic
+projection across parallel texts. Natural language
+engineering, 11(3):311?326.
+316
+W. Jiang and Q. Liu. 2010. Dependency parsing and
+projection based on word-pair classification. In Pro-
+ceedings of the 48th Annual Meeting of the Associa-
+tion for Computational Linguistics, ACL, volume 10,
+pages 12?20.
+P. Liang. 2005. Semi-supervised learning for natural
+language. Ph.D. thesis, Massachusetts Institute of
+Technology.
+R. McDonald, S. Petrov, and K. Hall. 2011. Multi-
+source transfer of delexicalized dependency parsers.
+In Proceedings of the Conference on Empirical
+Methods in Natural Language Processing, pages
+62?72. Association for Computational Linguistics.
+F.J. Och and H. Ney. 2000. Giza++: Training of statis-
+tical translation models.
+S. Petrov, D. Das, and R. McDonald. 2011. A
+universal part-of-speech tagset. arXiv preprint
+arXiv:1104.2086.
+O. Ta?ckstro?m, R. McDonald, and J. Uszkoreit. 2012.
+Cross-lingual word clusters for direct transfer of lin-
+guistic structure.
+O Ta?ckstro?m, R McDonald, and J Nivre. 2013. Tar-
+get language adaptation of discriminative transfer
+parsers. Proceedings of NAACL-HLT.
+H. Tseng, P. Chang, G. Andrew, D. Jurafsky, and
+C. Manning. 2005. A conditional random field
+word segmenter for sighan bakeoff 2005. In Pro-
+ceedings of the Fourth SIGHAN Workshop on Chi-
+nese Language Processing, volume 171. Jeju Island,
+Korea.
+F Xia and W Lewis. 2007. Multilingual struc-
+tural projection across interlinear text. In Proc. of
+the Conference on Human Language Technologies
+(HLT/NAACL 2007), pages 452?459.
+N. Xue, F. Xia, F.D. Chiou, and M. Palmer. 2005. The
+penn chinese treebank: Phrase structure annotation
+of a large corpus. Natural Language Engineering,
+11(2):207.
+D. Yarowsky, G. Ngai, and R. Wicentowski. 2001.
+Inducing multilingual text analysis tools via robust
+projection across aligned corpora. In Proceedings
+of the first international conference on Human lan-
+guage technology research, pages 1?8. Association
+for Computational Linguistics.
+317
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Short Papers), pages 545?550,
+Baltimore, Maryland, USA, June 23-25 2014.
+c
+?2014 Association for Computational Linguistics
+Improving Lexical Embeddings with Semantic Knowledge
+Mo Yu
+?
+Machine Translation Lab
+Harbin Institute of Technology
+Harbin, China
+gflfof@gmail.com
+Mark Dredze
+Human Language Technology Center of Excellence
+Center for Language and Speech Processing
+Johns Hopkins University
+Baltimore, MD 21218
+mdredze@cs.jhu.edu
+Abstract
+Word embeddings learned on unlabeled
+data are a popular tool in semantics, but
+may not capture the desired semantics. We
+propose a new learning objective that in-
+corporates both a neural language model
+objective (Mikolov et al, 2013) and prior
+knowledge from semantic resources to
+learn improved lexical semantic embed-
+dings. We demonstrate that our embed-
+dings improve over those learned solely on
+raw text in three settings: language mod-
+eling, measuring semantic similarity, and
+predicting human judgements.
+1 Introduction
+Word embeddings are popular representations for
+syntax (Turian et al, 2010; Collobert and We-
+ston, 2008; Mnih and Hinton, 2007), semantics
+(Huang et al, 2012; Socher et al, 2013), morphol-
+ogy (Luong et al, 2013) and other areas. A long
+line of embeddings work, such as LSA and ran-
+domized embeddings (Ravichandran et al, 2005;
+Van Durme and Lall, 2010), has recently turned
+to neural language models (Bengio et al, 2006;
+Collobert and Weston, 2008; Turian et al, 2010).
+Unsupervised learning can take advantage of large
+corpora, which can produce impressive results.
+However, the main drawback of unsupervised
+learning is that the learned embeddings may not
+be suited for the task of interest. Consider se-
+mantic embeddings, which may capture a notion
+of semantics that improves one semantic task but
+harms another. Controlling this behavior is chal-
+lenging with an unsupervised objective. However,
+rich prior knowledge exists for many tasks, and
+there are numerous such semantic resources.
+We propose a new training objective for learn-
+ing word embeddings that incorporates prior
+?
+This work was done while the author was visiting JHU.
+knowledge. Our model builds on word2vec
+(Mikolov et al, 2013), a neural network based
+language model that learns word embeddings by
+maximizing the probability of raw text. We extend
+the objective to include prior knowledge about
+synonyms from semantic resources; we consider
+both the Paraphrase Database (Ganitkevitch et al,
+2013) and WordNet (Fellbaum, 1999), which an-
+notate semantic relatedness between words. The
+latter was also used in (Bordes et al, 2012) for
+training a network for predicting synset relation.
+The combined objective maximizes both the prob-
+ability of the raw corpus and encourages embed-
+dings to capture semantic relations from the re-
+sources. We demonstrate improvements in our
+embeddings on three tasks: language modeling,
+measuring word similarity, and predicting human
+judgements on word pairs.
+2 Learning Embeddings
+We present a general model for learning word em-
+beddings that incorporates prior knowledge avail-
+able for a domain. While in this work we con-
+sider semantics, our model could incorporate prior
+knowledge from many types of resources. We be-
+gin by reviewing the word2vec objective and then
+present augmentations of the objective for prior
+knowledge, including different training strategies.
+2.1 Word2vec
+Word2vec (Mikolov et al, 2013) is an algorithm
+for learning embeddings using a neural language
+model. Embeddings are represented by a set of
+latent (hidden) variables, and each word is rep-
+resented by a specific instantiation of these vari-
+ables. Training learns these representations for
+each word w
+t
+(the tth word in a corpus of size T )
+so as to maximize the log likelihood of each token
+given its context: words within a window sized c:
+max
+1
+T
+T
+?
+t=1
+log p
+(
+w
+t
+|w
+t+c
+t?c
+)
+, (1)
+545
+where w
+t+c
+t?c
+is the set of words in the window of
+size c centered at w
+t
+(w
+t
+excluded).
+Word2vec offers two choices for modeling of
+Eq. (1): a skip-gram model and a continuous bag-
+of-words model (cbow). The latter worked better
+in our experiments so we focus on it in our presen-
+tation. cbow defines p(w
+t
+|w
+t+c
+t?c
+) as:
+exp
+(
+e
+?
+w
+t
+>
+?
+?
+?c?j?c,j 6=0
+e
+w
+t+j
+)
+?
+w
+exp
+(
+e
+?
+w
+>
+?
+?
+?c?j?c,j 6=0
+e
+w
+t+j
+)
+, (2)
+where e
+w
+and e
+?
+w
+represent the input and output
+embeddings respectively, i.e., the assignments to
+the latent variables for word w. While some learn
+a single representation for each word (e
+?
+w
+, e
+w
+),
+our results improved when we used a separate em-
+bedding for input and output in cbow.
+2.2 Relation Constrained Model
+Suppose we have a resource that indicates rela-
+tions between words. In the case of semantics,
+we could have a resource that encodes semantic
+similarity between words. Based on this resource,
+we learn embeddings that predict one word from
+another related word. We defineR as a set of rela-
+tions between two words w and w
+?
+. R can contain
+typed relations (e.g., w is related to w
+?
+through
+a specific type of semantic relation), and rela-
+tions can have associated scores indicating their
+strength. We assume a single relation type of uni-
+form strength, though it is straightforward to in-
+clude additional characteristics into the objective.
+Define R
+w
+to be the subset of relations in R
+which involve word w. Our objective maximizes
+the (log) probability of all relations by summing
+over all words N in the vocabulary:
+1
+N
+N
+?
+i=1
+?
+w?R
+w
+i
+log p (w|w
+i
+) , (3)
+p(w|w
+i
+) = exp
+(
+e
+?
+w
+T
+e
+w
+i
+)
+/
+?
+w?
+exp
+(
+e
+?
+w?
+T
+e
+w
+i
+)
+takes a form similar to Eq. (2) but without the
+context: e and e
+?
+are again the input and output
+embeddings. For our semantic relations e
+?
+w
+and
+e
+w
+are symmetrical, so we use a single embedding.
+Embeddings are learned such that they are predic-
+tive of related words in the resource. We call this
+the Relation Constrained Model (RCM).
+2.3 Joint Model
+The cbow and RCM objectives use separate data
+for learning. While RCM learns embeddings
+suited to specific tasks based on knowledge re-
+sources, cbow learns embeddings for words not in-
+cluded in the resource but appear in a corpus. We
+form a joint model through a linear combination
+of the two (weighted by C):
+1
+T
+T
+?
+t=1
+log p
+(
+w
+t
+|w
+t+c
+t?c
+)
++
+C
+N
+N
+?
+i=1
+?
+w?R
+w
+i
+log p (w|w
+i
+)
+Based on our initial experiments, RCM uses the
+output embeddings of cbow.
+We learn embeddings using stochastic gradient
+ascent. Updates for the first term for e
+?
+and e are:
+e
+?
+w
+? ?
+cbow
+(
+?(f(w))? I
+[w=w
+t
+]
+)
+?
+t+c
+?
+j=t?c
+e
+w
+j
+e
+w
+j
+? ?
+cbow
+?
+w
+(
+?(f(w))? I
+[w=w
+t
+]
+)
+? e
+?
+w
+,
+where ?(x) = exp{x}/(1 + exp{x}), I
+[x]
+is 1
+when x is true, f(w) = e
+?
+w
+>
+?
+t+c
+j=t?c
+e
+w
+j
+. Second
+term updates are:
+e
+?
+w
+? ?
+RCM
+(
+?(f
+?
+(w))? I
+[w?R
+w
+i
+]
+)
+? e
+?
+w
+i
+e
+?
+w
+i
+? ?
+RCM
+?
+w
+(
+?(f
+?
+(w))? I
+[w?R
+w
+i
+]
+)
+? e
+?
+w
+,
+where f
+?
+(w) = e
+?
+w
+>
+e
+?
+w
+i
+. We use two learning
+rates: ?
+cbow
+and ?
+RCM
+.
+2.4 Parameter Estimation
+All three models (cbow, RCM and joint) use the
+same training scheme based on Mikolov et al
+(2013). There are several choices to make in pa-
+rameter estimation; we present the best perform-
+ing choices used in our results.
+We use noise contrastive estimation (NCE)
+(Mnih and Teh, 2012), which approximately max-
+imizes the log probability of the softmax objec-
+tive (Eq. 2). For each objective (cbow or RCM),
+we sample 15 words as negative samples for each
+training instance according to their frequencies in
+raw texts (i.e. training data of cbow). Suppose w
+has frequency u(w), then the probability of sam-
+pling w is p(w) ? u(w)
+3/4
+.
+We use distributed training, where shared em-
+beddings are updated by each thread based on
+training data within the thread, i.e., asynchronous
+stochastic gradient ascent. For the joint model,
+we assign threads to the cbow or RCM objective
+with a balance of 12:1(i.e. C is approximately
+1
+12
+).
+We allow the cbow threads to control convergence;
+training stops when these threads finish process-
+ing the data. We found this an effective method
+546
+for balancing the two objectives. We trained each
+cbow objective using a single pass over the data set
+(except for those in Section 4.1), which we empir-
+ically verified was sufficient to ensure stable per-
+formances on semantic tasks.
+Model pre-training is critical in deep learning
+(Bengio et al, 2007; Erhan et al, 2010). We eval-
+uate two strategies: random initialization, and pre-
+training the embeddings. For pre-training, we first
+learn using cbow with a random initialization. The
+resulting trained model is then used to initialize
+the RCM model. This enables the RCM model to
+benefit from the unlabeled data, but refine the em-
+beddings constrained by the given relations.
+Finally, we consider a final model for training
+embeddings that uses a specific training regime.
+While the joint model balances between fitting the
+text and learning relations, modeling the text at
+the expense of the relations may negatively impact
+the final embeddings for tasks that use the embed-
+dings outside of the context of word2vec. There-
+fore, we use the embeddings from a trained joint
+model to pre-train an RCM model. We call this
+setting Joint?RCM.
+3 Evaluation
+For training cbow we use the New York Times
+(NYT) 1994-97 subset from Gigaword v5.0
+(Parker et al, 2011). We select 1,000 paragraphs
+each for dev and test data from the December 2010
+portion of the NYT. Sentences are tokenized using
+OpenNLP
+1
+, yielding 518,103,942 tokens for train-
+ing, 42,953 tokens for dev and 41,344 for test.
+We consider two resources for training the
+RCM term: the Paraphrase Database (PPDB)
+(Ganitkevitch et al, 2013) and WordNet (Fell-
+baum, 1999). For each semantic pair extracted
+from these resources, we add a relation to the
+RCM objective. Since we use both resources for
+evaluation, we divide each into train, dev and test.
+PPDB is an automatically extracted dataset con-
+taining tens of millions of paraphrase pairs, in-
+cluding words and phrases. We used the ?lexi-
+cal? version of PPDB (no phrases) and filtered to
+include pairs that contained words found in the
+200,000 most frequent words in the NYT corpus,
+which ensures each word in the relations had sup-
+port in the text corpus. Next, we removed dupli-
+cate pairs: if <A,B> occurred in PPDB, we re-
+moved relations of <B,A>. PPDB is organized
+1
+https://opennlp.apache.org/
+PPDB Relations WordNet Relations
+Train XL 115,041 Train 68,372
+XXL 587,439 (not used in
+XXXL 2,647,105 this work)
+Dev 1,582 Dev 1,500
+Test 1,583 Test 1,500
+Table 1: Sizes of semantic resources datasets.
+into 6 parts, ranging from S (small) to XXXL.
+Division into these sets is based on an automat-
+ically derived accuracy metric. Since S contains
+the most accurate paraphrases, we used these for
+evaluation. We divided S into a dev set (1582
+pairs) and test set (1583 pairs). Training was based
+on one of the other sets minus relations from S.
+We created similar splits using WordNet, ex-
+tracting synonyms using the 100,000 most fre-
+quent NYT words. We divide the vocabulary into
+three sets: the most frequent 10,000 words, words
+with ranks between 10,001-30,000 and 30,001-
+100,000. We sample 500 words from each set to
+construct a dev and test set. For each word we
+sample one synonym to form a pair. The remain-
+ing words and their synonyms are used for train-
+ing. However we did not use the training data be-
+cause it is too small to affect the results. Table 1
+summarizes the datasets.
+4 Experiments
+The goal of our experiments is to demonstrate the
+value of learning semantic embeddings with infor-
+mation from semantic resources. In each setting,
+we will compare the word2vec baseline embed-
+ding trained with cbow against RCM alone, the
+joint model and Joint?RCM. We consider three
+evaluation tasks: language modeling, measuring
+semantic similarity, and predicting human judge-
+ments on semantic relatedness. In all of our ex-
+periments, we conducted model development and
+tuned model parameters (C, ?
+cbow
+, ?
+RCM
+, PPDB
+dataset, etc.) on development data, and evaluate
+the best performing model on test data. The mod-
+els are notated as follows: word2vec for the base-
+line objective (cbow or skip-gram), RCM-r/p and
+Joint-r/p for random and pre-trained initializations
+of the RCM and Joint objectives, and Joint?RCM
+for pre-training RCM with Joint embeddings. Un-
+less otherwise notes, we train using PPDB XXL.
+We initially created WordNet training data, but
+found it too small to affect results. Therefore,
+we include only RCM results trained on PPDB,
+but show evaluations on both PPDB and WordNet.
+547
+Model NCE HS
+word2vec (cbow) 8.75 6.90
+RCM-p 8.55 7.07
+Joint-r (?
+RCM
+= 1? 10
+?2
+) 8.33 6.87
+Joint-r (?
+RCM
+= 1? 10
+?3
+) 8.20 6.75
+Joint?RCM 8.40 6.92
+Table 2: LM evaluation on held out NYT data.
+We trained 200-dimensional embeddings and used
+output embeddings for measuring similarity. Dur-
+ing the training of cbow objectives we remove all
+words with frequencies less than 5, which is the
+default setting of word2vec.
+4.1 Language Modeling
+Word2vec is fundamentally a language model,
+which allows us to compute standard evaluation
+metrics on a held out dataset. After obtaining
+trained embeddings from any of our objectives,
+we use the embeddings in the word2vec model
+to measure perplexity of the test set. Measuring
+perplexity means computing the exact probability
+of each word, which requires summation over all
+words in the vocabulary in the denominator of the
+softmax. Therefore, we also trained the language
+models with hierarchical classification (Mikolov
+et al, 2013) strategy (HS). The averaged perplexi-
+ties are reported on the NYT test set.
+While word2vec and joint are trained as lan-
+guage models, RCM is not. In fact, RCM does not
+even observe all the words that appear in the train-
+ing set, so it makes little sense to use the RCM em-
+beddings directly for language modeling. There-
+fore, in order to make fair comparison, for every
+set of trained embeddings, we fix them as input
+embedding for word2vec, then learn the remain-
+ing input embeddings (words not in the relations)
+and all the output embeddings using cbow. Since
+this involves running cbow on NYT data for 2 it-
+erations (one iteration for word2vec-training/pre-
+training/joint-modeling and the other for tuning
+the language model), we use Joint-r (random ini-
+tialization) for a fair comparison.
+Table 2 shows the results for language mod-
+eling on test data. All of our proposed models
+improve over the baseline in terms of perplexity
+when NCE is used for training LMs. When HS is
+used, the perplexities are greatly improved. How-
+ever in this situation only the joint models improve
+the results; and Joint?RCM performs similar to
+the baseline, although it is not designed for lan-
+guage modeling. We include the optimal ?
+RCM
+in the table; while set ?
+cbow
+= 0.025 (the default
+setting of word2vec). Even when our goal is to
+strictly model the raw text corpus, we obtain im-
+provements by injecting semantic information into
+the objective. RCM can effectively shift learning
+to obtain more informative embeddings.
+4.2 Measuring Semantic Similarity
+Our next task is to find semantically related words
+using the embeddings, evaluating on relations
+from PPDB and WordNet. For each of the word
+pairs in the evaluation set <A,B>, we use the co-
+sine distance between the embeddings to score A
+with a candidate word B
+?
+. We use a large sample
+of candidate words (10k, 30k or 100k) and rank all
+candidate words for pairs where B appears in the
+candidates. We then measure the rank of the cor-
+rect B to compute mean reciprocal rank (MRR).
+Our goal is to use word A to select word B as
+the closest matching word from the large set of
+candidates. Using this strategy, we evaluate the
+embeddings from all of our objectives and mea-
+sure which embedding most accurately selected
+the true correct word.
+Table 3 shows MRR results for both PPDB
+and WordNet dev and test datasets for all models.
+All of our methods improve over the baselines in
+nearly every test set result. In nearly every case,
+Joint?RCM obtained the largest improvements.
+Clearly, our embeddings are much more effective
+at capturing semantic similarity.
+4.3 Human Judgements
+Our final evaluation is to predict human judge-
+ments of semantic relatedness. We have pairs of
+words from PPDB scored by annotators on a scale
+of 1 to 5 for quality of similarity. Our data are
+the judgements used by Ganitkevitch et al (2013),
+which we filtered to include only those pairs for
+which we learned embeddings, yielding 868 pairs.
+We assign a score using the dot product between
+the output embeddings of each word in the pair,
+then order all 868 pairs according to this score.
+Using the human judgements, we compute the
+swapped pairs rate: the ratio between the number
+of swapped pairs and the number of all pairs. For
+pair p scored y
+p
+by the embeddings and judged y?
+p
+by an annotator, the swapped pair rate is:
+?
+p
+1
+,p
+2
+?D
+I[(y
+p
+1
+? y
+p
+2
+) (y?
+p
+2
+? y?
+p
+1
+) < 0]
+?
+p
+1
+,p
+2
+?D
+I[y
+p
+1
+6= y
+p
+2
+]
+(4)
+where I[x] is 1 when x is true.
+548
+PPDB WordNet
+Model
+Dev Test Dev Test
+10k 30k 100k 10k 30k 100k 10k 30k 100k 10k 30k 100k
+word2vec (cbow) 49.68 39.26 29.15 49.31 42.53 30.28 10.24 8.64 5.14 10.04 7.90 4.97
+word2vec (skip-gram) 48.70 37.14 26.20 - - - 8.61 8.10 4.62 - - -
+RCM-r 55.03 42.52 26.05 - - - 13.33 9.05 5.29 - - -
+RCM-p 61.79 53.83 40.95 65.42 55.82 41.20 15.25 12.13 7.46 14.13 11.23 7.39
+Joint-r 59.91 50.87 36.81 - - - 15.73 11.36 7.14 13.97 10.51 7.44
+Joint-p 59.75 50.93 37.73 64.30 53.27 38.97 15.61 11.20 6.96 - - -
+Joint?RCM 64.22 54.99 41.34 68.20 57.87 42.64 16.81 11.67 7.55 16.16 11.21 7.56
+Table 3: MRR for semantic similarity on PPDB and WordNet dev and test data. Higher is better. All
+RCM objectives are trained with PPDB XXL. To preserve test data integrity, only the best performing
+setting of each model is evaluated on the test data.
+Model Swapped Pairs Rate
+word2vec (cbow) 17.81
+RCM-p 16.66
+Joint-r 16.85
+Joint-p 16.96
+Joint?RCM 16.62
+Table 4: Results for ranking the quality of PPDB
+pairs as compared to human judgements.
+PPDB Dev
+Model Relations 10k 30k 100k
+RCM-r XL 24.02 15.26 9.55
+RCM-p XL 54.97 45.35 32.95
+RCM-r XXL 55.03 42.52 26.05
+RCM-p XXL 61.79 53.83 40.95
+RCM-r XXXL 51.00 44.61 28.42
+RCM-p XXXL 53.01 46.35 34.19
+Table 5: MRR on PPDB dev data for training on
+an increasing number of relations.
+Table 4 shows that all of our models obtain
+reductions in error as compared to the baseline
+(cbow), with Joint?RCM obtaining the largest re-
+duction. This suggests that our embeddings are
+better suited for semantic tasks, in this case judged
+by human annotations.
+PPDB Dev
+Model ?
+RCM
+10k 30k 100k
+Joint-p 1? 10
+?1
+47.17 36.74 24.50
+5? 10
+?2
+54.31 44.52 33.07
+1? 10
+?2
+59.75 50.93 37.73
+1? 10
+?3
+57.00 46.84 34.45
+Table 6: Effect of learning rate ?
+RCM
+on MRR for
+the RCM objective in Joint models.
+4.4 Analysis
+We conclude our experiments with an analysis of
+modeling choices. First, pre-training RCM models
+gives significant improvements in both measuring
+semantic similarity and capturing human judge-
+ments (compare ?p? vs. ?r? results.) Second, the
+number of relations used for RCM training is an
+important factor. Table 5 shows the effect on dev
+data of using various numbers of relations. While
+we see improvements from XL to XXL (5 times as
+many relations), we get worse results on XXXL,
+likely because this set contains the lowest quality
+relations in PPDB. Finally, Table 6 shows different
+learning rates ?
+RCM
+for the RCM objective.
+The baseline word2vec and the joint model have
+nearly the same averaged running times (2,577s
+and 2,644s respectively), since they have same
+number of threads for the CBOW objective and the
+joint model uses additional threads for the RCM
+objective. The RCM models are trained with sin-
+gle thread for 100 epochs. When trained on the
+PPDB-XXL data, it spends 2,931s on average.
+5 Conclusion
+We have presented a new learning objective for
+neural language models that incorporates prior
+knowledge contained in resources to improve
+learned word embeddings. We demonstrated that
+the Relation Constrained Model can lead to better
+semantic embeddings by incorporating resources
+like PPDB, leading to better language modeling,
+semantic similarity metrics, and predicting hu-
+man semantic judgements. Our implementation is
+based on the word2vec package and we made it
+available for general use
+2
+.
+We believe that our techniques have implica-
+tions beyond those considered in this work. We
+plan to explore the embeddings suitability for
+other semantics tasks, including the use of re-
+sources with both typed and scored relations. Ad-
+ditionally, we see opportunities for jointly learn-
+ing embeddings across many tasks with many re-
+sources, and plan to extend our model accordingly.
+Acknowledgements Yu is supported by China
+Scholarship Council and by NSFC 61173073.
+2
+https://github.com/Gorov/JointRCM
+549
+References
+Yoshua Bengio, Holger Schwenk, Jean-S?ebastien
+Sen?ecal, Fr?ederic Morin, and Jean-Luc Gauvain.
+2006. Neural probabilistic language models. In
+Innovations in Machine Learning, pages 137?186.
+Springer.
+Yoshua Bengio, Pascal Lamblin, Dan Popovici, Hugo
+Larochelle, et al 2007. Greedy layer-wise training
+of deep networks. In Neural Information Processing
+Systems (NIPS).
+Antoine Bordes, Xavier Glorot, Jason Weston, and
+Yoshua Bengio. 2012. Joint learning of words
+and meaning representations for open-text semantic
+parsing. In International Conference on Artificial
+Intelligence and Statistics, pages 127?135.
+Ronan Collobert and Jason Weston. 2008. A unified
+architecture for natural language processing: Deep
+neural networks with multitask learning. In Interna-
+tional Conference on Machine Learning (ICML).
+Dumitru Erhan, Yoshua Bengio, Aaron Courville,
+Pierre-Antoine Manzagol, Pascal Vincent, and Samy
+Bengio. 2010. Why does unsupervised pre-training
+help deep learning? Journal of Machine Learning
+Research (JMLR), 11:625?660.
+Christiane Fellbaum. 1999. WordNet. Wiley Online
+Library.
+Juri Ganitkevitch, Benjamin Van Durme, and Chris
+Callison-Burch. 2013. PPDB: The paraphrase
+database. In North American Chapter of the Asso-
+ciation for Computational Linguistics (NAACL).
+Eric H Huang, Richard Socher, Christopher D Man-
+ning, and Andrew Y Ng. 2012. Improving word
+representations via global context and multiple word
+prototypes. In Association for Computational Lin-
+guistics (ACL), pages 873?882.
+Minh-Thang Luong, Richard Socher, and Christo-
+pher D Manning. 2013. Better word representa-
+tions with recursive neural networks for morphol-
+ogy. In Conference on Natural Language Learning
+(CoNLL).
+Tomas Mikolov, Ilya Sutskever, Kai Chen, Greg Cor-
+rado, and Jeffrey Dean. 2013. Distributed represen-
+tations of words and phrases and their composition-
+ality. arXiv preprint arXiv:1310.4546.
+Andriy Mnih and Geoffrey Hinton. 2007. Three new
+graphical models for statistical language modelling.
+In International Conference on Machine Learning
+(ICML).
+Andriy Mnih and Yee Whye Teh. 2012. A fast and
+simple algorithm for training neural probabilistic
+language models. arXiv preprint arXiv:1206.6426.
+Robert Parker, David Graff, Junbo Kong, Ke Chen, and
+Kazuaki Maeda. 2011. English gigaword fifth edi-
+tion. Technical report, Linguistic Data Consortium.
+Deepak Ravichandran, Patrick Pantel, and Eduard
+Hovy. 2005. Randomized algorithms and nlp: us-
+ing locality sensitive hash function for high speed
+noun clustering. In Association for Computational
+Linguistics (ACL).
+Richard Socher, Alex Perelygin, Jean Wu, Jason
+Chuang, Christopher D. Manning, Andrew Ng, and
+Christopher Potts. 2013. Recursive deep models
+for semantic compositionality over a sentiment tree-
+bank. In Empirical Methods in Natural Language
+Processing (EMNLP), pages 1631?1642.
+Joseph Turian, Lev Ratinov, and Yoshua Bengio. 2010.
+Word representations: a simple and general method
+for semi-supervised learning. In Association for
+Computational Linguistics (ACL).
+Benjamin Van Durme and Ashwin Lall. 2010. On-
+line generation of locality sensitive hash signatures.
+In Association for Computational Linguistics (ACL),
+pages 231?235.
+550

@@ -1,0 +1,1837 @@
+Proceedings of Human Language Technology Conference and Conference on Empirical Methods in Natural Language
+Processing (HLT/EMNLP), pages 748?754, Vancouver, October 2005. c?2005 Association for Computational Linguistics
+Composition of Conditional Random Fields for Transfer Learning
+Charles Sutton and Andrew McCallum
+Department of Computer Science
+University of Massachusetts
+Amherst, MA 01003
+{sutton,mccallum}@cs.umass.edu
+Abstract
+Many learning tasks have subtasks for which
+much training data exists. Therefore, we want
+to transfer learning from the old, general-
+purpose subtask to a more specific new task,
+for which there is often less data. While work
+in transfer learning often considers how the
+old task should affect learning on the new
+task, in this paper we show that it helps to
+take into account how the new task affects the
+old. Specifically, we perform joint decoding of
+separately-trained sequence models, preserv-
+ing uncertainty between the tasks and allowing
+information from the new task to affect predic-
+tions on the old task. On two standard text data
+sets, we show that joint decoding outperforms
+cascaded decoding.
+1 Introduction
+Many tasks in natural language processing are solved by
+chaining errorful subtasks. Within information extrac-
+tion, for example, part-of-speech tagging and shallow
+parsing are often performed before the main extraction
+task. Commonly these subtasks have their own standard
+sets of labeled training data: for example, many large
+data sets exist for learning to extract person names from
+newswire text; whereas the available training data for new
+applications, such as extracting appointment information
+from email, tends to be much smaller. Thus, we need to
+transfer regularities learned from a well-studied subtask,
+such as finding person names in newswire text, to a new,
+related task, such as finding names of speakers in email
+seminar announcements.
+In previous NLP systems, transfer is often accom-
+plished by training a model for the subtask, and using its
+prediction as a feature for the new task. For example, re-
+cent CoNLL shared tasks (Tjong Kim Sang & De Meul-
+der, 2003; Carreras & Marquez, 2004), which are stan-
+dard data sets for such common NLP tasks as clause iden-
+tification and named-entity recognition, include predic-
+tions from a part-of-phrase tagger and a shallow parser as
+features. But including only the single most likely sub-
+task prediction fails to exploit useful dependencies be-
+tween the tasks. First, if the subtask prediction is wrong,
+the model for the new task may not be able to recover. Of-
+ten, errors propagate upward through the chain of tasks,
+causing errors in the final output. This problem can be
+ameliorated by preserving uncertainty in the subtask pre-
+dictions, because even if the best subtask prediction is
+wrong, the distribution over predictions can still be some-
+what accurate.
+Second, information from the main task can inform the
+subtask. This is especially important for learning trans-
+fer, because the new domain often has different charac-
+teristics than the old domain, which is often a standard
+benchmark data set. For example, named-entity recog-
+nizers are usually trained on newswire text, which is more
+structured and grammatical than email, so we expect an
+off-the-shelf named-entity recognizer to perform some-
+what worse on email. An email task, however, often has
+domain-specific features, such as PREVIOUS WORD IS
+Speaker:), which were unavailable or uninformative to
+the subtask on the old training set, but are very informa-
+tive to the subtask in the new domain. While previous
+work in transfer learning has considered how the old task
+can help the new task, in this paper we show how the new
+task can help itself by improving predictions on the old.
+In this paper we address the issue of transfer by train-
+ing a cascade of models independently on the various
+training sets, but at test time combining them into a single
+model in which decoding is performed jointly. For the in-
+dividual models, we use linear-chain conditional random
+fields (CRFs), because the great freedom that they allow
+in feature engineering facilitates the learning of richer in-
+teractions between the subtasks. We train a linear chain
+CRF on each subtask, using the prediction of the previous
+subtask as a feature. At test time, we combine the learned
+weights from the original CRFs into a single grid-shaped
+factorial CRF, which makes predictions for all the tasks
+748
+at once. Viterbi decoding in this combined model im-
+plicitly considers all possible predictions for the subtask
+when making decisions in the main task.
+We evaluate joint decoding for learning transfer on a
+standard email data set and a standard entity recognition
+task. On the email data set, we show a significant gain
+in performance, including new state-of-the-art results. Of
+particular interest for transfer learning, we also show that
+using joint decoding, we achieve equivalent results to cas-
+caded decoding with 25% less training data.
+2 Linear-chain CRFs
+Conditional random fields (CRFs) (Lafferty et al, 2001)
+are undirected graphical models that are conditionally
+trained. In this section, we describe CRFs for the linear-
+chain case. Linear-chain CRFs can be roughly under-
+stood as conditionally-trained finite state machines. A
+linear-chain CRF defines a distribution over state se-
+quences s = {s1, s2, . . . , sT } given an input sequence
+x = {x1, x2, . . . , xT } by making a first-order Markov
+assumption on states. These Markov assumptions imply
+that the distribution over sequences factorizes in terms of
+pairwise functions ?t(st?1, st,x) as:
+p(s|x) =
+?
+t ?t(st?1, st,x)
+Z(x)
+, (1)
+The partition function Z(x) is defined to ensure that the
+distribution is normalized:
+Z(x) =
+?
+s?
+?
+t
+?t(s
+?
+t?1, s
+?
+t,x). (2)
+The potential functions ?t(st?1, st,x) can be interpreted
+as the cost of making a transition from state st?1 to state
+st at time t, similar to a transition probability in an HMM.
+Computing the partition function Z(x) requires sum-
+ming over all of the exponentially many possible state
+sequences s?. By exploiting Markov assumptions, how-
+ever, Z(x) (as well as the node marginals p(st|x) and the
+Viterbi labeling) can be calculated efficiently by variants
+of the standard dynamic programming algorithms used
+for HMMs.
+We assume the potentials factorize according to a set
+of features {fk}, which are given and fixed, so that
+?(st?1, st,x) = exp
+(
+?
+k
+?kfk(st?1, st,x, t)
+)
+. (3)
+The model parameters are a set of real weights? = {?k},
+one for each feature.
+Feature functions can be arbitrary. For example, one
+feature function could be a binary test fk(st?1, st,x, t)
+that has value 1 if and only if st?1 has the label SPEAK-
+ERNAME, st has the label OTHER, and the word xt be-
+gins with a capital letter. The chief practical advantage
+of conditional models, in fact, is that we can include ar-
+bitrary highly-dependent features without needing to es-
+timate their distribution, as would be required to learn a
+generative model.
+Given fully-labeled training instances {(sj ,xj)}Mj=1,
+CRF training is usually performed by maximizing the pe-
+nalized log likelihood
+`(?) =
+?
+j
+?
+t
+?
+k
+?kfk(sj,t?1, sj,t,x, t)
+?
+?
+j
+logZ(xj)?
+?
+k
+?2k
+2?2
+(4)
+where the final term is a zero-mean Gaussian prior placed
+on parameters to avoid overfitting. Although this maxi-
+mization cannot be done in closed form, it can be op-
+timized numerically. Particularly effective are gradient-
+based methods that use approximate second-order infor-
+mation, such as conjugate gradient and limited-memory
+BFGS (Byrd et al, 1994). For more information on
+current training methods for CRFs, see Sha and Pereira
+(2003).
+3 Dynamic CRFs
+Dynamic conditional random fields (Sutton et al, 2004)
+extend linear-chain CRFs in the same way that dynamic
+Bayes nets (Dean & Kanazawa, 1989) extend HMMs.
+Rather than having a single monolithic state variable,
+DCRFs factorize the state at each time step by an undi-
+rected model.
+Formally, DCRFs are the class of conditionally-trained
+undirected models that repeat structure and parameters
+over a sequence. If we denote by ?c(yc,t,xt) the repe-
+tition of clique c at time step t, then a DCRF defines the
+probability of a label sequence s given the input x as:
+p(s|x) =
+?
+t ?c(yc,t,xt)
+Z(x)
+, (5)
+where as before, the clique templates are parameterized
+in terms of input features as
+?c(yc,t,xt) = exp
+{
+?
+k
+?kfk(yc,t,xt)
+}
+. (6)
+Exact inference in DCRFs can be performed by
+forward-backward in the cross product state space, if the
+cross-product space is not so large as to be infeasible.
+Otherwise, approximate methods must be used; in our
+experience, loopy belief propagation is often effective
+in grid-shaped DCRFs. Even if inference is performed
+monolithically, however, a factorized state representation
+is still useful because it requires much fewer parame-
+ters than a fully-parameterized linear chain in the cross-
+product state space.
+749
+Sutton et al (2004) introduced the factorial CRF
+(FCRF), in which the factorized state structure is a grid
+(Figure 1). FCRFs were originally applied to jointly
+performing interdependent language processing tasks, in
+particular part-of-speech tagging and noun-phrase chunk-
+ing. The previous work on FCRFs used joint training,
+which requires a single training set that is jointly labeled
+for all tasks in the cascade. For many tasks such data
+is not readily available, for example, labeling syntac-
+tic parse trees for every new Web extraction task would
+be prohibitively expensive. In this paper, we train the
+subtasks separately, which allows us the freedom to use
+large, standard data sets for well-studied subtasks such as
+named-entity recognition.
+4 Alternatives for Learning Transfer
+In this section, we enumerate several classes of methods
+for learning transfer, based on the amount and type of
+interaction they allow between the tasks. The principal
+differences between methods are whether the individual
+tasks are performed separately in a cascade or jointly;
+whether a single prediction from the lower task is used,
+or several; and what kind of confidence information is
+shared between the subtasks.
+The main types of transfer learning methods are:
+1. Cascaded training and testing. This is the traditional
+approach in NLP, in which the single best prediction
+from the old task is used in the new task at training
+and test time. In this paper, we show that allowing
+richer interactions between the subtasks can benefit
+performance.
+2. Joint training and testing. In this family of ap-
+proaches, a single model is trained to perform all the
+subtasks at once. For example, in Caruana?s work
+on multitask learning (Caruana, 1997), a neural net-
+work is trained to jointly performmultiple classifica-
+tion tasks, with hidden nodes that form a shared rep-
+resentation among the tasks. Jointly trained meth-
+ods allow potentially the richest interaction between
+tasks, but can be expensive in both computation time
+required for training and in human effort required to
+label the joint training data.
+Exact inference in a jointly-trained model, such
+as forward-backward in an FCRF, implicitly con-
+siders all possible subtask predictions with confi-
+dence given by the model?s probability of the pre-
+diction. However, for computational efficiency, we
+can use inference methods such as particle filtering
+and sparse message-passing (Pal et al, 2005), which
+communicate only a limited number of predictions
+between sections of the model.
+Main Task
+Subtask A
+Subtask B
+Input
+Figure 1: Graphical model for the jointly-decoded CRF.
+All of the pairwise cliques also have links to the observed
+input, although we omit these edges in the diagram for
+clarity.
+3. Joint testing with cascaded training. Although a
+joint model over all the subtasks can have better per-
+formance, it is often much more expensive to train.
+One approach for reducing training time is cascaded
+training, which provides both computational effi-
+ciency and the ability to reuse large, standard train-
+ing sets for the subtasks. At test time, though, the
+separately-trained models are combined into a sin-
+gle model, so that joint decoding can propagate in-
+formation between the tasks.
+Even with cascaded training, it is possible to pre-
+serve some uncertainty in the subtask?s predictions.
+Instead of using only a single subtask prediction
+for training the main task, the subtask can pass up-
+wards a lattice of likely predictions, each of which
+is weighted by the model?s confidence. This has the
+advantage of making the training procedure more
+similar to the joint testing procedure, in which all
+possible subtask predictions are considered.
+In the next two sections, we describe and evaluate
+joint testing with cascaded training for transfer learning
+in linear-chain CRFs. At training time, only the best
+subtask prediction is used, without any confidence infor-
+mation. Even though this is perhaps the simplest joint-
+testing/cascaded-training method, we show that it still
+leads to a significant gain in accuracy.
+5 Composition of CRFs
+In this section we briefly describe how we combine
+individually-trained linear-chain CRFs using composi-
+tion. For a series of N cascaded tasks, we train indi-
+vidual CRFs separately on each task, using the prediction
+of the previous CRF as a feature. We index the CRFs
+by i, so that the state of CRF i at time t is denoted sit.
+Thus, the feature functions for CRF i are of the form
+f ik(s
+i
+t?1, s
+i
+t, s
+i?1
+t ,x, t)?that is, they depend not only on
+the observed input x and the transition (sit?1 ? s
+i
+t) but
+750
+wt = w
+wt matches [A-Z][a-z]+
+wt matches [A-Z][A-Z]+
+wt matches [A-Z]
+wt matches [A-Z]+
+wt matches [A-Z]+[a-z]+[A-Z]+[a-z]
+wt appears in list of first names,
+last names, honorifics, etc.
+wt appears to be part of a time followed by a dash
+wt appears to be part of a time preceded by a dash
+wt appears to be part of a date
+Tt = T
+qk(x, t + ?) for all k and ? ? [?4, 4]
+Table 1: Input features qk(x, t) for the seminars data. In
+the above wt is the word at position t, Tt is the POS tag
+at position t, w ranges over all words in the training data,
+and T ranges over all Penn Treebank part-of-speech tags.
+The ?appears to be? features are based on hand-designed
+regular expressions that can span several tokens.
+also on the state si?1t of the previous transducer.
+We also add all conjunctions of the input features and
+the previous transducer?s state, for example, a feature that
+is 1 if the current state is SPEAKERNAME, the previ-
+ous transducer predicted PERSONNAME, and the previ-
+ous word is Host:.
+To perform joint decoding at test time, we form the
+composition of the individual CRFs, viewed as finite-
+state transducers. That is, we define a new linear-chain
+CRF whose state space is the cross product of the states
+of the individual CRFs, and whose transition costs are the
+sum of the transition costs of the individual CRFs.
+Formally, let S1, S2, . . . SN be the state sets and
+?1,?2, . . .?N the weights of the individual CRFs. Then
+the state set of the combined CRF is S = S1?S2? . . .?
+SN . We will denote weight k in an individual CRF i by
+?ik and a single feature by f
+i
+k(s
+i
+t?1, s
+i
+t, s
+i?1
+t ,x, t). Then
+for s ? S, the combined model is given by:
+p(s|x) =
+?
+t exp
+{?N
+i=1
+?
+k ?
+i
+kf
+i
+k(s
+i
+t?1, s
+i
+t, s
+i?1
+t ,x, t)
+}
+Z(x)
+.
+(7)
+The graphical model for the combined model is the fac-
+torial CRF in Figure 1.
+6 Experiments
+6.1 Email Seminar Announcements
+We evaluate joint decoding on a collection of 485 e-mail
+messages announcing seminars at Carnegie Mellon Uni-
+versity, gathered by Freitag (1998). The messages are
+annotated with the seminar?s starting time, ending time,
+location, and speaker. This data set has been the sub-
+ject of much previous work using a wide variety of learn-
+ing methods. Despite all this work, however, the best
+50 100 150 200 250
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Number of training instances
+F1
+JointCascaded
+Figure 2: Learning curves for the seminars data set on
+the speaker field, averaged over 10-fold cross validation.
+Joint training performs equivalently to cascaded decoding
+with 25% more data.
+reported systems have precision and recall on speaker
+names of only about 70%?too low to use in a practical
+system. This task is so challenging because the messages
+are written by many different people, who each have dif-
+ferent ways of presenting the announcement information.
+Because the task includes finding locations and per-
+son names, the output of a named-entity tagger is a use-
+ful feature. It is not a perfectly indicative feature, how-
+ever, because many other kinds of person names appear in
+seminar announcements?for example, names of faculty
+hosts, departmental secretaries, and sponsors of lecture
+series. For example, the token Host: indicates strongly
+both that what follows is a person name, but that person
+is not the seminars? speaker.
+Even so, named-entity predictions do improve per-
+formance on this task. We use the predictions from a
+CRF named-entity tagger that we trained on the standard
+CoNLL 2003 English data set. The CoNLL 2003 data
+set consists of newswire articles from Reuters labeled as
+either people, locations, organizations, or miscellaneous
+entities. It is much larger than the seminar announce-
+ments data set. While the named-entity data contains
+203,621 tokens for training, the seminar announcements
+data set contains only slightly over 60,000 training to-
+kens.
+Previous work on the seminars data has used a one-
+field-per-document evaluation. That is, for each field, the
+CRF selects a single field value from its Viterbi path, and
+this extraction is counted as correct if it exactly matches
+any of the true field mentions in the document. We com-
+pute precision and recall following this convention, and
+report their harmonic mean F1. As in the previous work,
+751
+System stime etime location speaker overall
+WHISK (Soderland, 1999) 92.6 86.1 66.6 18.3 65.9
+SRV (Freitag, 1998) 98.5 77.9 72.7 56.3 76.4
+HMM (Frietag & McCallum, 1999) 98.5 62.1 78.6 76.6 78.9
+RAPIER (Califf & Mooney, 1999) 95.9 94.6 73.4 53.1 79.3
+SNOW-IE (Roth & Wen-tau Yih, 2001) 99.6 96.3 75.2 73.8 86.2
+(LP)2 (Ciravegna, 2001) 99.0 95.5 75.0 77.6 86.8
+CRF (no transfer) This paper 99.1 97.3 81.0 73.7 87.8
+CRF (cascaded) This paper 99.2 96.0 84.3 74.2 88.4
+CRF (joint) This paper 99.1 96.0 85.3 76.3 89.2
+Table 2: Comparison of F1 performance on the seminars data. Joint decoding performs significantly better than
+cascaded decoding. The overall column is the mean of the other four. (This table was adapted from Peshkin and
+Pfeffer (2003).)
+we use 10-fold cross validation with a 50/50 training/test
+split. We use a spherical Gaussian prior on parameters
+with variance ?2 = 0.5.
+We evaluate whether joint decoding with cascaded
+training performs better than cascaded training and de-
+coding. Table 2 compares cascaded and joint decoding
+for CRFs with other previous results from the literature.1
+The features we use are listed in Table 1. Although previ-
+ous work has used very different feature sets, we include
+a no-transfer CRF baseline to assess the impact of transfer
+from the CoNLL data set. All the CRF runs used exactly
+the same features.
+On the most challenging fields, location and speaker,
+cascaded transfer is more accurate than no transfer at all,
+and joint decoding is more accurate than cascaded decod-
+ing. In particular, for speaker, we see an error reduction
+of 8% by using joint decoding over cascaded. The differ-
+ence in F1 between cascaded and joint decoding is statis-
+tically significant for speaker (paired t-test; p = 0.017)
+but only marginally significant for location (p = 0.067).
+Our results are competitive with previous work; for ex-
+ample, on location, the CRF is more accurate than any of
+the existing systems.
+Examining the trained models, we can observe both
+errors made by the general-purpose named entity tagger,
+and how they can be corrected by considering the sem-
+inars labels. In newswire text, long runs of capitalized
+words are rare, often indicating the name of an entity. In
+email announcements, runs of capitalized words are com-
+mon in formatted text blocks like:
+Location: Baker Hall
+Host: Michael Erdmann
+In this type of situation, the named entity tagger often
+mistakes Host: for the name of an entity, especially be-
+cause the word precedingHost is also capitalized. On one
+of the cross-validated testing sets, of 80 occurrences of
+1We omit one relevant paper (Peshkin & Pfeffer, 2003) be-
+cause its evaluation method differs from all the other previous
+work.
+wt = w
+wt matches [A-Z][a-z]+
+wt matches [A-Z][A-Z]+
+wt matches [A-Z]
+wt matches [A-Z]+
+wt matches [A-Z]+[a-z]+[A-Z]+[a-z]
+wt is punctuation
+wt appears in list of first names, last names, honorifics, etc.
+qk(x, t + ?) for all k and ? ? [?2, 2]
+Conjunction qk(x, t) and qk?(x, t) for all features k, k
+?
+Conjunction qk(x, t) and qk?(x, t + 1) for all features k, k
+?
+Table 3: Input features qk(x, t) for the ACE named-entity
+data. In the above wt is the word at position t, and w
+ranges over all words in the training data.
+the wordHost:, the named-entity tagger labels 52 as some
+kind of entity. When joint decoding is used, however,
+only 20 occurrences are labeled as entities. Recall that
+the joint model uses exactly the same weights as the cas-
+caded model; the only difference is that the joint model
+takes into account information about the seminar labels
+when choosing named-entity labels. This is an example
+of how domain-specific information from the main task
+can improve performance on a more standard, general-
+purpose subtask.
+Figure 2 shows the difference in performance between
+joint and cascaded decoding as a function of training set
+size. Cascaded decoding with the full training set of 242
+emails performs equivalently to joint decoding on only
+181 training instances, a 25% reduction in the training
+set.
+In summary, even with a simple cascaded training
+method on a well-studied data set, joint decoding per-
+forms better for transfer than cascaded decoding.
+6.2 Entity Recognition
+In this section we give results on joint decoding for trans-
+fer between two newswire data sets with similar but over-
+lapping label sets. The Automatic Content Extraction
+(ACE) data set is another standard entity recognition data
+752
+Transfer Type
+none cascaded joint
+Person name 81.0 86.9 87.3
+Person nominal 34.9 36.1 42.4
+Organization name 53.9 62.6 61.1
+Organization nominal 33.7 35.3 40.8
+GPE name 78.5 84.0 84.0
+GPE nominal 51.2 54.1 59.2
+Table 4: Comparison of F1 performance between joint
+and cascaded training on the ACE entity recognition task.
+GPE means geopolitical entities, such as countries. Joint
+decoding helps most on the harder nominal (common
+noun) references. These results were obtained using a
+small subset of the training set.
+set, containing 422 stories from newspaper, newswire,
+and broadcast news. Unlike the CoNLL entity recog-
+nition data set, in which only proper names of entities
+are annotated, the ACE data includes annotation both for
+named entities like United States, and also nominal men-
+tions of entities like the nation. Thus, although the input
+text has similar distribution in the CoNLL NER and ACE
+data set, the label distributions are very different.
+Current state-of-the-art systems for the ACE task (Flo-
+rian et al, 2004) use the predictions of other named-entity
+recognizers as features, that is, they use cascaded trans-
+fer. In this experiment, we test whether the transfer be-
+tween these datasets can be further improved using joint
+decoding. We train a CRF entity recognizer on the ACE
+dataset, with the output of a named-entity entity recog-
+nizer trained on the CoNLL 2003 English data set. The
+CoNLL recognizer is the same CRF as was used in the
+previous experiment. In these results, we use a subset of
+10% of the ACE training data. Table 3 lists the features
+we use. Table 4 compares the results on some represen-
+tative entity types. Again, cascaded decoding for transfer
+is better than no transfer at al, and joint decoding is better
+than cascaded decoding. Interestingly, joint decoding has
+most impact on the harder nominal references, showing
+marked improvement over the cascaded approach.
+7 Related Work
+Researchers have begun to accumulate experimental ev-
+idence that joint training and decoding yields better per-
+formance than the cascaded approach. As mentioned ear-
+lier, the original work on dynamic CRFs (Sutton et al,
+2004) demonstrated improvement due to joint training in
+the domains of part-of-speech tagging and noun-phrase
+chunking. Also, Carreras and Marquez (Carreras &
+Ma`rquez, 2004) have obtained increased performance in
+clause finding by training a cascade of perceptrons to
+minimize a single global error function. Finally, Miller et
+al. (Miller et al, 2000) have combined entity recognition,
+parsing, and relation extraction into a jointly-trained sin-
+gle statistical parsing model that achieves improved per-
+formance on all the subtasks.
+Part of the contribution of the current work is to sug-
+gest that joint decoding can be effective even when joint
+training is not possible because jointly-labeled data is un-
+available. For example, Miller et al report that they orig-
+inally attempted to annotate newswire articles for all of
+parsing, relations, and named entities, but they stopped
+because the annotation was simply too expensive. In-
+stead they hand-labeled relations only, assigning parse
+trees to the training set using a standard statistical parser,
+which is potentially less flexible than the cascaded train-
+ing, because the model for main task is trained explicitly
+to match the noisy subtask predictions, rather than being
+free to correct them.
+In the speech community, it is common to com-
+pose separately trained weighted finite-state transducers
+(Mohri et al, 2002) for joint decoding. Our method ex-
+tends this work to conditional models. Ordinarily, higher-
+level transducers depend only on the output of the previ-
+ous transducer: a transducer for the lexicon, for exam-
+ple, consumes only phonemes, not the original speech
+signal. In text, however, such an approach is not sensi-
+ble, because there is simply not enough information in
+the named-entity labels, for example, to do extraction if
+the original words are discarded. In a conditional model,
+weights in higher-level transducers are free to depend on
+arbitrary features of the original input without any addi-
+tional complexity in the finite-state structure.
+Finally, stacked sequential learning (Cohen & Car-
+valho, 2005) is another potential method for combining
+the results of the subtask transducers. In this general
+meta-learning method for sequential classification, first
+a base classifier predicts the label at each time step, and
+then a higher-level classifier makes the final prediction,
+including as features a window of predictions from the
+base classifier. For transfer learning, this would corre-
+spond to having an independent base model for each sub-
+task (e.g., independent CRFs for named-entity and sem-
+inars), and then having a higher-level CRF that includes
+as a feature the predictions from the base models.
+8 Conclusion
+In this paper we have shown that joint decoding improves
+transfer between interdependent NLP tasks, even when
+the old task is named-entity recognition, for which highly
+accurate systems exist. The rich features afforded by a
+conditional model allow the new task to influence the pre-
+753
+dictions of the old task, an effect that is only possible with
+joint decoding.
+It is now common for researchers to publicly release
+trained models for standard tasks such as part-of-speech
+tagging, named-entity recognition, and parsing. This pa-
+per has implications for how such standard tools are pack-
+aged. Our results suggest that off-the-shelf NLP tools
+will need not only to provide a single-best prediction, but
+also to be engineered so that they can easily communicate
+distributions over predictions to models for higher-level
+tasks.
+Acknowledgments
+This work was supported in part by the Center for Intelligent In-
+formation Retrieval, in part by The Central Intelligence Agency,
+the National Security Agency and National Science Foundation
+under NSF grants #IIS-0326249 and #IIS-0427594, and in part
+by the Defense Advanced Research Projects Agency (DARPA),
+through the Department of the Interior, NBC, Acquisition Ser-
+vices Division, under contract number NBCHD030010. Any
+opinions, findings and conclusions or recommendations ex-
+pressed in this material are the author(s) and do not necessarily
+reflect those of the sponsor.
+References
+Byrd, R. H., Nocedal, J., & Schnabel, R. B. (1994). Repre-
+sentations of quasi-Newton matrices and their use in limited
+memory methods. Math. Program., 63, 129?156.
+Califf, M. E., & Mooney, R. J. (1999). Relational learning
+of pattern-match rules for information extraction. Proceed-
+ings of the Sixteenth National Conference on Artificial Intel-
+ligence (AAAI-99) (pp. 328?334).
+Carreras, X., & Marquez, L. (2004). Introduction to the
+CoNLL-2004 shared task: Semantic role labeling. Proceed-
+ings of CoNLL-2004.
+Carreras, X., & Ma`rquez, L. (2004). Online learning via global
+feedback for phrase recognition. In S. Thrun, L. Saul and
+B. Scho?lkopf (Eds.), Advances in neural information pro-
+cessing systems 16. Cambridge, MA: MIT Press.
+Caruana, R. (1997). Multitask learning. Machine Learning, 28,
+41?75.
+Ciravegna, F. (2001). Adaptive information extraction from text
+by rule induction and generalisation. Proceedings of 17th In-
+ternational Joint Conference on Artificial Intelligence (IJCAI
+2001).
+Cohen, W. W., & Carvalho, V. R. (2005). Stacked sequential
+learning. International Joint Conference on Artificial Intelli-
+gence (pp. 671?676).
+Dean, T., & Kanazawa, K. (1989). A model for reasoning about
+persistence and causation. Computational Intelligence, 5(3),
+142?150.
+Florian, R., Hassan, H., Ittycheriah, A., Jing, H., Kambhatla,
+N., Luo, X., Nicolov, N., Roukos, S., & Zhang, T. (2004). A
+statistical model for multilingual entity detection and track-
+ing. In HLT/NAACL 2004.
+Freitag, D. (1998). Machine learning for information extraction
+in informal domains. Doctoral dissertation, Carnegie Mellon
+University.
+Frietag, D., & McCallum, A. (1999). Information extraction
+with HMMs and shrinkage. AAAI Workshop on Machine
+Learning for Information Extraction.
+Lafferty, J., McCallum, A., & Pereira, F. (2001). Conditional
+random fields: Probabilistic models for segmenting and la-
+beling sequence data. Proc. 18th International Conf. on Ma-
+chine Learning.
+Miller, S., Fox, H., Ramshaw, L. A., & Weischedel, R. M.
+(2000). A novel use of statistical parsing to extract infor-
+mation from text. ANLP 2000 (pp. 226?233).
+Mohri, M., Pereira, F., & Riley, M. (2002). Weighted finite-
+state transducers in speech recognition. Computer Speech
+and Language, 16, 69?88.
+Pal, C., Sutton, C., & McCallum, A. (2005). Fast inference
+and learning with sparse belief propagation (Technical Re-
+port IR-433). Center for Intelligent Information Retrieval,
+University of Massachusetts.
+Peshkin, L., & Pfeffer, A. (2003). Bayesian information extrac-
+tion network. Proceedings of the International Joint Confer-
+ence on Artificial Intelligence (IJCAI).
+Roth, D., & Wen-tau Yih (2001). Relational learning via propo-
+sitional algorithms: An information extraction case study. In-
+ternational Joint Conference on Artificial Intelligence (pp.
+1257?1263).
+Sha, F., & Pereira, F. (2003). Shallow parsing with conditional
+random fields. Proceedings of HLT-NAACL 2003.
+Soderland, S. (1999). Learning information extraction rules for
+semi-structured and free text. Machine Learning, 233?272.
+Sutton, C., Rohanimanesh, K., & McCallum, A. (2004). Dy-
+namic conditional random fields: Factorized probabilistic
+models for labeling and segmenting sequence data. Proceed-
+ings of the Twenty-First International Conference on Ma-
+chine Learning (ICML).
+Tjong Kim Sang, E. F., & De Meulder, F. (2003). Introduc-
+tion to the CoNLL-2003 shared task: Language-independent
+named entity recognition. Proceedings of CoNLL-2003 (pp.
+142?147). Edmonton, Canada.
+754
+Proceedings of the Human Language Technology Conference of the North American Chapter of the ACL, pages 89?95,
+New York, June 2006. c?2006 Association for Computational Linguistics
+Reducing Weight Undertraining
+in Structured Discriminative Learning
+Charles Sutton, Michael Sindelar, and Andrew McCallum
+Department of Computer Science
+University of Massachusetts Amherst
+Amherst, MA 01003 USA
+{casutton,mccallum}@cs.umass.edu, msindela@student.umass.edu
+Abstract
+Discriminative probabilistic models are very
+popular in NLP because of the latitude they
+afford in designing features. But training
+involves complex trade-offs among weights,
+which can be dangerous: a few highly-
+indicative features can swamp the contribution
+of many individually weaker features, causing
+their weights to be undertrained. Such a model
+is less robust, for the highly-indicative features
+may be noisy or missing in the test data. To
+ameliorate this weight undertraining, we intro-
+duce several new feature bagging methods, in
+which separate models are trained on subsets
+of the original features, and combined using a
+mixture model or a product of experts. These
+methods include the logarithmic opinion pools
+used by Smith et al (2005). We evaluate fea-
+ture bagging on linear-chain conditional ran-
+dom fields for two natural-language tasks. On
+both tasks, the feature-bagged CRF performs
+better than simply training a single CRF on all
+the features.
+1 Introduction
+Discriminative methods for training probabilistic models
+have enjoyed wide popularity in natural language pro-
+cessing, such as in part-of-speech tagging (Toutanova et
+al., 2003), chunking (Sha and Pereira, 2003), named-
+entity recognition (Florian et al, 2003; Chieu and Ng,
+2003), and most recently parsing (Taskar et al, 2004).
+A discriminative probabilistic model is trained to maxi-
+mize the conditional probability p(y|x) of output labels
+y given input variables x, as opposed to modeling the
+joint probability p(y, x), as in generative models such as
+the Naive Bayes classifier and hidden Markov models.
+The popularity of discriminative models stems from the
+great flexibility they allow in defining features: because
+the distribution over input features p(x) is not modeled,
+it can contain rich, highly overlapping features without
+making the model intractable for training and inference.
+In NLP, for example, useful features include word bi-
+grams and trigrams, prefixes and suffixes, membership in
+domain-specific lexicons, and information from semantic
+databases such as WordNet. It is not uncommon to have
+hundreds of thousands or even millions of features.
+But not all features, even ones that are carefully engi-
+neered, improve performance. Adding more features to a
+model can hurt its accuracy on unseen testing data. One
+well-known reason for this is overfitting: a model with
+more features has more capacity to fit chance regulari-
+ties in the training data. In this paper, however, we focus
+on another, more subtle effect: adding new features can
+cause existing ones to be underfit. Training of discrimi-
+native models, such as regularized logistic regression, in-
+volves complex trade-offs among weights. A few highly-
+indicative features can swamp the contribution of many
+individually weaker features, even if the weaker features,
+taken together, are just as indicative of the output. Such
+a model is less robust, for the few strong features may be
+noisy or missing in the test data.
+This effect was memorably observed by Dean Pomer-
+leau (1995) when training neural networks to drive vehi-
+cles autonomously. Pomerleau reports one example when
+the system was learning to drive on a dirt road:
+The network had no problem learning and then
+driving autonomously in one direction, but
+when driving the other way, the network was
+erratic, swerving from one side of the road to
+the other. . . . It turned out that the network
+was basing most of its predictions on an easily-
+identifiable ditch, which was always on the
+right in the training set, but was on the left
+when the vehicle turned around. (Pomerleau,
+1995)
+The network had features to detect the sides of the road,
+and these features were active at training and test time,
+although weakly, because the dirt road was difficult to
+89
+detect. But the ditch was so highly indicative that the
+network did not learn the dependence between the road
+edge and the desired steering direction.
+A natural way of avoiding undertraining is to train sep-
+arate models for groups of competing features?in the
+driving example, one model with the ditch features, and
+one with the side-of-the-road features?and then average
+them into a single model. This is same idea behind log-
+arithmic opinion pools, used by Smith, Cohn, and Os-
+borne (2005) to reduce overfitting in CRFs. In this pa-
+per, we tailor our ensemble to reduce undertraining rather
+than overfitting, and we introduce several new combina-
+tion methods, based on whether the mixture is taken ad-
+ditively or geometrically, and on a per-sequence or per-
+transition basis. We call this general class of methods
+feature bagging, by analogy to the well-known bagging
+algorithm for ensemble learning.
+We test these methods on conditional random fields
+(CRFs) (Lafferty et al, 2001; Sutton and McCallum,
+2006), which are discriminatively-trained undirected
+models. On two natural-language tasks, we show that
+feature bagging performs significantly better than train-
+ing a single CRF with all available features.
+2 Conditional Random Fields
+Conditional random fields (CRFs) (Lafferty et al, 2001;
+Sutton and McCallum, 2006) are undirected graphical
+models of a conditional distribution. Let G be an undi-
+rected graphical model over random vectors y and x.
+As a typical special case, y = {yt} and x = {xt} for
+t = 1, . . . , T , so that y is a labeling of an observed se-
+quence x. For a given collection C = {{yc, xc}} of
+cliques in G, a CRF models the conditional probability
+of an assignment to labels y given the observed variables
+x as:
+p?(y|x) = 1Z(x)
+?
+c?C
+?(yc, xc), (1)
+where ? is a potential function and the partition function
+Z(x) = ?y
+?
+c?C ?(yc, xc) is a normalization factorover all possible label assignments.
+We assume the potentials factorize according to a set
+of features {fk}, which are given and fixed, so that
+?(yc, xc) = exp
+(?
+k
+?kfk(yc, xc)
+)
+(2)
+The model parameters are a set of real weights? = {?k},
+one weight for each feature.
+Many applications have used the linear-chain CRF, in
+which a first-order Markov assumption is made on the
+hidden variables. In this case, the cliques of the condi-
+tional model are the nodes and edges, so that there are
+feature functions fk(yt?1, yt, x, t) for each label transi-
+tion. (Here we write the feature functions as potentially
+? ? ? ?
+?
+?
+0 2 4 6 8 10
+0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+Alpha
+Acc
+urac
+y
+Strong feature presentStrong feature removed
+Figure 1: Effect of a single strong feature drowning out
+weaker features in logistic regression on synthetic data.
+The x-axis indicates the strength of the strong feature. In
+the top line, the strong feature is present at training and
+test time. In the bottom line, the strong feature is missing
+from the training data at test time.
+depending on the entire input sequence.) Feature func-
+tions can be arbitrary. For example, a feature function
+fk(yt?1, yt, x, t) could be a binary test that has value 1 if
+and only if yt?1 has the label ?adjective?, yt has the label
+?proper noun?, and xt begins with a capital letter.
+Linear-chain CRFs correspond to finite state machines,
+and can be roughly understood as conditionally-trained
+hidden Markov models (HMMs). This class of CRFs
+is also a globally-normalized extension to Maximum En-
+tropy Markov Models (McCallum et al, 2000) that avoids
+the label bias problem (Lafferty et al, 2001).
+Note that the number of state sequences is exponential
+in the input sequence length T . In linear-chain CRFs, the
+partition function Z(x), the node marginals p(yi|x), and
+the Viterbi labeling can be calculated efficiently by vari-
+ants of the dynamic programming algorithms for HMMs.
+3 Weight Undertraining
+In the section, we give a simple demonstration of weight
+undertraining. In a discriminative classifier, such as
+a neural network or logistic regression, a few strong
+features can drown out the effect of many individually
+weaker features, even if the weak features are just as
+indicative put together. To demonstrate this effect, we
+present an illustrative experiment using logistic regres-
+sion, because of its strong relation to CRFs. (Linear-
+90
+chain conditional random fields are the generalization of
+logistic regression to sequence data.)
+Consider random variables x1 . . . xn, each distributed
+as independent standard normal variables. The output
+y is a binary variable whose probability depends on all
+the xi; specifically, we define its distribution as y ?
+Bernoulli(logit(?i xi)). The correct decision boundaryin this synthetic problem is the hyperplane tangent to the
+weight vector (1, 1, . . . , 1). Thus, if n is large, each xi
+contributes weakly to the output y. Finally, we include
+a highly indicative feature xS = ??i xi + N (? =0,?2 = 0.04). This variable alone is sufficient to deter-
+mine the distribution of y. The variable ? is a parameter
+of the problem that determines how strongly indicative
+xS is; specifically, when ? = 0, the variable xS is ran-
+dom noise.
+We choose this synthetic model by analogy to Pomer-
+leau?s observations. The xi correspond to the side of
+the road in Pomerleau?s case?the weak features present
+at both testing and training?and xS corresponds to the
+ditch?the strongly indicative feature that is corrupted at
+test time.
+We examine how badly the learned classifier is de-
+graded when xS feature is present at training time but
+missing at test time. For several values of the weight pa-
+rameter ?, we train a regularized logistic regression clas-
+sifier on 1000 instances with n = 10 weak variables. In
+Figure 1, we show how the amount of error caused by
+ablating xS at test time varies according to the strength
+of xS . Each point in Figure 1 is averaged over 100
+randomly-generated data sets. When xS is weakly in-
+dicative, it does not affect the predictions of the model at
+all, and the classifier?s performance is the same whether
+it appears at test time or not. When xS becomes strongly
+indicative, however, the classifier learns to depend on it,
+and performs much more poorly when xS is ablated, even
+though exactly the same information is available in the
+weak features.
+4 Feature Bagging
+In this section, we describe the feature bagging method.
+We divide the set of features F = {fk} into a collec-
+tion of possibly overlapping subsets F = {F1, . . . FM},
+which we call feature bags. We train individual CRFs
+on each of the feature bags using standard MAP training,
+yielding individual CRFs {p1, . . . pM}.
+We average the individual CRFs into a single com-
+bined model. This averaging can be performed in several
+ways: we can average probabilities of entire sequences,
+or of individual transitions; and we can average using the
+arithmetic mean, or the geometric mean. This yields four
+combination methods:
+1. Per-sequence mixture. The distribution over label
+sequences y given inputs x is modeled as a mixture
+of the individual CRFs. Given nonnegative weights
+{?1, . . .?m} that sum to 1, the combined model is
+given by
+pSM(y|x) =
+M?
+i=1
+?ipi(y|x). (3)
+It is easily seen that if the sequence model is de-
+fined as in Equation 3, then the pairwise marginals
+are mixtures as well:
+pSM(yt, yt?1|x) =
+M?
+i=1
+?ipi(yt, yt?1|x). (4)
+The probabilities pi(yt, yt?1|x) are pairwise
+marginal probabilities in the individual mod-
+els, which can be efficiently computed by the
+forward-backward algorithm.
+We can perform decoding in the mixture model by
+maximizing the individual node marginals. That is,
+to predict yt we compute
+y?t = arg maxyt pSM(yt|x) = arg maxyt
+?
+i
+?ipi(yt|x),
+(5)
+where pi(yt|x) is computed by first running
+forward-backward on each of the individual CRFs.
+In the results here, however, we compute the
+maximum probability sequence approximately, as
+follows. We form a linear-chain distribution
+pAPPX(y|x) = ?t pSM(yt|yt?1, x), and compute themost probable sequence according to pAPPX by the
+Viterbi algorithm. This is approximate because pSM
+is not a linear-chain distribution in general, even
+when all the components are. However, the dis-
+tribution pAPPX does minimize the KL-divergence
+D(pSM?q) over all linear-chain distributions q.
+The mixture weights can be selected in a variety of
+ways, including equal voting, as in traditional bag-
+ging, or EM.
+2. Per-sequence product of experts. These are the log-
+arithmic opinion pools that have been applied to
+CRFs by (Smith et al, 2005). The distribution over
+label sequences y given inputs x is modeled as a
+product of experts (Hinton, 2000). In a product of
+experts, instead of summing the probabilities from
+the individual models, we multiply them together.
+Essentially we take a geometric mean instead of
+an arithmetic mean. Given nonnegative weights
+{?1, . . .?m} that sum to 1, the product model is
+p(y|x) ?
+M?
+i=1
+(pi(y|x))?i . (6)
+91
+The combined model can also be viewed as a condi-
+tional random field whose features are the log prob-
+abilities from the original models:
+p(y|x) ? exp
+{ M?
+i=1
+?i log pi(y|x)
+}
+(7)
+By substituting in the CRF definition, it can be seen
+that the model in Equation 7 is simply a single CRF
+whose parameters are a weighted average of the
+original parameters. So feature bagging using the
+product method does not increase the family of mod-
+els that are considered: standard training of a single
+CRF on all available features could potentially pick
+the same parameters as the bagged model.
+Nevertheless, in Section 5, we show that this feature
+bagging method performs better than standard CRF
+training.
+The previous two combination methods combine the
+individual models by averaging probabilities of en-
+tire sequences. Alternatively, in a sequence model
+we can average probabilities of individual transitions
+pi(yt|yt?1, x). Computing these transition proba-
+bilities requires performing probabilistic inference in
+each of the original CRFs, because pi(yt|yt?1, x) =?
+y\yt,yt+1 p(y|yt?1, x).This yields two other combination methods:
+3. Per-transition mixture. The transition probabilities
+are modeled as
+pTM(yt|yt?1, x) =
+M?
+i=1
+?ipi(yt|yt?1, x) (8)
+Intuitively, the difference between per-sequence and
+per-transition mixtures can be understood genera-
+tively. In order to generate a label sequence y given
+an input x, the per-sequence model selects a mix-
+ture component, and then generates y using only
+that component. The per-transition model, on the
+other hand, selects a component, generates y1 from
+that component, selects another component, gener-
+ates y2 from the second component given y1, and so
+on.
+4. Per-transition product of experts. Finally, we can
+combine the transition distributions using a product
+model
+pSP(yt|yt?1, x) ?
+M?
+i=1
+p(yt|yt?1, x)?i (9)
+Each transition distribution is thus?similarly to the
+per-sequence case?an exponential-family distribu-
+tion whose features are the log transition proba-
+bilities from the individual models. Unlike the
+per-sequence product, there is no weight-averaging
+trick here, because the probabilities p(yt|yt?1, x)
+are marginal probabilities.
+Considered as a sequence distribution p(y|x),
+the per-transition product is a locally-normalized
+maximum-entropy Markov model (McCallum et al,
+2000). It would not be expected to suffer from label
+bias, however, because each of the features take the
+future into account; they are marginal probabilities
+from CRFs.
+Of these four combination methods, Method 2, the per-
+sequence product of experts, is originally due to Smith et
+al. (2005). The other three combination methods are as
+far as we know novel. In the next section, we compare
+the four combination methods on several sequence label-
+ing tasks. Although for concreteness we describe them
+in terms of sequence models, they may be generalized to
+arbitrary graphical structures.
+5 Results
+We evaluate feature bagging on two natural language
+tasks, named entity recognition and noun-phrase chunk-
+ing. We use the standard CoNLL 2003 English data set,
+which is taken from Reuters newswire and consists of
+a training set of 14987 sentences, a development set of
+3466 sentences, and a testing set of 3684 sentences. The
+named-entity labels in this data set corresponding to peo-
+ple, locations, organizations and other miscellaneous en-
+tities. Our second task is noun-phrase chunking. We
+use the standard CoNLL 2000 data set, which consists of
+8936 sentences for training and 2012 sentences for test-
+ing, taken from Wall Street Journal articles annotated by
+the Penn Treebank project. Although the CoNLL 2000
+data set is labeled with other chunk types as well, here
+we use only the NP chunks.
+As is standard, we compute precision and recall for
+both tasks based upon the chunks (or named entities for
+CoNLL 2003) as
+P = # correctly labeled chunks# labeled chunks
+R = # correctly labeled chunks# actual chunks
+We report the harmonic mean of precision and recall as
+F1 = (2PR)/(P + R).
+For both tasks, we use per-sequence product-of-experts
+feature bagging with two feature bags which we manu-
+ally choose based on prior experience with the data set.
+For each experiment, we report two baseline CRFs, one
+trained on union of the two feature sets, and one trained
+only on the features that were present in both bags, such
+as lexical identity and regular expressions. In both data
+92
+sets, we trained the individual CRFs with a Gaussian
+prior on parameters with variance ?2 = 10.
+For the named entity task, we use two feature bags
+based upon character ngrams and lexicons. Both bags
+contain a set of baseline features, such as word identity
+and regular expressions (Table 4). The ngram CRF in-
+cludes binary features for character ngrams of length 2,
+3, and 4 and word prefixes and suffixes of length 2, 3,
+and 4. The lexicon CRF includes membership features
+for a variety of lexicons containing people names, places,
+and company names. The combined model has 2,342,543
+features. The mixture weight ? is selected using the de-
+velopment set.
+For the chunking task, the two feature sets are selected
+based upon part of speech and lexicons. Again, a set of
+baseline features are used, similar to the regular expres-
+sions and word identity features used on the named entity
+task (Table 4). The first bag also includes part-of-speech
+tags generated by the Brill tagger and the conjunctions of
+those tags used by Sha and Pereira (2003). The second
+bag uses lexicon membership features for lexicons con-
+taining names of people, places, and organizations. In ad-
+dition, we use part-of-speech lexicons generated from the
+entire Treebank, such as a list of all words that appear as
+nouns. These lists are also used by the Brill tagger (Brill,
+1994). The combined model uses 536,203 features. The
+mixture weight ? is selected using 2-fold cross valida-
+tion. The chosen model had weight 0.55 on the lexicon
+model, and weight 0.45 on the ngram model.
+In both data sets, the bagged model performs better
+than the single CRF trained with all of the features. For
+the named entity task, bagging improves performance
+from 85.45% to 86.61%, with a substantial error reduc-
+tion of 8.32%. This is lower than the best reported results
+for this data set, which is 89.3% (Ando and Zhang, 2005),
+using a large amount of unlabeled data. For the chunking
+task, bagging improved the performance from 94.34% to
+94.77%, with an error reduction of 7.60%. In both data
+sets, the improvement is statistically significant (McNe-
+mar?s test; p < 0.01).
+On the chunking task, the bagged model also outper-
+forms the models of Kudo and Matsumoto (2001) and
+Sha and Pereira (2003), and equals the currently-best re-
+sults of (Ando and Zhang, 2005), who use a large amount
+of unlabeled data. Although we use lexicons that were
+not included in the previous models, the additional fea-
+tures actually do not help the original CRF. Only with
+feature bagging do these lexicons improve performance.
+Finally, we compare the four bagging methods of Sec-
+tion 4: pre-transition mixture, pre-transition product of
+experts, and per-sequence mixture. On the named en-
+tity data, all four models perform in a statistical tie, with
+no statistically significant difference in their performance
+(Table 1). As we mentioned in the last section, the de-
+Model F1
+Per-sequence Product of Experts 86.61
+Per-transition Product of Experts 86.58
+Per-sequence Mixture 86.46
+Per-transition Mixture 86.42
+Table 1: Comparison of various bagging methods on the
+CoNLL 2003 Named Entity Task.
+Model F1
+Single CRF(Base Feat.) 81.52
+Single CRF(All Feat.) 85.45
+Combined CRF 86.61
+Table 2: Results for the CoNLL 2003 Named Entity
+Task. The bagged CRF performs significantly better than
+a single CRF with all available features (McNemar?s test;
+p < 0.01).
+coding procedure for the per-sequence mixture is approx-
+imate. It is possible that a different decoding procedure,
+such as maximizing the node marginals, would yield bet-
+ter performance.
+6 Previous Work
+In the machine learning literature, there is much work on
+ensemble methods such as stacking, boosting, and bag-
+ging. Generally, the ensemble of classifiers is generated
+by training on different subsets of data, rather than dif-
+ferent features. However, there is some literature within
+unstructured classified on combining models trained on
+feature subsets. Ho (1995) creates an ensemble of de-
+cision trees by randomly choosing a feature subset on
+which to grow each tree using standard decision tree
+learners. Other work along these lines include that of Bay
+(1998) using nearest-neighbor classifiers, and more re-
+cently Bryll et al(2003). Also, in Breiman?s work on ran-
+dom forests (2001), ensembles of random decision trees
+are constructed by choosing a random feature at each
+node. This literature mostly has the goal of improving
+accuracy by reducing the classifier?s variance, that is, re-
+ducing overfitting.
+In contrast, O?Sullivan et al (2000) specifically focus
+on increasing robustness by training classifiers to use all
+of the available features. Their algorithm FeatureBoost
+is analogous to AdaBoost, except that the meta-learning
+algorithm maintains weights on features instead of on in-
+stances. Feature subsets are automatically sampled based
+on which features, if corrupted, would most affect the
+ensemble?s prediction. They show that FeatureBoost is
+more robust than AdaBoost on synthetically corrupted
+UCI data sets. Their method does not easily extend to se-
+quence models, especially natural-language models with
+hundreds of thousands of features.
+93
+Model F1
+Single CRF(Base Feat.) 89.60
+Single CRF(All Feat.) 94.34
+(Sha and Pereira, 2003) 94.38
+(Kudo and Matsumoto, 2001) 94.39
+(Ando and Zhang, 2005) 94.70
+Combined CRF 94.77
+Table 3: Results for the CoNLL 2000 Chunking Task.
+The bagged CRF performs significantly better than a sin-
+gle CRF (McNemar?s test; p < 0.01), and equals the re-
+sults of (Ando and Zhang, 2005), who use a large amount
+of unlabeled data.
+wt = w
+wt begins with a capital letter
+wt contains only capital letters
+wt is a single capital letter
+wt contains some capital letters and some lowercase
+wt contains a numeric character
+wt contains only numeric characters
+wt appears to be a number
+wt is a string of at least two periods
+wt ends with a period
+wt contains a dash
+wt appears to be an acronym
+wt appears to be an initial
+wt is a single letter
+wt contains punctuation
+wt contains quotation marks
+Pt = P
+All features for time t + ? for all ? ? [?2, 2]
+Table 4: Baseline features used in all bags. In the above
+wt is the word at position t, Pt is the POS tag at position
+t, w ranges over all words in the training data, and P
+ranges over all chunk tags supplied in the training data.
+The ?appears to be? features are based on hand-designed
+regular expressions.
+There is less work on ensembles of sequence models,
+as opposed to unstructured classifiers. One example is
+Altun, Hofmann, and Johnson (2003), who describe a
+boosting algorithm for sequence models, but they boost
+instances, not features. In fact, the main advantage of
+their technique is increased model sparseness, whereas in
+this work we aim to fully use more features to increase
+accuracy and robustness.
+Most closely related to the present work is that on log-
+arithmic opinion pools for CRFs (Smith et al, 2005),
+which we have called per-sequence mixture of experts in
+this paper. The previous work focuses on reducing over-
+fitting, combining a model of many features with several
+simpler models. In contrast, here we apply feature bag-
+ging to reduce feature undertraining, combining several
+models with complementary feature sets. Our current
+positive results are probably not due to reduction in over-
+fitting, for as we have observed, all the models we test,
+including the bagged one, have 99.9% F1 on the train-
+ing set. Now, feature undertraining can be viewed as a
+type of overfitting, because it arises when a set of fea-
+tures is more indicative in the training set than the test-
+ing set. Understanding this particular type of overfitting
+is useful, because it motivates the choice of feature bags
+that we explore in this work. Indeed, one contribution of
+the present work is demonstrating how a careful choice
+of feature bags can yield state-of-the-art performance.
+Concurrently and independently, Smith and Osborne
+(2006) present similar experiments on the CoNLL-2003
+data set, examining a per-sequence mixture of experts
+(that is, a logarithmic opinion pool), in which the lexi-
+con features are trained separately. Their work presents
+more detailed error analysis than we do here, while we
+present results both on other combination methods and
+on NP chunking.
+7 Conclusion
+Discriminatively-trained probabilistic models have had
+much success in applications because of their flexibil-
+ity in defining features, but sometimes even highly-
+indicative features can fail to increase performance. We
+have shown that this can be due to feature undertrain-
+ing, where highly-indicative features prevent training of
+many weaker features. One solution to this is feature bag-
+ging: repeatedly selecting feature subsets, training sepa-
+rate models on each subset, and averaging the individual
+models.
+On large, real-world natural-language processing
+tasks, feature bagging significantly improves perfor-
+mance, even with only two feature subsets. In this work,
+we choose the subsets based on our intuition of which
+features are complementary for this task, but automati-
+cally determining the feature subsets is an interesting area
+for future work.
+Acknowledgments
+We thank Andrew Ng, Hanna Wallach, Jerod Weinman,
+and Max Welling for helpful conversations. This work
+was supported in part by the Center for Intelligent Infor-
+mation Retrieval, in part by the Defense Advanced Re-
+search Projects Agency (DARPA), in part by The Cen-
+tral Intelligence Agency, the National Security Agency
+and National Science Foundation under NSF grant #IIS-
+0326249, and in part by The Central Intelligence Agency,
+the National Security Agency and National Science
+Foundation under NSF grant #IIS-0427594. Any opin-
+ions, findings and conclusions or recommendations ex-
+pressed in this material are the author(s) and do not nec-
+essarily reflect those of the sponsor.
+94
+References
+Yasemin Altun, Thomas Hofmann, and Mark Johnson.
+2003. Discriminative learning for label sequences via
+boosting. In Advances in Neural Information Process-
+ing Systems (NIPS*15).
+Rie Ando and Tong Zhang. 2005. A high-performance
+semi-supervised learning method for text chunking. In
+Proceedings of the 43rd Annual Meeting of the Asso-
+ciation for Computational Linguistics (ACL?05), pages
+1?9, Ann Arbor, Michigan, June. Association for Com-
+putational Linguistics.
+Stephen D. Bay. 1998. Combining nearest neighbor
+classifiers through multiple feature subsets. In ICML
+?98: Proceedings of the Fifteenth International Con-
+ference on Machine Learning, pages 37?45. Morgan
+Kaufmann Publishers Inc.
+Leo Breiman. 2001. Random forests. Machine Learn-
+ing, 45(1):5?32, October.
+Eric Brill. 1994. Some advances in transformation-based
+part of speech tagging. In AAAI ?94: Proceedings
+of the twelfth national conference on Artificial intelli-
+gence (vol. 1), pages 722?727. American Association
+for Artificial Intelligence.
+Robert Bryll, Ricardo Gutierrez-Osuna, and Francis
+Quek. 2003. Attribute bagging: improving accuracy
+of classifier ensembles by using random feature sub-
+sets. Pattern Recognition, 36:1291?1302.
+Hai Leong Chieu and Hwee Tou Ng. 2003. Named en-
+tity recognition with a maximum entropy approach. In
+Walter Daelemans and Miles Osborne, editors, Pro-
+ceedings of CoNLL-2003, pages 160?163. Edmonton,
+Canada.
+Radu Florian, Abe Ittycheriah, Hongyan Jing, and Tong
+Zhang. 2003. Named entity recognition through clas-
+sifier combination. In Proceedings of CoNLL-2003.
+G.E. Hinton. 2000. Training products of experts by mini-
+mizing contrastive divergence. Technical Report 2000-
+004, Gatsby Computational Neuroscience Unit.
+T. K. Ho. 1995. Random decision forests. In Proc. of
+the 3rd Int?l Conference on Document Analysis and
+Recognition, pages 278?282, Montreal, Canada, Au-
+gust.
+T. Kudo and Y. Matsumoto. 2001. Chunking with sup-
+port vector machines. In Proceedings of NAACL-2001.
+J. Lafferty, A. McCallum, and F. Pereira. 2001. Con-
+ditional random fields: Probabilistic models for seg-
+menting and labeling sequence data. Proc. 18th Inter-
+national Conf. on Machine Learning.
+Andrew McCallum, Dayne Freitag, and Fernando
+Pereira. 2000. Maximum entropy Markov models
+for information extraction and segmentation. In Proc.
+17th International Conf. on Machine Learning, pages
+591?598. Morgan Kaufmann, San Francisco, CA.
+Joseph O?Sullivan, John Langford, Rich Caruana, and
+Avrim Blum. 2000. Featureboost: A meta learning
+algorithm that improves model robustness. In Interna-
+tional Conference on Machine Learning.
+Dean Pomerleau. 1995. Neural network vision for robot
+driving. In M. Arbib, editor, The Handbook of Brain
+Theory and Neural Networks.
+Fei Sha and Fernando Pereira. 2003. Shallow pars-
+ing with conditional random fields. In Proceedings
+of HLT-NAACL 2003. Association for Computational
+Linguistics.
+Andrew Smith and Miles Osborne. 2006. Using
+gazetteers in discriminative information extraction. In
+CoNLL-X, Tenth Conference on Computational Natu-
+ral Language Learning.
+Andrew Smith, Trevor Cohn, and Miles Osborne. 2005.
+Logarithmic opinion pools for conditional random
+fields. In Proceedings of the 43rd Annual Meet-
+ing of the Association for Computational Linguistics
+(ACL?05), pages 18?25, Ann Arbor, Michigan, June.
+Association for Computational Linguistics.
+Charles Sutton and Andrew McCallum. 2006. An in-
+troduction to conditional random fields for relational
+learning. In Lise Getoor and Ben Taskar, editors, Intro-
+duction to Statistical Relational Learning. MIT Press.
+To appear.
+Ben Taskar, Dan Klein, Michael Collins, Daphne Koller,
+and Chris Manning. 2004. Max-margin parsing. In
+Empirical Methods in Natural Language Processing
+(EMNLP04).
+Kristina Toutanova, Dan Klein, Christopher D. Manning,
+and Yoram Singer. 2003. Feature-rich part-of-speech
+tagging with a cyclic dependency network. In HLT-
+NAACL 2003.
+95
+Proceedings of the 9th Conference on Computational Natural Language Learning (CoNLL),
+pages 225?228, Ann Arbor, June 2005. c?2005 Association for Computational Linguistics
+Joint Parsing and Semantic Role Labeling
+Charles Sutton and Andrew McCallum
+Department of Computer Science
+University of Massachusetts
+Amherst, MA 01003 USA
+{casutton,mccallum}@cs.umass.edu
+Abstract
+A striking feature of human syntactic pro-
+cessing is that it is context-dependent, that
+is, it seems to take into account seman-
+tic information from the discourse con-
+text and world knowledge. In this paper,
+we attempt to use this insight to bridge
+the gap between SRL results from gold
+parses and from automatically-generated
+parses. To do this, we jointly perform
+parsing and semantic role labeling, using
+a probabilistic SRL system to rerank the
+results of a probabilistic parser. Our cur-
+rent results are negative, because a locally-
+trained SRL model can return inaccurate
+probability estimates.
+1 Introduction
+Although much effort has gone into developing
+statistical parsing models and they have improved
+steadily over the years, in many applications that
+use parse trees errors made by the parser are a ma-
+jor source of errors in the final output. A promising
+approach to this problem is to perform both pars-
+ing and the higher-level task in a single, joint prob-
+abilistic model. This not only allows uncertainty
+about the parser output to be carried upward, such
+as through an k-best list, but also allows informa-
+tion from higher-level processing to improve pars-
+ing. For example, Miller et al (2000) showed that
+performing parsing and information extraction in a
+joint model improves performance on both tasks. In
+particular, one suspects that attachment decisions,
+which are both notoriously hard and extremely im-
+portant for semantic analysis, could benefit greatly
+from input from higher-level semantic analysis.
+The recent interest in semantic role labeling pro-
+vides an opportunity to explore how higher-level se-
+mantic information can inform syntactic parsing. In
+previous work, it has been shown that SRL systems
+that use full parse information perform better than
+those that use shallow parse information, but that
+machine-generated parses still perform much worse
+than human-corrected gold parses.
+The goal of this investigation is to narrow the gap
+between SRL results from gold parses and from au-
+tomatic parses. We aim to do this by jointly perform-
+ing parsing and semantic role labeling in a single
+probabilistic model. In both parsing and SRL, state-
+of-the-art systems are probabilistic; therefore, their
+predictions can be combined in a principled way by
+multiplying probabilities. In this paper, we rerank
+the k-best parse trees from a probabilistic parser us-
+ing an SRL system. We compare two reranking ap-
+proaches, one that linearly weights the log proba-
+bilities, and the other that learns a reranker over
+parse trees and SRL frames in the manner of Collins
+(2000).
+Currently, neither method performs better than
+simply selecting the top predicted parse tree. We
+discuss some of the reasons for this; one reason be-
+ing that the ranking over parse trees induced by the
+semantic role labeling score is unreliable, because
+the model is trained locally.
+2 Base SRL System
+Our approach to joint parsing and SRL begins with
+a base SRL system, which uses a standard architec-
+ture from the literature. Our base SRL system is a
+cascade of maximum-entropy classifiers which se-
+lect the semantic argument label for each constituent
+of a full parse tree. As in other systems, we use
+three stages: pruning, identification, and classifica-
+tion. First, in pruning, we use a deterministic pre-
+processing procedure introduced by Xue and Palmer
+(2004) to prune many constituents which are almost
+certainly not arguments. Second, in identification,
+a binary MaxEnt classifier is used to prune remain-
+ing constituents which are predicted to be null with
+225
+Base features [GJ02]
+Path to predicate
+Constituent type
+Head word
+Position
+Predicate
+Head POS [SHWA03]
+All conjunctions of above
+Table 1: Features used in base identification classi-
+fier.
+high probability. Finally, in classification, a multi-
+class MaxEnt classifier is used to predict the argu-
+ment type of the remaining constituents. This clas-
+sifer also has the option to output NULL.
+It can happen that the returned semantic argu-
+ments overlap, because the local classifiers take no
+global constraints into account. This is undesirable,
+because no overlaps occur in the gold semantic an-
+notations. We resolve overlaps using a simple recur-
+sive algorithm. For each parent node that overlaps
+with one of its descendents, we check which pre-
+dicted probability is greater: that the parent has its
+locally-predicted argument label and all its descen-
+dants are null, or that the descendants have their op-
+timal labeling, and the parent is null. This algorithm
+returns the non-overlapping assignment with glob-
+ally highest confidence. Overlaps are uncommon,
+however; they occurred only 68 times on the 1346
+sentences in the development set.
+We train the classifiers on PropBank sections 02?
+21. If a true semantic argument fails to match
+any bracketing in the parse tree, then it is ignored.
+Both the identification and classification models are
+trained using gold parse trees. All of our features are
+standard features for this task that have been used
+in previous work, and are listed in Tables 1 and 2.
+We use the maximum-entropy implementation in the
+Mallet toolkit (McCallum, 2002) with a Gaussian
+prior on parameters.
+3 Reranking Parse Trees Using SRL
+Information
+Here we give the general framework for the rerank-
+ing methods that we present in the next section. We
+write a joint probability model over semantic frames
+F and parse trees t given a sentence x as
+p(F, t|x) = p(F |t,x)p(t|x), (1)
+where p(t|x) is given by a standard probabilistic
+parsing model, and p(F |t,x) is given by the base-
+line SRL model described previously.
+Base features [GJ02]
+Head word
+Constituent type
+Position
+Predicate
+Voice
+Head POS [SHWA03]
+From [PWHMJ04]
+Parent Head POS
+First word / POS
+Last word / POS
+Sibling constituent type / head word / head POS
+Conjunctions [XP03]
+Voice & Position
+Predicate & Head word
+Predicate & Constituent type
+Table 2: Features used in baseline labeling classifier.
+Parse Trees Used SRL F1
+Gold 77.1
+1-best 63.9
+Reranked by gold parse F1 68.1
+Reranked by gold frame F1 74.2
+Simple SRL combination (? = 0.5) 56.9
+Chosen using trained reranker 63.6
+Table 3: Comparison of Overall SRL F1 on devel-
+opment set by the type of parse trees used.
+In this paper, we choose (F ?, t?) to approximately
+maximize the probability p(F, t|x) using a reranking
+approach. To do the reranking, we generate a list of
+k-best parse trees for a sentence, and for each pre-
+dicted tree, we predict the best frame using the base
+SRL model. This results in a list {(F i, ti)} of parse
+tree / SRL frame pairs, from which the reranker
+chooses. Thus, our different reranking methods vary
+only in which parse tree is selected; given a parse
+tree, the frame is always chosen using the best pre-
+diction from the base model.
+The k-best list of parses is generated using Dan
+Bikel?s (2004) implementation of Michael Collins?
+parsing model. The parser is trained on sections 2?
+21 of the WSJ Treebank, which does not overlap
+with the development or test sets. The k-best list is
+generated in Bikel?s implementation by essentially
+turning off dynamic programming and doing very
+aggressive beam search. We gather a maximum of
+500 best parses, but the limit is not usually reached
+using feasible beam widths. The mean number of
+parses per sentence is 176.
+4 Results and Discussion
+In this section we present results on several rerank-
+ing methods for joint parsing and semantic role la-
+226
+beling. Table 3 compares F1 on the development set
+of our different reranking methods. The first four
+rows in Table 3 are baseline systems. We present
+baselines using gold trees (row 1 in Table 3) and
+predicted trees (row 2). As shown in previous work,
+gold trees perform much better than predicted trees.
+We also report two cheating baselines to explore
+the maximum possible performance of a reranking
+system. First, we report SRL performance of ceil-
+ing parse trees (row 3), i.e., if the parse tree from the
+k-best list is chosen to be closest to the gold tree.
+This is the best expected performance of a parse
+reranking approach that maximizes parse F1. Sec-
+ond, we report SRL performance where the parse
+tree is selected to maximize SRL F1, computing
+using the gold frame (row 4). There is a signifi-
+cant gap both between parse-F1-reranked trees and
+SRL-F1-reranked trees, which shows promise for
+joint reranking. However, the gap between SRL-
+F1-reranked trees and gold parse trees indicates that
+reranking of parse lists cannot by itself completely
+close the gap in SRL performance between gold and
+predicted parse trees.
+4.1 Reranking based on score combination
+Equation 1 suggests a straightforward method for
+reranking: simply pick the parse tree from the k-best
+list that maximizes p(F, t|x), in other words, add the
+log probabilities from the parser and the base SRL
+system. More generally, we consider weighting the
+individual probabilities as
+s(F, t) = p(F |t,x)1??p(t|x)?. (2)
+Such a weighted combination is often used in the
+speech community to combine acoustic and lan-
+guage models.
+This reranking method performs poorly, however.
+No choice of ? performs better than ? = 1, i.e.,
+choosing the 1-best predicted parse tree. Indeed, the
+more weight given to the SRL score, the worse the
+combined system performs. The problem is that of-
+ten a bad parse tree has many nodes which are obvi-
+ously not constituents: thus p(F |t,x) for such a bad
+tree is very high, and therefore not reliable. As more
+weight is given to the SRL score, the unlabeled re-
+call drops, from 55% when ? = 0 to 71% when
+? = 1. Most of the decrease in F1 is due to the drop
+in unlabeled recall.
+4.2 Training a reranker using global features
+One potential solution to this problem is to add
+features of the entire frame, for example, to vote
+against predicted frames that are missing key argu-
+ments. But such features depend globally on the en-
+tire frame, and cannot be represented by local clas-
+sifiers. One way to train these global features is to
+learn a linear classifier that selects a parse / frame
+pair from the ranked list, in the manner of Collins
+(2000). Reranking has previously been applied to
+semantic role labeling by Toutanova et al (2005),
+from which we use several features. The difference
+between this paper and Toutanova et al is that in-
+stead of reranking k-best SRL frames of a single
+parse tree, we are reranking 1-best SRL frames from
+the k-best parse trees.
+Because of the the computational expense of
+training on k-best parse tree lists for each of 30,000
+sentences, we train the reranker only on sections 15?
+18 of the Treebank (the same subset used in previ-
+ous CoNLL competitions). We train the reranker
+using LogLoss, rather than the boosting loss used
+by Collins. We also restrict the reranker to consider
+only the top 25 parse trees.
+This globally-trained reranker uses all of the fea-
+tures from the local model, and the following global
+features: (a) sequence features, i.e., the linear se-
+quence of argument labels in the sentence (e.g.
+A0_V_A1), (b) the log probability of the parse tree,
+(c) has-arg features, that is, for each argument type
+a binary feature indicating whether it appears in the
+frame, (d) the conjunction of the predicate and has-
+arg feature, and (e) the number of nodes in the tree
+classified as each argument type.
+The results of this system on the development set
+are given in Table 3 (row 6). Although this performs
+better than the score combination method, it is still
+no better than simply taking the 1-best parse tree.
+This may be due to the limited training set we used
+in the reranking model. A base SRL model trained
+only on sections 15?18 has 61.26 F1, so in com-
+parison, reranking provides a modest improvement.
+This system is the one that we submitted as our offi-
+cial submission. The results on the test sets are given
+in Table 4.
+5 Summing over parse trees
+In this section, we sketch a different approach to
+joint SRL and parsing that does not use rerank-
+ing at all. Maximizing over parse trees can mean
+that poor parse trees can be selected if their se-
+mantic labeling has an erroneously high score. But
+we are not actually interested in selecting a good
+parse tree; all we want is a good semantic frame.
+This means that we should select the semantic frame
+227
+Precision Recall F?=1
+Development 64.43% 63.11% 63.76
+Test WSJ 68.57% 64.99% 66.73
+Test Brown 62.91% 54.85% 58.60
+Test WSJ+Brown 67.86% 63.63% 65.68
+Test WSJ Precision Recall F?=1
+Overall 68.57% 64.99% 66.73
+A0 69.47% 74.35% 71.83
+A1 66.90% 64.91% 65.89
+A2 64.42% 61.17% 62.75
+A3 62.14% 50.29% 55.59
+A4 72.73% 70.59% 71.64
+A5 50.00% 20.00% 28.57
+AM-ADV 55.90% 49.60% 52.57
+AM-CAU 76.60% 49.32% 60.00
+AM-DIR 57.89% 38.82% 46.48
+AM-DIS 79.73% 73.75% 76.62
+AM-EXT 66.67% 43.75% 52.83
+AM-LOC 50.26% 53.17% 51.67
+AM-MNR 54.32% 51.16% 52.69
+AM-MOD 98.50% 95.46% 96.96
+AM-NEG 98.20% 94.78% 96.46
+AM-PNC 46.08% 40.87% 43.32
+AM-PRD 0.00% 0.00% 0.00
+AM-REC 0.00% 0.00% 0.00
+AM-TMP 72.15% 67.43% 69.71
+R-A0 0.00% 0.00% 0.00
+R-A1 0.00% 0.00% 0.00
+R-A2 0.00% 0.00% 0.00
+R-A3 0.00% 0.00% 0.00
+R-A4 0.00% 0.00% 0.00
+R-AM-ADV 0.00% 0.00% 0.00
+R-AM-CAU 0.00% 0.00% 0.00
+R-AM-EXT 0.00% 0.00% 0.00
+R-AM-LOC 0.00% 0.00% 0.00
+R-AM-MNR 0.00% 0.00% 0.00
+R-AM-TMP 0.00% 0.00% 0.00
+V 99.21% 86.24% 92.27
+Table 4: Overall results (top) and detailed results on
+the WSJ test (bottom).
+that maximizes the posterior probability: p(F |x) =
+?
+t p(F |t,x)p(t|x). That is, we should be sum-
+ming over the parse trees instead of maximizing over
+them. The practical advantage of this approach is
+that even if one seemingly-good parse tree does not
+have a constituent for a semantic argument, many
+other parse trees in the k-best list might, and all
+are considered when computing F ?. Also, no sin-
+gle parse tree need have constituents for all of F ?;
+because it sums over all parse trees, it can mix and
+match constituents between different trees. The op-
+timal frame F ? can be computed by an O(N3) pars-
+ing algorithm if appropriate independence assump-
+tions are made on p(F |x). This requires designing
+an SRL model that is independent of the bracketing
+derived from any particular parse tree. Initial experi-
+ments performed poorly because the marginal model
+p(F |x) was inadequate. Detailed exploration is left
+for future work.
+6 Conclusion and Related Work
+In this paper, we have considered several methods
+for reranking parse trees using information from se-
+mantic role labeling. So far, we have not been
+able to show improvement over selecting the 1-best
+parse tree. Gildea and Jurafsky (Gildea and Jurafsky,
+2002) also report results on reranking parses using
+an SRL system, with negative results. In this paper,
+we confirm these results with a MaxEnt-trained SRL
+model, and we extend them to show that weighting
+the probabilities does not help either.
+Our results with Collins-style reranking are too
+preliminary to draw definite conclusions, but the po-
+tential improvement does not appear to be great. In
+future work, we will explore the max-sum approach,
+which has promise to avoid the pitfalls of max-max
+reranking approaches.
+Acknowledgements
+This work was supported in part by the Center for Intelligent
+Information Retrieval, in part by National Science Foundation
+under NSF grants #IIS-0326249 ond #IIS-0427594, and in part
+by the Defense Advanced Research Projec ts Agency (DARPA),
+through the Department of the Interior, NBC, Acquisition Ser-
+vices Division, under contract number NBCHD030010. Any
+opinions, findings and conclusions or recommendations ex-
+pressed in this material are the author(s) and do not necessarily
+reflect those of the sponsor.
+References
+Daniel M. Bikel. 2004. Intricacies of Collins? parsing model.
+Computational Linguistics.
+Michael Collins. 2000. Discriminative reranking for natu-
+ral language parsing. In Proc. 17th International Conf. on
+Machine Learning, pages 175?182. Morgan Kaufmann, San
+Francisco, CA.
+Daniel Gildea and Daniel Jurafsky. 2002. Automatic labeling of
+semantic roles. Computational Linguistics, 28(3):245?288.
+Andrew Kachites McCallum. 2002. Mallet: A machine learn-
+ing for language toolkit. http://mallet.cs.umass.
+edu.
+Scott Miller, Heidi Fox, Lance A. Ramshaw, and Ralph M.
+Weischedel. 2000. A novel use of statistical parsing to ex-
+tract information from text. In ANLP 2000, pages 226?233.
+Mihai Surdeanu, Sanda Harabagiu, John Williams, and Paul
+Aarseth. 2003. Using predicate-argument structures for in-
+formation extraction. In ACL-2003.
+Kristina Toutanova, Aria Haghighi, and Christopher D. Man-
+ning. 2005. Joint learning improves semantic role labeling.
+In ACL 2005.
+Nianwen Xue and Martha Palmer. 2004. Calibrating features
+for semantic role labeling. In Proceedings of 2004 Confer-
+ence on Empirical Methods in Natural Language Process-
+ing.
+228

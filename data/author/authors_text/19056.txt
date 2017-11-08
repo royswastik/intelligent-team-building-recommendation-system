@@ -1,0 +1,2181 @@
+Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics, pages 83?92,
+Portland, Oregon, June 19-24, 2011. c?2011 Association for Computational Linguistics
+Jigs and Lures: Associating Web Queries with Structured Entities
+Patrick Pantel
+Microsoft Research
+Redmond, WA, USA
+ppantel@microsoft.com
+Ariel Fuxman
+Microsoft Research
+Mountain View, CA, USA
+arielf@microsoft.com
+Abstract
+We propose methods for estimating the prob-
+ability that an entity from an entity database
+is associated with a web search query. Asso-
+ciation is modeled using a query entity click
+graph, blending general query click logs with
+vertical query click logs. Smoothing tech-
+niques are proposed to address the inherent
+data sparsity in such graphs, including inter-
+polation using a query synonymy model. A
+large-scale empirical analysis of the smooth-
+ing techniques, over a 2-year click graph
+collected from a commercial search engine,
+shows significant reductions in modeling er-
+ror. The association models are then applied
+to the task of recommending products to web
+queries, by annotating queries with products
+from a large catalog and then mining query-
+product associations through web search ses-
+sion analysis. Experimental analysis shows
+that our smoothing techniques improve cover-
+age while keeping precision stable, and over-
+all, that our top-performing model affects 9%
+of general web queries with 94% precision.
+1 Introduction
+Commercial search engines use query associations
+in a variety of ways, including the recommendation
+of related queries in Bing, ?something different? in
+Google, and ?also try? and related concepts in Ya-
+hoo. Mining techniques to extract such query asso-
+ciations generally fall into four categories: (a) clus-
+tering queries by their co-clicked url patterns (Wen
+et al, 2001; Baeza-Yates et al, 2004); (b) leveraging
+co-occurrences of sequential queries in web search
+query sessions (Zhang and Nasraoui, 2006; Boldi et
+al., 2009); (c) pattern-based extraction over lexico-
+syntactic structures of individual queries (Pas?ca and
+Durme, 2008; Jain and Pantel, 2009); and (d) distri-
+butional similarity techniques over news or web cor-
+pora (Agirre et al, 2009; Pantel et al, 2009). These
+techniques operate at the surface level, associating
+one surface context (e.g., queries) to another.
+In this paper, we focus instead on associating sur-
+face contexts with entities that refer to a particu-
+lar entry in a knowledge base such as Freebase,
+IMDB, Amazon?s product catalog, or The Library
+of Congress. Whereas the former models might as-
+sociate the string ?Ronaldinho? with the strings ?AC
+Milan? or ?Lionel Messi?, our goal is to associate
+?Ronaldinho? with, for example, the Wikipedia en-
+tity page ?wiki/AC Milan? or the Freebase entity
+?en/lionel mess?. Or for the query string ?ice fish-
+ing?, we aim to recommend products in a commer-
+cial catalog, such as jigs or lures.
+The benefits and potential applications are large.
+By knowing the entity identifiers associated with a
+query (instead of strings), one can greatly improve
+both the presentation of search results as well as
+the click-through experience. For example, consider
+when the associated entity is a product. Not only
+can we present the product name to the web user,
+but we can also display the image, price, and re-
+views associated with the entity identifier. Once the
+entity is clicked, instead of issuing a simple web
+search query, we can now directly show a product
+page for the exact product; or we can even perform
+actions directly on the entity, such as buying the en-
+tity on Amazon.com, retrieving the product?s oper-
+83
+ating manual, or even polling your social network
+for friends that own the product. This is a big step
+towards a richer semantic search experience.
+In this paper, we define the association between a
+query string q and an entity id e as the probability
+that e is relevant given the query q, P (e|q). Fol-
+lowing Baeza-Yates et al (2004), we model rele-
+vance as the likelihood that a user would click on
+e given q, events which can be observed in large
+query-click graphs. Due to the extreme sparsity
+of query click graphs (Baeza-Yates, 2004), we pro-
+pose several smoothing models that extend the click
+graph with query synonyms and then use the syn-
+onym click probabilities as a background model.
+We demonstrate the effectiveness of our smoothing
+models, via a large-scale empirical study over real-
+world data, which significantly reduce model errors.
+We further apply our models to the task of query-
+product recommendation. Queries in session logs
+are annotated using our association probabilities and
+recommendations are obtained by modeling session-
+level query-product co-occurrences in the annotated
+sessions. Finally, we demonstrate that our models
+affect 9% of general web queries with 94% recom-
+mendation precision.
+2 Related Work
+We introduce a novel application of significant com-
+mercial value: entity recommendations for general
+Web queries. This is different from the vast body
+of work on query suggestions (Baeza-Yates et al,
+2004; Fuxman et al, 2008; Mei et al, 2008b; Zhang
+and Nasraoui, 2006; Craswell and Szummer, 2007;
+Jagabathula et al, 2011), because our suggestions
+are actual entities (as opposed to queries or docu-
+ments). There is also a rich literature on recom-
+mendation systems (Sarwar et al, 2001), including
+successful commercial systems such as the Ama-
+zon product recommendation system (Linden et al,
+2003) and the Netflix movie recommendation sys-
+tem (Bell et al, 2007). However, these are entity-
+to-entity recommendations systems. For example,
+Netflix recommends movies based on previously
+seen movies (i.e., entities). Furthermore, these sys-
+tems have access to previous transactions (i.e., ac-
+tual movie rentals or product purchases), whereas
+our recommendation system leverages a different re-
+source, namely query sessions.
+In principle, one could consider vertical search
+engines (Nie et al, 2007) as a mechanism for as-
+sociating queries to entities. For example, if we type
+the query ?canon eos digital camera? on a commerce
+search engine such as Bing Shopping or Google
+Products, we get a listing of digital camera entities
+that satisfy our query. However, vertical search en-
+gines are essentially rankers that given a query, re-
+turn a sorted list of (pointers to) entities that are re-
+lated to the query. That is, they do not expose actual
+association scores, which is a key contribution of our
+work, nor do they operate on general search queries.
+Our smoothing methods for estimating associ-
+ation probabilities are related to techniques de-
+veloped by the NLP and speech communities to
+smooth n-gram probabilities in language model-
+ing. The simplest are discounting methods, such
+as additive smoothing (Lidstone, 1920) and Good-
+Turing (Good, 1953). Other methods leverage
+lower-order background models for low-frequency
+events, such as Katz? backoff smoothing (Katz,
+1987), Witten-Bell discounting (Witten and Bell,
+1991), Jelinek-Mercer interpolation (Jelinek and
+Mercer, 1980), and Kneser-Ney (Kneser and Ney,
+1995).
+In the information retrieval community, Ponte and
+Croft (1998) are credited for accelerating the use
+of language models. Initial proposals were based
+on learning global smoothing models, where the
+smoothing of a word would be independent of the
+document that the word belongs to (Zhai and Laf-
+ferty, 2001). More recently, a number of local
+smoothing models have been proposed (Liu and
+Croft, 2004; Kurland and Lee, 2004; Tao et al,
+2006). Unlike global models, local models leverage
+relationships between documents in a corpus. In par-
+ticular, they rely on a graph structure that represents
+document similarity. Intuitively, the smoothing of a
+word in a document is influenced by the smoothing
+of the word in similar documents. For a complete
+survey of these methods and a general optimization
+framework that encompasses all previous proposals,
+please see the work of Mei, Zhang et al (2008a).
+All the work on local smoothing models has been
+applied to the prediction of priors for words in docu-
+ments. To the best of our knowledge, we are the first
+to establish that query-click graphs can be used to
+84
+create accurate models of query-entity associations.
+3 Association Model
+Task Definition: Consider a collection of entities
+E. Given a search query q, our task is to compute
+P (e|q), the probability that an entity e is relevant to
+q, for all e ? E.
+We limit our model to sets of entities that can
+be accessed through urls on the web, such as Ama-
+zon.com products, IMDB movies, Wikipedia enti-
+ties, and Yelp points of interest.
+Following Baeza-Yates et al (2004), we model
+relevance as the click probability of an entity given
+a query, which we can observe from click logs of
+vertical search engines, i.e., domain-specific search
+engines such as the product search engine at Ama-
+zon, the local search engine at Yelp, or the travel
+search engine at Bing Travel. Clicked results in a
+vertical search engine are edges between queries and
+entities e in the vertical?s knowledge base. General
+search query click logs, which capture direct user
+intent signals, have shown significant improvements
+when used for web search ranking (Agichtein et al,
+2006). Unlike for general search engines, vertical
+search engines have typically much less traffic re-
+sulting in extremely sparse click logs.
+In this section, we define a graph structure for
+recording click information and we propose several
+models for estimating P (e|q) using the graph.
+3.1 Query Entity Click Graph
+We define a query entity click graph, QEC(Q?U ?
+E,Cu ? Ce), as a tripartite graph consisting of a set
+of query nodes Q, url nodes U , entity nodes E, and
+weighted edges Cu exclusively between nodes of Q
+and nodes of U , as well as weighted edges Ce ex-
+clusively between nodes of Q and nodes of E. Each
+edge in Cu and Ce represents the number of clicks
+observed between query-url pairs and query-entity
+pairs, respectively. Let wu(q, u) be the click weight
+of the edges in Cu, and we(q, e) be the click weight
+of the edges in Ce.
+IfCe is very large, then we can model the associa-
+tion probability, P (e|q), as the maximum likelihood
+estimation (MLE) of observing clicks on e given the
+query q:
+P?mle(e|q) =
+we(q,e)?
+e??E we(q,e
+?) (3.1)
+Figure 1 illustrates an example query entity
+graph linking general web queries to entities in a
+large commercial product catalog. Figure 1a illus-
+trates eight queries in Q with their observed clicks
+(solid lines) with products in E1. Some probabil-
+ity estimates, assigned by Equation 3.1, include:
+P?mle(panfish jigs, e1) = 0, P?mle(ice jigs, e1) = 1,
+and P?mle(ice auger, e4) =
+ce(ice auger,e4)
+ce(ice auger,e3)+ce(ice auger,e4)
+.
+Even for the largest search engines, query click
+logs are extremely sparse, and smoothing techniques
+are necessary (Craswell and Szummer, 2007; Gao et
+al., 2009). By considering only Ce, those clicked
+urls that map to our entity collection E, the sparsity
+situation is even more dire. The sparsity of the graph
+comes in two forms: a) there are many queries for
+which an entity is relevant that will never be seen
+in the click logs (e.g., ?panfish jig? in Figure 1a);
+and b) the query-click distribution is Zipfian and
+most observed edges will have very low click counts
+yielding unreliable statistics. In the following sub-
+sections, we present a method to expand QEC with
+unseen queries that are associated with entities in E.
+Then we propose smoothing methods for leveraging
+a background model over the expanded click graph.
+Throughout our models, we make the simplifying
+assumption that the knowledge base E is complete.
+3.2 Graph Expansion
+Following Gao et al (2009), we address the spar-
+sity of edges in Ce by inferring new edges through
+traversing the query-url click subgraph, UC(Q ?
+U,Cu), which contains many more edges than Ce.
+If two queries qi and qj are synonyms or near syn-
+onyms2, then we expect their click patterns to be
+similar.
+We define the synonymy similarity, s(qi, qj) as
+the cosine of the angle between qi and qj, the click
+pattern vectors of qi and qj , respectively:
+cosine(qi,qj) =
+qi?qj?
+qi?qi?
+?
+qj?qj
+where q is an nu dimensional vector consisting of
+the pointwise mutual information between q and
+each url u in U , pmi(q, u):
+1Clicks are collected from a commerce vertical search en-
+gine described in Section 5.1.
+2A query qi is a near synonym of a query qj if most relevant
+results of qi are also relevant to qj . Section 5.2.1 describes our
+adopted metric for near synonymy.
+85
+ice fishing
+ice auger
+Eskimo 
+Mako 
+Auger
+Luretech 
+Hot Hooks
+Hi-Tech
+Fish ?N? 
+Bucket
+icefishingworld.com
+iceteam.com
+cabelas.com
+strikemaster.com
+ice fishing tackle
+fishusa.com
+power auger
+ice jigs
+fishing bucket
+customjigs.com
+keeperlures.com
+panfish jigs
+d rock
+Strike-
+Lite II 
+Auger
+Luretech 
+Hot Hooks
+ice fishing tackle
+ice jigs
+panfish jigs
+? ?eqwe ,? ?eqwe ,?
+E
+Q
+U
+? ?ji qqs ,
+ice auger
+cabelas.com
+strikemaster.com
+power auger
+d rock
+? ?uqwu ,a) b)
+c)
+d)
+fishing
+ice fishing
+ice fishing minnesota
+d rock
+ice fishing tackle
+ice fishing
+t 0
+t 1
+t 3
+t 4
+t2
+(e1)
+(e1)
+(e2)
+(e3)
+(e4)
+Figure 1: Example QEC graph: (a) Sample queries in Q, clicks connecting queries with urls in U , and clicks to
+entities in E; (b) Zoom on edges in Cu illustrating clicks observed on urls with weight wu(q, u) as well as synonymy
+edges between queries with similarity score s(qi, qj) (Section 3.2); (c) Zoom on edges in Ce where solid lines indicate
+observed clicks with weight we(q, e) and dotted lines indicate inferred clicks with smoothed weight w?e(q, e) (Sec-
+tion 3.3); and (d) A temporal sequence of queries in a search session illustrating entity associations propagating from
+the QEC graph to the queries in the session (Section 4).
+pmi(q, u) = log
+(
+wu(q,u)?
+?
+q??Q,u??U wu(q
+?,u?)
+?
+u??U wu(q,u
+?)
+?
+q??Q wu(q
+?,u)
+)
+(3.2)
+PMI is known to be biased towards infrequent
+events. We apply the discounting factor, ?(q, u),
+proposed in (Pantel and Lin, 2002):
+?(q,u)= wu(q,u)wu(q,u)+1 ?
+min(?q??Q wu(q?,u),
+?
+u??U wu(q,u
+?))
+min(?q??Q wu(q?,u),
+?
+u??U wu(q,u
+?))+1
+Enrichment: We enrich the original QEC graph
+by creating a new edge {q?,e}, where q? ? Q and e ?
+E, if there exists a query q where s(q, q?) > ? and
+we(q, e) > 0. ? is set experimentally, as described
+in Section 5.2.
+Figure 1b illustrates similarity edges created be-
+tween query ?ice auger? and both ?power auger?
+and ?d rock?. Since ?ice auger? was connected to
+entities e3 and e4 in the original QEC, our expan-
+sion model creates new edges in Ce between {power
+auger, e3}, {power auger, e4}, and {d rock, e3}.
+For each newly added edge {q,e}, P?mle = 0 ac-
+cording to our model from Equation 3.1 since we
+have never observed any clicks between q and e. In-
+stead, we define a new model that uses P?mle when
+clicks are observed and otherwise assigns uniform
+probability mass, as:
+P?hybr(e|q) =
+?
+?
+?
+P?mle(e|q) if ?e?|we(q,e?)>0
+1?
+e??E ?(q,e
+?)
+otherwise
+(3.3)
+where ?(q, e) is an indicator variable which is 1 if
+there is an edge between {q, e} in Ce.
+This model does not leverage the local synonymy
+graph in order to transfer edge weight to unseen
+edges. In the next section, we investigate smooth-
+ing techniques for achieving this.
+3.3 Smoothing
+Smoothing techniques can be useful to alleviate data
+sparsity problems common in statistical models. In
+practice, methods that leverage a background model
+(e.g., a lower-order n-gram model) have shown most
+promise (Katz, 1987; Witten and Bell, 1991; Je-
+linek and Mercer, 1980; Kneser and Ney, 1995). In
+this section, we present two smoothing methods, de-
+rived from Jelinek-Mercer interpolation (Jelinek and
+Mercer, 1980), for estimating the target association
+probability P (e|q).
+Figure 1c highlights two edges, illustrated with
+dashed lines, inserted into Ce during the graph ex-
+pansion phase of Section 3.2. w?e(q, e) represents
+the weight of our background model, which can be
+viewed as smoothed click counts, and are obtained
+86
+Label Model Reference
+UNIF P?unif (e|q) Eq. 3.8
+MLE P?mle(e|q) Eq. 3.1
+HYBR P?hybr(e|q) Eq. 3.3
+INTU P?intu(e|q) Eq. 3.6
+INTP P?intp(e|q) Eq. 3.7
+Table 1: Models for estimating the association probabil-
+ity P (e|q).
+by propagating clicks to unseen edges using the syn-
+onymy model as follows:
+w?e(q, e) =
+?
+q??Q
+s(q,q?)
+Nsq
+? P?mle(e|q?) (3.4)
+where Nsq =
+?
+q??Q s(q, q
+?). By normalizing
+the smoothed weights, we obtain our background
+model, P?bsim:
+P?bsim(e|q) =
+w?e(q,e)?
+e??E w?e(q,e
+?) (3.5)
+Below we propose two models for interpolating our
+foreground model from Equation 3.1 with the back-
+ground model from Equation 3.5.
+Basic Interpolation: This smoothing model,
+P?intu(e|q), linearly combines our foreground and
+background models using a model parameter ?:
+P?intu(e|q)=?P?mle(e|q)+(1??)P?bsim(e|q) (3.6)
+Bucket Interpolation: Intuitively, edges {q, e} ?
+Ce with higher observed clicks, we(q, e), should be
+trusted more than those with low or no clicks. A
+limitation of P?intu(e|q) is that it weighs the fore-
+ground and background models in the same way ir-
+respective of the observed foreground clicks. Our
+final model, P?intp(e|q) parameterizes the interpola-
+tion by the number of observed clicks:
+P?intp(e|q)=?[we(q, e)]P?mle(e|q)
++ (1? ?[we(q, e)])P?bsim(e|q)
+(3.7)
+In practice, we bucket the observed click parame-
+ter, we(q, e), into eleven buckets: {1-click, 2-clicks,
+..., 10-clicks, more than 10 clicks}.
+Section 5.2 outlines our procedure for learn-
+ing the model parameters for both P?intu(e|q) and
+P?intp(e|q).
+3.4 Summary
+Table 1 summarizes the association models pre-
+sented in this section as well as a strawman that as-
+signs uniform probability to all edges in QEC:
+P?unif (e|q) =
+1
+?
+e??E ?(q, e
+?)
+(3.8)
+In the following section, we apply these models
+to the task of extracting product recommendations
+for general web search queries. A large-scale exper-
+imental study is presented in Section 5 supporting
+the effectiveness of our models.
+4 Entity Recommendation
+Query recommendations are pervasive in commer-
+cial search engines. Many systems extract recom-
+mendations by mining temporal query chains from
+search sessions and clickthrough patterns (Zhang
+and Nasraoui, 2006). We adopt a similar strategy,
+except instead of mining query-query associations,
+we propose to mine query-entity associations, where
+entities come from an entity database as described in
+Section 1. Our technical challenge lies in annotating
+sessions with entities that are relevant to the session.
+4.1 Product Entity Domain
+Although our model generalizes to any entity do-
+main, we focus now on a product domain. Specifi-
+cally, our universe of entities,E, consists of the enti-
+ties in a large commercial product catalog, for which
+we observe query-click-product clicks, Ce, from the
+vertical search logs. Our QEC graph is completed
+by extracting query-click-urls from a search engine?s
+general search logs, Cu. These datasets are de-
+scribed in Section 5.1.
+4.2 Recommendation Algorithm
+We hypothesize that if an entity is relevant to a
+query, then it is relevant to all other queries co-
+occurring in the same session. Key to our method
+are the models from Section 3.
+Step 1 ? Query Annotation: For each query q in a
+session s, we annotate it with a set Eq, consisting of
+every pair {e, P? (e|q)}, where e ? E such that there
+exists an edge {q, e} ? Ce with probability P? (e|q).
+Note that Eq will be empty for many queries.
+Step 2 ? Session Analysis: We build a query-
+entity frequency co-occurrence matrix, A, consist-
+ing of n|Q| rows and n|E| columns, where each row
+corresponds to a query and each column to an entity.
+87
+The value of the cell Aqe is the sum over each ses-
+sion s, of the maximum edge weight between any
+query q? ? s and e3:
+Aqe =
+?
+s?S ?(s, e)
+where S consists of all observed search sessions and:
+?(s, e) = argmax
+P? (e|q?)
+({e, P? (e|q?)} ? Eq?),?q
+? ? s
+Step 3 ? Ranking: We compute ranking scores
+between each query q and entity e using pointwise
+mutual information over the frequencies in A, simi-
+larly to Eq. 3.2.
+The final recommendations for a query q are ob-
+tained by returning the top-k entities e according to
+Step 3. Filters may be applied on: f the frequency
+Aqe; and p the pointwise mutual information rank-
+ing score between q and e.
+5 Experimental Results
+5.1 Datasets
+We instantiate our models from Sections 3 and 4 us-
+ing search query logs and a large catalog of prod-
+ucts from a commercial search engine. We form
+our QEC graphs by first collecting in Ce aggregate
+query-click-entity counts observed over two years
+in a commerce vertical search engine. Similarly,
+Cu is formed by collecting aggregate query-click-url
+counts observed over six months in a web search en-
+gine, where each query must have frequency at least
+10. Three final QEC graphs are sampled by taking
+various snapshots of the above graph as follows: a)
+TRAIN consists of 50% of the graph; b) TEST con-
+sists of 25% of the graph; c) DEV consists of 25%
+of the graph.
+5.2 Association Models
+5.2.1 Model Parameters
+We tune the ? parameters for P?intu and P?intp against
+the DEV QEC graph. There are twelve parameters
+to be tuned: ? for P?intu and ?(1), ?(2), ..., ?(10),
+?(> 10) for P?intp, where ?(x) is the observed
+click bucket as described in Section 3.3. For each,
+we choose the parameter value that minimizes the
+mean-squared error (MSE) of the DEV set, where
+3Note that this co-occurrence occurs because q? was anno-
+tated with entity e in the same session as q occurred.
+0
+0.05
+0.1
+0.15
+0.2
+0.25
+0.3
+0.35
+0.4
+0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+M
+S
+E
+Alpha
+Alpha vs. MSE: Heldout Training For Alpha Parameters Basic
+Bucket_1
+Bucket_2
+Bucket_3
+Bucket_4
+Bucket_5
+Bucket_6
+Bucket_7
+Bucket_8
+Bucket_9
+Bucket_10
+Bucket_11
+Figure 2: Alpha tuning on held out data.
+Model MSE Var Err/MLE MSEW Var Err/MLE
+P?unif 0.0328
+? 0.0112 -25.7% 0.0663? 0.0211 -71.8%
+P?mle 0.0261 0.0111 ? 0.0386 0.0141 ?
+P?hybr 0.0232
+? 0.0071 11.1% 0.0385 0.0132 0.03%
+P?intu 0.0226? 0.0075 13.4% 0.0369? 0.0133 4.4%
+P?intp 0.0213? 0.0068 18.4% 0.0375? 0.0131 2.8%
+Table 2: Model analysis: MSE and MSEW with vari-
+ance and error reduction relative to P?mle. ? indicates sta-
+tistical significance over P?mle with 95% confidence.
+model probabilities are computed using the TRAIN
+QEC graph. Figure 2 illustrates the MSE ranging
+over [0, 0.05, 0.1, ..., 1].
+We trained the query synonym model of Sec-
+tion 3.2 on the DEV set and hand-annotated 100 ran-
+dom synonymy pairs according to whether or not the
+pairs were synonyms 2. Setting ? = 0.4 results in a
+precision > 0.9.
+5.2.2 Analysis
+We evaluate the quality of our models in Table 1 by
+evaluating their mean-squared error (MSE) against
+the target P (e|q) computed on the TEST set:
+MSE(P? )=
+?
+{q,e}?CTe
+(PT (e|q)?P? (e|q))2
+MSEW (P? )=
+?
+{q,e}?CTe
+wTe (q,e)?(P
+T (e|q)?P? (e|q))2
+where CTe are the edges in the TEST QEC graph
+with weight wTe (q, e), P
+T (e|q) is the target proba-
+bility computed over the TEST QEC graph, and P?
+is one of our models trained on the TRAIN QEC
+graph. MSE measures against each edge type,
+which makes it sensitive to the long tail of the
+click graph. Conversely, MSEW measures against
+each edge instance, which makes it a good mea-
+sure against the head of the click graph. We expect
+our smoothing models to have much more impact
+on MSE (i.e., the tail) than on MSEW since head
+queries do not suffer from data sparsity.
+Table 2 lists the MSE and MSEW results for
+each model. We consider P?unif as a strawman and
+P?mle as a strong baseline (i.e., without any graph
+expansion nor any smoothing against a background
+88
+00.01
+0.02
+0.03
+0.04
+0.05
+0.06
+M
+S
+E
+Click Bucket (scaled by query - instance coverage)
+Mean Squared Error vs. Click Bucket
+UNI F
+ML E
+H YBR
+I NTU
+I NTP
+1 2 43 5 6 7 8 9 10
+Figure 3: MSE of each model against the number of
+clicks in the TEST corpus. Buckets scaled by query in-
+stance coverage of all queries with 10 or fewer clicks.
+model). P?unif performs generally very poorly, how-
+ever P?mle is much better, with an expected estima-
+tion error of 0.16 accounting for an MSE of 0.0261.
+As expected, our smoothing models have little im-
+provement on the head-sensitive metric (MSEW )
+relative to P?mle. In particular, P?hybr performs nearly
+identically to P?mle on the head. On the tail, all three
+smoothing models significantly outperform P?mle
+with P?intp reducing the error by 18.4%. Table 3 lists
+query-product associations for five randomly sam-
+pled products along with their model scores from
+P?mle with P?intp.
+Figure 3 provides an intrinsic view into MSE as
+a function of the number of observed clicks in the
+TEST set. As expected, for larger observed click
+counts (>4), all models perform roughly the same,
+indicating that smoothing is not necessary. However,
+for low click counts, which in our dataset accounts
+for over 20% of the overall click instances, we see
+a large reduction in MSE with P?intp outperforming
+P?intu, which in turn outperforms P?hybr. P?unif per-
+forms very poorly. The reason it does worse as the
+observed click count rises is that head queries tend to
+result in more distinct urls with high-variance clicks,
+which in turn makes a uniform model susceptible to
+more error.
+Figure 3 illustrates that the benefit of the smooth-
+ing models is in the tail of the click graph, which
+supports the larger error reductions seen in MSE in
+Table 2. For associations only observed once, P?intp
+reduces the error by 29% relative to P?mle.
+We also performed an editorial evaluation of the
+query-entity associations obtained with bucket inter-
+polation. We created two samples from the TEST
+dataset: one randomly sampled by taking click
+weights into account, and the other sampled uni-
+formly at random. Each set contains results for
+Query P?mleP?intp Query P?mleP?intp
+Garmin GTM 20 GPS Canon PowerShot SX110 IS
+garmin gtm 20 0.44 0.45 canon sx110 0.57 0.57
+garmin traffic receiver 0.30 0.27 powershot sx110 0.48 0.48
+garmin nuvi 885t 0.02 0.02 powershot sx110 is 0.38 0.36
+gtm 20 0 0.33 powershot sx130 is 0 0.33
+garmin gtm20 0 0.33 canon power shot sx110 0 0.20
+nuvi 885t 0 0.01 canon dig camera review 0 0.10
+Samsung PN50A450 50? TV Devil May Cry: 5th Anniversary Col.
+samsung 50 plasma hdtv 0.75 0.83 devil may cry 0.76 0.78
+samsung 50 0.33 0.32 devilmaycry 0 1.00
+50? hdtv 0.17 0.12 High Island Hammock/Stand Combo
+samsung plasma tv review 0 0.42 high island hammocks 1.00 1.00
+50? samsung plasma hdtv 0 0.35 hammocks and stands 0 0.10
+Table 3: Example query-product association scores for a
+random sample of five products. Bold queries resulted
+from the expansion algorithm in Section 3.2.
+100 queries. The former consists of 203 query-
+product associations, and the latter of 159 associa-
+tions. The evaluation was done using Amazon Me-
+chanical Turk4. We created a Mechanical Turk HIT5
+where we show to the Mechanical Turk workers the
+query and the actual Web page in a Product search
+engine. For each query-entity association, we gath-
+ered seven labels and considered an association to be
+correct if five Mechanical Turk workers gave a pos-
+itive label. An association was considered to be in-
+correct if at least five workers gave a negative label.
+Borderline cases where no label got five votes were
+discarded (14% of items were borderline for the uni-
+form sample; 11% for the weighted sample). To en-
+sure the quality of the results, we introduced 30%
+of incorrect associations as honeypots. We blocked
+workers who responded incorrectly on the honey-
+pots so that the precision on honeypots is 1. The
+result of the evaluation is that the precision of the as-
+sociations is 0.88 on the weighted sample and 0.90
+on the uniform sample.
+5.3 Related Product Recommendation
+We now present an experimental evaluation of our
+product recommendation system using the baseline
+model P?mle and our best-performing model P?intp.
+The goals of this evaluation are to (1) determine
+the quality of our product recommendations; and (2)
+assess the impact of our association models on the
+product recommendations.
+5.3.1 Experimental Setup
+We instantiate our recommendation algorithm from
+Section 4.2 using session co-occurrence frequencies
+4https://www.mturk.com
+5HIT stands for Human Intelligence Task
+89
+Query Set Sample Query Bag Sample
+f 10 25 50 100 10 25 50 100
+p 10 10 10 10 10 10 10 10
+P?mle precision 0.89 0.93 0.96 0.96 0.94 0.94 0.93 0.92
+P?intp precision 0.86 0.92 0.96 0.96 0.94 0.94 0.93 0.94
+P?mle coverage 0.007 0.004 0.002 0.001 0.085 0.067 0.052 0.039
+P?intp coverage 0.008 0.005 0.003 0.002 0.094 0.076 0.059 0.045
+Rintp,mle 1.16 1.14 1.13 1.14 1.11 1.13 1.15 1.19
+Table 4: Experimental results for product recommenda-
+tions. All configurations are for k = 10.
+from a one-month snapshot of user query sessions at
+a Web search engine, where session boundaries oc-
+cur when 60 seconds elapse in between user queries.
+We experiment with the recommendation parame-
+ters defined at the end of Section 4.2 as follows: k =
+10, f ranging from 10 to 100, and p ranging from 3
+to 10.
+For each configuration, we report coverage as the
+total number of queries in the output (i.e., the queries
+for which there is some recommendation) divided by
+the total number of queries in the log. For our per-
+formance metrics, we sampled two sets of queries:
+(a) Query Set Sample: uniform random sam-
+ple of 100 queries from the unique queries in the
+one-month log; and (b) Query Bag Sample:
+weighted random sample, by query frequency, of
+100 queries from the query instances in the one-
+month log. For each sample query, we pooled to-
+gether and randomly shuffled all recommendations
+by our algorithm using both P?mle and P?intp on each
+parameter configuration. We then manually anno-
+tated each {query, product} pair as relevant, mildly
+relevant or non-relevant. In total, 1127 pairs were
+annotated. Interannotator agreement between two
+judges on this task yielded a Cohen?s Kappa (Cohen,
+1960) of 0.56. We therefore collapsed the mildly
+relevant and non-relevant classes yielding two final
+classes: relevant and non-relevant. Cohen?s Kappa
+on this binary classification is 0.71.
+Let CM be the number of relevant (i.e., correct)
+suggestions recommended by a configurationM and
+let |M | be the number of recommendations returned
+by M . Then we define the (micro-) precision of M
+as: PM =
+CM
+C . We define relative recall (Pantel et
+al., 2004) between two configurations M1 and M2
+as RM1,M2 =
+PM1?|M1|
+PM2?|M2|
+.
+5.3.2 Results
+Table 4 summarizes our results for some configura-
+tions (others omitted for lack of space). Most re-
+Query Product Recommendation
+wedding gowns 27 Dresses (Movie Soundtrack)
+wedding gowns Bridal Gowns: The Basics of Designing, [...] (Book)
+wedding gowns Wedding Dress Hankie
+wedding gowns The Perfect Wedding Dress (Magazine)
+wedding gowns Imagine Wedding Designer (Video Game)
+low blood pressure Omron Blood Pressure Monitor
+low blood pressure Healthcare Automatic Blood Pressure Monitor
+low blood pressure Ridgecrest Blood Pressure Formula - 60 Capsules
+low blood pressure Omron Portable Wrist Blood Pressure Monitor
+?hello cupcake? cookbook Giant Cupcake Cast Pan
+?hello cupcake? cookbook Ultimate 3-In-1 Storage Caddy
+?hello cupcake? cookbook 13 Cup Cupcakes and More Dessert Stand
+?hello cupcake? cookbook Cupcake Stand Set (Toys)
+1 800 flowers Todd Oldham Party Perfect Bouquet
+1 800 flowers Hugs and Kisses Flower Bouquet with Vase
+Table 5: Sample product recommendations.
+markable is the {f = 10, p = 10} configuration
+where the P?intp model affected 9.4% of all query
+instances posed by the millions of users of a major
+search engine, with a precision of 94%. Although
+this model covers 0.8% of the unique queries, the
+fact that it covers many head queries such as wal-
+mart and iphone accounts for the large query in-
+stance coverage. Also since there may be many gen-
+eral web queries for which there is no appropriate
+product in the database, a coverage of 100% is not
+attainable (nor desirable); in fact the upper bound
+for the coverage is likely to be much lower.
+Turning to the impact of the association models
+on product recommendations, we note that precision
+is stable in our P?intp model relative to our baseline
+P?mle model. However, a large lift in relative recall
+is observed, up to a 19% increase for the {f = 100,
+p = 10} configuration. These results are consistent
+with those of Section 5.2, which compared the asso-
+ciation models independently of the application and
+showed that P?intp outperforms P?mle.
+Table 5 shows sample product recommendations
+discovered by our P?intp model. Manual inspection
+revealed two main sources of errors. First, ambiguity
+is introduced both by the click model and the graph
+expansion algorithm of Section 3.2. In many cases,
+the ambiguity is resolved by user click patterns (i.e.,
+users disambiguate queries through their browsing
+behavior), but one such error was seen for the query
+?shark attack videos? where several Shark-branded
+vacuum cleaners are recommended. This is because
+of the ambiguous query ?shark? that is found in the
+click logs and in query sessions co-occurring with
+the query ?shark attack videos?. The second source
+of errors is caused by systematic user errors com-
+monly found in session logs such as a user acciden-
+tally submitting a query while typing. An example
+90
+session is: {?speedo?, ?speedometer?}where the in-
+tended session was just the second query and the un-
+intended first query is associated with products such
+as Speedo swimsuits. This ultimately causes our sys-
+tem to recommend various swimsuits for the query
+?speedometer?.
+6 Conclusion
+Learning associations between web queries and
+entities has many possible applications, including
+query-entity recommendation, personalization by
+associating entity vectors to users, and direct adver-
+tising. Although many techniques have been devel-
+oped for associating queries to queries or queries
+to documents, to the best of our knowledge this is
+the first that aims to associate queries to entities
+by leveraging click graphs from both general search
+logs and vertical search logs.
+We developed several models for estimating the
+probability that an entity is relevant given a user
+query. The sparsity of query entity graphs is ad-
+dressed by first expanding the graph with query
+synonyms, and then smoothing query-entity click
+counts over these unseen queries. Our best per-
+forming model, which interpolates between a fore-
+ground click model and a smoothed background
+model, significantly reduces testing error when com-
+pared against a strong baseline, by 18%. On associ-
+ations observed only once in our test collection, the
+modeling error is reduced by 29% over the baseline.
+We applied our best performing model to the
+task of query-entity recommendation, by analyz-
+ing session co-occurrences between queries and an-
+notated entities. Experimental analysis shows that
+our smoothing techniques improve coverage while
+keeping precision stable, and overall, that our top-
+performing model affects 9% of general web queries
+with 94% precision.
+References
+[Agichtein et al2006] Eugene Agichtein, Eric Brill, and
+Susan T. Dumais. 2006. Improving web search rank-
+ing by incorporating user behavior information. In SI-
+GIR, pages 19?26.
+[Agirre et al2009] Eneko Agirre, Enrique Alfonseca,
+Keith Hall, Jana Kravalova, Marius Pas?ca, and Aitor
+Soroa. 2009. A study on similarity and relatedness
+using distributional and wordnet-based approaches. In
+NAACL, pages 19?27.
+[Baeza-Yates et al2004] Ricardo Baeza-Yates, Carlos
+Hurtado, and Marcelo Mendoza. 2004. Query rec-
+ommendation using query logs in search engines. In
+Wolfgang Lindner, Marco Mesiti, Can Tu?rker, Yannis
+Tzitzikas, and Athena Vakali, editors, EDBT Work-
+shops, volume 3268 of Lecture Notes in Computer
+Science, pages 588?596. Springer.
+[Baeza-Yates2004] Ricardo Baeza-Yates. 2004. Web us-
+age mining in search engines. In In Web Mining: Ap-
+plications and Techniques, Anthony Scime, editor. Idea
+Group, pages 307?321.
+[Bell et al2007] R. Bell, Y. Koren, and C. Volinsky.
+2007. Modeling relationships at multiple scales to
+improve accuracy of large recommender systems. In
+KDD, pages 95?104.
+[Boldi et al2009] Paolo Boldi, Francesco Bonchi, Carlos
+Castillo, Debora Donato, and Sebastiano Vigna. 2009.
+Query suggestions using query-flow graphs. In WSCD
+?09: Proceedings of the 2009 workshop on Web Search
+Click Data, pages 56?63. ACM.
+[Cohen1960] Jacob Cohen. 1960. A coefficient of agree-
+ment for nominal scales. Educational and Psycholog-
+ical Measurement, 20(1):37?46, April.
+[Craswell and Szummer2007] Nick Craswell and Martin
+Szummer. 2007. Random walks on the click graph.
+In SIGIR, pages 239?246.
+[Fuxman et al2008] A. Fuxman, P. Tsaparas, K. Achan,
+and R. Agrawal. 2008. Using the wisdom of the
+crowds for keyword generation. In WWW, pages 61?
+70.
+[Gao et al2009] Jianfeng Gao, Wei Yuan, Xiao Li, Ke-
+feng Deng, and Jian-Yun Nie. 2009. Smoothing click-
+through data for web search ranking. In SIGIR, pages
+355?362.
+[Good1953] Irving John Good. 1953. The population fre-
+quencies of species and the estimation of population
+parameters. Biometrika, 40(3 and 4):237?264.
+[Jagabathula et al2011] S. Jagabathula, N. Mishra, and
+S. Gollapudi. 2011. Shopping for products you don?t
+know you need. In To appear at WSDM.
+[Jain and Pantel2009] Alpa Jain and Patrick Pantel. 2009.
+Identifying comparable entities on the web. In CIKM,
+pages 1661?1664.
+[Jelinek and Mercer1980] Frederick Jelinek and
+Robert L. Mercer. 1980. Interpolated estimation
+of markov source parameters from sparse data. In In
+Proceedings of the Workshop on Pattern Recognition
+in Practice, pages 381?397.
+[Katz1987] Slava M. Katz. 1987. Estimation of probabil-
+ities from sparse data for the language model compo-
+nent of a speech recognizer. In IEEE Transactions on
+91
+Acoustics, Speech and Signal Processing, pages 400?
+401.
+[Kneser and Ney1995] Reinhard Kneser and Hermann
+Ney. 1995. Improved backing-off for m-gram lan-
+guage modeling. In In Proceedings of the IEEE Inter-
+national Conference on Acoustics, Speech and Signal
+Processing, pages 181?184.
+[Kurland and Lee2004] O. Kurland and L. Lee. 2004.
+Corpus structure, language models, and ad-hoc infor-
+mation retrieval. In SIGIR, pages 194?201.
+[Lidstone1920] George James Lidstone. 1920. Note on
+the general case of the bayes-laplace formula for in-
+ductive or a posteriori probabilities. Transactions of
+the Faculty of Actuaries, 8:182?192.
+[Linden et al2003] G. Linden, B. Smith, and J. York.
+2003. Amazon.com recommendations: Item-to-item
+collaborative filtering. IEEE Internet Computing,
+7(1):76?80.
+[Liu and Croft2004] X. Liu and W. Croft. 2004. Cluster-
+based retrieval using language models. In SIGIR,
+pages 186?193.
+[Mei et al2008a] Q. Mei, D. Zhang, and C. Zhai. 2008a.
+A general optimization framework for smoothing lan-
+guage models on graph structures. In SIGIR, pages
+611?618.
+[Mei et al2008b] Q. Mei, D. Zhou, and Church K. 2008b.
+Query suggestion using hitting time. In CIKM, pages
+469?478.
+[Nie et al2007] Z. Nie, J. Wen, and W. Ma. 2007.
+Object-level vertical search. In Conference on Innova-
+tive Data Systems Research (CIDR), pages 235?246.
+[Pantel and Lin2002] Patrick Pantel and Dekang Lin.
+2002. Discovering word senses from text. In
+SIGKDD, pages 613?619, Edmonton, Canada.
+[Pantel et al2004] Patrick Pantel, Deepak Ravichandran,
+and Eduard Hovy. 2004. Towards terascale knowl-
+edge acquisition. In COLING, pages 771?777.
+[Pantel et al2009] Patrick Pantel, Eric Crestan, Arkady
+Borkovsky, Ana-Maria Popescu, and Vishnu Vyas.
+2009. Web-scale distributional similarity and entity
+set expansion. In EMNLP, pages 938?947.
+[Pas?ca and Durme2008] Marius Pas?ca and Benjamin Van
+Durme. 2008. Weakly-supervised acquisition of
+open-domain classes and class attributes from web
+documents and query logs. In ACL, pages 19?27.
+[Ponte and Croft1998] J. Ponte and B. Croft. 1998. A
+language modeling approach to information retrieval.
+In SIGIR, pages 275?281.
+[Sarwar et al2001] B. Sarwar, G. Karypis, J. Konstan,
+and J. Reidl. 2001. Item-based collaborative filtering
+recommendation system. In WWW, pages 285?295.
+[Tao et al2006] T. Tao, X. Wang, Q. Mei, and C. Zhai.
+2006. Language model information retrieval with doc-
+ument expansion. In HLT/NAACL, pages 407?414.
+[Wen et al2001] Ji-Rong Wen, Jian-Yun Nie, and
+HongJiang Zhang. 2001. Clustering user queries of a
+search engine. In WWW, pages 162?168.
+[Witten and Bell1991] I.H. Witten and T.C. Bell. 1991.
+The zero-frequency problem: Estimating the proba-
+bilities of novel events in adaptive text compression.
+IEEE Transactions on Information Theory, 37(4).
+[Zhai and Lafferty2001] C. Zhai and J. Lafferty. 2001. A
+study of smoothing methods for language models ap-
+plied to ad hoc information retrieval. In SIGIR, pages
+334?342.
+[Zhang and Nasraoui2006] Z. Zhang and O. Nasraoui.
+2006. Mining search engine query logs for query rec-
+ommendation. In WWW, pages 1039?1040.
+92
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics, pages 1524?1533,
+Baltimore, Maryland, USA, June 23-25 2014.
+c?2014 Association for Computational Linguistics
+Smart Selection
+Patrick Pantel
+Microsoft Research
+One Microsoft Way
+Redmond, WA 98052, USA
+ppantel@microsoft.com
+Michael Gamon
+Microsoft Research
+One Microsoft Way
+Redmond, WA 98052, USA
+mgamon@microsoft.com
+Ariel Fuxman
+Microsoft Research
+1065 La Avenida St.
+Mountain View, CA 94043, USA
+arielf@microsoft.com
+Abstract
+Natural touch interfaces, common now in
+devices such as tablets and smartphones,
+make it cumbersome for users to select
+text. There is a need for a new text selec-
+tion paradigm that goes beyond the high
+acuity selection-by-mouse that we have re-
+lied on for decades. In this paper, we in-
+troduce such a paradigm, called Smart Se-
+lection, which aims to recover a user?s in-
+tended text selection from her touch input.
+We model the problem using an ensemble
+learning approach, which leverages mul-
+tiple linguistic analysis techniques com-
+bined with information from a knowledge
+base and a Web graph. We collect a dataset
+of true intended user selections and simu-
+lated user touches via a large-scale crowd-
+sourcing task, which we release to the
+academic community. We show that our
+model effectively addresses the smart se-
+lection task and significantly outperforms
+various baselines and standalone linguistic
+analysis techniques.
+1 Introduction
+The process of using a pointing device to select
+a span of text has a long history dating back to
+the invention of the mouse. It serves to access
+functions on text spans, such as copying/pasting,
+looking up a word in a dictionary, searching the
+Web, or accessing other accelerators. As con-
+sumers move from traditional PCs to mobile de-
+vices (e.g., tablets and smartphones), touch inter-
+action is replacing the pointing devices of yore.
+Although more intuitive and arguably a more natu-
+ral form of interaction, touch offers much less acu-
+ity (colloquially referred to as the fat finger prob-
+lem). To select multi-word spans today, mobile
+devices require an intricate series of gestures that
+results in cumbersome user experiences
+1
+. Conse-
+quently, there is an opportunity to reinvent the way
+users select text in such devices.
+Our task is, given a single user touch, to pre-
+dict the span that the user likely intended to se-
+lect. We call this task smart selection. We re-
+strict our prediction task to cases where a user in-
+tends to perform research on a text span (dictio-
+nary/thesaurus lookup, translation, searching). We
+specifically consider operations on text spans that
+do not form a single unit (i.e., an entity, a concept,
+a topic, etc.) to be out of scope. For example, full
+sentences, paragraph and page fragments are out
+of scope.
+Smart selection, as far as we know, is a new re-
+search problem. Yet there are many threads of re-
+search in the NLP community that identify multi-
+word sequences, which have coherent properties.
+For example, named-entity recognizers identify
+entities such as people/places/organizations, chun-
+kers and parsers identify syntactic constituents
+such as noun phrases, key phrase detectors or term
+segmentors identify term boundaries. While each
+of these techniques retrieve meaningful linguistic
+units, our problem is a semantic one of recovering
+a user?s intent, and as such none alone solves the
+entire smart selection problem.
+In this paper, we model the problem of smart
+selection using an ensemble learning approach.
+We leverage various linguistic techniques, such as
+those discussed above, and augment them with
+other sources of information from a knowledge
+1
+In order to select a multi-word span, a user would first
+have to touch on either word, then drag the left and right
+boundary handles to expand it to the adjacent words.
+1524
+base and a web graph. We evaluate our meth-
+ods using a novel dataset constructed for our
+task. We construct our dataset of true user-
+intended selections by crowdsourcing the task of
+a user selecting spans of text in a researching
+task. We obtain 13,681 data points. For each in-
+tended selection, we construct test cases for each
+individual sub-word, simulating the user select-
+ing via touch. The resulting testset consists of
+33,912 ?simulated selection, intended selection?-
+pairs, which we further stratify into head, torso,
+and tail subsets. We release the full dataset and
+testset to the academic community for further re-
+search on this new NLP task. Finally, we empir-
+ically show that our ensemble model significantly
+improves upon various baseline systems.
+In summary, the major contributions of our re-
+search are:
+? We introduce a new natural language pro-
+cessing task, called smart selection, which
+aims to address an important problem in text
+selection for touch-enabled devices;
+? We conduct a large crowd-sourced user study
+to collect a dataset of intended selections and
+simulated user selections, which we release
+to the academic community;
+? We propose a machine-learned ensemble
+model for smart selection, which combines
+various linguistic annotation methods with
+information from a large knowledge base and
+web graph;
+? We empirically show that our model can ef-
+fectively address the smart selection task.
+2 Related Work
+Related work falls into three broad categories: lin-
+guistic unit detection, human computer interaction
+(HCI), and intent detection.
+2.1 Linguistic Unit Detection
+Smart selection is closely related to the detection
+of syntactic and semantic units: user selections are
+often entities, noun phrases, or concepts. A first
+approach to solving smart selection is to select an
+entity, noun phrase, or concept that subsumes the
+user selection. However, no single approach alone
+can cover the entire smart selection problem. For
+example, consider an approach that uses a state-of-
+the-art named-entity recognizer (NER) (Chinchor,
+1998; Tjong Kim Sang and De Meulder, 2003;
+Finkel et al, 2005; Ratinov and Roth, 2009). We
+found in our dataset (see Section 3.2) that only
+a quarter of what users intend to select consists
+in fact of named entities. Although an NER ap-
+proach can be very useful, it is certainly not suf-
+ficient. The remainder of the data can be partially
+addressed with noun phrase (NP) detectors (Ab-
+ney, 1991; Ramshaw and Marcus, 1995; Mu?noz et
+al., 1999; Kudo and Matsumoto, 2001) and lists of
+items in a knowledge base (KB), but again, each is
+not alone sufficient. NP detectors and KB-based
+methods are further very susceptible to the gen-
+eration of false positives (i.e., text contains many
+nested noun phrases and knowledge base items in-
+clude highly ambiguous terms).
+In our work, we leverage all three techniques in
+order to benefit from their complementary cover-
+age of user selections. We further create a novel
+unit detector, called the hyperlink intent model.
+Based on the assumption that Wikipedia anchor
+texts are similar in nature to what users would se-
+lect in a researching task, it models the problem
+of recovering Wikipedia anchor texts from partial
+selections.
+2.2 Human Computer Interaction
+There is a substantial amount of research in the
+HCI community on how to facilitate interaction
+of a user with touch and speech enabled devices.
+To give but a few examples of trends in this field,
+Gunawardana et al (2010) address the fat finger
+problem in the use of soft keyboards on mobile de-
+vices, Kumar et al (2012) explore a novel speech
+interaction paradigm for text entry, and Sakamoto
+et al (2013) introduce a technique that combines
+touch and voice input on a mobile device for im-
+proved navigation of user interface elements such
+as commands and controls. To the best of our
+knowledge, however, the problem of smart selec-
+tion as we defined it has not been addressed.
+2.3 Intent detection
+There is a long line of research in the web lit-
+erature on understanding user intent. The clos-
+est to smart selection is query recommendation
+(Baeza-Yates et al, 2005; Zhang and Nasraoui,
+2006; Boldi et al, 2008), where the goal is to sug-
+gest queries that may be related to a user?s intent.
+Query recommendation techniques are based ei-
+ther on clustering queries by their co-clicked URL
+patterns (Baeza-Yates et al, 2005) or on leverag-
+ing co-occurrences of sequential queries in web
+1525
+search sessions (Zhang and Nasraoui, 2006; Boldi
+et al, 2008; Sadikov et al, 2010). The key dif-
+ference from smart selection is that in our task the
+output is a selection that is relevant to the context
+of the document where the original selection ap-
+pears (e.g., by adding terms neighboring the selec-
+tion). In query recommendation, however, there is
+no notion of a document being read by the user
+and, instead, the recommendations are based ex-
+clusively on the aggregation of behavior of multi-
+ple users.
+3 Problem Setting and Data
+3.1 Smart Selection Definition
+Let D be the set of all documents. We define a
+selection to be a character ?offset, length?-tuple in
+a document d ? D. Let S be the set of all possible
+selections in D and let S
+d
+be the set of all possible
+selections in d.
+We define a scored smart selection, ?, in a doc-
+ument d, as a pair ? = ?x, y? where x ? S
+d
+is a
+selection and y ? R
++
+is a score for the selection.
+We formally define the smart selection function
+? as producing a ranked scored list of all possi-
+ble selections from a document and user selection
+pair
+2
+:
+? : D? S? (?
+1
+, ..., ?
+|S
+d
+|
+| x
+i
+? S
+d
+, y
+i
+? y
+i+1
+)
+(1)
+Consider a user who selects s in a document d.
+Let ? be the target selection that best captures what
+the user intended to select. We define the smart
+selection task as recovering ? given the pair ?d, s?.
+Our problem then is to learn a function ? that best
+recovers the target selection from any user selec-
+tion.
+Note that even for a human, reconstructing an
+intended selection from a single word selection is
+not trivial. While there are some fairly clear cut
+cases such as expanding the selection ?Obama?
+to Barack Obama in the sentence ?While in
+DC, Barack Obama met with...?, there are cases
+where the user intention depends on extrinsic fac-
+tors such as the user?s interests. For example, in
+a phrase ?University of California at Santa Cruz?
+with a selection ?California?, some (albeit proba-
+bly few) users may indeed be interested in the state
+of California, others in the University
+2
+The output consists of a ranked list of selections instead
+of a single selection to allow experiences such as proposing
+an n-best list to the user.
+of California system of universities, and
+yet others specifically in the University of
+California at Santa Cruz. In the next
+section, we describe how we obtained a dataset of
+true intended user selections.
+3.2 Data
+In order to obtain a representative dataset for the
+smart selection task, we focus on a real-world ap-
+plication of users interacting with a touch-enabled
+e-reader device. In this application, a user is read-
+ing a book and chooses phrases for which she
+would like to get information from resources such
+as a dictionary, Wikipedia, or web search. Yet, be-
+cause of the touch interface, she may only touch
+on a single word.
+3.2.1 Crowdsourced Intended Selections
+We obtain the intended selections through the fol-
+lowing crowdsourcing exercise. We use the en-
+tire collection of textbooks in English from Wik-
+ibooks
+3
+, a repository of publicly available text-
+books. The corpus consists of 2,696 textbooks that
+span a large variety of categories such as Comput-
+ing, Humanities, Science, etc. We first produce
+a uniform random sample of 100 books, and then
+sample one paragraph from each book. The result-
+ing set of 100 paragraphs is then sent to the crowd-
+sourcing system. Each paragraph is evaluated by
+100 judges, using a pool of 152 judges. For each
+paragraph, we request the judges to select com-
+plete phrases for which they would like to ?learn
+more in resources such as Wikipedia, search en-
+gines and dictionaries?, i.e., our true user intended
+selections. As a result of this exercise, we obtain
+13,681 judgments, corresponding to 4,067 unique
+intended selections. The distribution of number of
+unique judges who selected each unique intended
+selection, in a log-log scale, is shown in Figure
+1. Notice that this is a Zipfian distribution since it
+follows a linear trend in the log-log scale.
+Intuitively, the likelihood that a phrase is of
+interest to a user correlates with the number of
+judges who select that phrase. We thus use the
+number of judges who selected each phrase as a
+proxy for the likelihood that the phrase will be
+chosen by users.
+The resulting dataset consists of 4,067 ?d, ??-
+pairs where d is a Wikibook document paragraph
+and ? is an intended selection, along with the num-
+ber of judges who selected it. We further assigned
+3
+Available at http://wikibooks.org.
+1526
+0
+2
+4
+6
+8
+10
+12
+0 1 2 3 4 5 6
+LOG 2(
+Uniqu
+e inte
+nded 
+select
+ions)
+LOG2(Unique judges that selected the intended selection)
+Figure 1: Zipfian distribution of unique intended
+selections vs. the number of judges who selected
+them, in log-log scale.
+each pair to one of five randomly chosen folds,
+which are used for cross-validation experiments.
+3.2.2 Testset Construction
+We define a test case as a triple ?d, s, ?? where
+s is a simulated user selection. For each ?d, ??-
+pair in our dataset we construct n correspond-
+ing test cases by simulating the user selections
+{?d, ?, s
+1
+?, . . . , ?d, ?, s
+n
+?}where s
+1
+, . . . , s
+n
+corre-
+spond to the individual words in ? . In other words,
+each word in ? is considered as a candidate user
+selection.
+We discard all target selections that only a sin-
+gle judge annotated since we observed that these
+mostly contained errors and noise, such as full sen-
+tences or nonsensical long sentence fragments.
+Our first testset, labeled T
+ALL
+, is the resulting
+traffic-weighted multiset. That is, each test case
+?d, s, ?? appears k times, where k is the number
+of judges who selected ? in d. T
+ALL
+consists of
+33,913 test cases.
+We further utilize the distribution of judgments
+in the creation of three other testsets. Following
+the stratified sampling methodology commonly
+employed in the IR community, we construct
+testsets for the frequently, less frequently, and
+rarely annotated intended selections, which we
+call HEAD, TORSO, and TAIL, respectively. We
+obtain these testsets by first sorting each unique
+selection according to their frequency of occur-
+rence, and then partitioning the set so that HEAD
+corresponds to the elements at the top of the list
+that account for 20% of the judgments; TAIL cor-
+responds to the elements at the bottom also ac-
+counting for 20% of the judgments; and TORSO
+corresponds to the remaining elements. The re-
+sulting test sets, T
+HEAD
+, T
+TORSO
+, T
+TAIL
+consist of
+114, 2115, and 5798 test cases, respectively
+4
+.
+Test sets along with fold assignments
+and annotation guidelines are avail-
+able at http://research.microsoft.com/en-
+us/downloads/eb42522c-068e-404c-b63f-
+cf632bd27344/.
+3.3 Discussion
+Our focus on single word selections is motivated
+by the touchscreen scenario presented in Sec-
+tion 1. Although our touch simulation assumes
+that each word in a target selection is equally likely
+to be selected by a user, in fact we expect this dis-
+tribution to be non-uniform. For example, users
+may tend to select the first or last word more fre-
+quently than words in the middle of the target se-
+lection. Or perhaps users tend to select nouns and
+verbs more frequently than function words. We
+consider this out of scope for our paper, but view it
+as an important avenue of future investigation. Fi-
+nally, for non-touchscreen environments, such as
+the desktop case, it would also be interesting to
+study the problem on multi-word user selections.
+To get an idea of the kind of intended selections
+that comprise our dataset, we broke them down ac-
+cording to whether they referred to named entities
+or not. Perhaps surprisingly, the fraction of named
+entities in the dataset is quite low, 24.3%
+5
+. The
+rest of the intended selections mostly correspond
+to concepts and topics such as embouchure forma-
+tion, vocal fold relaxation, NHS voucher values,
+time-domain graphs, etc.
+4 Model
+As argued in Section 1, existing techniques,
+such as NER taggers, chunkers, Knowledge Base
+lookup, etc., are geared towards aspects of the
+task (i.e., NEs, concepts, KB entries), but not the
+task as a whole. We can, however, combine the
+outputs of these systems with a learned ?meta-
+model?. The meta-model ranks the combined can-
+didates according to a criterion that is derived from
+data that resembles real usage of smart selection
+as closely as possible. This technique is known
+4
+We stress that T
+ALL
+is a multi-set, reflecting the over-
+all expected user traffic from our 100 judges per paragraph.
+T
+HEAD
+, T
+TORSO
+, T
+TAIL
+, in contrast, are not multi-sets since
+judgment frequency is already accounted for in the stratifi-
+cation process, as commonly done in the IR community.
+5
+Becker et al (2012) report a similar finding, showing that
+only 26% of questions, which a user might ask after reading
+a Wikipedia article, are focused on named entities.
+1527
+in the machine learning community as ensemble
+learning (Dietterich, 1997).
+Our ensemble approach, described in this sec-
+tion, serves as our main implementation of the
+smart selection function ? of Equation 1. Each of
+the ensemble members are themselves a separate
+implementation of ? and will be used as a point
+of comparison in our experiments. Below, we de-
+scribe the ensemble members before turning to the
+ensemble learner.
+4.1 Ensemble Members
+4.1.1 Hyperlink Intent Model
+The Hyperlink Intent Model (HIM), which lever-
+ages web graph information, is a machine-learned
+system based on the intuition that anchor texts in
+Wikipedia are good representations of what users
+might want to learn about. We build upon the fact
+that Wikipedia editors write anchor texts for enti-
+ties, concepts, and things of potential interest for
+follow-up to other content. HIM learns to recover
+anchor texts from their single word subselections.
+Specifically, HIM iteratively decides whether to
+expand the current selection (initially a single
+word) one word to the left or right via greedy bi-
+nary decisions, until a stopping condition is met.
+At each step, two binary classifiers are consulted.
+The first one scores the left expansion decision
+and the second one scores the right expansion de-
+cision. In addition, we use the same two classi-
+fiers to evaluate the expansion decision ?from the
+outside in?, i.e., from the word next to the current
+selection (left and right, respectively) to the clos-
+est word in the current selection. If the probabil-
+ity for expansion of any model exceeds a prede-
+fined threshold, then the most probable expansion
+is chosen and we continue the iteration with the
+newly expanded selection as input. The algorithm
+is illustrated in Figure 2.
+We automatically create our training set for HIM
+by first taking a random sample of 8K Wikipedia
+anchor texts. We treat each anchor text as an in-
+tended selection, and each word in the anchor text
+as a simulated user selection. For each word to the
+left (or the right) of the user selection that is part
+of the anchor text, we create a positive training ex-
+ample. Similarly, for each word to the left (or the
+right) that is outside of the anchor text, we create a
+negative training example. We include additional
+negative examples using random word selections
+from Wikipedia content. For this purpose we sam-
+Left Context Right Context
+Current selection Candidate RightSelectedWord 2
+Candidate Left SelectedWord 1
+Context 1Context 2
+Context 4 Context 3
+Figure 2: Hyperlink Intent Model (HIM) decoding
+flow for smart selection.
+ple random words that are not part of an anchor
+text. Our final data consists of 2.6M data points,
+with a 1:20 ratio of positive to negative examples
+6
+.
+We use logistic regression as the classification
+algorithm for our binary classifiers. The fea-
+tures used by each model are computed over three
+strings: the current selection s (initially the single-
+word simulated user selection), the candidate ex-
+pansion word w, and one word over from the
+right or left of s. The features fall into five fea-
+ture families: (1) character-level features, includ-
+ing capitalization, all-cap formatting, character
+length, presence of opening/closing parentheses,
+presence and position of digits and non-alphabetic
+characters, and minimum and average character
+uni/bi/trigram frequencies (based on frequency ta-
+bles computed offline from Wikipedia article con-
+tent); (2) stopword features, which indicate the
+presence of a stop word (from a stop word list);
+(3) tf.idf scores precomputed from Wikipedia con-
+tent statistics; (4) knowledge base features, which
+indicate whether a string matches an item or a sub-
+string of an item in the knowledge base described
+in Section 4.1.2 below; and (5) lexical features,
+which capture the actual string of the current se-
+lection and the candidate expansion word.
+4.1.2 Unit Spotting
+Our second qualitative class of ensemble members
+use notions of unit that are either based on linguis-
+tic constituency or knowledge base presence. The
+general process is that any unit that subsumes the
+user selection is treated as a smart selection can-
+didate. Scoring of candidates is by normalized
+length, under the assumption that in general the
+most specific (longest) unit is more likely to be the
+intended selection.
+6
+Note that this training set is generated automatically and
+is, by design, of a different nature than the manually labeled
+data we use to train and test the ensemble model.
+1528
+Our first unit spotter, labeled NER is geared
+towards recognizing named entities. We use
+a commercial and proprietary state-of-the-art
+NER system, trained using the perceptron algo-
+rithm (Collins, 2002) over more than a million
+hand-annotated labels.
+Our second approach uses purely syntactic in-
+formation and treats noun phrases as units. We la-
+bel this model as NP. For this purpose we parse the
+sentence containing the user selection with a syn-
+tactic parser following (Ratnaparkhi, 1999). We
+then treat every noun phrase that subsumes the
+user selection as a candidate smart selection.
+Finally, our third unit spotter, labeled KB, is
+based on the assumption that concepts and other
+entries in a knowledge base are, by nature, things
+that can be of interest to people. For our knowl-
+edge base lookup, we use a proprietary graph con-
+sisting of knowledge from Wikipedia, Freebase,
+and paid feeds from various providers from do-
+mains such as entertainment, local, and finance.
+4.1.3 Heuristics
+Our third family of ensemble members imple-
+ments simple heuristics, which tend to be high pre-
+cision especially in the HEAD of our data.
+The first heuristic, representing the current
+touch-enabled selection paradigm seen in many of
+today?s tablets and smartphones, is labeled CUR. It
+simply assumes that the intended selection is al-
+ways the user-selected word.
+The second is a capitalization-based heuristic
+(CAP), which simply expands every selected capi-
+talized word selection to the longest uninterrupted
+sequence of capitalized words.
+4.2 Ensemble Learning
+In this section, we describe how we train our meta-
+learner, labeled ENS, which takes as input the can-
+didate lists produced by the ensemble members
+from Section 4.1, and scores each candidate, pro-
+ducing a final scored ranked list.
+We use logistic regression as a classification al-
+gorithm to address this task. Our 22 features in
+ENS consist of three main classes: (1) features
+related to the individual ensemble members; (2)
+features related to the user selection; and (3) fea-
+tures related to the candidate smart selection. For
+(1), the features consist of whether a particular
+ensemble member generated the candidate smart
+selection and its score for that candidate. If the
+candidate smart selection is not in the candidate
+list of an ensemble member, its score is set to
+zero. For both (2) and (3), features account for
+length and capitalization properties of the user se-
+lection and the candidate smart selection (e.g., to-
+ken length, ratio of capitalized tokens, ratio of cap-
+italized characters, whether or not the first and last
+tokens are capitalized.)
+Although training data for the HIM model was
+automatically generated from Wikipedia, for ENS
+we desire training data that reflects the true ex-
+pected user experience. For this, we use five-
+fold cross-validation over our data collection de-
+scribed in Section 3.2. That is, to decode a fold
+with our meta-learner, we train ENS with the other
+four folds. Note that every candidate selection for
+a ?document, user selection?-pair, ?d, s?, for the
+same d and s, are assigned to a single fold, hence
+the training process does not see any user selection
+from the test set.
+5 Experimental Results
+5.1 Experimental Setup
+Recall our testsets T
+ALL
+, T
+HEAD
+, T
+TORSO
+, and T
+TAIL
+from Section 3.2.2, where a test case is defined as
+a triple ?d, s, ??, and where d is a document, s is a
+user selection, and ? is the intended user selection.
+In this section, we describe our evaluation metric
+and summarize the system configurations that we
+evaluate.
+5.1.1 Metric
+In our evaluation, we apply the smart selection
+function ?(d, s) (see Eq. 1) to each test case and
+measure how well it recovers ? .
+Let A be the set of ?d, ??-pairs from our dataset
+described in Section 3.2.1 that corresponds to a
+testset T. Let T
+?d,??
+be the set of all test cases
+in T with a fixed d and ? . We define the macro
+precision of a smart selection function, P
+?
+, as fol-
+lows:
+P
+?
+=
+1
+| A |
+?
+?d,???A
+P
+?
+(d, ?) (2)
+P
+?
+(d, ?) =
+1
+| T
+?d,??
+|
+?
+?d,s,???T
+?d,??
+P
+?
+(d, s, ?)
+P
+?
+(d, s, ?) =
+1
+| ?(d, s) |
+?
+???(d,s)
+I(?, ?)
+I(?, ?) =
+{
+1 if ? = ?x, y? ? x = ?
+0 otherwise
+1529
+CP@1 CP@2 CP@3 CP@4 CP@5
+CUR 39.3 - - - -
+CAP 48.9 51.0 51.2 51.8 51.8
+NER 43.5 - - - -
+NP 34.1 50.2 55.5 57.1 57.6
+KB 50.2 50.8 50.9 50.9 50.9
+HIM 48.1 48.8 48.8 48.8 48.8
+ENS 56.8
+?
+76.0
+?
+82.6
+?
+85.2
+?
+86.6
+?
+Table 1: Smart selection performance, as a func-
+tion of CP, on T
+ALL
+.
+?
+and
+?
+indicate statistical
+significance with p = 0.01 and 0.05, respectively.
+An oracle ensemble would achieve an upper bound
+CP of 87.3%.
+We report cumulative macro precision at
+rank (CP@k) in our experiments since our
+testsets contain a single true user-intended
+selection for each test case
+7
+. However,
+this is an overly conservative metric since
+in many cases an alternative smart selection
+might equally please the user. For example,
+if our testset contains a user intended selec-
+tion ? = The University of Southern
+California, then given the simulated selec-
+tion ?California?, both ? and University of
+Southern California would most likely
+equally satisfy the user intent (whereas the latter
+would be considered incorrect in our evaluation).
+In fact, the ideal testset would further evaluate the
+distance or relevance of the smart selection to the
+intended user selection. We would then find per-
+haps that Southern California is a more
+reasonable smart selection than of Southern
+California. However, precisely defining such
+a relevance function and designing the guidelines
+for a user study is non-trivial and left for future
+work.
+5.1.2 Systems
+In our experiments, we evaluate the follow-
+ing systems, each described in detail in Sec-
+tion 4: Passthrough (CUR), Capitalization (CAP),
+Named-Entity Recognizer (NER), Noun Phrase
+(NP), Knowledge Base (KB), Hyperlink Intent
+Model (HIM), Ensemble (ENS).
+5.2 Results
+Table 1 reports the smart selection performance on
+the full traffic weighted testset T
+ALL
+, as a func-
+7
+Because there is only a single true intended selection for
+each test case, Recall@k = CP@k.
+tion of CP@k. Our ensemble approach recovers
+the true user-intended selection in 56.8% of the
+cases. In its top-2 and top-3 ranked smart selec-
+tions, the true user-intended selection is retrieved
+76.0% and 82.6% of the time, respectively. In po-
+sition 1, ENS significantly outperforms all other
+systems with 95% confidence. Moreover, we no-
+tice that the divergence between ENS and the other
+systems greatly increases for K ? 2, where the
+significance is now at the 99% level.
+The CUR system models the selection paradigm
+of today?s consumer touch-enabled devices (i.e., it
+assumes that the intented selection is always the
+touched word). Without changing the user inter-
+face, we report a 45% improvement in predicting
+what the user intended to select over this baseline.
+If we changed the user interface to allow two or
+three options to be displayed to the user, then we
+would improve by 93% and 110%, respectively.
+For CUR and NER, we report results only at
+K = 1 since these systems only ever return a sin-
+gle smart selection. Note also that when no named
+entity is found by NER, or no noun phrase is found
+by NP or no knowledge base entry is found by KB,
+the corresponding systems return the original user
+selection as their smart selection.
+CAP does not vary much across K: when the
+intended selection is a capitalized multi-word, the
+longest string tends to be the intended selection.
+The same holds for KB.
+Whereas Table 1 reports the aggregate expected
+traffic performance, we further explore the per-
+formance against the stratified T
+HEAD
+, T
+TORSO
+, and
+T
+TAIL
+testsets. The results are summarized in Ta-
+ble 2. As outlined in Section 3.2, the HEAD se-
+lections tend to be disproportionately entities and
+capitalized terms when compared to the TORSO
+and TAIL. Hence CAP, NER and KB perform much
+better on the HEAD. In fact, on the HEAD, CAP per-
+forms statistically as well as the ENS model. This
+means that at position 1, for systems that need to
+focus only on the HEAD, a very simple solution is
+adequate. For TORSO and TAIL, however, ENS
+performs better. At positions 2 and 3, across all
+strata, the ENS model significantly outperforms all
+other systems (with 99% confidence).
+Next, we studied the relative contribution of
+each ensemble member to the ENS model. Fig-
+ure 3 illustrates the results of the ablation study.
+The ensemble member that results in the biggest
+performance drop when removed is HIM. Perhaps
+1530
+HEAD TORSO TAIL
+CP@1 CP@2 CP@3 CP@1 CP@2 CP@3 CP@1 CP@2 CP@3
+CUR 48.5 - - 36.7 - - 26.6 - -
+CAP 74.2 74.7 74.8 43.0 45.0 45.1 26.1 27.4 28.2
+NER 60.6 - - 39.2 - - 26.7 - -
+NP 52.3 64.9 69.4 31.0 48.2 53.8 20.0 32.2 35.7
+KB 66.7 66.7 66.7 47.0 47.9 48.1 29.9 30.1 30.1
+HIM 64.4 65.7 65.7 44.7 45.2 45.4 27.9 28.2 28.2
+ENS 75.8 91.8
+?
+96.5
+?
+52.7
+?
+73.7
+?
+81.5
+?
+32.4
+?
+50.7
+?
+58.5
+?
+Table 2: Smart selection performance, as a function of CP, on the T
+HEAD
+, T
+TORSO
+, and T
+TAIL
+testsets.
+?
+and
+?
+indicate statistical significance with p = 0.01 and 0.05, respectively. An oracle ensemble would
+achieve an upper bound CP of 98.5%, 86.8% and 64.8% for T
+HEAD
+, T
+TORSO
+, and T
+TAIL
+, respectively.
+0.7
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+S mart Selection Cumulative Precision @ Rank (ALL)
+Ensemble Member Ablation
+E NS
+-H IM
+-KB
+-NE R
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+1 2 3 4 5
+Cumul
+ative
+ Preci
+sion
+Rank
+Smart Selection Cumulative Precision @ Rank (ALL)
+Ensemble Member Ablation
+ENS
+- HIM
+- KB
+- NE R
+- NP
+Figure 3: Ablation of ensemble model members
+over T
+ALL
+. Each consecutive model removes one
+member specified in the series name.
+surprisingly, a first ablation of either the CAP or
+KB model, two of the better individual performing
+models from Table 1, leads to an ablated-ENS per-
+formance that is nearly identical to the full ENS
+model. One possible reason is that both tend to
+generate similar candidates (i.e., many entities in
+our KB are capitalized). Although the HIM model
+as a standalone system does not outperform sim-
+ple linguistic unit selection models, it appears to
+be the most important contributor to the overall
+ensemble.
+5.3 Error Analysis: Oracle Ensemble
+We begin by assessing an upper bound for our en-
+semble, i.e., an oracle ensemble, by assuming that
+if a correct candidate is generated by any ensem-
+ble member, the oracle ensemble model places it
+in first position. For T
+ALL
+the oracle performance
+is 87.3%. In other words, our choice of ensemble
+members was able to recover a correct smart se-
+lection as a candidate in 87.3% of the user study
+cases. For T
+HEAD
+, T
+TORSO
+, and T
+TAIL
+, the oracle
+performance is 98.5%, 86.8%, and 64.8%, respec-
+tively.
+Although our ENS model?s CP@3 is within 2-6
+points of the oracle, there is room to significantly
+improve our CP@1, see Table 1 and Table 2. We
+analyze this opportunity by inspecting a random
+sample of 200 test cases where ENS produced an
+incorrect smart selection in position 1. The break-
+down of these cases is: 1 case from T
+HEAD
+; 50
+cases from T
+TORSO
+; 149 cases from T
+TAIL
+, i.e.,
+most errors occur in the TAIL.
+For 146 of these cases (73%), not a single en-
+semble member produced the correct target selec-
+tion ? as a candidate. We analyze these cases in
+detail in Section 5.4. Of the remaining cases, 25,
+10, 9, 4, 4, and 2 were correct in positions 2, 3, 4,
+5, 6, 7, respectively. Table 3 lists some examples.
+In 18 cases (33%), the result in position 1 is
+very reasonable given the context and user selec-
+tion (see lines 1-4 in Table 3 for examples). Often
+the target selection was also found in second po-
+sition. These cases highlight the need for a more
+relaxed, relevance-based user study, as pointed out
+at the end of Section 5.1.1.
+We attributed 7 (13%) of the cases to data prob-
+lems: some cases had a punctuation as a sole char-
+acter user selection, some had a mishandled es-
+caped quotation character, and some had a UTF-8
+encoding error.
+The remaining 29 (54%) were truly model er-
+rors. Some examples are shown in lines 5-8 in Ta-
+ble 3. We found three categories of errors here.
+First, our model has learned a strong prior on pre-
+ferring the original user selection (see example
+line 5). From a user experience point of view,
+when the model is unsure of itself, it is in fact
+better not to alter her selection. Second, we also
+learned a strong capitalization prior, i.e., to trust
+the CAP member (see example line 6). Finally, we
+noticed that we have difficulty handling user selec-
+tions consisting of a stopword (we noted determin-
+ers, prepositions, and the word ?and?). Adding a
+few simple features to ENS based on a stopwords
+list or a list of closed-class words should address
+this problem.
+1531
+Text Snippet User Selection ENS 1st Result
+1 ?The Russian conquest of the South Caucasus in the 19th century split the
+speech community across two states...?
+Caucasus South Caucasus
+2 ?...are generally something that transportation agencies would like to mini-
+mize...?
+transportation transportation agencies
+3 ?The vocal organ of birds, the syrinx, is located at the base of the blackbird?s
+trachea.?
+vocal vocal organ
+4 ?An example of this may be an idealised waveform like a square wave...? waveform idealised waveform
+5 ?Tickets may be purchased from either the ticket counter or from automatic
+machines...?
+counter counter
+6 ?PBXT features include the following: MVCC Support: MVCC stands for
+Multi-version Concurrency Control.?
+MVCC MVCC Support
+7 ?Centers for song production pathways include the High vocal center; ro-
+bust nucleus of archistriatum (RA); and the tracheosyringeal part of the hy-
+poglossal nucleus...?
+robust robust nucleus
+8 ?...and get an 11gR2 RAC cluster database running inside virtual ma-
+chines...?
+cluster RAC cluster
+Table 3: Position 1 errors when applying ENS to our test cases. The text snippet is a substring of a
+paragraph presented to our judges with the target selection (? ) indicated in bold.
+5.4 Error Analysis: Ensemble Members
+Over all test cases, the distribution of cases with-
+out a correct candidate generated by an ensem-
+ble member in the HEAD, TORSO, TAIL is 0.3%,
+34.6%, and 65.1%, respectively. We manually in-
+spected a random sample of 100 such test cases.
+The majority of them, 83%, were large sentence
+fragments, which we consider out of scope ac-
+cording to our prediction task definition outlined
+in Section 1. The average token length of the tar-
+get selection ? for these was 15.3. In compari-
+son, we estimate the average token length of the
+task-admissable cases to be 2.7 tokens. Although
+most of these long fragment selections seem to
+be noise, a few cases are statements that a user
+would reasonably want to know more about, such
+as: (i) ?Talks of a merger between the NHL and
+the WHA were growing? or (ii) ?NaN + NaN *
+1.0i?.
+In 10% of the cases, we face a punctuation-
+handling issue, and in each case our ensemble was
+able to generate a correct candidate when fixing
+the punctuation. For example, for the book title
+? = What is life?, our ensemble found the
+candidate What is life, dropping the ques-
+tion mark. For ? = Near Earth Asteroid.
+our ensemble found Near Earth Asteroid,
+dropping the period. Similar problems occurred
+with parentheses and quotation marks.
+In two cases, our ensemble members dropped
+a leading ?the? token, e.g., for ? = the Hume
+Highway, we found Hume Highway.
+Finally, 2 cases were UTF-8 encoding mistakes,
+leaving five ?true error? cases.
+6 Conclusion and Future Work
+We introduced a new paradigm, smart selection,
+to address the cumbersome text selection capabil-
+ities of today?s touch-enabled mobile devices. We
+report 45% improvement in predicting what the
+user intended to select over current touch-enabled
+consumer platforms, such as iOS, Android and
+Windows. We release to the community a dataset
+of 33, 912 crowdsourced true intended user selec-
+tions and corresponding simulated user touches.
+There are many avenues for future work, includ-
+ing understanding the distribution of user touches
+on their intended selection, other interesting sce-
+narios (e.g., going beyond the e-reader towards
+document editors and web browsers may show dif-
+ferent distributions in what users select), leverag-
+ing other sources of signal such as a user?s profile,
+her interests and her local session context, and ex-
+ploring user interfaces that leverage n-best smart
+selection prediction lists, for example by provid-
+ing selection options to the user after her touch.
+With the release of our 33, 912-crowdsourced
+dataset and our model analyses, it is our hope that
+the research community can help accelerate the
+progress towards reinventing the way text selec-
+tion occurs today, the initial steps for which we
+have taken in this paper.
+7 Acknowledgments
+The authors thank Aitao Chen for sharing his
+NER tagger for our experiments, and Bernhard
+Kohlmeier, Pradeep Chilakamarri, Ashok Chan-
+dra, David Hamilton, and Bo Zhao for their guid-
+ance and valuable discussions.
+1532
+References
+Steven. P. Abney. 1991. Parsing by chunks. In
+Robert C. Berwick, Steven P. Abney, and Carol
+Tenny, editors, Principle-Based Parsing: Computa-
+tion and Psycholinguistics, pages 257?278. Kluwer,
+Dordrecht.
+Ricardo Baeza-Yates, Carlos Hurtado, and Marcelo
+Mendoza. 2005. Query recommendation using
+query logs in search engines. In Current Trends
+in Database Technology-EDBT 2004 Workshops,
+pages 588?596. Springer.
+Lee Becker, Sumit Basu, and Lucy Vanderwende.
+2012. Mind the gap: Learning to choose gaps for
+question generation. In Proceedings of NAACL HLT
+?12, pages 742?751.
+Paolo Boldi, Francesco Bonchi, Carlos Castillo, Deb-
+ora Donato, Aristides Gionis, and Sebastiano Vigna.
+2008. The query-flow graph: model and applica-
+tions. In Proceedings of CIKM ?08, pages 609?618.
+ACM.
+Nancy A. Chinchor. 1998. Named entity task defini-
+tion. In Proceedings of the Seventh Message Under-
+standing Conference (MUC-7), Fairfax, VA.
+Michael Collins. 2002. Discriminative training meth-
+ods for hidden markov models: theory and experi-
+ments with perceptron algorithms. In Proceedings
+of EMNLP.
+Thomas G. Dietterich. 1997. Machine Learning Re-
+search - Four Current Directions. AI Magazine,
+18:4:97?136.
+Jenny Rose Finkel, Trond Grenager, and Christopher
+Manning. 2005. Incorporating non-local informa-
+tion into information extraction systems by gibbs
+sampling. In In ACL, pages 363?370.
+Asela Gunawardana, Tim Paek, and Christopher Meek.
+2010. Usability guided key-target resizing for soft
+keyboards. In Proceedings of IUI ?10, pages 111?
+118.
+Taku Kudo and Yuji Matsumoto. 2001. Chunking with
+support vector machines. In Proceedings of NAACL
+?01, pages 1?8.
+Anuj Kumar, Tim Paek, and Bongshin Lee. 2012.
+Voice typing: A new speech interaction model for
+dictation on touchscreen devices. In Proceedings of
+CHI?12, pages 2277?2286.
+Marcia Mu?noz, Vasin Punyakanok, Dan Roth, and Dav
+Zimak. 1999. A learning approach to shallow pars-
+ing. In Proceedings of EMNLP/VLC, pages 168?
+178.
+Lance A. Ramshaw and Mitchell P. Marcus. 1995.
+Text chunking using transformation-based learning.
+In Proceedings of the 3rd ACL Workshop on Very
+Large Corpora, pages 82?94. Cambridge MA, USA.
+Lev Ratinov and Dan Roth. 2009. Design challenges
+and misconceptions in named entity recognition. In
+Proceedings of CoNLL-2009, pages 147?155.
+Adwait Ratnaparkhi. 1999. Learning to parse natu-
+ral language with maximum entropy models. Mach.
+Learn., 34(1-3):151?175, February.
+Eldar Sadikov, Jayant Madhavan, Lu Wang, and Alon
+Halevy. 2010. Clustering query refinements by user
+intent. In Proceedings of the 19th international con-
+ference on World wide web, pages 841?850. ACM.
+Daisuke Sakamoto, Takanori Komatsu, and Takeo
+Igarashi. 2013. Voice augmented manipulation: us-
+ing paralinguistic information to manipulate mobile
+devices. In Mobile HCI, pages 69?78.
+Erik F. Tjong Kim Sang and Fien De Meulder.
+2003. Introduction to the conll-2003 shared task:
+Language-independent named entity recognition. In
+Proceedings of CoNLL-2003, pages 142?147. Ed-
+monton, Canada.
+Zhiyong Zhang and Olfa Nasraoui. 2006. Mining
+search engine query logs for query recommendation.
+In Proceedings of the 15th international conference
+on World Wide Web, pages 1039?1040. ACM.
+1533

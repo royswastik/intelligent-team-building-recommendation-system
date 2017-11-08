@@ -1,0 +1,3099 @@
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 455?465, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Multi-instance Multi-label Learning for Relation Extraction
+Mihai Surdeanu?, Julie Tibshirani?, Ramesh Nallapati?, Christopher D. Manning?
+? Stanford University, Stanford, CA 94305
+{mihais,jtibs,manning}@stanford.edu
+? Artificial Intelligence Center, SRI International
+nallapat@ai.sri.com
+Abstract
+Distant supervision for relation extraction
+(RE) ? gathering training data by aligning a
+database of facts with text ? is an efficient ap-
+proach to scale RE to thousands of different
+relations. However, this introduces a challeng-
+ing learning scenario where the relation ex-
+pressed by a pair of entities found in a sen-
+tence is unknown. For example, a sentence
+containing Balzac and France may express
+BornIn or Died, an unknown relation, or no re-
+lation at all. Because of this, traditional super-
+vised learning, which assumes that each ex-
+ample is explicitly mapped to a label, is not
+appropriate. We propose a novel approach
+to multi-instance multi-label learning for RE,
+which jointly models all the instances of a pair
+of entities in text and all their labels using
+a graphical model with latent variables. Our
+model performs competitively on two difficult
+domains.
+1 Introduction
+Information extraction (IE), defined as the task of
+extracting structured information (e.g., events, bi-
+nary relations, etc.) from free text, has received re-
+newed interest in the ?big data? era, when petabytes
+of natural-language text containing thousands of dif-
+ferent structure types are readily available. How-
+ever, traditional supervised methods are unlikely to
+scale in this context, as training data is either lim-
+ited or nonexistent for most of these structures. One
+of the most promising approaches to IE that ad-
+dresses this limitation is distant supervision, which
+generates training data automatically by aligning a
+DB =
+(
+BornIn(Barack Obama,United States)
+EmployedBy(Barack Obama,United States)
+)
+Sentence Latent Label
+Barack Obama is the 44th and current President
+of the United States.
+EmployedBy
+Obama was born in the United States just as he
+has always said.
+BornIn
+United States President Barack Obama meets
+with Chinese Vice President Xi Jinping today.
+EmployedBy
+Obama ran for the United States Senate in 2004. ?
+Figure 1: Training sentences generated through distant
+supervision for a database containing two facts.
+database of facts with text (Craven and Kumlien,
+1999; Bunescu and Mooney, 2007).
+In this paper we focus on distant supervision for
+relation extraction (RE), a subproblem of IE that ad-
+dresses the extraction of labeled relations between
+two named entities. Figure 1 shows a simple exam-
+ple for a RE domain with two labels. Distant super-
+vision introduces two modeling challenges, which
+we highlight in the table. The first challenge is
+that some training examples obtained through this
+heuristic are not valid, e.g., the last sentence in Fig-
+ure 1 is not a correct example for any of the known
+labels for the tuple. The percentage of such false
+positives can be quite high. For example, Riedel
+et al2010) report up to 31% of false positives in
+a corpus that matches Freebase relations with New
+York Times articles. The second challenge is that
+the same pair of entities may have multiple labels
+and it is unclear which label is instantiated by any
+textual mention of the given tuple. For example, in
+Figure 1, the tuple (Barack Obama, United States)
+has two valid labels: BornIn and EmployedBy, each
+(latently) instantiated in different sentences. In the
+455
+instance
+...
+instance
+label
+instance
+label
+...
+object
+Figure 2: Overview of multi-instance multi-label learn-
+ing. To contrast, in traditional supervised learning there
+is one instance and one label per object. For relation ex-
+traction the object is a tuple of two named entities. Each
+mention of this tuple in text generates a different instance.
+Riedel corpus, 7.5% of the entity tuples in the train-
+ing partition have more than one label.
+We summarize this multi-instance multi-label
+(MIML) learning problem in Figure 2. In this pa-
+per we propose a novel graphical model, which we
+called MIML-RE, that targets MIML learning for re-
+lation extraction. Our work makes the following
+contributions:
+(a) To our knowledge, MIML-RE is the first RE ap-
+proach that jointly models both multiple instances
+(by modeling the latent labels assigned to instances)
+and multiple labels (by providing a simple method to
+capture dependencies between labels). For example,
+our model learns that certain labels tend to be gener-
+ated jointly while others cannot be jointly assigned
+to the same tuple.
+(b) We show that MIML-RE performs competitively
+on two difficult domains.
+2 Related Work
+Distant supervision for IE was introduced by Craven
+and Kumlien (1999), who focused on the ex-
+traction of binary relations between proteins and
+cells/tissues/diseases/drugs using the Yeast Protein
+Database as a source of distant supervision. Since
+then, the approach grew in popularity (Bunescu and
+Mooney, 2007; Bellare and McCallum, 2007; Wu
+and Weld, 2007; Mintz et al2009; Riedel et al
+2010; Hoffmann et al2011; Nguyen and Moschitti,
+2011; Sun et al2011; Surdeanu et al2011a).
+However, most of these approaches make one or
+more approximations in learning. For example,
+most proposals heuristically transform distant super-
+vision to traditional supervised learning (i.e., single-
+instance single-label) (Bellare and McCallum, 2007;
+Wu and Weld, 2007; Mintz et al2009; Nguyen
+and Moschitti, 2011; Sun et al2011; Surdeanu
+et al2011a). Bunescu and Mooney (2007) and
+Riedel et al2010) model distant supervision for
+relation extraction as a multi-instance single-label
+problem, which allows multiple mentions for the
+same tuple but disallows more than one label per ob-
+ject. Our work is closest to Hoffmann et al2011).
+They address the same problem we do (binary rela-
+tion extraction) with a MIML model, but they make
+two approximations. First, they use a deterministic
+model that aggregates latent instance labels into a
+set of labels for the corresponding tuple by OR-ing
+the classification results. We use instead an object-
+level classifier that is trained jointly with the clas-
+sifier that assigns latent labels to instances and can
+capture dependencies between labels. Second, they
+use a Perceptron-style additive parameter update ap-
+proach, whereas we train in a Bayesian framework.
+We show in Section 5 that these approximations gen-
+erally have a negative impact on performance.
+MIML learning has been used in fields other than
+natural language processing. For example, Zhou
+and Zhang (2007) use MIML for scene classifica-
+tion. In this problem, each image may be assigned
+multiple labels corresponding to the different scenes
+captured. Furthermore, each image contains a set of
+patches, which forms the bag of instances assigned
+to the given object (image). Zhou and Zhang pro-
+pose two algorithms that reduce the MIML problem
+to a more traditional supervised learning task. In
+one algorithm, for example, they convert the task to
+a multi-instance single-label problem by creating a
+separate bag for each label. Due to this, the pro-
+posed approach cannot model inter-label dependen-
+cies. Moreover, the authors make a series of approx-
+imations, e.g., they assume that each instance in a
+bag shares the bag?s overall label. We instead model
+all these issues explicitly in our approach.
+In general, our approach belongs to the category
+of models that learn in the presence of incomplete or
+incorrect labels. There has been interest among ma-
+chine learning researchers in the general problem of
+noisy data, especially in the area of instance-based
+learning. Brodley and Friedl (1999) summarize
+past approaches and present a simple, all-purpose
+method to filter out incorrect data before training.
+While potentially applicable to our problem, this ap-
+proach is completely general and cannot incorporate
+our domain-specific knowledge about how the noisy
+456
+data is generated.
+3 Distant Supervision for Relation Extraction
+Here we focus on distant supervision for the ex-
+traction of relations between two entities. We de-
+fine a relation as the construct r(e1, e2), where r is
+the relation name, e.g., BornIn in Figure 1, and e1
+and e2 are two entity names, e.g., Barack Obama
+and United States. Note that there are entity tu-
+ples (e1, e2) that participate in multiple relations,
+r1, . . . , ri. In other words, the tuple (e1, e2) is the
+object illustrated in Figure 2 and the different rela-
+tion names are the labels. We define an entity men-
+tion as a sequence of text tokens that matches the
+corresponding entity name in some text, and relation
+mention (for a given relation r(e1, e2)) as a pair of
+entity mentions of e1 and e2 in the same sentence.
+Relation mentions thus correspond to the instances
+in Figure 2.1 As the latter definition indicates, we
+focus on the extraction of relations expressed in a
+single sentence. Furthermore, we assume that entity
+mentions are extracted by a different process, such
+as a named entity recognizer.
+We define the task of relation extraction as a func-
+tion that takes as input a document collection (C), a
+set of entity mentions extracted from C (E), a set of
+known relation labels (L) and an extraction model,
+and outputs a set of relations (R) such that any of the
+relations extracted is supported by at least one sen-
+tence in C. To train the extraction model, we use a
+database of relations (D) that are instantiated at least
+once in C. Using distant supervision, D is aligned
+with sentences in C, producing relation mentions for
+all relations in D.
+4 Model
+Our model assumes that each relation mention in-
+volving an entity pair has exactly one label, but al-
+lows the pair to exhibit multiple labels across differ-
+ent mentions. Since we do not know the actual re-
+lation label of a mention in the distantly supervised
+setting, we model it using a latent variable z that
+can take one of the k pre-specified relation labels
+as well as an additional NIL label, if no relation is
+expressed by the corresponding mention. We model
+the multiple relation labels an entity pair can assume
+1For this reason, we use relation mention and relation in-
+stance interchangeably in this paper.
+. . .
+. . . . . .
+. . .
+Figure 3: MIML model plate diagram. We unrolled the
+y plate to emphasize that it is a collection of binary clas-
+sifiers (one per relation label), whereas the z classifier is
+multi-class. Each z and yj classifier has an additional
+prior parameter, which is omitted here for clarity.
+using a multi-label classifier that takes as input the
+latent relation types of the all the mentions involving
+that pair. The two-layer hierarchical model is shown
+graphically in Figure 3, and is described more for-
+mally below. The model includes one multi-class
+classifier (for z) and a set of binary classifiers (for
+each yj). The z classifier assigns latent labels from
+L to individual relation mentions or NIL if no rela-
+tion is expressed by the mention. Each yj classifier
+decides if relation j holds for the given entity tu-
+ple, using the mention-level classifications as input.
+Specifically, in the figure:
+? n is the number of distinct entity tuples in D;
+? Mi is the set of mentions for the ith entity pair;
+? x is a sentence and z is the latent relation clas-
+sification for that sentence;
+? wz is the weight vector for the multi-class
+mention-level classifier;
+? k is the number of known relation labels in L;
+? yj is the top-level classification decision for the
+entity pair as to whether the jth relation holds;
+? wj is the weight vector for the binary top-level
+classifier for the jth relation.
+Additionally, we define Pi (Ni) as the set of all
+known positive (negative) relation labels for the ith
+entity tuple. In this paper, we construct Ni as L\Pi,
+but, in general, other scenarios are possible. For
+example, both Sun et al2011) and Surdeanu et
+457
+al. (2011a) proposed models where Ni for the ith tu-
+ple (e1, e2) is defined as: {rj | rj(e1, ek) ? D, ek 6=
+e2, rj /? Pi}, which is a subset of L\Pi. That is, en-
+tity e2 is considered a negative example for relation
+rj (in the context of entity e1) only if rj exists in the
+training data with a different value.
+The addition of the object-level layer (for y) is an
+important contribution of this work. This layer can
+capture information that cannot be modeled by the
+mention-level classifier. For example, it can learn
+that two relation labels (e.g., BornIn and SpouseOf)
+cannot be generated jointly for the same entity tu-
+ple. So, if the z classifier outputs both these la-
+bels for different mentions of the same tuple, the y
+layer can cancel one of them. Furthermore, the y
+classifiers can learn when two labels tend to appear
+jointly, e.g., CapitalOf and Contained between two
+locations, and use this occurrence as positive rein-
+forcement for these labels. We discuss the features
+that implement these ideas in Section 5.
+4.1 Training
+We train the proposed model using hard discrimina-
+tive Expectation Maximization (EM). In the Expec-
+tation (E) step we assign latent mention labels us-
+ing the current model (i.e., the mention and relation
+level classifiers). In the Maximization (M) step we
+retrain the model to maximize the log likelihood of
+the data using the current latent assignments.
+In the equations that follow, we refer to
+w1, . . . ,wk collectively as wy for compactness.
+The vector zi contains the latent mention-level clas-
+sifications for the ith entity pair, while yi represents
+the corresponding set of gold-standard labels (that
+is, y(r)i = 1 if r ? Pi, and y
+(r)
+i = 0 for r ? Ni.)
+Using these notations, the log-likelihood of the data
+is given by:
+LL(wy,wz) =
+n?
+i=1
+log p(yi|xi,wy,wz)
+=
+n?
+i=1
+log
+?
+zi
+p(yi, zi|xi,wy,wz)
+The joint probability in the inner summation can be
+broken up into simpler parts:
+p(yi, zi|xi,wy,wz)
+= p(zi|xi,wz)p(yi|zi,wy)
+=
+?
+m?Mi
+p(z(m)i |x
+(m)
+i ,wz)
+?
+r?Pi?Ni
+p(y(r)i |zi,w
+(r)
+y )
+where the last step follows from conditional inde-
+pendence. Thus the log-likelihood for this problem
+is not convex (it includes a sum of products). How-
+ever, we can still use EM, but the optimization fo-
+cuses on maximizing the lower bound of the log-
+likelihood, i.e., we maximize the above joint proba-
+bility for each entity pair in the database. Rewriting
+this probability in log space, we obtain:
+log p(yi, zi|xi,wy,wz) (1)
+=
+?
+m?Mi
+log p(z(m)i |x
+(m)
+i ,wz)+
+?
+r?Pi?Ni
+log p(y(r)i |zi,w
+(r)
+y )
+The algorithm proceeds as follows.
+E-step: In this step we infer the mention-level
+classifications zi for each entity tuple, given all its
+mentions, the gold labels yi, and current model, i.e.,
+wz and wy weights. Formally, we seek to find:
+zi
+? = argmax
+z
+p(z|yi,xi,wy,wz)
+However it is computationally intractable to con-
+sider all vectors z as there is an exponential num-
+ber of possible assignments, so we approximate and
+consider each mention separately. Concretely,
+p(z(m)i |yi,xi,wy,wz)
+? p(yi, z
+(m)
+i |xi,wy,wz)
+? p(z(m)i |x
+(m)
+i ,wz)p(yi|z
+?
+i,wy)
+= p(z(m)i |x
+(m)
+i ,wz)
+?
+r?Pi?Ni
+p(y(r)i |z
+?
+i,w
+(r)
+y )
+where z?i contains the previously inferred mention
+labels for group i, with the exception of compo-
+nent m whose label is replaced by z(m)i . So for
+i = 1, . . . , n, and for each m ?Mi we calculate:
+z(m)?i =argmax
+z
+p(z|x(m)i ,wz)? (2)
+?
+r?Pi?Ni
+p(y(r)i |z
+?
+i,w
+(r)
+y )
+458
+Intuitively, the above equation indicates that men-
+tion labels are chosen to maximize: (a) the prob-
+abilities assigned by the mention-level model; (b)
+the probability that the correct relation labels are as-
+signed to the corresponding tuple; and (c) the prob-
+ability that the labels known to be incorrect are not
+assigned to the tuple. For example, if a particular
+mention label receives a high mention-level proba-
+bility but it is known to be a negative label for that
+tuple, it will receive a low overall score.
+M-step: In this step we find wy,wz that maxi-
+mize the lower bound of the log-likelihood, i.e., the
+probability in equation (1), given the current assign-
+ments for zi. From equation (1) it is clear that this
+can be maximized separately with respect to wy and
+wz. Intuitively, this step amounts to learning the
+weights for the mention-level classifier (wz) and the
+weights for each of the k top-level classifiers (wy).
+The updates are given by:
+w?z = argmax
+w
+n?
+i=1
+?
+m?Mi
+log p(z(m)?i |x
+(m)
+i ,w) (3)
+w(r)?y = argmax
+w
+?
+1?i?n s.t. r?Pi?Ni
+log p(y(r)i |z
+?
+i ,w) (4)
+Note that these are standard updates for logistic re-
+gression. We obtained these weights using k + 1
+logistic classifiers: one multi-class classifier for wz
+and k binary classifiers for each relation label r ? L.
+We implemented all using the L2-regularized logis-
+tic regression from the publicly-downloadable Stan-
+ford CoreNLP package.2 The main difference be-
+tween the classifiers is how features are generated:
+the mention-level classifier computes its features
+based on xi, whereas the relation-level classifiers
+generate features based on the current assignments
+for zi and the corresponding relation label r. We
+discuss the actual features used in our experiments
+in Section 5.
+4.2 Inference
+Given an entity tuple, we obtain its relation labels as
+follows. We first classify its mentions:
+z(m)?i = argmaxz
+p(z|x(m)i ,wz) (5)
+2nlp.stanford.edu/software/corenlp.shtml
+then decide on the final relation labels using the top-
+level classifiers:
+y(r)?i = arg max
+y?{0,1}
+p(y|z?i ,w
+(r)
+y ) (6)
+4.3 Implementation Details
+We discuss next several details that are crucial for
+the correct implementation of the above model.
+Initialization: Since EM is not guaranteed to con-
+verge at the global maximum of the observed data
+likelihood, it is important to provide it with good
+starting values. In our context, the initial values are
+labels assigned to zi, which are required to compute
+equation (2) in the first iteration (z?i). We generate
+these values using a local logistic regression classi-
+fier that uses the same features as the mention-level
+classifier in the joint model but treats each relation
+mention independently. We train this classifier using
+?traditional? distant supervision: for each relation in
+the databaseD we assume that all the corresponding
+mentions are positive examples for the correspond-
+ing label (Mintz et al2009). Note that this heuris-
+tic repeats relation mentions with different labels for
+the tuples that participate in multiple relations. For
+example, all the relation mentions in Figure 1 will
+yield datums with both the EmployedBy and BornIn
+labels. Despite this limitation, we found that this is
+a better initialization heuristic than random assign-
+ment.
+For the second part of equation (2), we initial-
+ize the relation-level classifier with a model that
+replicates the at least one heuristic of Hoffmann et
+al. (2011). Each w(r)y model has a single feature with
+a high positive weight that is triggered when label r
+is assigned to any of the mentions in z?i .
+Avoiding overfitting: A na??ve implementation of
+our approach leads to an unrealistic training scenario
+where the z classifier generates predictions (in equa-
+tion (2)) for the same datums it has seen in training
+in the previous iteration. To avoid this overfitting
+problem we used cross validation: we divided the
+training tuples in K distinct folds and trained K dif-
+ferent mention-level classifiers. Each classifier out-
+puts p(z|x(m)i ,wz) for tuples in a given fold during
+the E-step (equation (2)) and is trained (equation (3))
+using tuples from all other folds.
+459
+At testing time, we compute p(z|x(m)i ,wz) in
+equation (5) as the average of the probabilities of
+the above set of mention classifiers:
+p(z|x(m)i ,wz) =
+?K
+j=1 p(z|x
+(m)
+i ,w
+j
+z)
+K
+where wjz are the weights of the mention classifier
+responsible for fold j. We found that this simple
+bagging model performs slightly better in practice
+(a couple of tenths of a percent) than training a sin-
+gle mention classifier on the latent mention labels
+generated in the last training iteration.
+Inference during training: During the inference
+process in the E-step, the algorithm incrementally
+?flips? mention labels based on equation (2), for
+each group of mentions Mi. Thus, z?i changes as the
+algorithm progresses, which may impact the label
+assigned to the remaining mentions in that group. To
+avoid any potential bias introduced by the arbitrary
+order of mentions as seen in the data, we randomize
+each group Mi before we inspect its mentions.
+5 Experimental Results
+5.1 Data
+We evaluate our algorithm on two corpora. The first
+was developed by Riedel et al2010) by aligning
+Freebase3 relations with the New York Times (NYT)
+corpus. They used the Stanford named entity recog-
+nizer (Finkel et al2005) to find entity mentions in
+text and constructed relation mentions only between
+entity mentions in the same sentence.
+Riedel et al2010) observes that evaluating on
+this corpus underestimates true extraction accuracy
+because Freebase is incomplete. Thus, some re-
+lations extracted during testing will be incorrectly
+marked as wrong, simply because Freebase has no
+information on them. To mitigate this issue, Riedel
+et al2010) and Hoffman et al2011) perform a
+second evaluation where they compute the accuracy
+of labels assigned to a set of relation mentions that
+they manually annotated. To avoid any potential an-
+notation biases, we instead evaluate on a second cor-
+pus that has comprehensive annotations generated
+by experts for all test relations.
+We constructed this second dataset using mainly
+resources distributed for the 2010 and 2011 KBP
+3freebase.com
+shared tasks (Ji et al2010; Ji et al2011). We gen-
+erated training relations from the knowledge base
+provided by the task organizers, which is a subset
+of the English Wikipedia infoboxes from a 2008
+snapshot. Similarly to the corpus of Riedel et al
+these infoboxes contain open-domain relations be-
+tween named entities, but with a different focus.
+For example, more than half of the relations in
+the evaluation data are alternate names of organi-
+zations or persons (e.g., org:alternate names) or re-
+lations associated with employment and member-
+ship (e.g., per:employee of) (Ji et al2011). We
+aligned these relations against a document collec-
+tion that merges two distinct sources: (a) the col-
+lection provided by the shared task, which contains
+approximately 1.5 million documents from a vari-
+ety of sources, including newswire, blogs and tele-
+phone conversation transcripts; and (b) a complete
+snapshot of the English Wikipedia from June 2010.
+During training, for each entity tuple (e1, e2), we
+retrieved up to 50 sentences that contain both en-
+tity mentions.4 We used Stanford?s CoreNLP pack-
+age to find entity mentions in text and, similarly to
+Riedel et al2010), we construct relation mention
+candidates only between entity mentions in the same
+sentence. We analyzed a set of over 2,000 relation
+mentions and we found that 39% of the mentions
+where e1 is an organization name and 36% of men-
+tions where e1 is a person name do not express the
+corresponding relation.
+At evaluation time, the KBP shared task requires
+the extraction of all relations r(e1, e2) given a query
+that contains only the first entity e1. To accommo-
+date this setup, we adjusted our sentence extraction
+component to use just e1 as the retrieval query and
+we kept up to 50 sentences that contain a mention
+of the input entity for each evaluation query. For
+tuning and testing we used the 200 queries from the
+2010 and 2011 evaluations. We randomly selected
+40 queries for development and used the remaining
+160 for the formal evaluation.
+To address the large number of negative examples
+in training, Riedel et alubsampled them randomly
+with a retention probability of 10%. For the KBP
+corpus, we followed the same strategy, but we used
+4Sentences were ranked using the similarity between their
+parent document and the query that concatenates the two entity
+names. We used the default Lucene similarity measure.
+460
+# of gold # of gold % of gold entity tuples % of gold entity tuples % of mentions that
+relations relations with more than one label with multiple mentions in text do not express # of relation labels
+in training in testing in training in training their relation
+Riedel 4,700 1,950 7.5% 46.4% up to 31% 51
+KBP 183,062 3,334 2.8% 65.1% up to 39% 41
+Table 1: Statistics about the two corpora used in this paper. Some of the numbers for the Riedel dataset is from (Riedel
+et al2010; Hoffmann et al2011).
+a subsampling probability of 5% because this led to
+the best results in development for all models.
+Table 1 provides additional statistics about the
+two corpora. The table indicates that having mul-
+tiple mentions for an entity tuple is a very common
+phenomenon in both corpora, and that having mul-
+tiple labels per tuple is more common in the Riedel
+dataset than KBP (7.5% vs. 2.8%).
+5.2 Features
+Our model requires two sets of features: one for the
+mention classifier (z) and one for the relation clas-
+sifier (y). In the Riedel dataset, we used the same
+features as Riedel et al2010) and Hoffmann et
+al. (2011) for the mention classifier. In the KBP
+dataset, we used a feature set that was developed in
+our previous work (Surdeanu et al2011b). These
+features can be grouped in three classes: (a) features
+that model the two entities, such as their head words;
+(b) features that model the syntactic context of the
+relation mention, such as the dependency path be-
+tween the two entity mentions; and (c) features that
+model the surface context, such as the sequence of
+part of speech tags between the two entity mentions.
+We used these features for all the models evaluated
+on the KBP dataset.5
+For the relation-level classifier, we developed two
+feature groups. The first models Hoffmann et al
+at least one heuristic using a single feature, which
+is set to true if at least one mention in zi has the la-
+bel r, which is modeled by the current relation clas-
+sifier. The second group models the dependencies
+between relation labels. This is implemented by a
+set of |L| ? 1 features, where feature j is instan-
+tiated whenever the label modeled (r) is predicted
+jointly with another label rj (rj ? L, rj 6= r) in zi.
+These features learn both positive and negative re-
+inforcements between labels. For example, if labels
+5To avoid an excessive number of features in the KBP exper-
+iments, we removed features seen less than five times in train-
+ing.
+r1 and r2 tend to be generated jointly, the feature for
+the corresponding dependency will receive a posi-
+tive weight in the models for r1 and r2. Similarly, if
+r1 and r2 cannot be generated jointly, the model will
+assign a negative weight to feature 2 in r1?s classi-
+fier and to feature 1 in r2?s classifier. Note that this
+feature is asymmetric, i.e., feature 1 in r2?s classi-
+fier may have a different value than feature 2 in r1?s
+classifier, depending on the accuracy of the individ-
+ual predictions for r1 and r2.
+5.3 Baselines
+We compare our approach against three models:
+Mintz++ ? This is the model used to initialize the
+mention-level classifier in our model. As discussed
+in Section 4.3, this model follows the ?traditional?
+distant supervision heuristic, similarly to (Mintz et
+al., 2009). However, our implementation has several
+advantages over the original model: (a) we model
+each relation mention independently, whereas Mintz
+et alollapsed all the mentions of the same entity
+tuple into a single datum; (b) we allow multi-label
+outputs for a given entity tuple at prediction time
+by OR-ing the predictions for the individual rela-
+tion mentions corresponding to the tuple (similarly
+to (Hoffmann et al2011))6; and (c) we use the
+simple bagging strategy described in Section 4.3 to
+combine multiple models. Empirically, we observed
+that these changes yield a significant improvement
+over the original proposal. For this reason, we con-
+sider this model a strong baseline on its own.
+Riedel ? This is the ?at-least-once? model reported
+in (Riedel et al2010), which had the best perfor-
+mance in that work. This approach models the task
+as a multi-instance single-label problem. Note that
+this is the only model shown here that does not allow
+multi-label outputs for an entity tuple.
+6We also allow multiple labels per tuple at training time,
+in which case we replicate the corresponding datum for each
+label. However, this did not improve performance significantly
+compared to selecting a single label per datum during training.
+461
+Hoffmann ? This is the ?MultiR? model, which per-
+formed the best in (Hoffmann et al2011). This
+models RE as a MIML problem, but learns using
+a Perceptron algorithm and uses a deterministic ?at
+least one? decision instead of a relation classifier.
+We used Hoffman?s publicly released code7 for the
+experiments on the Riedel dataset and our own im-
+plementation for the KBP experiments.8
+5.4 Results
+We tuned all models using three-fold cross valida-
+tion for the Riedel dataset and using the develop-
+ment queries for the KBP dataset. MIML-RE has
+two parameters that require tuning: the number of
+EM epochs (T ) and the number of folds for the men-
+tion classifiers (K).9 The values obtained after tun-
+ing are T = 15,K = 5 for the Riedel dataset and
+T = 8,K = 3 for KBP. Similarly, we tuned the
+number of epochs for the Hoffmann model on the
+KBP dataset, obtaining an optimal value of 20.
+On the Riedel dataset we evaluate all models us-
+ing standard precision and recall measures. For the
+KBP evaluation we used the official KBP scorer,10
+with two changes: (a) we score with the parame-
+ter anydoc set to true, which configures the scorer
+to accept relation mentions as correct regardless of
+their supporting document; and (b) we score only
+on the subset of gold relations that have at least one
+mention in our sentences. The first decision is neces-
+sary because the gold KBP answers contain support-
+ing documents only from the corpus provided by the
+organizers but we retrieve candidate answers from
+multiple collections. The second is required because
+the focus of this work is not on sentence retrieval but
+on RE, which should be evaluated in isolation.11
+Similarly to previous work, we report preci-
+sion/recall curves in Figure 4. We evaluate two
+variants of MIML-RE: one that includes all the
+features for the y model, and another (MIML-RE
+7cs.washington.edu/homes/raphaelh/mr/
+8The decision to reimplement the Hoffmann model was a
+practical one, driven by incompatibilities between their imple-
+mentation and our KBP framework.
+9We could also tune the prior parameters for both our model
+and Mintz++, but we found in early experiments that the default
+value of 1 yields the best scores for all priors.
+10nlp.cs.qc.cuny.edu/kbp/2011/scoring.html
+11Due to these changes, the scores reported in this paper are
+not directly comparable with the shared task scores.
+At-Least-One) which has only the at least one
+feature. For all the Bayesian models implemented
+here, we sorted the predicted relations by the noisy-
+or score of the top predictions for their mentions.
+Formally, we rank a relation r predicted for group i,
+i.e., r ? y?i , using:
+noisyOri(r) = 1?
+?
+m?Mi
+(1? s(m)i (r))
+where s(m)i (r) = p(r|x
+(m)
+i ,wz) if r = z
+(m)?
+i or 0 oth-
+erwise. The noisy-or formula performs well for
+ranking because it integrates model confidence (the
+higher the probabilities, the higher the score) and re-
+dundancy (the more mentions are predicted with a
+label, the higher that label?s score). Note that the
+above ranking score does not include the probability
+of the relation classifier (equation (6)) for MIML-RE.
+While we use equation (6) to generate y?i , we found
+that the corresponding probabilities are too coarse
+to provide a good ranking score. This is caused by
+the fact that our relation-level classifier works with
+a small number of (noisy) features. Lastly, for our
+implementation of the Hoffmann et alodel, we
+used their ranking heuristic (sorting predictions by
+the maximum extraction score for that relation).
+6 Discussion
+Figure 4 indicates that MIML-RE generally outper-
+forms the current state of the art. In the Riedel
+dataset, MIML-RE has higher overall recall than the
+Riedel et alodel, and, for the same recall point,
+MIML-RE?s precision is between 2 and 15 points
+higher. For most of the curve, our model obtains
+better precision for the same recall point than the
+Hoffmann model, which currently has the best re-
+ported results on this dataset. The difference is as
+high as 5 precision points around the middle of the
+curve. The Hoffmann model performs better close to
+the extremities of the curve (low/high recall). Nev-
+ertheless, we argue that our model is more stable
+than Hoffmann?s: MIML-RE yields a smoother pre-
+cision/recall curve, without most of the depressions
+seen in the Hoffmann results. In the KBP dataset,
+MIML-RE performs consistently better than our im-
+plementation of Hoffmann?s model, with higher pre-
+cision values for the same recall point, and much
+higher overall recall. We believe that these dif-
+ferences are caused by our Bayesian framework,
+462
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0.8
+ 0.9
+ 0  0.05  0.1  0.15  0.2  0.25  0.3
+Pr
+ec
+isi
+on
+Recall
+Hoffmann
+Riedel
+Mintz++
+MIML-RE
+MIML-RE At-Least-One
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0  0.05  0.1  0.15  0.2  0.25  0.3
+Pr
+ec
+isi
+on
+Recall
+Hoffmann (our implementation)
+Mintz++
+MIML-RE
+MIML-RE At-Least-One
+Figure 4: Results in the Riedel dataset (top) and the KBP dataset (bottom). The Hoffmann scores in the KBP dataset
+were generated using our implementation. The other Hoffmann and Riedel results were taken from their papers.
+which provides a more formal implementation of the
+MIML problem.
+Figure 4 also indicates that MIML-RE yields a con-
+sistent improvement over Mintz++ (with the excep-
+tion of a few points in the low-recall portion of the
+KBP curves). The difference in precision for the
+same recall point is as high as 25 precision points in
+the Riedel dataset and up to 5 points in KBP. Over-
+all, the best F1 score of MIML-RE is slightly over 1
+point higher than the best F1 score of Mintz++ in
+the Riedel dataset and 3 points higher in KBP. Con-
+sidering that Mintz++ is a strong baseline and we
+evaluate on two challenging domains, we consider
+these results proof that the correct modeling of the
+MIML scenario is beneficial.
+Lastly, Figure 4 shows that MIML-RE outper-
+forms its variant without label-dependency fea-
+tures (MIML-RE At-Least-One) in the higher-
+recall part of the curve in the Riedel dataset. The im-
+provement is approximately 1 F1 point throughout
+the last segment of the curve. The overall increase
+in F1 was found to be significant (p = 0.0296) in a
+one-sided, paired t-test over randomly sampled test
+data. We see a smaller improvement in KBP (con-
+centrated around the middle of the curve), likely be-
+cause the number of entity tuples with multiple la-
+bels in training is small (see Table 1). Neverthe-
+less, this exercise shows that, when dependencies
+between labels exist in a dataset, modeling them,
+which can be trivially done in MIML-RE, is useful.
+463
+P R F1
+Hoffmann (our implementation) 48.6 29.8 37.0
+Mintz++ 43.8 36.8 40.0
+MIML-RE 64.8 31.6 42.6
+MIML-RE At-Least-One 56.1 32.5 41.1
+Table 2: Results at the highest F1 point in the preci-
+sion/recall curve on the dataset that contains groups with
+at least 10 mentions.
+In a similar vein, we tested the models previ-
+ously described on a subset of the Riedel evalua-
+tion dataset that only includes groups with at least
+10 mentions. This corpus contains approximately
+2% of the groups from the original testing partition,
+out of which 90 tuples have at least one known label
+and 1410 groups serve as negative examples.
+For conciseness, we do not include the entire
+precision/recall curves for this experiment, but sum-
+marize them in Table 2, which lists the performance
+peak (highest F1 score) for each of the models
+investigated. The table shows that MIML-RE obtains
+the highest F1 score overall, 1.5 points higher than
+MIML-RE At-Least-One and 2.6 points higher
+than Mintz++. More importantly, for approximately
+the same recall point, MIML-RE obtains a precision
+that is over 8 percentage points higher than that of
+MIML-RE At-Least-One. A post-hoc inspection
+of the results indicates that, indeed, MIML-RE suc-
+cessfully eliminates undesired labels when two
+(or more) incompatible labels are jointly assigned
+to the same tuple. Take for example the tuple
+(Mexico City, Mexico), for which the correct re-
+lation is /location/administrative division/country.
+MIML-RE At-Least-One incorrectly predicts
+the additional /location/location/contains relation,
+while MIML-RE does not make this prediction
+because it recognizes that these two labels are in-
+compatible in general: one location cannot both be
+within another location and contain it. Indeed, ex-
+amining the weights assigned to label-dependency
+features in MIML-RE, we see that the model has
+assigned a large negative weight to the depen-
+dency feature between /location/location/contains
+and /location/administrative division/country
+for the /location/location/contains class. We
+also observe positive dependencies between la-
+bels. For example, MIML-RE learns that the
+relations /people/person/place lived and /peo-
+ple/person/place of birth tend to co-occur and
+assigns a positive weight to this dependency feature
+for the corresponding classes.
+These results strongly suggest that when all as-
+pects of the MIML scenario are present, our model
+can successfully capture them and make use of the
+additional structure to improve performance.
+7 Conclusion
+In this paper we showed that distant supervision
+for RE, which generates training data by aligning a
+database of facts with text, poses a distinct multi-
+instance multi-label learning scenario. In this set-
+ting, each entity pair to be modeled typically has
+multiple instances in the text and may have multiple
+labels in the database. This is considerably differ-
+ent from traditional supervised learning, where each
+instance has a single, explicit label.
+We argued that this MIML scenario should be
+formally addressed. We proposed, to our knowl-
+edge, the first approach that models all aspects of the
+MIML setting, i.e., the latent assignment of labels to
+instances and dependencies between labels assigned
+to the same entity pair.
+We evaluated our model on two challenging do-
+mains and obtained state-of-the-art results on both.
+Our model performs well even when not all aspects
+of the MIML scenario are common, and as seen in
+the discussion, shows significant improvement when
+evaluated on entity pairs with many labels or men-
+tions. When all aspects of the MIML scenario are
+present, our model is well-equipped to handle them.
+The code and data used in the experiments re-
+ported in this paper are available at: http://nlp.
+stanford.edu/software/mimlre.shtml.
+Acknowledgments
+We gratefully acknowledge the support of Defense Ad-
+vanced Research Projects Agency (DARPA) Machine
+Reading Program under Air Force Research Laboratory
+(AFRL) prime contract no. FA8750-09-C-0181. Any
+opinions, findings, and conclusion or recommendations
+expressed in this material are those of the author(s) and
+do not necessarily reflect the view of the DARPA, AFRL,
+or the US government. We gratefully thank Raphael
+Hoffmann and Sebastian Riedel for sharing their code
+and data and for the many useful discussions.
+464
+References
+Kedar Bellare and Andrew McCallum. 2007. Learn-
+ing extractors from unlabeled text using relevant
+databases. In Proceedings of the Sixth International
+Workshop on Information Extraction on the Web.
+Carla Brodley and Mark Friedl. 1999. Identifying mis-
+labeled training data. Journal of Artificial Intelligence
+Research (JAIR).
+Razvan Bunescu and Raymond Mooney. 2007. Learning
+to extract relations from the web using minimal super-
+vision. In Proceedings of the 45th Annual Meeting of
+the Association for Computational Linguistics.
+Mark Craven and Johan Kumlien. 1999. Constructing
+biological knowledge bases by extracting information
+from text sources. In Proceedings of the Seventh Inter-
+national Conference on Intelligent Systems for Molec-
+ular Biology.
+Jenny Rose Finkel, Trond Grenager, and Christopher D.
+Manning. 2005. Incorporating non-local information
+into information extraction systems by gibbs sampling.
+In Proceedings of the 43nd Annual Meeting of the As-
+sociation for Computational Linguistics.
+Raphael Hoffmann, Congle Zhang, Xiao Ling, Luke
+Zettlemoyer, and Daniel S. Weld. 2011. Knowledge-
+based weak supervision for information extraction of
+overlapping relations. In Proceedings of the Annual
+Meeting of the Association for Computational Linguis-
+tics (ACL).
+Heng Ji, Ralph Grishman, Hoa T. Dang, Kira Griffitt, and
+Joe Ellis. 2010. Overview of the TAC 2010 knowl-
+edge base population track. In Proceedings of the Text
+Analytics Conference.
+Heng Ji, Ralph Grishman, and Hoa T. Dang. 2011.
+Overview of the TAC 2011 knowledge base popula-
+tion track. In Proceedings of the Text Analytics Con-
+ference.
+Mike Mintz, Steven Bills, Rion Snow, and Daniel Juraf-
+sky. 2009. Distant supervision for relation extrac-
+tion without labeled data. In Proceedings of the 47th
+Annual Meeting of the Association for Computational
+Linguistics.
+Truc Vien T. Nguyen and Alessandro Moschitti. 2011.
+End-to-end relation extraction using distant supervi-
+sion from external semantic repositories. In Proceed-
+ings of the 49th Annual Meeting of the Association for
+Computational Linguistics: Human Language Tech-
+nologies.
+Sebastian Riedel, Limin Yao, and Andrew McCallum.
+2010. Modeling relations and their mentions without
+labeled text. In Proceedings of the European Confer-
+ence on Machine Learning and Knowledge Discovery
+in Databases (ECML PKDD ?10).
+Ang Sun, Ralph Grishman, Wei Xu, and Bonan Min.
+2011. New York University 2011 system for KBP slot
+filling. In Proceedings of the Text Analytics Confer-
+ence.
+Mihai Surdeanu, Sonal Gupta, John Bauer, David Mc-
+Closky, Angel X. Chang, Valentin I. Spitkovsky, and
+Christopher D. Manning. 2011a. Stanford?s distantly-
+supervised slot-filling system. In Proceedings of the
+Text Analytics Conference.
+Mihai Surdeanu, David McClosky, Mason R. Smith, An-
+drey Gusev, and Christopher D. Manning. 2011b.
+Customizing an information extraction system to a
+new domain. In Proceedings of the Workshop on Re-
+lational Models of Semantics, Portland, Oregon, June.
+Fei Wu and Dan Weld. 2007. Autonomously semanti-
+fying Wikipedia. In Proceedings of the International
+Conference on Information and Knowledge Manage-
+ment (CIKM).
+Z.H. Zhou and M.L. Zhang. 2007. Multi-instance multi-
+label learning with application to scene classification.
+In Advances in Neural Information Processing Sys-
+tems (NIPS).
+465
+Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 1556?1567,
+October 25-29, 2014, Doha, Qatar.
+c?2014 Association for Computational Linguistics
+Combining Distant and Partial Supervision for Relation Extraction
+Gabor Angeli, Julie Tibshirani, Jean Y. Wu, Christopher D. Manning
+Stanford University
+Stanford, CA 94305
+{angeli, jtibs, jeaneis, manning}@stanford.edu
+Abstract
+Broad-coverage relation extraction either
+requires expensive supervised training
+data, or suffers from drawbacks inherent
+to distant supervision. We present an ap-
+proach for providing partial supervision
+to a distantly supervised relation extrac-
+tor using a small number of carefully se-
+lected examples. We compare against es-
+tablished active learning criteria and pro-
+pose a novel criterion to sample examples
+which are both uncertain and representa-
+tive. In this way, we combine the ben-
+efits of fine-grained supervision for diffi-
+cult examples with the coverage of a large
+distantly supervised corpus. Our approach
+gives a substantial increase of 3.9% end-
+to-end F
+1
+on the 2013 KBP Slot Filling
+evaluation, yielding a net F
+1
+of 37.7%.
+1 Introduction
+Fully supervised relation extractors are limited to
+relatively small training sets. While able to make
+use of much more data, distantly supervised ap-
+proaches either make dubious assumptions in or-
+der to simulate fully supervised data, or make use
+of latent-variable methods which get stuck in local
+optima easily. We hope to combine the benefits
+of supervised and distantly supervised methods by
+annotating a small subset of the available data us-
+ing selection criteria inspired by active learning.
+To illustrate, our training corpus contains
+1 208 524 relation mentions; annotating all of
+these mentions for a fully supervised classifier, at
+an average of $0.13 per annotation, would cost ap-
+proximately $160 000. Distant supervision allows
+us to make use of this large corpus without requir-
+ing costly annotation. The traditional approach is
+based on the assumption that every mention of an
+entity pair (e.g., Obama and USA) participates in
+the known relation between the two (i.e., born in).
+However, this introduces noise, as not every men-
+tion expresses the relation we are assigning to it.
+We show that by providing annotations for only
+10 000 informative examples, combined with a
+large corpus of distantly labeled data, we can yield
+notable improvements in performance over the
+distantly supervised data alone. We report results
+on three criteria for selecting examples to anno-
+tate: a baseline of sampling examples uniformly
+at random, an established active learning criterion,
+and a new metric incorporating both the uncer-
+tainty and the representativeness of an example.
+We show that the choice of metric is important
+? yielding as much as a 3% F
+1
+difference ? and
+that our new proposed criterion outperforms the
+standard method in many cases. Lastly, we train
+a supervised classifier on these collected exam-
+ples, and report performance comparable to dis-
+tantly supervised methods. Furthermore, we no-
+tice that initializing the distantly supervised model
+using this supervised classifier is critical for ob-
+taining performance improvements.
+This work makes a number of concrete contri-
+butions. We propose a novel application of active
+learning techniques to distantly supervised rela-
+tion extraction. To the best of the authors knowl-
+edge, we are the first to apply active learning to the
+class of latent-variable distantly supervised mod-
+els presented in this paper. We show that anno-
+tating a proportionally small number of examples
+yields improvements in end-to-end accuracy. We
+compare various selection criteria, and show that
+this decision has a notable impact on the gain in
+performance. In many ways this reconciles our
+results with the negative results of Zhang et al.
+(2012), who show limited gains from na??vely an-
+notating examples. Lastly, we make our annota-
+tions available to the research community.
+1
+1
+http://nlp.stanford.edu/software/
+mimlre.shtml
+1556
+2 Background
+2.1 Relation Extraction
+We are interested in extracting a set of relations
+y
+1
+. . . y
+k
+from a fixed set of possible relations R,
+given two entities e
+1
+and e
+2
+. For example, we
+would like to extract that Barack Obama was born
+in Hawaii. The task is decomposed into two steps:
+First, sentences containing mentions of both e
+1
+and e
+2
+are collected. The set of these sentences
+x, marked with the entity mentions for e
+1
+and e
+2
+,
+becomes the input to the relation extractor, which
+then produces a set of relations which hold be-
+tween the mentions. We are predominantly in-
+terested in the second step ? classifying a set of
+pairs of entity mentions into the relations they ex-
+press. Figure 1 gives the general setting for re-
+lation extraction, with entity pairs Barack Obama
+and Hawaii, and Barack Obama and president.
+Traditionally, relation extraction has fallen into
+one of four broad approaches: supervised classi-
+fication, as in the ACE task (Doddington et al.,
+2004; GuoDong et al., 2005; Surdeanu and Cia-
+ramita, 2007), distant supervision (Craven and
+Kumlien, 1999; Wu and Weld, 2007; Mintz et
+al., 2009; Sun et al., 2011; Roth and Klakow,
+2013) deterministic rule-based systems (Soder-
+land, 1997; Grishman and Min, 2010; Chen et al.,
+2010), and translation from open domain informa-
+tion extraction schema (Riedel et al., 2013). We
+focus on the first two of these approaches.
+2.2 Supervised Relation Extraction
+Relation extraction can be naturally cast as a su-
+pervised classification problem. A corpus of rela-
+tion mentions is collected, and each mention x is
+annotated with the relation y, if any, it expresses.
+The classifier?s output is then aggregated to decide
+the relations between the two entities.
+However, annotating supervised training data
+is generally expensive to perform at large scale.
+Although resources such as Freebase or the TAC
+KBP knowledge base have on the order of millions
+of training tuples over entities it is not feasible to
+manually annotate the corresponding mentions in
+the text. This has led to the rise of distantly su-
+pervised methods, which make use of this indirect
+supervision, but do not necessitate mention-level
+supervision.
+Barack Obama was born in Hawaii.
+Barack Obama visited Hawaii.
+The president grew up in Hawaii.
+state of birth
+state of residence
+Barack Obama met former president Clinton.
+Obama became president in 2008. title
+Figure 1: The relation extraction setup. For a
+pair of entities, we collect sentences which men-
+tion both entities. These sentences are then used
+to predict one or more relations between those
+entities. For instance, the sentences containing
+both Barack Obama and Hawaii should support
+the state of birth and state of residence relation.
+2.3 Distant Supervision
+Traditional distant supervision makes the assump-
+tion that for every triple (e
+1
+, y, e
+2
+) in a knowledge
+base, every sentence containing mentions for e
+1
+and e
+2
+express the relation y. For instance, tak-
+ing Figure 1, we would create a datum for each
+of the three sentences containing BARACK OBAMA
+and HAWAII labeled with state of birth, and like-
+wise with state of residence, creating 6 training
+examples overall. Similarly, both sentences in-
+volving Barack Obama and president would be
+marked as expressing the title relation.
+While this allows us to leverage a large database
+effectively, it nonetheless makes a number of na??ve
+assumptions. First ? explicit in the formulation of
+the approach ? it assumes that every mention ex-
+presses some relation, and furthermore expresses
+the known relation(s). For instance, the sen-
+tence Obama visited Hawaii would be erroneously
+treated as a positive example of the born in rela-
+tion. Second, it implicitly assumes that our knowl-
+edge base is complete: entity mentions with no
+known relation are treated as negative examples.
+The first of these assumptions is addressed by
+multi-instance multi-label (MIML) learning, de-
+scribed in Section 2.4. Min et al. (2013) address
+the second assumption by extending the MIML
+model with additional latent variables, while Xu
+et al. (2013) allow feedback from a coarse relation
+extractor to augment labels from the knowledge
+base. These latter two approaches are compatible
+with but are not implemented in this work.
+2.4 Multi-Instance Multi-Label Learning
+The multi-instance multi-label (MIML-RE) model
+of Surdeanu et al. (2012), which builds upon work
+1557
+. . .
+. . . . . .
+. . .
+Figure 2: The MIML-RE model, as shown in Sur-
+deanu et al. (2012). The outer plate corresponds to
+each of the n entity pairs in our knowledge base.
+Each entity pair has a set of mention pairs M
+i
+, and
+a corresponding plate in the diagram for each men-
+tion pair in M
+i
+. The variable x represents the in-
+put mention pair, whereas y represents the positive
+and negative relations for the given pair of entities.
+The latent variable z denotes a mention-level pre-
+diction for each input. The weight vector for the
+multinomial z classifier is given by w
+z
+, and there
+is a weight vector w
+j
+for each binary y classifier.
+by Hoffmann et al. (2011) and Riedel et al. (2010),
+addresses the assumptions of distantly supervised
+relations extractors in a principled way by positing
+a latent mention-level annotation.
+The model groups mentions according to their
+entity pair ? for instance, every mention pair with
+Obama and Hawaii would be grouped together. A
+latent variable z
+i
+is created for every mention i,
+where z
+i
+? R ? {None} takes a single relation
+label, or a no relation marker. We create |R| bi-
+nary variables y representing the known positive
+and negative relations for the entity pair. A set of
+binary classifiers (log-linear factors in the graphi-
+cal model) links the latent predictions z
+1
+. . . z
+|M
+i
+|
+and each y
+j
+. These classifiers include two classes
+of features: first, a binary feature which fires if at
+least one of the mentions expresses a known rela-
+tion between the entity pair, and second, a feature
+for each co-occurrence of relations for a given en-
+tity pair. Figure 2 describes the model.
+2.5 Background on Active Learning
+We describe preliminaries and prior work on ac-
+tive learning; we use this framework to propose
+two sampling schemes in Section 3 which we use
+to annotate mention-level labels for MIML-RE.
+One way of expressing the generalization error
+of a hypothesis
+?
+h is through its mean-squared error
+with the true hypothesis h:
+E[(h(x)?
+?
+h(x))
+2
+]
+= E[E[(h(x)?
+?
+h(x))
+2
+|x]]
+=
+?
+x
+E[(h(x)?
+?
+h(x))
+2
+|x]p(x)dx.
+The integrand can be further broken into bias
+and variance terms:
+E[(h(x)?
+?
+h(x))
+2
+] = (E[
+?
+h(x)]? h(x))
+2
++ E[(
+?
+h(x)? E[
+?
+h(x)])
+2
+]
+where for simplicity we?ve dropped the condition-
+ing on x.
+Many traditional sampling strategies, such as
+query-by-committee (QBC) (Freund et al., 1992;
+Freund et al., 1997) and uncertainty sampling
+(Lewis and Gale, 1994), work by decreasing the
+variance of the learned model. In QBC, we
+first create a ?committee? of classifiers by ran-
+domly sampling their parameters from a distribu-
+tion based on the training data. These classifiers
+then make predictions on the unlabeled examples,
+and the examples on which there is the most dis-
+agreement are selected for labeling. This strat-
+egy can be seen as an attempt to decrease the ver-
+sion space ? the set of classifiers that are consis-
+tent with the labeled data. Decreasing the version
+space should lower variance, since variance is in-
+versely related to the size of the hypothesis space.
+In most scenarios, active learning does not con-
+cern itself with the bias term. If a model is fun-
+damentally misspecified, then no amount of ad-
+ditional training data can lower its bias. How-
+ever, our paradigm differs from the traditional set-
+ting, in that we are annotating latent variables in
+a model with a non-convex objective. These an-
+notations may help increase the convexity of our
+objective, leading us to a more accurate optimum
+and thereby lowering bias.
+The other component to consider is
+?
+x
+? ? ? p(x)dx. This suggests that it is impor-
+tant to choose examples that are representative
+of the underlying distribution p(x), as we want
+to label points that will improve the classifier?s
+predictions on as many and as high-probability
+examples as possible. Incorporating a repre-
+sentativeness metric has been shown to provide
+a significant improvement over plain QBC or
+1558
+uncertainty sampling (McCallum and Nigam,
+1998; Settles, 2010).
+2.6 Active Learning for Relation Extraction
+Several papers have explored active learning for
+relation extraction. Fu and Grishman (2013) em-
+ploy active learning to create a classifier quickly
+for new relations, simulated from the ACE corpus.
+Finn and Kushmerick (2003) compare a number
+of selection criteria ? including QBC ? for a su-
+pervised classifier. To the best of our knowledge,
+we are the first to apply active learning to distantly
+supervised relation extraction. Furthermore, we
+evaluate our selection criteria live in a real-world
+setting, collecting new sentences and evaluating
+on an end-to-end task.
+For latent variable models, McCallum and
+Nigam (1998) apply active learning to semi-
+supervised document classification. We take in-
+spiration from their use of QBC and the choice of
+metric for classifier disagreement. However their
+model assumes a fully Bayesian set-up, whereas
+ours does not require strong assumptions about the
+parameter distributions.
+Settles et al. (2008) use active learning to im-
+prove a multiple-instance classifier. Their model
+is simpler in that it does not allow for unobserved
+variables or multiple labels, and the authors only
+evaluate on image retrieval and synthetic text clas-
+sification datasets.
+3 Example Selection
+We describe three criteria for selection examples
+to annotate. The first ? sampling uniformly ? is
+a baseline for our hypothesis that intelligently se-
+lecting examples is important. For this criterion,
+we select mentions uniformly at random from the
+training set to annotate. This is the approach used
+in Zhang et al. (2012). The other two criteria rely
+on a metric for disagreement provided by QBC;
+we describe our adaptation of QBC for MIML-RE
+as a preliminary to introducing these criteria.
+3.1 QBC For MIML-RE
+We use a version of QBC based on bootstrap-
+ping (Saar-Tsechansky and Provost, 2004). To
+create the committee of classifiers, we re-sample
+the training set with replacement 7 times and train
+a model over each sampled dataset. We mea-
+sure disagreement on z-labels among the classi-
+fiers using a generalized Jensen-Shannon diver-
+gence (McCallum and Nigam, 1998), taking the
+average KL divergence of all classifier judgments.
+We first calculate the mention-level confi-
+dences. Note that z
+(m)
+i
+? M
+i
+denotes the latent
+variable in entity pair i with index m; z
+(?m)
+i
+de-
+notes the set of all latent variables except z
+(m)
+i
+:
+p(z
+(m)
+i
+|y
+i
+,x
+i
+) =
+p(y
+i
+, z
+(m)
+i
+|x
+i
+)
+p(y
+i
+|x
+i
+)
+=
+?
+z
+(?m)
+i
+p(y
+i
+, z
+i
+|x
+i
+)
+?
+z
+(m)
+i
+p(y
+i
+, z
+(m)
+i
+|x
+i
+)
+.
+Notice that the denominator just serves to nor-
+malize the probability within a sentence group.
+We can rewrite the numerator as follows:
+?
+z
+(?m)
+i
+p(y
+i
+, z
+i
+|x
+i
+)
+=
+?
+z
+(?m)
+i
+p(y
+i
+|z
+i
+)p(z
+i
+|x
+i
+)
+= p(z
+(m)
+i
+|x
+i
+)
+?
+z
+(?m)
+i
+p(y
+i
+|z
+i
+)p(z
+(?m)
+i
+|x
+i
+).
+For computational efficiency, we approximate
+p(z
+(?m)
+i
+|x
+i
+) with a point mass at its maximum.
+Next, we calculate the Jensen-Shannon (JS) diver-
+gence from the k bootstrapped classifiers:
+1
+k
+k
+?
+c=1
+KL(p
+c
+(z
+(m)
+i
+|y
+i
+,x
+i
+)||p
+mean
+(z
+(m)
+i
+|y
+i
+,x
+i
+)) (1)
+where p
+c
+is the probability assigned by each of the
+k classifiers to the latent z
+(m)
+i
+, and p
+mean
+is the av-
+erage of these probabilities. We use this metric
+to capture the disagreement of our model with re-
+spect to a particular latent variable. This is then
+used to inform our selection criteria.
+We note that QBC may be especially useful in
+our situation as our objective is highly nonconvex.
+If two committee members disagree on a latent
+variable, it is likely because they converged to dif-
+ferent local optima; annotating that example could
+help bring the classifiers into agreement.
+The second selection criterion we consider is
+the most straightforward application of QBC ? se-
+lecting the examples with the highest JS disagree-
+ment. This allows us to compare our criterion, de-
+scribed next, against an established criterion from
+the active learning literature.
+1559
+3.2 Sample by JS Disagreement
+We propose a novel active learning sampling cri-
+terion that incorporates not only disagreement but
+also representativeness in selecting examples to
+annotate. Prior work has taken a weighted combi-
+nation of an example?s disagreement and a score
+corresponding to whether the example is drawn
+from a dense portion of the feature space (e.g.,
+McCallum and Nigam (1998)). However, this re-
+quires both selecting a criterion for defining den-
+sity (e.g., distance metric in feature space), and
+tuning a parameter for the relative weight of dis-
+agreement versus representativeness.
+Instead, we account for choosing representa-
+tive examples by sampling without replacement
+proportional to the example?s disagreement. For-
+mally, we define the probability of selecting an
+example z
+(m)
+i
+to be proportional to the Jensen-
+Shannon divergence in (1). Since the training set is
+an approximation to the prior distribution over ex-
+amples, sampling uniformly over the training set is
+an approximation to sampling from the prior prob-
+ability of seeing an input x. We can view our crite-
+rion as an approximation to sampling proportional
+to the product of two densities: a prior over exam-
+ples x, and the JS divergence mentioned above.
+4 Incorporating Sentence-Level
+Annotations
+Following Surdeanu et al. (2012), MIML-RE is
+trained through hard discriminative Expectation
+Maximization, inferring the latent z values in the
+E-step and updating the weights for both the z and
+y classifiers in the M-step. During the E-step, we
+constrain the latent z to match our sentence-level
+annotations when available.
+It is worth noting that even in the hard-EM
+regime, we can in principle incorporate annotator
+uncertainty elegantly into the model. At each E
+step, each z
+i
+is set according to
+z
+i
+(m)?
+? argmax
+z?R
+[
+p(z | x
+(m)
+i
+,w
+z
+) ?
+?
+r
+p(y
+(r)
+i
+| z
+?
+i
+,w
+(r)
+y
+)
+]
+where z
+?
+i
+contains the inferred labels from the
+previous iteration, but with its mth component re-
+placed by z
+(m)
+i
+.
+By setting the distribution p(z | x
+(m)
+i
+,w
+z
+) to re-
+flect uncertainty among annotators, we can leave
+open the possibility for the model to choose a re-
+lation which annotators deemed unlikely, but the
+model nonetheless prefers. For simplicity, how-
+ever, we treat our annotations as a hard assign-
+ment.
+In addition to incorporating annotations during
+training, we can also use this data to intelligently
+initialize the model. Since the MIML-RE objec-
+tive is non-convex, the initialization of the classi-
+fier weights w
+y
+and w
+z
+is important. The y clas-
+sifiers are initialized with the ?at-least-once? as-
+sumption of Hoffmann et al. (2011); w
+z
+can be ini-
+tialized either using traditional distant supervision
+or from a supervised classifier trained on the an-
+notated sentences. If initialized with a supervised
+classifier, the model can be viewed as augment-
+ing this supervised model with a large distantly
+labeled corpus, providing both additional entity
+pairs to train from, and additional mentions for an
+annotated entity pair.
+5 Crowdsourced Example Annotation
+Most prior work on active learning is done by sim-
+ulation on a fully labeled dataset; such a dataset
+doesn?t exist for our case. Furthermore, a key aim
+of this paper is to practically improve state-of-the-
+art performance in relation extraction in addition
+to evaluating active learning criteria. Therefore,
+we develop and execute an annotation task for col-
+lecting labels for our selected examples.
+We utilize Amazon Mechanical Turk to crowd-
+source annotations. For each task, the annotator
+(Turker) is presented with the task description, fol-
+lowed by 15 questions, 2 of which are randomly
+placed controls. For each question, we present
+Turkers with a relation mention and the top 5 re-
+lation predictions from our classifier. The Turker
+also has an option to freely specify a relation not
+presented in the first five options, or mark that
+there is no relation. We attempt to heuristically
+match common free-form answers to official rela-
+tions.
+To maintain the quality of the results, we dis-
+card all submissions in which both controls were
+answered incorrectly, and additionally discard all
+submissions from Turkers who failed the controls
+on more than
+1
+3
+of their submissions. Rejected
+tasks were republished for other workers to com-
+plete. We collect 5 annotations for each example,
+and use the most commonly agreed answer as the
+ground truth. Ties are broken arbitrarily, except in
+1560
+Figure 3: The task shown to Amazon Mechanical
+Turk workers. A sentence along with the top 5 re-
+lation predictions from our classifier are shown to
+Turkers, as well as an option to specify a custom
+relation or manually enter ?no relation.? The cor-
+rect response for this example should be either no
+relation or a custom relation.
+the case of deciding between a relation and no re-
+lation, in which case the relation was always cho-
+sen.
+A total of 23 725 examples were annotated, cov-
+ering 10 000 examples for each of the three selec-
+tion criteria. Note that there is overlap between
+the examples selected for the three criteria. In ad-
+dition, 10 023 examples were annotated during de-
+velopment; these are included in the set of all an-
+notated examples, but excluded from any of the
+three criteria. The compensation per task was 23
+cents; the total cost of annotating examples was
+$3156, in addition to $204 spent on developing the
+task. Informally, Turkers achieved an accuracy of
+around 75%, as evaluated by a paper author, per-
+forming disproportionately well on identifying the
+no relation label.
+6 Experiments
+We evaluate the three high-level research contri-
+butions of this work: we show that we improve
+the accuracy of MIML-RE, we validate the effec-
+tiveness of our selection criteria, and we provide a
+corpus of annotated examples, evaluating a super-
+vised classifier trained on this corpus. The train-
+ing and testing methodology for evaluating these
+contributions is given in Sections 6.1 and 6.2; ex-
+periments are given in Section 6.3.
+6.1 Training Setup
+We adopt the setup of Surdeanu et al. (2012) for
+training the MIML-RE model, with minor modifi-
+cations. We use both the 2010 and 2013 KBP of-
+ficial document collections, as well as a July 2013
+dump of Wikipedia as our text corpus. We sub-
+sample negatives such that
+1
+3
+of our dataset con-
+sists of entity pairs with no known relations. In all
+experiments, MIML-RE is trained for 7 iterations
+of EM; for efficiency, the z classifier is optimized
+using stochastic gradient descent;
+2
+the y classifiers
+are optimized using L-BFGS.
+Similarly to Surdeanu et al. (2011), we as-
+sign negative relations which are either incompat-
+ible with the known positive relations (e.g., re-
+lations whose co-occurrence would violate type
+constraints); or, are actually functional relations
+in which another entity already participates. For
+example, if we know that Obama was born in the
+United States, we could add born in as a negative
+relation to the pair Obama and Kenya.
+Our dataset consists of 325 891 entity pairs with
+at least one positive relation, and 158 091 entity
+pairs with no positive relations. Pairs with at least
+one known relation have an average of 4.56 men-
+tions per group; groups with no known relations
+have an average of 1.55 mentions per group. In to-
+tal, 1 208 524 distinct mentions are considered; the
+annotated examples are selected from this pool.
+6.2 Testing Methodology
+We compare against the original MIML-RE model
+using the same dataset and evaluation methodol-
+ogy as Surdeanu et al. (2012). This allows for an
+evaluation where the only free variable between
+this and prior work is the predictions of the rela-
+tion extractor.
+Additionally, we evaluate the relation extractors
+in the context of Stanford?s end-to-end KBP sys-
+tem (Angeli et al., 2014) using the NIST TAC-
+KBP 2013 English Slotfilling evaluation. In the
+end-to-end framework, the input to the system is a
+query entity and a set of articles, and the output is
+a set of slot fills ? each slot fill is a candidate triple
+in the knowledge base, the first element of which
+is the query entity. This amounts to roughly pop-
+ulating a data structure like Wikipedia infoboxes
+automatically from a large corpus of text.
+Importantly, an end-to-end evaluation in a top-
+performing full system gives a more accurate idea
+of the expected real-world gain from each model.
+Both the information retrieval component provid-
+ing candidates to the relation extractor, as well as
+2
+For the sake of consistency, the supervised classifiers and
+those in Mintz++ are trained identically to the z classifiers in
+MIML-RE.
+1561
+Method Init
+Active Learning Criterion
+Not Used Uniform High JS Sample JS All Available
+P R F
+1
+P R F
+1
+P R F
+1
+P R F
+1
+P R F
+1
+Mintz++ ? 41.3 28.2 33.5 ? ? ? ?
+MIML-RE
+Dist 38.0 30.5 33.8 39.2 30.4 34.2 41.7 28.9 34.1 36.6 31.1 33.6 37.5 30.6 33.7
+Sup 35.1 35.6 35.4 34.4 35.0 34.7 46.2 30.8 37.0 39.4 36.2 37.7 36.0 37.1 36.5
+Supervised ? ? 35.5 28.9 31.9 31.3 33.2 32.2 33.5 35.0 34.2 32.9 33.4 33.2
+Table 1: A summary of results on the end-to-end KBP 2013 evaluation for various experiments. The
+first column denotes the algorithm used: either traditional distant supervision (Mintz++), MIML-RE, or
+a supervised classifier. In the case of MIML-RE, the model may be initialized either using Mintz++, or
+the corresponding supervised classifier (the ?Not Used? column is initialized with the ?All? supervised
+classifier). One of five active learning scenarios are evaluated: no annotated examples provided, the three
+active learning criteria, and all available examples used. The entry in blue denotes the basic MIML-RE
+model; entries in gray perform worse than this model. The bold items denote the best performance
+among selection criteria.
+the consistency and inference performed on the
+classifier output introduce bias in this evaluation?s
+sensitivity to particular types of errors. Mistakes
+which are easy to filter, or are difficult to retrieve
+using IR are less important in this evaluation; in
+contrast, factors such as providing good confi-
+dence scores for consistency become more impor-
+tant.
+For the end-to-end evaluation, we use the offi-
+cial evaluation script with two changes: First, all
+systems are evaluated with provenance ignored, so
+as not to penalize any system for finding a new
+provenance not validated in the official evaluation
+key. Second, each system reports its optimal F
+1
+along its P/R curve, yielding results which are
+optimistic when compared against other systems
+entered into the competition. However, this also
+yields results which are invariant to threshold tun-
+ing, and is therefore more appropriate for compar-
+ing between systems in this paper.
+Development was done on the KBP 2010?2012
+queries, and results are reported using the 2013
+queries as a simulated test set. Our best system
+achieves an F
+1
+of 37.7; the top two teams at KBP
+2013 (of 18 entered) achieved F
+1
+scores of 40.2
+and 37.1 respectively, ignoring provenance.
+6.3 Results
+Table 1 summarizes all results for the end-to-end
+task; relevant features of the table are copied in
+subsequent sections to illustrate key trends. Mod-
+els which perform worse than the original MIML-
+RE model (MIML-RE, initialized with ?Dist,? un-
+der ?Not Used?) are denoted in gray. The best per-
+System P R F
+1
+Mintz++ 41.3 28.2 33.5
+MIML + Dist 38.0 30.5 33.8
+MIML + Sup 35.1 35.6 35.4
+MIML + Dist + SampleJS 36.6 31.1 33.6
+MIML + Sup + SampleJS 39.4 36.2 37.7
+Table 2: A summary of improvements to MIML-
+RE on the end-to-end slotfilling task, copied from
+Table 1. Mintz++ is the traditional distantly su-
+pervised model. The second row corresponds to
+the unmodified MIML-RE model. The third row
+corresponds to MIML-RE initialized with a su-
+pervised classifier (trained on all examples). The
+fourth row is MIML-RE with annotated exam-
+ples incorporated during training (but not initial-
+ization). The last row shows the best results ob-
+tained by our model.
+forming model improves on the base model by 3.9
+F
+1
+points on the end-to-end task.
+We evaluate each of the individual contribu-
+tions of the paper: improving the accuracy of
+the MIML-RE relation extractor, evaluating our
+example selection criteria, and demonstrating the
+annotated examples? effectiveness for a fully-
+supervised relation extractor.
+Improve MIML-RE Accuracy A key goal of
+this work is to improve the accuracy of the MIML-
+RE model; we show that we improve the model
+both on the end-to-end slotfilling task (Table 2) as
+well as on a standard evaluation (Figure 5). Sim-
+ilar to our work, recent work by Pershina et al.
+1562
+System P R F
+1
+MIML + Sup 35.1 35.6 35.4
+MIML + Sup + Uniform 34.4 35.0 34.7
+MIML + Sup + HighJS 46.2 30.8 37.0
+MIML + Sup + SampleJS 39.4 36.2 37.7
+MIML + Sup + All 36.0 37.1 36.5
+Table 3: A summary of the performance of each
+example selection criterion. In each case, the
+model was initialized with a supervised classifier.
+The first row corresponds to the MIML-RE model
+initialized with a supervised classifier. The middle
+three rows show performance for the three selec-
+tion criteria, used both for initialization and during
+training. The last row shows results if all available
+annotations are used, independent of their source.
+System P R F
+1
+Mintz++ 41.3 28.2 33.5
+MIML + Dist 38.0 30.5 33.8
+Supervised + SampleJS 33.5 35.0 34.2
+MIML + Sup 35.1 35.6 35.5
+MIML + Sup + SampleJS 39.4 36.2 37.7
+Table 4: A comparison of the best performing su-
+pervised classifier with other systems. The top
+section compares the supervised classifier with
+prior work. The lower section highlights the im-
+provements gained from initializing MIML-RE
+with a supervised classifier.
+(2014) incorporates labeled data to guide MIML-
+RE during training. They make use of labeled data
+to extract training guidelines, which are intended
+to generalize across many examples. We show that
+we can match or outperform their improvements
+with our best criterion.
+A few interesting trends emerge from the end-
+to-end results in Table 2. Using annotated sen-
+tences during training alone did not improve per-
+formance consistently, even hurting performance
+when the SampleJS criterion was used. This
+supports an intuition that the initialization of the
+model is important, and that it is relatively difficult
+to coax the model out of a local optimum if it is
+initialized poorly. This is further supported by the
+improvement in performance when the model is
+initialized with a supervised classifier, even when
+no examples are used during training. Similar
+trends are reported in prior work, e.g., Smith and
+Eisner (2007) Section 4.4.6.
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0  0.05  0.1  0.15  0.2  0.25  0.3
+Prec
+ision
+Recall
+MIML-RESurdeanu et al. (2012)Mintz++
+Figure 4: MIML-RE and Mintz++ evaluated ac-
+cording to Surdeanu et al. (2012). The original
+model from the paper is plotted for comparison, as
+our training methodology is somewhat different.
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0  0.05  0.1  0.15  0.2  0.25  0.3
+Prec
+ision
+Recall
+Sample JSPershina et al. (2014)MIML-RE
+Figure 5: Our best active learning criterion evalu-
+ated against our version of MIML-RE, alongside
+the best system of Pershina et al. (2014).
+Also interesting is the relatively small gain
+MIML-RE provides over traditional distant super-
+vision (Mintz++) in this setting. We conjecture
+that the mistakes made by Mintz++ are often rel-
+atively easily filtered by the downstream consis-
+tency component. This is supported by Figure 4;
+we evaluate our trained MIML-RE model against
+Mintz++ and the results reported in Surdeanu et
+al. (2012). We show that our model performs as
+well or better than the original implementation,
+and consistently outperforms Mintz++.
+Evaluate Selection Criteria A key objective of
+this work is to evaluate how much of an impact
+careful selection of annotated examples has on the
+overall performance of the system. We evaluate
+the three selection criteria from Section 3.2, show-
+ing the results for MIML-RE in Table 3; results
+for the supervised classifier are given in Table 1.
+In both cases, we show that the sampled JS cri-
+1563
+terion performs comparably to or better than the
+other criteria.
+At least two interesting trends can be noted from
+these results: First, the uniformly sampled crite-
+rion performed worse than MIML-RE initialized
+with a supervised classifier. This may be due to
+noise in the annotation: a small number of an-
+notation errors on entity pairs with only a single
+corresponding mention could introduce dangerous
+noise into training. These singleton mentions will
+rarely have disagreement between the committee
+of classifiers, and therefore will generally only be
+selected in the uniform criterion.
+Second, adding in the full set of examples did
+not improve performance ? in fact, performance
+generally dropped in this scenario. We conjecture
+that this is due to the inclusion of the uniformly
+sampled examples, with performance dropping for
+the same reasons as above.
+Both of these results can be reconciled with
+the results of Zhang et al. (2012); like this work,
+they annotated examples to analyze the trade-off
+between adding more data to a distantly super-
+vised system, and adding more direct supervi-
+sion. They conclude that annotations provide only
+a relatively small improvement in performance.
+However, their examples were uniformly selected
+from the training corpus, and did not make use
+of the structure provided by MIML-RE. Our re-
+sults agree in that neither the uniform selection
+criterion nor the supervised classifier significantly
+outperformed the unmodified MIML-RE model;
+nonetheless, we show that if care is taken in se-
+lecting these labeled examples we can achieve no-
+ticeable improvements in accuracy.
+We also evaluate our selection criteria on the
+evaluation of Surdeanu et al. (2012), both initial-
+ized with Mintz++ (Figure 7) and with the super-
+vised classifier (Figure 6). These results mirror
+those in the end-to-end evaluation; when initial-
+ized with the supervised classifier the high dis-
+agreement (High JS) and sampling proportional to
+disagreement (Sample JS) criteria clearly outper-
+form both the base MIML-RE model as well as
+the uniformly sampling criterion. Using the an-
+notated examples only during training yielded no
+perceivable benefit over the base model (Figure 7).
+Supervised Relation Extractor The examples
+collected can be used to directly train a supervised
+classifier, with results summarized in Table 4. The
+most salient insight is that the performance of the
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0  0.05  0.1  0.15  0.2  0.25  0.3
+Prec
+ision
+Recall
+Sample JSHigh JSUniformMIML-RE
+Figure 6: A comparison of models trained with
+various selection criteria on the evaluation of Sur-
+deanu et al. (2012), all initialized with the corre-
+sponding supervised classifier.
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0  0.05  0.1  0.15  0.2  0.25  0.3
+Prec
+ision
+Recall
+Sample JSHigh JSUniformMIML-RE
+Figure 7: A comparison of models trained with
+various selection criteria on the evaluation of Sur-
+deanu et al. (2012), all initialized with Mintz++.
+best supervised classifier is similar to that of the
+MIML-RE model, despite being trained on nearly
+two orders of magnitude less training data.
+More interestingly, however, the supervised
+classifier provides a noticeably better initializa-
+tion for MIML-RE than Mintz++, yielding better
+results even without enforcing the labels during
+EM. These results suggest that the power gained
+from the the more sophisticated MIML-RE model
+is best used in conjunction with a small amount of
+training data. That is, using MIML-RE as a princi-
+pled model for combining a large distantly labeled
+corpus and a small number of careful annotations
+yields significant improvement over using either
+of the two data sources alone.
+1564
+Relation # P R F
+1
+no relation 3073
+employee of 1978 29 32 33 46 31 38
+countries of res. 1061 30 42 7 40 11 41
+states of residence 427 57 33 14 7 23 12
+cities of residence 356 31 52 9 30 14 38
+(org:)member of 290 0 0 0 0 0 0
+country of hq 280 63 62 65 62 64 62
+top members 221 36 26 50 60 42 36
+country of birth 205 22 0 40 0 29 0
+parents 196 10 26 31 54 15 35
+city of hq 194 46 52 57 61 51 56
+(org:)alt names 184 52 48 39 39 45 43
+founded by 180 100 89 29 38 44 53
+city of birth 145 17 50 8 17 11 25
+state of hq 132 50 64 30 35 38 45
+title 121 20 26 28 35 23 30
+subsidiaries 105 33 25 6 3 10 5
+founded 90 62 82 62 69 62 75
+spouse 88 37 54 85 85 51 66
+origin 86 42 43 68 70 51 53
+state of birth 83 0 50 0 10 0 17
+charges 69 54 54 16 16 24 24
+cause of death 69 93 93 39 39 55 55
+(per:)alt names 69 9 20 2 3 3 6
+country of death 65 100 100 10 10 18 18
+members 54 0 0 0 0 0 0
+children 52 53 62 14 18 22 27
+parents 50 64 64 28 28 39 39
+city of death 38 42 75 16 19 23 30
+dissolved 38 0 0 0 0 0 0
+date of death 33 64 64 44 39 52 48
+political affiliation 23 7 25 100 100 13 40
+state of death 19 0 0 0 0 0 0
+shareholders 19 0 0 0 0 0 0
+siblings 16 50 50 33 33 40 40
+schools attended 14 80 78 41 48 54 60
+date of birth 11 100 100 85 85 92 92
+other family 9 0 0 0 0 0 0
+age 4 94 97 94 90 94 93
+# of employees 3 0 0 0 0 0 0
+religion 2 100 100 29 29 44 44
+website 0 25 0 3 0 6 0
+Table 5: A summary of relations annotated, and
+end-to-end slotfilling performance by relation.
+The first column gives the relation; the second
+shows the number of examples annotated. The
+subsequent columns show the performance of the
+unmodified MIML-RE model and our best per-
+forming model (SampleJS). Changes in values are
+bolded; positive changes are shown in green and
+negative changes in red. The most frequent 10 re-
+lations in the evaluation are likewise bolded.
+6.4 Analysis By Relation
+In this section, we explore which of the KBP rela-
+tions were shown to Turkers, and whether the im-
+provements in accuracy correspond to these rela-
+tions. We compare only the unmodified MIML-
+RE model, and our best model (MIML-RE initial-
+ized with the supervised classifier, under the Sam-
+pleJS criterion). Results are shown in Table 5.
+A few interesting trends emerge from this anal-
+ysis. We note that annotating even 80+ examples
+for a relation seems to provide a consistent boost
+in accuracy, whereas relations with fewer anno-
+tated examples tended to show little or no change.
+However, the gains of our model are not univer-
+sal across relation types, even dropping noticeably
+on some ? for instance, F
+1
+drops on both state of
+residence and country of birth. This could suggest
+systematic noise from Turker judgments; e.g., for
+foreign geography (state of residence) or ambigu-
+ous relations (top members).
+An additional insight from the table is the mis-
+match between examples chosen to be annotated,
+and the most popular relations in the KBP evalu-
+ation. For instance, by far the most popular KBP
+relation (title) had only 121 examples annotated.
+7 Conclusion
+We have shown that providing a relatively small
+number of mention-level annotations can improve
+the accuracy of MIML-RE, yielding an end-to-end
+improvement of 3.9 F
+1
+on the KBP task. Further-
+more, we have introduced a new active learning
+criterion, and shown both that the choice of crite-
+rion is important, and that our new criterion per-
+forms well. Lastly, we make available a dataset of
+mention-level annotations for constructing a tradi-
+tional supervised relation extractor.
+Acknowledgements
+We thank the anonymous reviewers for their
+thoughtful comments, and Dan Weld for his feed-
+back on additional experiments and analysis. We
+gratefully acknowledge the support of the Defense
+Advanced Research Projects Agency (DARPA)
+Deep Exploration and Filtering of Text (DEFT)
+Program under Air Force Research Laboratory
+(AFRL) contract no. FA8750-13-2-0040. Any
+opinions, findings, and conclusion or recommen-
+dations expressed in this material are those of the
+authors and do not necessarily reflect the view of
+the DARPA, AFRL, or the US government.
+1565
+References
+Gabor Angeli, Arun Chaganty, Angel Chang, Kevin
+Reschke, Julie Tibshirani, Jean Y. Wu, Osbert Bas-
+tani, Keith Siilats, and Christopher D. Manning.
+2014. Stanford?s 2013 KBP system. In TAC-KBP.
+Zheng Chen, Suzanne Tamang, Adam Lee, Xiang
+Li, Wen-Pin Lin, Matthew Snover, Javier Artiles,
+Marissa Passantino, and Heng Ji. 2010. CUNY-
+BLENDER. In TAC-KBP.
+Mark Craven and Johan Kumlien. 1999. Constructing
+biological knowledge bases by extracting informa-
+tion from text sources. In AAAI.
+George R Doddington, Alexis Mitchell, Mark A Przy-
+bocki, Lance A Ramshaw, Stephanie Strassel, and
+Ralph M Weischedel. 2004. The automatic content
+extraction (ACE) program?tasks, data, and evalua-
+tion. In LREC.
+Aidan Finn and Nicolas Kushmerick. 2003. Active
+learning selection strategies for information extrac-
+tion. In International Workshop on Adaptive Text
+Extraction and Mining.
+Yoav Freund, H Sebastian Seung, Eli Shamir, and Naf-
+tali Tishby. 1992. Information, prediction, and
+query by committee. In NIPS.
+Yoav Freund, H Sebastian Seung, Eli Shamir, and Naf-
+tali Tishby. 1997. Selective sampling using the
+query by committee algorithm. Machine learning,
+28(2-3):133?168.
+Lisheng Fu and Ralph Grishman. 2013. An efficient
+active learning framework for new relation types. In
+IJCNLP.
+Ralph Grishman and Bonan Min. 2010. New York
+University KBP 2010 slot-filling system. In Proc.
+TAC 2010 Workshop.
+Zhou GuoDong, Su Jian, Zhang Jie, and Zhang Min.
+2005. Exploring various knowledge in relation ex-
+traction. In ACL.
+Raphael Hoffmann, Congle Zhang, Xiao Ling, Luke
+Zettlemoyer, and Daniel S Weld. 2011. Knowledge-
+based weak supervision for information extraction
+of overlapping relations. In ACL-HLT.
+David D Lewis and William A Gale. 1994. A sequen-
+tial algorithm for training text classifiers. In SIGIR.
+Andrew McCallum and Kamal Nigam. 1998. Employ-
+ing EM and pool-based active learning for text clas-
+sification. In ICML.
+Bonan Min, Ralph Grishman, Li Wan, Chang Wang,
+and David Gondek. 2013. Distant supervision for
+relation extraction with an incomplete knowledge
+base. In NAACL-HLT.
+Mike Mintz, Steven Bills, Rion Snow, and Dan Juraf-
+sky. 2009. Distant supervision for relation extrac-
+tion without labeled data. In ACL.
+Maria Pershina, Bonan Min, Wei Xu, and Ralph Gr-
+ishman. 2014. Infusion of labeled data into distant
+supervision for relation extraction. In ACL.
+Sebastian Riedel, Limin Yao, and Andrew McCallum.
+2010. Modeling relations and their mentions with-
+out labeled text. In Machine Learning and Knowl-
+edge Discovery in Databases. Springer.
+Sebastian Riedel, Limin Yao, Andrew McCallum, and
+Benjamin M Marlin. 2013. Relation extraction
+with matrix factorization and universal schemas. In
+NAACL-HLT.
+Benjamin Roth and Dietrich Klakow. 2013. Feature-
+based models for improving the quality of noisy
+training data for relation extraction. In CIKM.
+Maytal Saar-Tsechansky and Foster Provost. 2004.
+Active sampling for class probability estimation and
+ranking. Machine Learning, 54(2):153?178.
+Burr Settles, Mark Craven, and Soumya Ray. 2008.
+Multiple-instance active learning. In Advances in
+neural information processing systems, pages 1289?
+1296.
+Burr Settles. 2010. Active learning literature survey.
+University of Wisconsin Madison Technical Report
+1648.
+Noah Smith and Jason Eisner. 2007. Novel estimation
+methods for unsupervised discovery of latent struc-
+ture in natural language text. Ph.D. thesis, Johns
+Hopkins.
+Stephen G Soderland. 1997. Learning text analysis
+rules for domain-specific natural language process-
+ing. Ph.D. thesis, University of Massachusetts.
+Ang Sun, Ralph Grishman, Wei Xu, and Bonan Min.
+2011. New York University 2011 system for KBP
+slot filling. In Proceedings of the Text Analytics
+Conference.
+Mihai Surdeanu and Massimiliano Ciaramita. 2007.
+Robust information extraction with perceptrons. In
+ACE07 Proceedings.
+Mihai Surdeanu, Sonal Gupta, John Bauer, David Mc-
+Closky, Angel X Chang, Valentin I Spitkovsky, and
+Christopher D Manning. 2011. Stanfords distantly-
+supervised slot-filling system. In Proceedings of the
+Text Analytics Conference.
+Mihai Surdeanu, Julie Tibshirani, Ramesh Nallap-
+ati, and Christopher D. Manning. 2012. Multi-
+instance multi-label learning for relation extraction.
+In EMNLP.
+Fei Wu and Daniel S Weld. 2007. Autonomously se-
+mantifying wikipedia. In Proceedings of the six-
+teenth ACM conference on information and knowl-
+edge management. ACM.
+1566
+Wei Xu, Le Zhao, Raphael Hoffman, and Ralph Grish-
+man. 2013. Filling knowledge base gaps for distant
+supervision of relation extraction. In ACL.
+Ce Zhang, Feng Niu, Christopher R?e, and Jude Shav-
+lik. 2012. Big data versus the crowd: Looking for
+relationships in all the right places. In ACL.
+1567
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Short Papers), pages 124?129,
+Baltimore, Maryland, USA, June 23-25 2014.
+c?2014 Association for Computational Linguistics
+Robust Logistic Regression using Shift Parameters
+Julie Tibshirani and Christopher D. Manning
+Stanford University
+Stanford, CA 94305, USA
+{jtibs, manning}@cs.stanford.edu
+Abstract
+Annotation errors can significantly hurt
+classifier performance, yet datasets are
+only growing noisier with the increased
+use of Amazon Mechanical Turk and tech-
+niques like distant supervision that auto-
+matically generate labels. In this paper,
+we present a robust extension of logistic
+regression that incorporates the possibil-
+ity of mislabelling directly into the objec-
+tive. This model can be trained through
+nearly the same means as logistic regres-
+sion, and retains its efficiency on high-
+dimensional datasets. We conduct exper-
+iments on named entity recognition data
+and find that our approach can provide a
+significant improvement over the standard
+model when annotation errors are present.
+1 Introduction
+Almost any large dataset has annotation errors,
+especially those complex, nuanced datasets com-
+monly used in natural language processing. Low-
+quality annotations have become even more com-
+mon in recent years with the rise of Amazon Me-
+chanical Turk, as well as methods like distant su-
+pervision and co-training that involve automati-
+cally generating training data.
+Although small amounts of noise may not be
+detrimental, in some applications the level can
+be high: upon manually inspecting a relation ex-
+traction corpus commonly used in distant super-
+vision, Riedel et al (2010) report a 31% false
+positive rate. In cases like these, annotation er-
+rors have frequently been observed to hurt perfor-
+mance. Dingare et al (2005), for example, con-
+duct error analysis on a system to extract relations
+from biomedical text, and observe that over half
+of the system?s errors could be attributed to incon-
+sistencies in how the data was annotated. Simi-
+larly, in a case study on co-training for natural lan-
+guage tasks, Pierce and Cardie (2001) find that
+the degradation in data quality from automatic la-
+belling prevents these systems from performing
+comparably to their fully-supervised counterparts.
+In this work we argue that incorrect exam-
+ples should be explicitly modelled during train-
+ing, and present a simple extension of logistic re-
+gression that incorporates the possibility of mis-
+labelling directly into the objective. Following a
+technique from robust statistics, our model intro-
+duces sparse ?shift parameters? to allow datapoints
+to slide along the sigmoid, changing class if ap-
+propriate. It has a convex objective, is well-suited
+to high-dimensional data, and can be efficiently
+trained with minimal changes to the logistic re-
+gression pipeline.
+In experiments on a large, noisy NER dataset,
+we find that this method can provide an improve-
+ment over standard logistic regression when anno-
+tation errors are present. The model also provides
+a means to identify which examples were misla-
+belled: through experiments on biological data,
+we demonstrate how our method can be used to
+accurately identify annotation errors. This robust
+extension of logistic regression shows particular
+promise for NLP applications: it helps account
+for incorrect labels, while remaining efficient on
+large, high-dimensional datasets.
+2 Related Work
+Much of the previous work on dealing with anno-
+tation errors centers around filtering the data be-
+fore training. Brodley and Friedl (1999) introduce
+what is perhaps the simplest form of supervised
+filtering: they train various classifiers, then record
+their predictions on a different part of the train set
+and eliminate contentious examples. Sculley and
+Cormack (2008) apply this approach to spam fil-
+tering with noisy user feedback.
+One obvious issue with these methods is that the
+noise-detecting classifiers are themselves trained
+124
+on noisy labels. Unsupervised filtering tries to
+avoid this problem by clustering training instances
+based solely on their features, then using the clus-
+ters to detect labelling anomalies (Rebbapragada
+et al, 2009). Recently, Intxaurrondo et al (2013)
+applied this approach to distantly-supervised rela-
+tion extraction, using heuristics such as the num-
+ber of mentions per tuple to eliminate suspicious
+examples.
+Unsupervised filtering, however, relies on the
+perhaps unwarranted assumption that examples
+with the same label lie close together in feature
+space. Moreover filtering techniques in general
+may not be well-justified: if a training example
+does not fit closely with the current model, it is
+not necessarily mislabelled. It may represent an
+important exception that would improve the over-
+all fit, or appear unusual simply because we have
+made poor modelling assumptions.
+Perhaps the most promising approaches are
+those that directly model annotation errors, han-
+dling mislabelled examples as they train. This
+way, there is an active trade-off between fitting the
+model and identifying suspected errors. Bootkra-
+jang and Kaban (2012) present an extension of
+logistic regression that models annotation errors
+through flipping probabilities. While intuitive, this
+approach has shortcomings of its own: the objec-
+tive function is nonconvex and the authors note
+that local optima are an issue, and the model can
+be difficult to fit when there are many more fea-
+tures than training examples.
+There is a growing body of literature on learn-
+ing from several annotators, each of whom may be
+inaccurate (Bachrach et al, 2012; Raykar et al,
+2009). It is important to note that we are consid-
+ering a separate, and perhaps more general, prob-
+lem: we have only one source of noisy labels, and
+the errors need not come from the human annota-
+tors, but could be introduced through contamina-
+tion or automatic labelling.
+The field of ?robust statistics? seeks to develop
+estimators that are not unduly affected by devi-
+ations from the model assumptions (Huber and
+Ronchetti, 2009). Since mislabelled points are
+one type of outlier, this goal is naturally related
+to our interest in dealing with noisy data, and it
+seems many of the existing techniques would be
+relevant. A common strategy is to use a modi-
+fied loss function that gives less influence to points
+far from the boundary, and several models along
+-4 -2 0 2 4
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+original sigmoid
+standard LR
+robust LR
+Figure 1: Fit resulting from a standard vs. robust
+model, where data is generated from the dashed
+sigmoid and negative labels flipped with probabil-
+ity 0.2.
+these lines have been proposed (Ding and Vish-
+wanathan., 2010; Masnadi-Shirazi et al, 2010).
+Unfortunately these approaches require optimiz-
+ing nonstandard, often nonconvex objectives, and
+fail to give insight into which datapoints are mis-
+labelled.
+In a recent advance, She and Owen (2011)
+demonstrate that introducing a regularized ?shift
+parameter? per datapoint can help increase the ro-
+bustness of linear regression. Candes et al (2009)
+propose a similar approach for principal compo-
+nent analysis, while Wright and Ma (2009) ex-
+plore its effectiveness in sparse signal recovery. In
+this work we adapt the technique to logistic re-
+gression. To the best of our knowledge, we are
+the first to experiment with adding ?shift param-
+eters? to logistic regression and demonstrate that
+the model is especially well-suited to the type of
+high-dimensional, noisy datasets commonly used
+in NLP.
+3 Model
+Recall that in binary logistic regression, the prob-
+ability of an example x
+i
+being positive is modeled
+as
+g(?
+T
+x
+i
+) =
+1
+1 + e
+??
+T
+x
+i
+.
+For simplicity, we assume the intercept term has
+been folded into the weight vector ?, so ? ? R
+m+1
+where m is the number of features.
+Following She and Owen (2011), we propose
+the following robust extension: for each datapoint
+i = 1, . . . , n, we introduce a real-valued shift pa-
+125
+rameter ?
+i
+so that the sigmoid becomes
+g(?
+T
+x
+i
++ ?
+i
+) =
+1
+1 + e
+??
+T
+x
+i
+??
+i
+.
+Since we believe that most examples are correctly
+labelled, we L
+1
+-regularize the shift parameters to
+encourage sparsity. Letting y
+i
+? {0, 1} be the la-
+bel for datapoint i and fixing ? ? 0, our objective
+is now given by
+l(?, ?) =
+n
+?
+i=1
+[
+y
+i
+log g(?
+T
+x
+i
++ ?
+i
+) (1)
++ (1? y
+i
+) log
+(
+1? g(?
+T
+x
+i
++ ?
+i
+)
+)
+]
+? ?
+n
+?
+i=1
+|?
+i
+|.
+These parameters ?
+i
+let certain datapoints shift
+along the sigmoid, perhaps switching from one
+class to the other. If a datapoint i is correctly an-
+notated, then we would expect its corresponding
+?
+i
+to be zero. If it actually belongs to the posi-
+tive class but is labelled negative, then ?
+i
+might be
+positive, and analogously for the other direction.
+One way to interpret the model is that it al-
+lows the log-odds of select datapoints to be
+shifted. Compared to models based on label-
+flipping, where there is a global set of flipping
+probabilities, our method has the advantage of tar-
+geting each example individually.
+It is worth noting that there is no difficulty in
+regularizing the ? parameters as well. For exam-
+ple, if we choose to use an L
+1
+penalty then our
+objective becomes
+l(?, ?) =
+n
+?
+i=1
+[
+y
+i
+log g(?
+T
+x
+i
++ ?
+i
+) (2)
++ (1? y
+i
+) log
+(
+1? g(?
+T
+x
+i
++ ?
+i
+)
+)
+]
+? ?
+m
+?
+j=1
+|?
+j
+| ? ?
+n
+?
+i=1
+|?
+i
+|.
+Finally, it may seem concerning that we have
+introduced a new parameter for each datapoint.
+But in many applications the number of features
+already exceeds n, so with proper regularization,
+this increase is actually quite reasonable.
+3.1 Training
+Notice that adding these shift parameters is equiv-
+alent to introducing n features, where the ith new
+feature is 1 for datapoint i and 0 otherwise. With
+this observation, we can simply modify the fea-
+ture matrix and parameter vector and train the lo-
+gistic model as usual. Specifically, we let ?
+?
+=
+(?
+0
+, . . . , ?
+m
+, ?
+1
+, . . . , ?
+n
+) and X
+?
+= [X|I
+n
+] so that
+the objective (1) simplifies to
+l(?
+?
+) =
+n
+?
+i=1
+[
+y
+i
+log g(?
+?T
+x
+?
+i
+)
++ (1? y
+i
+) log
+(
+1? g(?
+?T
+x
+?
+i
+)
+)
+]
+? ?
+m+n
+?
+j=m+1
+|?
+?(j)
+|.
+Upon writing the objective in this way, we imme-
+diately see that it is convex, just as standard L
+1
+-
+penalized logistic regression is convex.
+3.2 Testing
+To obtain our final logistic model, we keep only
+the ? parameters. Predictions are then made as
+usual:
+I{g(
+?
+?
+T
+x) > 0.5}.
+3.3 Selecting Regularization Parameters
+The parameter ? from equation (1) would nor-
+mally be chosen through cross-validation, but our
+set-up is unusual in that the training set may con-
+tain errors, and even if we have a designated devel-
+opment set it is unlikely to be error-free. We found
+in simulations that the errors largely do not inter-
+fere in selecting ?, so in the experiments below we
+cross-validate as normal.
+Notice that ? has a direct effect on the number
+of nonzero shifts ? and hence the suspected num-
+ber of errors in the training set. So if we have in-
+formation about the noise level, we can directly
+incorporate it into the selection procedure. For ex-
+ample, we may believe the training set has no more
+than 15% noise, and so would restrict the choice
+of ? during cross-validation to only those values
+where 15% or fewer of the estimated shift param-
+eters are nonzero.
+We now consider situations in which the ? pa-
+rameters are regularized as well. Assume, for ex-
+ample, that we use L
+1
+-regularization as in equa-
+tion (2), so that we now need to optimize over both
+? and ?. We perform the following simple proce-
+dure:
+1. Cross-validate using standard logistic regres-
+sion to select ?.
+2. Fix this value for ?, and cross-validate using
+the robust model to find the best choice of ?.
+126
+method suspects identified false positives
+Alon et al (1999) T2 T30 T33 T36 T37 N8 N12 N34 N36
+Furey et al (2000) ? ? ? ? ? ?
+Kadota et al (2003) ? ? ? ? ? T6, N2
+Malossini et al (2006) ? ? ? ? ? ? ? T8, N2, N28, N29
+Bootkrajang et al (2012) ? ? ? ? ? ? ?
+Robust LR ? ? ? ? ? ? ?
+Table 1: Results of various error-identification methods on the colon cancer dataset. The first row lists
+the samples that are biologically confirmed to be suspicious, and each other row gives the output from
+an automatic detection method. Bootkrajang et al report confidences, so we threshold at 0.5 to obtain
+these results.
+4 Experiments
+We conduct two sets of experiments to assess the
+effectiveness of the approach, in terms of both
+identifying mislabelled examples and producing
+accurate predictions.
+4.1 Contaminated Data
+Our first experiment is centered around a biologi-
+cal dataset with suspected labelling errors. Called
+the colon cancer dataset, it contains the expres-
+sion levels of 2000 genes from 40 tumor and 22
+normal tissues (Alon et al, 1999). There is evi-
+dence in the literature that certain tissue samples
+may have been cross-contaminated. In particular,
+5 tumor and 4 normal samples should have their
+labels flipped.
+In this experiment, we examine the model?s
+ability to identify mislabelled training examples.
+Because there are many more features than data-
+points and it is likely that not all genes are relevant,
+we choose to place an L
+1
+penalty on ?.
+Using glmnet, an R package for training reg-
+ularized models (Friedman et al, 2009), we se-
+lect ? and ? using cross-validation. Looking at
+the resulting values for ?, we find that only 7 of
+the shift parameters are nonzero and that each one
+corresponds to a suspicious datapoint. As further
+confirmation, the signs of the gammas correctly
+match the direction of the mislabelling. Compared
+to previous attempts to automatically detect errors
+in this dataset, our approach identifies at least as
+many suspicious examples but with no false posi-
+tives. A detailed comparison is given in Table 1.
+Although Bootkrajang and Kaban (2012) are quite
+accurate, it is worth noting that due to its noncon-
+vexity, their model needed to be trained 20 times
+to achieve these results.
+4.2 Manually Annotated Data
+We now consider the problem of named entity
+recognition (NER) to evaluate how our model per-
+forms in a large-scale prediction task. In tradi-
+tional NER, the goal is to determine whether each
+word is a person, organization, location, or not a
+named entity (?other?). Since our model is binary,
+we concentrate on the task of deciding whether a
+word is a person or not. (This task does not triv-
+ially reduce to finding the capitalized words, as the
+model must distinguish between people and other
+named entities like organizations).
+For training, we use a large, noisy NER dataset
+collected by Jenny Finkel. The data was created
+by taking various Wikipedia articles and giving
+them to five Amazon Mechanical Turkers to anno-
+tate. Few to no quality controls were put in place,
+so that certain annotators produced very noisy la-
+bels. To construct the train set we chose a Turker
+who was about average in how much he disagreed
+with the majority vote, and used only his annota-
+tions. Negative examples are subsampled to bring
+the class ratio to a reasonable level, for a total of
+200,000 negative and 24,002 positive examples.
+We find that in 0.4% of examples, the majority
+agreed they were negative but the chosen annota-
+tor marked them positive, and 7.5% were labelled
+positive by the majority but negative by the an-
+notator. Note that we still include examples for
+which there was no majority consensus, so these
+noise estimates are quite conservative.
+We evaluate on the English development test set
+from the CoNLL shared task (Tjong Kim Sang and
+Meulder, 2003). This data consists of news arti-
+cles from the Reuters corpus, hand-annotated by
+researchers at the University of Antwerp.
+We extract a set of features using Stanford?s
+NER pipeline (Finkel et al, 2005). This set was
+127
+model precision recall F1
+standard 76.99 85.87 81.19
+flipping 76.62 86.28 81.17
+robust 77.04 90.47 83.22
+Table 2: Performance of standard vs. robust logis-
+tic regression in the Wikipedia NER experiment.
+The flipping model refers to the approach from
+Bootkrajang and Kaban (2012).
+chosen for simplicity and is not highly engineered
+? it largely consists of lexical features such as the
+current word, the previous and next words in the
+sentence, as well as character n-grams and vari-
+ous word shape features. With a total of 393,633
+features in the train set, we choose to use L
+2
+-
+regularization, so that our penalty now becomes
+1
+2?
+2
+m
+?
+j=0
+|?
+j
+|
+2
++ ?
+n
+?
+i=1
+|?
+i
+|.
+This choice is natural as L
+2
+is the most common
+form of regularization in NLP, and we wish to ver-
+ify that our approach works for penalties besides
+L
+1
+.
+The robust model is fit using Orthant-Wise
+Limited-Memory Quasi Newton (OWL-QN), a
+technique for optimizing an L
+1
+-penalized objec-
+tive (Andrew and Gao, 2007). We tune both
+models through 5-fold cross-validation to obtain
+?
+2
+= 1.0 and ? = 0.1. Note that from the way
+we cross-validate (first tuning ? using standard lo-
+gistic regression, fixing this choice, then tuning ?)
+our procedure may give an unfair advantage to the
+baseline.
+We also compare against the algorithm pro-
+posed in Bootkrajang and Kaban (2012), an exten-
+sion of logistic regression mentioned in the section
+on prior work. This approach assumes that each
+example?s true label is flipped with a certain prob-
+ability before being observed, and fits the resulting
+latent-variable model using EM.
+The results of these experiments are shown in
+Table 2 as well as Figure 2. Robust logistic re-
+gression offers a noticeable improvement over the
+baseline, and this improvement holds at essentially
+all levels of precision and recall. Interestingly, be-
+cause of the large dimension, the flipping model
+consistently learns that no labels have been flipped
+and thus does not show a substantial difference
+with standard logistic regression.
+0.5 0.6 0.7 0.8 0.9 1.0
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+Recall
+Pre
+cisi
+on
+normal LR
+flipping model
+robust LR
+Figure 2: Precision-recall curve obtained from
+training on noisy Wikipedia data and testing on
+CoNLL. The flipping model refers to the approach
+from Bootkrajang and Kaban (2012).
+5 Future Work
+A natural direction for future work is to extend the
+model to a multi-class setting. One option is to
+introduce a ? for every class except the negative
+one, so that there are n(c ? 1) shift parameters in
+all. We could then apply a group lasso, with each
+group consisting of the ? for a particular datapoint
+(Meier et al, 2008). This way all of a datapoint?s
+shift parameters drop out together, which corre-
+sponds to the example being correctly labelled.
+CRFs and other sequence models could also
+benefit from the addition of shift parameters.
+Since the extra variables can be neatly folded into
+the linear term, convexity is preserved and the
+model could essentially be trained as usual.
+Acknowledgments
+Stanford University gratefully acknowledges the
+support of the Defense Advanced Research
+Projects Agency (DARPA) Deep Exploration and
+Filtering of Text (DEFT) Program under Air
+Force Research Laboratory (AFRL) contract no.
+FA8750-13-2-0040. Any opinions, findings, and
+conclusion or recommendations expressed in this
+material are those of the authors and do not nec-
+essarily reflect the view of the DARPA, AFRL, or
+the US government. We are especially grateful to
+Rob Tibshirani and Stefan Wager for their invalu-
+able advice and encouragement.
+128
+References
+U. Alon, N. Barkai, D. A. Notterman, K. Gish,
+S. Ybarra, D. Mack, A. J. Levine. 1999. Broad
+patterns of gene expression revealed by clustering
+analysis of tumor and normal colon tissues probed
+by oligonucleotide arrays. National Academy of Sci-
+ences of the USA.
+Galen Andrew and Jianfeng Gao. 2007. Scal-
+able Training of L
+1
+-Regularized Log-Linear Mod-
+els. ICML.
+Yoram Bachrach, Thore Graepel, Tom Minka, and
+John Guiver. 2012. How To Grade a Test With-
+out Knowing the Answers: A Bayesian Graphical
+Model for Adaptive Crowdsourcing and Aptitude
+Testing. arXiv preprint arXiv:1206.6386 (2012).
+Jakramate Bootkrajang and Ata Kaban. 2012. Label-
+noise Robust Logistic Regression and Its Applica-
+tions. ECML PKDD.
+Carla E. Brodley and Mark A. Friedl. 1999. Identify-
+ing mislabeled Training Data. JAIR, 11, 131-167.
+Emmanuel J. Candes, Xiaodong Li, Yi Ma, John
+Wright. 2009. Robust Principal Component Analy-
+sis? arXiv preprint arXiv:0912.3599, 2009.
+Nan Ding and S. V. N. Vishwanathan. 2010. t-Logistic
+regression. NIPS.
+Shipra Dingare, Malvina Nissim, Jenny Finkel,
+Christopher Manning, and Claire Grover. 2005. A
+system for identifying named entities in biomedical
+text: How results from two evaluations reflect on
+both the system and the evaluations. Comparative
+and Functional Genomics. 6(1?2), 77-85.
+Jenny Rose Finkel, Trond Grenager, Christopher Man-
+ning. 2005. Incorporating Non-local Information
+into Information Extraction Systems by Gibbs Sam-
+pling. ACL.
+Jerome Friedman, Trevor Hastie, Rob Tibshirani 2009.
+Regularization Paths for Generalized Linear Models
+via Coordinate Descent. Journal of statistical soft-
+ware, 33(1), 1.
+Terrence S. Furey, Nello Cristianini, Nigel Duffy,
+David W. Bednarski, Michel Schummer, David
+Haussler. 2000. Support vector machine classifi-
+cation and validation of cancer tissue samples using
+microarray expression data. Bioinformatics, 16(10),
+906-914.
+Peter J. Huber and Elvezio M. Ronchetti. 2000. Robust
+Statistics. John Wiley & Sons, Inc., Hoboken, NJ.
+Ander Intxaurrondo, Mihai Surdeanu, Oier Lopez de
+Lacalle, and Eneko Agirre. 2013. Removing
+Noisy Mentions for Distant Supervision. Congreso
+de la Sociedad Espaola para el Procesamiento del
+Lenguaje Natural.
+Koji Kadota, Daisuke Tominaga, Yutaka Akiyama,
+Katsutoshi Takahashi. 2003. Detecting outlying
+samples in microarray data: A critical assessment
+of the effect of outliers on sample. ChemBio Infor-
+matics Journal, 3(1), 30-45.
+Andrea Malossini, Enrico Blanzieri, Raymond T. Ng.
+2006. Detecting potential labeling errors in microar-
+rays by data perturbation. Bioinformatics, 22(17),
+2114-2121.
+Hamed Masnadi-Shirazi, Vijay Mahadevan, and Nuno
+Vasconcelos. 2010. On the design of robust classi-
+fiers for computer vision. IEEE International Con-
+ference Computer Vision and Pattern Recognition.
+Lukas Meier, Sara van de Geer, Peter Buhlmann. 2008.
+The group lasso for logistic regression. Journal of
+the Royal Statistical Society, 70(1), 53-71.
+David Pierce and Claire Cardie. 2001. Limitations of
+co-training for natural language learning from large
+datasets. EMNLP.
+Vikas Raykar, Shipeng Yu, Linda H. Zhao, Anna Jere-
+bko, Charles Florin, Gerardo Hermosillo Valadez,
+Luca Bogoni, and Linda Moy. 2009. Supervised
+learning from multiple experts: whom to trust when
+everyone lies a bit. ICML.
+Umaa Rebbapragada, Lukas Mandrake, Kiri L.
+Wagstaff, Damhnait Gleeson, Rebecca Castano,
+Steve Chien, Carla E. Brodley 2009. Improv-
+ing Onboard Analysis of Hyperion Images by Fil-
+tering mislabelled Training Data Examples. IEEE
+Aerospace Conference.
+Sebastian Riedel, Limin Yao, Andrew McCallum.
+2010. Modeling Relations and Their Mentions with-
+out Labelled Text. ECML PKDD.
+D. Sculley and Gordon V. Cormack 2008. Filtering
+Email Spam in the Presence of Noisy User Feed-
+back. CEAS.
+Yiyuan She and Art Owen. 2011. Outlier Detection
+Using Nonconvex Penalized Regression. Journal of
+the American Statistical Association, 106(494).
+Erik F. Tjong Kim Sang, Fien De Meulder. 2003.
+Introduction to the CoNLL-2003 Shared Task:
+Language-Independent Named Entity Recognition.
+CoNLL.
+John Wright and Yi Ma. 2009. Dense Error Correction
+via l
+1
+-Minimization IEEE Transactions on Informa-
+tion Theory.
+129

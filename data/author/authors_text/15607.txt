@@ -1,0 +1,2688 @@
+Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing, pages 782?792,
+Edinburgh, Scotland, UK, July 27?31, 2011. c?2011 Association for Computational Linguistics
+Robust Disambiguation of Named Entities in Text
+Johannes Hoffart1, Mohamed Amir Yosef1, Ilaria Bordino2, Hagen Fu?rstenau3,
+Manfred Pinkal3, Marc Spaniol1, Bilyana Taneva1, Stefan Thater3, Gerhard Weikum1
+1 Max Planck Institute for Informatics, Saarbru?cken, Germany
+2 Yahoo! Research Lab, Barcelona, Spain
+3 Saarland University, Saarbru?cken, Germany
+{jhoffart,mamir,mspaniol,btaneva,weikum}@mpi-inf.mpg.de
+bordino@yahoo-inc.com {hagenf,pinkal,stth}@coli.uni-sb.de
+Abstract
+Disambiguating named entities in natural-
+language text maps mentions of ambiguous
+names onto canonical entities like people or
+places, registered in a knowledge base such as
+DBpedia or YAGO. This paper presents a ro-
+bust method for collective disambiguation, by
+harnessing context from knowledge bases and
+using a new form of coherence graph. It unifies
+prior approaches into a comprehensive frame-
+work that combines three measures: the prior
+probability of an entity being mentioned, the
+similarity between the contexts of a mention
+and a candidate entity, as well as the coherence
+among candidate entities for all mentions to-
+gether. The method builds a weighted graph of
+mentions and candidate entities, and computes
+a dense subgraph that approximates the best
+joint mention-entity mapping. Experiments
+show that the new method significantly outper-
+forms prior methods in terms of accuracy, with
+robust behavior across a variety of inputs.
+1 Introduction
+1.1 Motivation
+Web pages, news articles, blog postings, and other
+Internet data contain mentions of named entities such
+as people, places, organizations, etc. Names are often
+ambiguous: the same name can have many different
+meanings. For example, given a text like ?They per-
+formed Kashmir, written by Page and Plant. Page
+played unusual chords on his Gibson.?, how can we
+tell that ?Kashmir? denotes a song by Led Zeppelin
+and not the Himalaya region (and that Page refers
+to guitarist Jimmy Page and not to Google founder
+Larry Page, and that Gibson is a guitar model rather
+than the actor Mel Gibson)?
+Establishing these mappings between the mentions
+and the actual entities is the problem of named-entity
+disambiguation (NED).
+If the possible meanings of a name are known up-
+front - e.g., by using comprehensive gazetteers such
+as GeoNames (www.geonames.org) or knowledge
+bases such as DBpedia (Auer07), Freebase (www.
+freebase.com), or YAGO (Suchanek07), which
+have harvested Wikipedia redirects and disambigua-
+tion pages - then the simplest heuristics for name res-
+olution is to choose the most prominent entity for a
+given name. This could be the entity with the longest
+Wikipedia article or the largest number of incoming
+links in Wikipedia; or the place with the most inhab-
+itants (for cities) or largest area, etc. Alternatively,
+one could choose the entity that uses the mention
+most frequently as a hyperlink anchor text. For the
+example sentence given above, all these techniques
+would incorrectly map the mention ?Kashmir? to the
+Himalaya region. We refer to this suite of methods
+as a popularity-based (mention-entity) prior.
+Key to improving the above approaches is to con-
+sider the context of the mention to be mapped, and
+compare it - by some similarity measure - to contex-
+tual information about the potential target entities.
+For the example sentence, the mention ?Kashmir?
+has context words like ?performed? and ?chords? so
+that we can compare a bag-of-words model against
+characteristic words in the Wikipedia articles of the
+different candidate entities (by measures such as co-
+sine similarity, weighted Jaccard distance, KL diver-
+gence, etc.). The candidate entity with the highest
+similarity is chosen. Alternatively, labeled training
+data can be harnessed to learn a multi-way classifier,
+and additional features like entire phrases, part-of-
+speech tags, dependency-parsing paths, or nearby
+782
+hyperlinks can be leveraged as well. These methods
+work well for sufficiently long and relatively clean
+input texts such as predicting the link target of a Wi-
+kipedia anchor text (Milne08). However, for short or
+more demanding inputs like news, blogs, or arbitrary
+Web pages, relying solely on context similarity can-
+not achieve near-human quality. Similarity measures
+based on syntactically-informed distributional mod-
+els require minimal context only. They have been
+developed for common nouns and verbs (Thater10),
+but not applied to named entities.
+The key to further improvements is to jointly con-
+sider multiple mentions in an input and aim for a col-
+lective assignment onto entities (Kulkarni09). This
+approach should consider the coherence of the re-
+sulting entities, in the sense of semantic relatedness,
+and it should combine such measures with the con-
+text similarity scores of each mention-entity pair. In
+our example, one should treat ?Page?, ?Plant? and
+?Gibson? also as named-entity mentions and aim to
+disambiguate them together with ?Kashmir?.
+Collective disambiguation works very well when a
+text contains mentions of a sufficiently large number
+of entities within a thematically homogeneous con-
+text. If the text is very short or is about multiple, un-
+related or weakly related topics, collective mapping
+tends to produce errors by directing some mentions
+towards entities that fit into a single coherent topic
+but do not capture the given text. For example, a text
+about a football game between ?Manchester? and
+?Barcelona? that takes place in ?Madrid? may end up
+mapping either all three of these mentions onto foot-
+ball clubs (i.e., Manchester United, FC Barcelona,
+Real Madrid) or all three of them onto cities. The
+conclusion here is that none of the prior methods
+for named-entity disambiguation is robust enough to
+cope with such difficult inputs.
+1.2 Contribution
+Our approach leverages recently developed knowl-
+edge bases like YAGO as an entity catalog and a
+rich source of entity types and semantic relationships
+among entities. These are factored into new measures
+for the similarity and coherence parts of collectively
+disambiguating all mentions in an input text. For
+similarity, we also explore an approach that lever-
+ages co-occurrence information obtained from large,
+syntactically parsed corpora (Thater10).
+We cast the joint mapping into the following graph
+problem: mentions from the input text and candidate
+entities define the node set, and we consider weighted
+edges between mentions and entities, capturing con-
+text similarities, and weighted edges among entities,
+capturing coherence. The goal on this combined
+graph is to identify a dense subgraph that contains
+exactly one mention-entity edge for each mention,
+yielding the most likely disambiguation. Such graph
+problems are NP-hard, as they generalize the well-
+studied Steiner-tree problem. We develop a greedy
+algorithm that provides high-quality approximations,
+and is customized to the properties of our mention-
+entity graph model.
+In addition to improving the above assets for the
+overall disambiguation task, our approach gains in
+robustness by using components selectively in a self-
+adapting manner. To this end, we have devised the
+following multi-stage procedure.
+? For each mention, we compute popularity priors
+and context similarities for all entity candidates
+as input for our tests.
+? We use a threshold test on the prior to decide
+whether popularity should be used (for mentions
+with a very high prior) or disregarded (for men-
+tions with several reasonable candidates).
+? When both the entity priors and the context simi-
+larities are reasonably similar in distribution for
+all the entity candidates, we keep the best candi-
+date and remove all others, fixing this mention
+before running the coherence graph algorithm.
+We then run the coherence graph algorithm on all
+the mentions and their remaining entity candidates.
+This way, we restrict the coherence graph algorithm
+to the critical mentions, in situations where the goal
+of coherence may be misleading or would entail high
+risk of degradation.
+The paper makes the following novel contribu-
+tions: 1) a framework for combining popularity pri-
+ors, similarity measures, and coherence into a robust
+disambiguation method; 2) new measures for defin-
+ing mention-entity similarity; 3) a new algorithm
+for computing dense subgraphs in a mention-entity
+graph, which produces high-quality mention-entity
+mappings; 4) an empirical evaluation on a demand-
+ing corpus (based on additional annotations for the
+dataset of the CoNLL 2003 NER task), with signifi-
+783
+cant improvements over state-of-the-art opponents.
+2 State of the Art
+Recognizing named entities (NER tagging) in natural-
+language text has been extensively addressed in NLP
+research. The output is labeled noun phrases. How-
+ever, these are not yet canonical entities, explicitly
+and uniquely denoted in a knowledge repository.
+Approaches that use Wikipedia for explicit disam-
+biguation date back to (Bunescu06) and have been
+further pursued by (Cucerzan07; Han09; Milne08;
+Nguyen08; Mihalcea07). (Bunescu06) defined a sim-
+ilarity measure that compared the context of a men-
+tion to the Wikipedia categories of an entity candi-
+date. (Cucerzan07; Milne08; Nguyen08) extended
+this framework by using richer features for the simi-
+larity comparison. (Milne08) additionally introduced
+a supervised classifier for mapping mentions to en-
+tities, with learned feature weights rather than using
+the similarity function directly. (Milne08) introduced
+a notion of semantic relatedness between a mention?s
+candidate entities and the unambiguous mentions in
+the textual context. The relatedness values are de-
+rived from the overlap of incoming links in Wikipedia
+articles. (Han09) considered another feature: the re-
+latedness of common noun phrases in a mention?s
+context, matched against Wikipedia article names.
+While these features point towards semantic coher-
+ence, the approaches are still limited to mapping each
+mention separately. Nonetheless, this line of feature-
+rich similarity-driven methods achieved very good
+results in experiments, especially for the task of pre-
+dicting Wikipedia link targets for a given href anchor
+text. On broader input classes such as news articles
+(called ?wikification in the wild? in (Milne08)), the
+precision was reported to be about 75 percent.
+The first work with an explicit collective-learning
+model for joint mapping of all mentions has been
+(Kulkarni09). This method starts with a supervised
+learner for a similarity prior, and models the pair-
+wise coherence of entity candidates for two different
+mentions as a probabilistic factor graph with all pairs
+as factors. The MAP (maximum a posteriori) es-
+timator for the joint probability distribution of all
+mappings is shown to be an NP-hard optimization
+problem, so that (Kulkarni09) resorts to approxima-
+tions and heuristics like relaxing an integer linear
+program (ILP) into an LP with subsequent round-
+ing or hill-climbing techniques. The experiments in
+(Kulkarni09) show that this method is superior to the
+best prior approaches, most notably (Milne08). How-
+ever, even approximate solving of the optimization
+model has high computational costs.
+Coreference resolution is the task of mapping
+mentions like pronouns or short phrases to a pre-
+ceding, more explicit, mention. Recently, interest
+has arisen in cross-document coreference resolution
+(Mayfield09), which comes closer to NED, but does
+not aim at mapping names onto entities in a knowl-
+edge base. Word sense disambiguation (McCarthy09;
+Navigli09) is the more general task of mapping con-
+tent words to a predefined inventory of word senses.
+While the NED problem is similar, it faces the chal-
+lenges that the ambiguity of entity names tends to be
+much higher (e.g., mentions of common lastnames
+or firstname-only).
+Projects on automatically building knowledge
+bases (Doan08) from natural-language text include
+KnowItAll (Banko07), YAGO and its tool SOFIE
+(Suchanek09; Nakashole11), StatSnowball (Zhu09),
+ReadTheWeb (Carlson10), and the factor-graph work
+by (Wick09). Only SOFIE maps names onto canon-
+ical entities; the other projects produce output with
+ambiguous names. SOFIE folds the NED into its
+MaxSat-based reasoning for fact extraction. This ap-
+proach is computationally expensive and not intended
+for online disambiguation of entire texts.
+3 Framework
+Mentions and Ambiguity: We consider an input
+text (Web page, news article, blog posting, etc.) with
+mentions (i.e., surface forms) of named entities (peo-
+ple, music bands, songs, universities, etc.) and aim
+to map them to their proper entries in a knowledge
+base, thus giving a disambiguated meaning to entity
+mentions in the text. We first identify noun phrases
+that potentially denote named entities. We use the
+Stanford NER Tagger (Finkel05) to discover these
+and segment the text accordingly.
+Entity Candidates: For possible entities (with
+unique canonical names) that a mention could denote,
+we harness existing knowledge bases like DBpedia
+or YAGO. For each entity they provide a set of short
+names (e.g., ?Apple? for Apple Inc. and para-
+784
+phrases (e.g., ?Big Apple? for New York City).
+In YAGO, these are available by the means relation,
+which in turn is harvested from Wikipedia disam-
+biguation pages, redirects, and links.
+Popularity Prior for Entities: Prominence or
+popularity of entities can be seen as a probabilistic
+prior for mapping a name to an entity. The most com-
+mon way of estimating this are the Wikipedia-based
+frequencies of particular names in link anchor texts
+referring to specific entities, or number of inlinks.
+Context Similarity of Mentions and Entities:
+The key for mapping mentions onto entities are the
+contexts on both sides of the mapping. We consider
+two different approaches. First, for each mention,
+we construct a context from all words in the entire
+input text. This way, we can represent a mention
+as a set of (weighted) words or phrases that it co-
+occurs with. Second, we alternatively consider simi-
+larity scores based on syntactically-parsed contexts,
+based on (Thater10). On the entity side of the map-
+ping, we associate each entity with characteristic
+keyphrases or salient words, precomputed from Wi-
+kipedia articles and similar sources. For example,
+Larry Page would have keyphrases like ?Stan-
+ford?, ?search engine?, etc., whereas Jimmy Page
+may have keyphrases ?Gibson guitar?, ?hard rock?,
+etc. Now we can define and compute similarity mea-
+sures between a mention and an entity candidate,
+e.g., the weighted word overlap, the KL divergence,
+n-gram-based measures, etc. In addition, we may
+use syntactic contextualization techniques, based on
+dependency trees, that suggest phrases that are typi-
+cally used with the same verb that appears with the
+mention in the input text (Thater10).
+Coherence among Entities: On the entity side,
+each entity has a context in the underlying knowl-
+edge base(s): other entities that are connected via
+semantic relationships (e.g., memberOf) or have the
+same semantic type (e.g., rock musician). An
+asset that knowledge bases like DBpedia and YAGO
+provide us with is the same-as cross-referencing to
+Wikipedia. This way, we can quantify the coherence
+between two entities by the number of incoming links
+that their Wikipedia articles share. When we consider
+candidate entities for different mentions, we can now
+define and compute a notion of coherence among the
+corresponding entities, e.g., by the overlap among
+their related entities or some form of type distance.
+Coherence is a key asset because most texts deal with
+a single or a few semantically related topics such as
+rock music or Internet technology or global warming,
+but not everything together.
+Overall Objective Function: To aim for the best
+disambiguation mappings, our framework combines
+prior, similarity, and coherence measures into a
+combined objective function: for each mention mi,
+i = 1..k, select entity candidates eji , one per men-
+tion, such that
+? ?
+?
+i=1..k
+prior(mi, eji)+
+? ?
+?
+i=1..k
+sim(cxt(mi), cxt(eji))+
+? ? coh(ej1 ? cnd(m1) . . . ejk ? cnd(mk)) = max!
+where ? + ? + ? = 1, cnd(mi) is the set of pos-
+sible meanings of mi, cxt( ) denotes the context of
+mentions and entities, respectively, and coh( ) is the
+coherence function for a set of entities.
+Section 4 gives details on each of these three com-
+ponents. For robustness, our solution selectively en-
+ables or disables the three components, based on tests
+on the mentions of the input text; see Section 5.
+4 Features and Measures
+4.1 Popularity Prior
+As mentioned above, our framework supports multi-
+ple forms of popularity-based priors, but we found a
+model based on Wikipedia link anchors to be most
+effective: For each surface form that constitutes an
+anchor text, we count how often it refers to a partic-
+ular entity. For each name, these counts provide us
+with an estimate for a probability distribution over
+candidate entities. For example, ?Kashmir? refers to
+Kashmir (the region) in 90.91% of all occurrences
+and in 5.45% to Kashmir (Song).
+4.2 Mention-Entity Similarity
+Keyphrase-based Similarity: On the mention side,
+we use all tokens in the document (except stopwords
+and the mention itself) as context. We experimented
+with a distance discount to discount the weight of
+tokens that are further away, but this did not improve
+the results for our test data.
+On the entity side, the knowledge base knows au-
+thoritative sources for each entity, for example, the
+785
+corresponding Wikipedia article or an organizational
+or individual homepage. These are the inputs for
+an offline data-mining step to determine character-
+istic keyphrases for each entity and their statistical
+weights. We describe this only for Wikipedia as in-
+put corpus, the approach extends to other inputs. As
+keyphrase candidates for an entity we consider its
+corresponding Wikipedia article?s link anchors texts,
+including category names, citation titles, and external
+references. We extended this further by considering
+also the titles of articles linking to the entity?s article.
+All these phrases form the keyphrase set of an entity:
+KP (e).
+For each word w that occurs in a keyphrase, we
+compute a specificity weight with regard to the given
+entity: the MI (mutual information) between the en-
+tity e and the keyword w, calculating the joint proba-
+bilities for MI as follows:
+p(e, w) =
+??w ?
+(
+KP (e) ??e??INe KP (e?)
+)??
+N
+reflecting if w is contained in the keyphrase set of e
+or any of the keyphrase sets of an entity linking to e,
+IN(e), with N denoting the total number of entities.
+The joint probabilities for the cases p(e, w?), p(e?, w),
+p(e?, w?) are calculated accordingly.
+Keyphrases may occur only partially in an input
+text. For example, the phrase ?Grammy Award win-
+ner? associated with entity Jimmy Page may oc-
+cur only in the form ?Grammy winner? near some
+mention ?Page?. Therefore, our algorithm for the
+similarity of mention m with regard to entity e com-
+putes partial matches of e?s keyphrases in the text.
+This is done by matching individual words and re-
+warding their proximity in an appropriate score. To
+this end we compute, for each keyphrase, the shortest
+window of words that contains a maximal number
+of words of the keyphrase. We refer to this window
+as the phrase?s cover (cf. (Taneva11)). For example,
+matching the text ?winner of many prizes including
+the Grammy? results in a cover length of 7 for the
+keyphrase ?Grammy award winner?. By this ratio-
+nale, the score of partially matching phrase q in a text
+is set to:
+score(q) = z
+(?
+w?cover weight(w)?
+w?q weight(w)
+)2
+where z = # matching wordslength of cover(q) andweight(w) is eitherthe MI weight (defined above) or the collection-wide
+IDF weight of the keyphrase word w. Note that the
+second factor is squared, so that there is a superlinear
+reduction of the score for each word that is missing
+in the cover.
+For the similarity of a mention m to candidate
+entity e, this score is aggregated over all keyphrases
+of e and all their partial matches in the text, leading
+to the similarity score
+simscore(m, e) =
+?
+q?KP (e)
+score(q)
+Syntax-based Similarity: In addition to surface
+features of words and phrases, we leverage informa-
+tion about the immediate syntactic context in which
+an entity mention occurs. For example, in the sen-
+tence ?Page played unusual chords?, we can extract
+the fact that the mention ?Page? is the subject of the
+verb ?play?. Using a large text corpus for training,
+we collect statistics about what kinds of entities tend
+to occur as subjects of ?play?, and then rank the can-
+didate entities according to their compatibility with
+the verb.
+Specifically, we employ the framework of
+(Thater10), which allows us to derive vector represen-
+tations of words in syntactic contexts (such as being
+the subject of a particular verb). We do not directly
+apply this model to derive contextualized representa-
+tions of entity mentions, as information about specific
+proper names is very sparse in corpora like GigaWord
+or Wikipedia. Instead, we consider a set of substi-
+tutes for each possible entity e, which we take as its
+context cxt(e). For this, we use the WordNet synsets
+associated with the entity?s YAGO types and all their
+hypernyms. For each substitute, we compute a stan-
+dard distributional vector and a contextualized vector
+according to (Thater10). Syntax-based similarity be-
+tween cxt(e) and the context cxt(m) of the mention
+is then defined as the sum of the scalar-product simi-
+larity between these two vectors for each substitute.
+This results in high similarity if the syntactic contex-
+tualization only leads to small changes of the vectors,
+reflecting the compatibility of the entity?s substitutes.
+In our example, we compute a vector for ?gui-
+tarist? as subject of ?play?, and another one for ?en-
+trepreneur? in the same context. The former is more
+786
+compatible with the given context than the latter, lead-
+ing to higher similarity for the entity Jimmy Page.
+4.3 Entity-Entity Coherence
+As all entities of interest are registered in a knowl-
+edge base (like YAGO), we can utilize the semantic
+type system, which is usually a DAG of classes. The
+simples measure is the distance between two entities
+in terms of type and subclassOf edges.
+The knowledge bases also provide same-as cross-
+referencing to Wikipedia, amd we quantify the coher-
+ence between two entities by the number of incom-
+ing links that their Wikipedia articles share. This
+approach has been refined by Milne and Witten
+(Milne08), taking into account the total number N of
+entities in the (Wikipedia) collection:
+mw coh(e1, e2) =
+1? log (max(|INe1 |, |INe2 |))? log(|INe1 ? INe2 |)log(|N |)? log (min(|INe1 |, |INe2 |))
+if > 0 and else set to 0.
+5 Graph Model and Algorithms
+5.1 Mention-Entity Graph
+From the popularity, similarity, and coherence mea-
+sures discussed in Section 4, we construct a weighted,
+undirected graph with mentions and candidate enti-
+ties as nodes. As shown in the example of Figure 1,
+the graph has two kinds of edges:
+? A mention-entity edge is weighted with a similar-
+ity measure or a combination of popularity and
+similarity measure. Our experiments will use a
+linear combination with coefficients learned from
+withheld training data.
+? An entity-entity edge is weighted based on
+Wikipedia-link overlap, or type distance, or some
+combination along these lines.
+Our experiments will focus on anchor-based pop-
+ularity, keyphrase-based and/or syntactic similarity,
+and link-based coherence (mw coh). The mention-
+entity graph is dense on the entities side and often has
+hundreds or thousands of nodes, as the YAGO knowl-
+edge base offers many candidate entities for common
+mentions (e.g., country names that could also denote
+sports teams, common lastnames, firstnames, etc.).
+5.2 Graph Algorithm
+Given a mention-entity graph, our goal is to com-
+pute a dense subgraph that would ideally contain all
+mention nodes and exactly one mention-entity edge
+for each mention, thus disambiguating all mentions.
+We face two main challenges here. The first is how
+to specify a notion of density that is best suited for
+capturing the coherence of the resulting entity nodes.
+The seemingly most natural approach would be to
+measure the density of a subgraph in terms of its total
+edge weight. Unfortunately, this will not work ro-
+bustly for the disambiguation problem. The solution
+could be dominated by a few entity nodes with very
+high weights of incident edges, so the approach could
+work for prominent targets, but it would not achieve
+high accuracy also for the long tail of less prominent
+and more sparsely connected entities. We need to
+capture the weak links in the collective entity set of
+the desired subgraph. For this purpose, we define
+the weighted degree of a node in the graph to be the
+total weight of its incident edges. We then define the
+density of a subgraph to be equal to the minimum
+weighted degree among its nodes. Our goal is to
+compute a subgraph with maximum density, while
+observing constraints on the subgraph structure.
+The second critical challenge that we need to face
+is the computational complexity. Dense-subgraph
+problems are almost inevitably NP-hard as they gen-
+eralize the Steiner-tree problem. Hence, exact algo-
+rithms on large input graphs are infeasible.
+To address this problem, we adopt and extend an
+approximation algorithm of (Sozio10) for the prob-
+lem of finding strongly interconnected, size-limited
+groups in social networks. The algorithm starts from
+the full mention-entity graph and iteratively removes
+the entity node with the smallest weighted degree.
+Among the subgraphs obtained in the various steps,
+the one maximizing the minimum weighted degree
+will be returned as output. To guarantee that we
+arrive at a coherent mention-entity mapping for all
+mentions, we enforce each mention node to remain
+connected to at least one entity. However, this con-
+straint may lead to very suboptimal results.
+For this reason, we apply a pre-processing phase to
+prune the entities that are only remotely related to the
+mention nodes. For each entity node, we compute the
+distance from the set of all mention nodes in terms
+787
+They performed 
+Kashmir,  
+written by  
+Page    
+and Plant.   
+Page played  
+unusual chords  
+on his Gibson. 
+?? Led Zeppelin 
+?? Hard rock 
+?? Electric guitar 
+?? Session guitarist 
+?? Led Zeppelin 
+?? Gibson 
+?? Jimmy Page 
+signature model 
+?? Hard rock 
+Kashmir (song) 
+Kashmir (region) 
+Larry Page 
+Jimmy Page 
+Page, Arizona 
+Robert Plant 
+Gibson Les Paul 
+Gibson, Missouri 
+Figure 1: Mention-Entity Graph Example
+of the sum of the corresponding squared shortest-
+path distances. We then restrict the input graph to
+the entity nodes that are closest to the mentions. An
+experimentally determined good choice for the size
+of this set is five times the number of the mention
+nodes. Then the iterative greedy method is run on
+this smaller subgraph. Algorithm 1 summarizes this
+procedure, where an entity is taboo if it is the
+last candidate for a mention it is connected to.
+Algorithm 1: Graph Disambiguation Algorithm
+Input: weighted graph of mentions and entities
+Output: result graph with one edge per mention
+begin
+pre?processing phase;
+foreach entity do
+calculate distance to all mentions;
+keep the closest (5? mentions count)
+entities, drop the others;
+main loop;
+while graph has non-taboo entity do
+determine non-taboo entity node
+with lowest weighted degree, remove it
+and all its incident edges;
+if minimum weighted degree increased
+then
+set solution to current graph;
+post?processing phase;
+process solution by local search or full
+enumeration for best configuration;
+The output of the main loop would often be close
+to the desired result, but may still have more than one
+mention-entity edge for one or more mentions. At
+this point, however, the subgraph is small enough to
+consider an exhaustive enumeration and assessment
+of all possible solutions. This is one of the options
+that we have implemented as post-processing step.
+Alternatively, we can perform a faster local-search
+algorithm. Candidate entities are randomly selected
+with probabilities proportional to their weighted de-
+grees. This step is repeated for a prespecified number
+of iterations, and the best configuration with the high-
+est total edge-weight is used as final solution.
+5.3 Robustness Tests
+The graph algorithm generally performs well. How-
+ever, it may be misled in specific situations, namely,
+if the input text is very short, or if it is thematically
+heterogeneous. To overcome these problems, we in-
+troduce two robustness tests for individual mentions
+and, depending on the tests? outcomes, use only a
+subset of our framework?s features and techniques.
+Prior test: Our first test ensures that the popularity
+prior does not unduly dominate the outcome if the
+true entities are dominated by false alternatives. We
+check, for each mention, whether the popularity prior
+for the most likely candidate entity is above some
+threshold ?, e. g. above 90% probability. If this is not
+the case, then the prior is completely disregarded for
+computing the mention-entity edge weights. Other-
+wise, the prior is combined with the context-based
+similarity computation to determine edge weights.
+788
+We never rely solely on the prior.
+Coherence test: As a test for whether the coher-
+ence part of our framework makes sense or not,
+we compare the popularity prior and the similarity-
+only measure, on a per-mention basis. For each
+mention, we compute the L1 distance between the
+popularity-based vector of candidate probabilities
+and the similarity-only-based vector of candidate
+probabilities:
+?
+i=1..k
+|prior(m, ei)? simscore(m, ei)|
+This difference is always between 0 and 2. If it ex-
+ceeds a specified threshold ? (e.g., 1), the disagree-
+ment between popularity and similarity-only indi-
+cates that there is a situation that coherence may be
+able to fix. If, on the other hand, there is hardly any
+disagreement, using coherence as an additional as-
+pect would be risky for thematically heterogeneous
+texts and should better be disabled. In that case, we
+choose an entity for the mention at hand, using the
+combination of prior and similarity. Only the win-
+ning entity is included in the mention-entity graph, all
+other candidates are omitted for the graph algorithm.
+The robustness tests and the resulting adaptation of
+our method are fully automated.
+6 Experiments
+6.1 Setup
+System: All described methods are implemented in
+a prototype system called AIDA (Accurate Online
+Disambiguation of Named Entities). We use the Stan-
+ford NER tagger (Finkel05) to identify mentions in
+input texts, the YAGO2 knowledge base (Hoffart11)
+as a repository of entities, and the English Wikipe-
+dia edition (as of 2010-08-17) as a source of mining
+keyphrases and various forms of weights. The graph
+algorithm makes use of Webgraph (Boldi04).
+Datasets: There is no established benchmark for
+NED. The best prior work (Kulkarni09)) compiled
+its own hand-annotated dataset, sampled from online
+news. Unfortunately, this data set is fairly small (102
+short news articles, about 3,500 proper noun men-
+tions). Moreover, its entity annotations refer to an old
+version of Wikipedia. To avoid unfair comparisons,
+we created our own dataset based on CoNLL 2003
+articles 1,393
+mentions (total) 34,956
+mentions with no entity 7,136
+words per article (avg.) 216
+mentions per article (avg.) 25
+distinct mentions per article (avg.) 17
+mentions with candidate in KB (avg.) 21
+entities per mention (avg) 73
+initial annotator disagreement (%) 21.1
+Table 1: CoNLL Dataset Properties
+data, extensively used in prior work on NER tagging
+(Sang03).
+This consists of proper noun annotations for 1393
+Reuters newswire articles. We hand-annotated all
+these proper nouns with corresponding entities in
+YAGO2. Each mention was disambiguated by two
+students and resolved by us in case of conflict. This
+data set is referred to as CoNLL in the following
+and fully available at http://www.mpi-inf.mpg.
+de/yago-naga/aida/. Table 1 summarizes prop-
+erties of the dataset.
+Methods under comparison: Our framework in-
+cludes many variants of prior methods from the lit-
+erature. We report experimental results for some of
+them. AIDA?s parameters were tuned by line-search
+on 216 withheld development documents. We found
+the following to work best:
+? threshold for prior test: ? = 0.9
+? weights for popularity, similarity, coherence:
+? = 0.43, ? = 0.47, ? = 0.10
+? initial number of entites in graph: 5 ? #mentions
+? threshold for coherence test: ? = 0.9
+We checked the sensitivity of the hyper-parameter
+settings and found the influence of variations to be
+small, e. g. when varying ? within the range [0.5,1.3],
+the changes in precision@1.0 are within 1%.
+The baseline for our experiments is the collective-
+inference method of (Kulkarni09), which outper-
+forms simpler methods (such as (Milne08)). We
+refer to this method as Kul CI. Since program code
+for this method is not available, we re-implemented
+it using the LP solver CPLEX for the optimization
+problem with subsequent rounding, as described in
+(Kulkarni09). In addition, we compare against (our
+re-implementation of) the method of (Cucerzan07),
+789
+Our Methods Competitors
+sim-k prior
+sim-k
+prior
+sim-s
+sim-k
+sim-s
+r-prior
+sim-k
+r-prior
+sim-k
+coh
+r-prior
+sim-k
+r-coh
+prior Cuc Kul s Kul sp Kul CI
+Macro P@1.0 76.53 75.75 71.43 76.40 80.71 80.73 81.91 71.24 43.74 58.06 76.74 76.74
+Micro P@1.0 76.09 70.72 66.09 76.13 79.57 81.77 81.82 65.84 51.03 63.42 72.31 72.87
+MAP 66.98 83.99 85.97 67.00 85.91 89.05 87.31 86.63 40.06 63.90 86.50 85.44
+Table 2: Experimental results on CoNLL (all values in %)
+referred to as Cuc. For all methods, weights for
+combining components were obtained by training
+a SVM classifier on 946 withheld CoNLL training
+documents.
+Performance measures: The key measures in our
+evaluation are precision and recall. We consider
+the precision-recall curve, as there is an inherent
+trade-off between the two measures. Precision is the
+fraction of mention-entity assignments that match
+the ground-truth assignment. Recall is the fraction
+of the ground-truth assignments that our method(s)
+could compute. Both measures can aggregate over of
+all mentions (across all texts) or over all input texts
+(each with several mentions). The former is called
+micro-averaging, the latter macro-averaging.
+As we use a knowledge base with millions of enti-
+ties, we decided to neglect the situation that a mention
+may refer to an unknown entity not registered in the
+knowledge base. We consider only mention-entity
+pairs where the ground-truth gives a known entity,
+and thus ignore roughly 20% of the mentions without
+known entity in the ground-truth. This simplifies the
+calculation of aggregated precision-recall measures
+like (interpolated) MAP (mean average precision):
+MAP = 1m
+?
+i=1..m
+precision@ im
+where precision@ im is the precision at a specificrecall level. This measure is equivalent to the area
+under the precision-recall curve.
+For constructing the precision-recall curve, we sort
+the mention-entity pairs in descending order of con-
+fidence, so that x% recall refers to the x% with the
+highest confidence. We use each method?s mention-
+entity similarity for the confidence values.
+6.2 Results
+The results of AIDA vs. the collective-inference
+method of (Kulkarni09) and the entity disambigua-
+tion method of (Cucerzan07) on 229 test documents
+are shown in Table 21. The table includes variants
+of our framework, with different choices for the sim-
+ilarity and coherence computations. The shorthand
+notation for the combinations in the table is as fol-
+lows: prior: popularity prior; r-prior: popularity
+prior with robustness test; sim-k: keyphrase based
+similarity measure; sim-s: syntax-based similarity;
+coh: graph coherence; r-coh: graph coherence with
+robustness test.
+The shorthand names for competitors are: Cuc:
+(Cucerzan07) similarity measure; Kul s: (Kulka-
+rni09) similarity measure only; Kul sp: Kul s com-
+bined with plus popularity prior; Kul CI: Kul sp com-
+bined with coherence. All coherence methods use
+the Milne-Witten inlink overlap measure mw coh.
+The most important measure is macro/micro preci-
+son@1.0, which corresponds to the overall correct-
+ness of the methods for all mentions that are assigned
+to an entity in the ground-truth data. Our sim-k pre-
+cision is already very good. Combining it with the
+syntax-based similarity improves micro-averaged pre-
+cision@1.0, but the macro-averaged results are a bit
+worse. Thus, the more advanced configurations of
+AIDA did not use syntax-based similarity. Uncondi-
+tionally combining prior and sim-k degrades the qual-
+ity, but including the prior robustness test (r-prior
+sim-k) improves the results significantly. The preci-
+sion for our best method, the prior- and coherence-
+tested Keyphrase-based mention-entity similarity (r-
+prior sim-k r-coh), significantly outperforms all com-
+petitors (with a p-value of a paired t-test< 0.01). Our
+macro-averaged precision@1.0 is 81.91%, whereas
+Kul CI only achieves 76.74%. Even r-prior sim-
+k, without any coherence, significantly outperforms
+12 of the 231documents in the original test set could not be
+processed by Kul CI due to memory limitations. All results are
+given for the subset, for the sake of comparability. Results for
+the complete set are available on our website.
+790
+0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1
+0.7
+0.8
+0.9
+r-prior sim-k r-coh
+r-prior sim-k
+Kul CI Kul sp
+prior
+recall
+pre
+cis
+ion
+Figure 2: Experimental results on CoNLL: precision-recall curves
+Kul CI (with coherence) with a p-value of < 0.01.
+In micro-average precision@1.0, the differences are
+even higher, showing that we perform better through-
+out all documents.
+The macro-averaged precision-recall curves in Fig-
+ure 2 show that the best AIDA method performs
+particularly well in the tail of high recall values. The
+MAP underlines the robustness of our best methods.
+The high MAP for the prior method is because
+we rank by mention-entity edge weight; for prior
+this is simply the prior probability. As the prior is
+most probably correct for mentions with a very high
+prior for their most popular entity (by definition), the
+initial ranking of the prior is very good, but drops
+more sharply. We believe that the main difficulty in
+named entity disambiguation lies exactly in the ?long
+tail? of not-so-prominent entities.
+We also tried the (Milne08) web service on a sub-
+set of our test collection, but this was obviously
+geared for Wikipedia linkage and performed poorly.
+6.3 Discussion
+Our keyphrase-based similarity measure performs
+better than the Kul s measure, which is a combina-
+tion of 4 different entity contexts (abstract tokens,
+full text tokens, inlink anchor tokens, inlink anchor
+tokens + surrounding tokens), 3 similarity measures
+(Jaccard, dot product, and tf.idf cosine similarity),
+and the popularity prior. Adding the prior to our
+similarity measure by linear combination degrades
+the performance. We found that our measure already
+captures a notion of popularity because popular enti-
+ties have more keyphrases and can thus accumulate
+a higher total score. The popularity should only be
+used when one entitiy has a very high probability, and
+introducing the robustness test for the prior achieved
+this, improving on both our similarity and Kul sp.
+Unconditionally adding the notion of coherence
+among entities improves the micro-average precision,
+but not the macro-average. Investigating potential
+problems, we found that the coherence can be led
+astray when parts of the document form a coherent
+cluster of entities, and other entities are then forced
+to be coherent to this cluster. To overcome this is-
+sue, we introduced the coherence robustness test,
+and the results with r-coh show that it makes sense
+to fix an entity for a mention when the prior and
+similarity are in reasonable agreement. Adding this
+coherence test leads to a signigicant (p-value < 0.05)
+improvement over the non-coherence based measures
+in both micro- and macro-average precision. Our ex-
+periments showed that when adding this coherence
+test, around 23 of the mentions are solved using localsimilarity only and are assigned an entity before run-
+ning the graph algorithm. In summary, we observed
+that the AIDA configuration with r-prior, keyphrase-
+based sim-k, and r-coh significantly outperformed all
+competitors.
+7 Conclusions and Future Work
+The AIDA system provides an integrated NED
+method using popularity, similarity, and graph-based
+coherence, and includes robustness tests for self-
+adaptive behavior. AIDA performed significantly bet-
+ter than state-of-the-art baselines. The system is fully
+implemented and accessible online (http://www.
+mpi-inf.mpg.de/yago-naga/aida/). Our fu-
+ture work will consider additional semantic proper-
+ties between entities (types, memberOf/partOf, etc.)
+for further enhancing the coherence algorithm.
+Acknowledgements
+This work has been partially supported by the German Sci-
+ence Foundation (DFG) through the Cluster of Excellence
+on ?Multimodal Computing and Interaction? and the Eu-
+ropean Union through the 7th Framework IST Integrated
+Project ?LivingKnowledge? (no. 231126). We also thank
+Mauro Sozio for the discussion on the graph algorithm.
+791
+References
+So?ren Auer, Christian Bizer, Georgi Kobilarov, Jens
+Lehmann, Richard Cyganiak, Zachary G. Ives: DB-
+pedia: A Nucleus for a Web of Open Data. ISWC 2007
+Michele Banko, Michael J. Cafarella, Stephen Soderland,
+Matthew Broadhead, Oren Etzioni: Open Information
+Extraction from the Web. IJCAI 2007
+Paolo Boldi and Sebastiano Vigna. The WebGraph frame-
+work I: Compression techniques. WWW 2004, soft-
+ware at http://webgraph.dsi.unimi.it/
+Razvan C. Bunescu, Marius Pasca: Using Encyclopedic
+Knowledge for Named entity Disambiguation. EACL
+2006
+Andrew Carlson, Justin Betteridge, Bryan Kisiel, Burr
+Settles, Estevam R. Hruschka Jr., Tom M. Mitchell.
+Toward an Architecture for Never-Ending Language
+Learning. AAAI 2010
+Silviu Cucerzan: Large-Scale Named Entity Disambigua-
+tion Based on Wikipedia Data. EMNLP-CoNLL 2007
+AnHai Doan, Luis Gravano, Raghu Ramakrishnan, Shiv-
+akumar Vaithyanathan. (Eds.). Special issue on infor-
+mation extraction. SIGMOD Record, 37(4), 2008.
+Jenny Rose Finkel, Trond Grenager, Christopher Man-
+ning: Incorporating Non-local Information into Infor-
+mation Extraction Systems by Gibbs Sampling. ACL
+2005, software at http://nlp.stanford.edu/
+software/CRF-NER.shtml
+Xianpei Han, Jun Zhao: Named entity disambiguation
+by leveraging wikipedia semantic knowledge. CIKM
+2009.
+Johannes Hoffart, Fabian Suchanek, Klaus Berberich, Ed-
+win Lewis-Kelham, Gerard de Melo, Gerhard Weikum:
+YAGO2: Exploring and Querying World Knowledge in
+Time, Space, Context, and Many Languages. Demo Pa-
+per, WWW 2011, data at http://www.mpi-inf.
+mpg.de/yago-naga/yago/
+Sayali Kulkarni, Amit Singh, Ganesh Ramakrishnan,
+Soumen Chakrabarti: Collective annotation of Wikipe-
+dia entities in web text. KDD 2009
+James Mayfield et al: Corss-Document Coreference Res-
+olution: A Key Technology for Learning by Reading.
+AAAI Spring Symposium on Learning by Reading and
+Learning to Read, 2009.
+Diane McCarthy. Word Sense Disambiguation: An
+Overview. Language and Linguistics Compass 3(2):
+537-558, Wiley, 2009
+Rada Mihalcea, Andras Csomai: Wikify!: Linking Docu-
+ments to Encyclopedic Knowledge. CIKM 2007
+David N. Milne, Ian H. Witten: Learning to Link with
+Wikipedia. CIKM 2008
+Ndapandula Nakashole, Martin Theobald, Gerhard
+Weikum: Scalable Knowledge Harvesting with High
+Precision and High Recall. WSDM 2011
+Roberto Navigli: Word sense disambiguation: A survey.
+ACM Comput. Surv., 41(2), 2009
+Hien T. Nguyen, Tru H. Cao: Named Entity Disambigua-
+tion on an Ontology Enriched by Wikipedia. RIVF
+2008
+Erik F. Tjong Kim Sang, Fien De Meulder: Introduction to
+the CoNLL-2003 Shared Task: Language-Independent
+Named Entity Recognition. CoNLL 2003
+Mauro Sozio, Aristides Gionis: The Community-search
+Problem and How to Plan a Successful Cocktail Party.
+KDD 2010
+Fabian M. Suchanek, Gjergji Kasneci, Gerhard Weikum:
+YAGO: a Core of Semantic Knowledge. WWW 2007
+Fabian Suchanek, Mauro Sozio, Gerhard Weikum: SOFIE:
+a Self-Organizing Framework for Information Extrac-
+tion. WWW 2009
+Bilyana Taneva, Mouna Kacimi, and Gerhard Weikum:
+Finding Images of Rare and Ambiguous Entities. Tech-
+nical Report MPI-I-2011-5-002, Max Planck Institute
+for Informatics, 2011.
+Stefan Thater, Hagen Fu?rstenau, Manfred Pinkal. Contex-
+tualizing Semantic Representations using Syntactically
+Enriched Vector Models. ACL 2010
+Michael L. Wick, Aron Culotta, Khashayar Rohani-
+manesh, Andrew McCallum: An Entity Based Model
+for Coreference Resolution. SDM 2009: 365-376
+Jun Zhu, Zaiqing Nie, Xiaojiang Liu, Bo Zhang, Ji-Rong
+Wen: StatSnowball: a Statistical Approach to Extract-
+ing Entity Relationships. WWW 2009
+792
+Proceedings of the 50th Annual Meeting of the Association for Computational Linguistics, pages 233?237,
+Jeju, Republic of Korea, 8-14 July 2012. c?2012 Association for Computational Linguistics
+Coupling Label Propagation and Constraints for Temporal Fact Extraction
+Yafang Wang, Maximilian Dylla, Marc Spaniol and Gerhard Weikum
+Max Planck Institute for Informatics, Saarbru?cken, Germany
+{ywang|mdylla|mspaniol|weikum}@mpi-inf.mpg.de
+Abstract
+The Web and digitized text sources contain
+a wealth of information about named entities
+such as politicians, actors, companies, or cul-
+tural landmarks. Extracting this information
+has enabled the automated construction of large
+knowledge bases, containing hundred millions
+of binary relationships or attribute values about
+these named entities. However, in reality most
+knowledge is transient, i.e. changes over time,
+requiring a temporal dimension in fact extrac-
+tion. In this paper we develop a methodology
+that combines label propagation with constraint
+reasoning for temporal fact extraction. Label
+propagation aggressively gathers fact candi-
+dates, and an Integer Linear Program is used
+to clean out false hypotheses that violate tem-
+poral constraints. Our method is able to im-
+prove on recall while keeping up with preci-
+sion, which we demonstrate by experiments
+with biography-style Wikipedia pages and a
+large corpus of news articles.
+1 Introduction
+In recent years, automated fact extraction from Web
+contents has seen significant progress with the emer-
+gence of freely available knowledge bases, such as
+DBpedia (Auer et al, 2007), YAGO (Suchanek et
+al., 2007), TextRunner (Etzioni et al, 2008), or
+ReadTheWeb (Carlson et al, 2010a). These knowl-
+edge bases are constantly growing and contain cur-
+rently (by example of DBpedia) several million enti-
+ties and half a billion facts about them. This wealth
+of data allows to satisfy the information needs of
+advanced Internet users by raising queries from key-
+words to entities. This enables queries like ?Who is
+married to Prince Charles?? or ?Who are the team-
+mates of Lionel Messi at FC Barcelona??.
+However, factual knowledge is highly ephemeral:
+Royals get married and divorced, politicians hold
+positions only for a limited time and soccer players
+transfer from one club to another. Consequently,
+knowledge bases should be able to support more
+sophisticated temporal queries at entity-level, such
+as ?Who have been the spouses of Prince Charles
+before 2000?? or ?Who are the teammates of Lionel
+Messi at FC Barcelona in the season 2011/2012??.
+In order to achieve this goal, the next big step is to
+distill temporal knowledge from the Web.
+Extracting temporal facts is a complex and time-
+consuming endeavor. There are ?conservative? strate-
+gies that aim at high precision, but they tend to suffer
+from low recall. On the contrary, there are ?aggres-
+sive? approaches that target at high recall, but fre-
+quently suffer from low precision. To this end, we
+introduce a method that allows us to gain maximum
+benefit from both ?worlds? by ?aggressively? gath-
+ering fact candidates and subsequently ?cleaning-up?
+the incorrect ones. The salient properties of our ap-
+proach and the novel contributions of this paper are
+the following:
+? A temporal fact extraction strategy that is able
+to efficiently gather thousands of fact candidates
+based on a handful of seed facts.
+? An ILP solver incorporating constraints on tem-
+poral relations among events (e.g., marriage of
+a person must be non-overlapping in time).
+? Experiments on real world news and Wikipedia
+articles showing that we gain recall while keep-
+ing up with precision.
+2 Related Work
+Recently, there have been several approaches that
+aim at the extraction of temporal facts for the auto-
+mated construction of large knowledge bases, but
+233
+time-aware fact extraction is still in its infancy. An
+approach toward fact extraction based on coupled
+semi-supervised learning for information extraction
+(IE) is NELL (Carlson et al, 2010b). However, it
+does neither incorporate constraints nor temporal-
+ity. TIE (Ling and Weld, 2010) binds time-points
+of events described in sentences, but does not dis-
+ambiguate entities or combine observations to facts.
+A pattern-based approach for temporal fact extrac-
+tion is PRAVDA (Wang et al, 2011), which utilizes
+label propagation as a semi-supervised learning strat-
+egy, but does not incorporate constraints. Similarly,
+TOB is an approach of extracting temporal business-
+related facts from free text, which requires deep pars-
+ing and does not apply constraints as well (Zhang et
+al., 2008). In contrast, CoTS (Talukdar et al, 2012)
+introduces a constraint-based approach of coupled
+semi-supervised learning for IE, however not focus-
+ing on the extraction part. Building on TimeML
+(Pustejovsky et al, 2003) several works (Verhagen et
+al., 2005; Mani et al, 2006; Chambers and Jurafsky,
+2008; Verhagen et al, 2009; Yoshikawa et al, 2009)
+identify temporal relationships in free text, but don?t
+focus on fact extraction.
+3 Framework
+Facts and Observations. We aim to extract factual
+knowledge transient over time from free text. More
+specifically, we assume time T = [0, Tmax ] to
+be a finite sequence of time-points with yearly
+granularity. Furthermore, a fact consists of a
+relation with two typed arguments and a time-
+interval defining its validity. For instance, we write
+worksForClub(Beckham,RMadrid)@[2003, 2008)
+to express that Beckham played for Real Madrid
+from 2003 to 2007. Since sentences containing a
+fact and its full time-interval are sparse, we consider
+three kinds of textual observations for each relation,
+namely begin, during, and end. ?Beckham signed
+for Real Madrid from Manchester United in 2003.?
+includes both the begin observation of Beckham be-
+ing with Real Madrid as well as the end observation
+of working for Manchester. A positive seed fact is a
+valid fact of a relation, while a negative seed fact is
+incorrect (e.g., for relation worksForClub, a positive
+seed fact is worksForClub(Beckham,RMadrid),
+while worksForClub(Beckham,BMunich) is a
+negative seed fact).
+Framework. As depicted in Figure 1, our framework
+is composed of four stages, where the first collects
+candidate sentences, the second mines patterns from
+the candidates sentences, the third extracts temporal
+facts from the sentences utilizing the patterns and the
+last removes noisy facts by enforcing constraints.
+Preprocessing. We retrieve all sentences from the
+corpus comprising at least two entities and a temporal
+expression, where we use YAGO for entity recogni-
+tion and disambiguation (cf. (Hoffart et al, 2011)).
+Figure 1: System Overview
+Pattern Analysis. A pattern is a n-gram based fea-
+ture vector. It is generated by replacing entities
+by their types, keeping only stemmed nouns, verbs
+converted to present tense and the last preposition.
+For example, considering ?Beckham signed for Real
+Madrid from Manchester United in 2003.? the cor-
+responding pattern for the end occurrence is ?sign
+for CLUB from?. We quantify the strength of each
+pattern by investigating how frequent the pattern oc-
+curs with seed facts of a particular relation and how
+infrequent it appears with negative seed facts.
+Fact Candidate Gathering. Entity pairs that co-
+occur with patterns whose strength is above a mini-
+mum threshold become fact candidates and are fed
+into the next stage of label propagation.
+4 T-Fact Extraction
+Building on (Wang et al, 2011) we utilize Label
+Propagation (Talukdar and Crammer, 2009) to deter-
+mine the relation and observation type expressed by
+each pattern.
+Graph. We create a graph G = (VF ??VP , E) having
+one vertex v ? VF for each fact candidate observed
+in the text and one vertex v ? VP for each pattern.
+Edges between VF and VP are introduced whenever a
+fact candidate appeared with a pattern. Their weight
+is derived from the co-occurrence frequency. Edges
+234
+among VP nodes have weights derived from the n-
+gram overlap of the patterns.
+Labels. Moreover, we use one label for each observa-
+tion type (begin, during, and end) of each relation and
+a dummy label representing the unknown relation.
+Objective Function. Let Y ? R|V|?|Labels|+ de-
+note the graph?s initial label assignment, and Y? ?
+R|V|?|Labels|+ stand for the estimated labels of all ver-
+tices, Sl encode the seed?s weights on its diagonal,
+and R?l contain zeroes except for the dummy label?s
+column. Then, the objective function is:
+L(Y?) =
+?
+`
+[
+(Y?` ? Y??`)TS`(Y?` ? Y??`)
++?1Y?T?`LY??` + ?2?Y??` ?R?`?
+2
+]
+(1)
+Here, the first term (Y?` ? Y??`)TS`(Y?` ? Y??`)
+ensures that the estimated labels approximate the
+initial labels. The labeling of neighboring vertices
+is smoothed by ?1Y?T?`LY??`, where L refers to the
+Laplacian matrix. The last term is a L2 regularizer.
+5 Cleaning of Fact Candidates
+To prune noisy t-facts, we compute a consistent sub-
+set of t-facts with respect to temporal constraints (e.g.
+joining a sports club takes place before leaving a
+sports club) by an Integer Linear Program (ILP).
+Variables. We introduce a variable xr ? {0, 1} for
+each t-fact candidate r ? R, where 1 means the can-
+didate is valid. Two variables xf,b, xf,e ? [0, Tmax ]
+denote begin (b) and end (e) of time-interval of a fact
+f ? F . Note, that many t-fact candidates refer to the
+same fact f , since they share their entity pairs.
+Objective Function. The objective function intends
+to maximize the number of valid raw t-facts, where
+wr is a weight obtained from the previous stage:
+max
+?
+r?R
+wr ? xr
+Intra-Fact Constraints. xf,b and xf,e encode a
+proper time-interval by adding the constraint:
+?f ? F xf,b < xf,e
+Considering only a single relation, we assume the
+setsRb,Rd, andRe to comprise its t-fact candidates
+with respect to the begin, during, and end observa-
+tions. Then, we introduce the constraints
+?l ? {b, e}, r ? Rl tl ? xr ? xf,l (2)
+?l ? {b, e}, r ? Rl xf,l ? tl ? xr + (1? xr)Tmax (3)
+?r ? Rd xf,b ? tb ? xr + (1? xr)Tmax (4)
+?r ? Rd te ? xr ? xf,e (5)
+where f has the same entity pair as r and tb, te are
+begin and end of r?s time-interval. Whenever xr is
+set to 1 for begin or end t-fact candidates, Eq. (2)
+and Eq. (3) set the value of xf,b or xf,e to tb or te,
+respectively. For each during t-fact candidate with
+xr = 1, Eq. (4) and Eq. (5) enforce xf,b ? tb and
+te ? xf,e.
+Inter-Fact Constraints. Since we can refer to a fact
+f ?s time interval by xf,b and xf,e and the connectives
+of Boolean Logic can be encoded in ILPs (Karp,
+1972), we can use all temporal constraints expressible
+by Allen?s Interval Algebra (Allen, 1983) to specify
+inter-fact constraints. For example, we leverage this
+by prohibiting marriages of a single person from
+overlapping in time.
+Previous Work. In comparison to (Talukdar et al,
+2012), our ILP encoding is time-scale invariant. That
+is, for the same data, if the granularity of T is
+changed from months to seconds, for example, the
+size of the ILP is not affected. Furthermore, because
+we allow all relations of Allen?s Interval Algebra, we
+support a richer class of temporal constraints.
+6 Experiments
+Corpus. Experiments are conducted in the soccer
+and the celebrity domain by considering the works-
+ForClub and isMarriedTo relation, respectively. For
+each person in the ?FIFA 100 list? and ?Forbes 100
+list? we retrieve their Wikipedia article. In addition,
+we obtained about 80,000 documents for the soccer
+domain and 370,000 documents for the celebrity do-
+main from BBC, The Telegraph, Times Online and
+ESPN by querying Google?s News Archive Search1
+in the time window from 1990-2011. All hyperpa-
+rameters are tuned on a separate data-set.
+Seeds. For each relation we manually select the 10
+positive and negative fact candidates with highest
+occurrence frequencies in the corpus as seeds.
+Evaluation. We evaluate precision by randomly sam-
+pling 50 (isMarriedTo) and 100 (worksForClub) facts
+for each observation type and manually evaluating
+them against the text documents. All experimental
+data is available for download from our website2.
+6.1 Pipeline vs. Joint Model
+Setting. In this experiment we compare the perfor-
+mance of the pipeline being stages 3 and 4 in Figure
+1news.google.com/archivesearch
+2www.mpi-inf.mpg.de/yago-naga/pravda/
+235
+1 and a joint model in form of an ILP solving the
+t-fact extraction and noise cleaning at the same time.
+Hence, the joint model resembles (Roth and Yih,
+2004) extended by Section 5?s temporal constraints.
+Re
+lat
+ion Observation
+Label Propagation ILP for T-Fact Extraction
+Precision # Obs. Precision # Obs.
+wo
+rk
+sF
+or
+Cl
+ub begin 80% 2537 81% 2426 W
+ithoutNoiseCleaning
+during 78% 2826 86% 1153
+end 65% 440 50% 550
+isM
+ar
+rie
+dT
+o begin 52% 195 28% 232
+during 76% 92 6% 466
+end 62% 50 2% 551
+wo
+rk
+sF
+or
+Cl
+ub begin 85% 2469 87% 2076
+W
+ithNoiseCleaning
+during 85% 2761 79% 1434
+end 74% 403 72% 275
+isM
+ar
+rie
+dT
+o begin 64% 177 74% 67
+during 79% 89 88% 61
+end 70% 47 71% 28
+Table 1: Pipeline vs. Joint Model
+Results. Table 1 shows the results on the pipeline
+model (lower-left), joint model (lower-right), label-
+propagation w/o noise cleaning (upper-left), and ILP
+for t-fact extraction w/o noise cleaning (upper-right).
+Analysis. Regarding the upper part of Table 1 the
+pattern-based extraction works very well for works-
+ForClub, however it fails on isMarriedTo. The reason
+is, that the types of worksForClub distinguish the
+patterns well from other relations. In contrast, isMar-
+riedTo?s patterns interfere with other person-person
+relations making constraints a decisive asset. When
+comparing the joint model and the pipeline model,
+the former sacrifices recall in order to keep up with
+the latter?s precision level. That is because the joint
+model?s ILP decides with binary variables on which
+patterns to accept. In contrast, label propagation ad-
+dresses the inherent uncertainty by providing label
+assignments with confidence numbers.
+6.2 Increasing Recall
+Setting. In a second experiment, we move the t-fact
+extraction stage away from high precision towards
+higher recall, where the successive noise cleaning
+stage attempts to restore the precision level.
+Results. The columns of Table 2 show results for
+different values of ?1 of Eq. (1). From left to right,
+we used ?1 = e?1, 0.6, 0.8 for worksForClub and
+?1 = e?2, e?1, 0.6 for isMarriedTo. The table?s up-
+per part reports on the output of stage 3, whereas the
+lower part covers the facts returned by noise cleaning.
+Analysis. For the conservative setting label propa-
+gation produces high precision facts with only few
+inconsistencies, so the noise cleaning stage has no
+effect, i.e. no pruning takes place. This is the set-
+ting usual pattern-based approaches without cleaning
+stage are working in. In contrast, for the standard set-
+ting (coinciding with Table 1?s left column) stage 3
+yields less precision, but higher recall. Since there are
+more inconsistencies in this setup, the noise cleaning
+stage accomplishes precision gains compensating for
+the losses in the previous stage. In the relaxed setting
+precision drops too low, so the noise cleaning stage is
+unable to figure out the truly correct facts. In general,
+the effects on worksForClub are weaker, since in this
+relation the constraints are less influential.
+Conservative Standard Relaxed
+Prec. # Obs. Prec. # Obs. Prec. # Obs.
+wo
+rk
+sF
+or
+Cl
+ub begin 83% 2443 80% 2537 80% 2608 W
+ithoutNoiseCleaning
+during 81% 2523 78% 2826 76% 2928
+end 77% 377 65% 440 62% 501
+isM
+ar
+rie
+dT
+o begin 72% 112 52% 195 44% 269
+during 90% 63 76% 92 52% 187
+end 67% 37 62% 50 36% 116
+wo
+rk
+sF
+or
+Cl
+ub begin 83% 2389 85% 2469 84% 2536
+W
+ithNoiseCleaning
+during 88% 2474 85% 2761 75% 2861
+end 79% 349 72% 403 70% 463
+isM
+ar
+rie
+dT
+o begin 72% 111 64% 177 46% 239
+during 90% 62 79% 89 54% 177
+end 69% 36 68% 47 38% 110
+Table 2: Increasing Recall.
+7 Conclusion
+In this paper we have developed a method that com-
+bines label propagation with constraint reasoning
+for temporal fact extraction. Our experiments have
+shown that best results can be achieved by applying
+?aggressive? label propagation with a subsequent ILP
+for ?clean-up?. By coupling both approaches we
+achieve both high(er) precision and high(er) recall.
+Thus, our method efficiently extracts high quality
+temporal facts at large scale.
+236
+Acknowledgements
+This work is supported by the 7th Framework IST
+programme of the European Union through the fo-
+cused research project (STREP) on Longitudinal An-
+alytics of Web Archive data (LAWA) under contract
+no. 258105.
+References
+James F. Allen. 1983. Maintaining knowledge about
+temporal intervals. Commun. ACM, 26(11):832?843,
+November.
+So?ren Auer, Christian Bizer, Georgi Kobilarov, Jens
+Lehmann, and Zachary Ives. 2007. Dbpedia: A nu-
+cleus for a web of open data. In In 6th Intl Semantic
+Web Conference, Busan, Korea, pages 11?15. Springer.
+Andrew Carlson, Justin Betteridge, Bryan Kisiel, Burr
+Settles, Estevam R. Hruschka Jr., and Tom M. Mitchell.
+2010a. Toward an architecture for never-ending lan-
+guage learning. In AAAI, pages 1306?1313.
+Andrew Carlson, Justin Betteridge, Richard C. Wang, Es-
+tevam R. Hruschka Jr., and Tom M. Mitchell. 2010b.
+Coupled semi-supervised learning for information ex-
+traction. In Proceedings of the Third ACM Interna-
+tional Conference on Web Search and Data Mining
+(WSDM 2010).
+Nathanael Chambers and Daniel Jurafsky. 2008. Jointly
+combining implicit constraints improves temporal or-
+dering. In EMNLP, pages 698?706.
+Oren Etzioni, Michele Banko, Stephen Soderland, and
+Daniel S. Weld. 2008. Open information extraction
+from the web. Commun. ACM, 51(12):68?74, Decem-
+ber.
+Johannes Hoffart, Mohamed Amir Yosef, Ilaria Bordino,
+Hagen Fu?rstenau, Manfred Pinkal, Marc Spaniol, Ste-
+fan Thater, and Gerhard Weikum. 2011. Robust disam-
+biguation of named entities in text. In Proc. of EMNLP
+2011: Conference on Empirical Methods in Natural
+Language Processing, Edinburgh, Scotland, UK, July
+2731, pages 782?792.
+Richard M. Karp. 1972. Reducibility among combinato-
+rial problems. In Complexity of Computer Computa-
+tions, pages 85?103.
+Xiao Ling and Daniel S. Weld. 2010. Temporal infor-
+mation extraction. In Proceedings of the AAAI 2010
+Conference, pages 1385 ? 1390, Atlanta, Georgia, USA,
+July 11-15. Association for the Advancement of Artifi-
+cial Intelligence.
+Inderjeet Mani, Marc Verhagen, Ben Wellner, Chong Min
+Lee, and James Pustejovsky. 2006. Machine learning
+of temporal relations. In In ACL-06, pages 17?18.
+James Pustejovsky, Jose? M. Castan?o, Robert Ingria, Roser
+Sauri, Robert J. Gaizauskas, Andrea Setzer, Graham
+Katz, and Dragomir R. Radev. 2003. TimeML: Robust
+specification of event and temporal expressions in text.
+In New Directions in Question Answering, pages 28?
+34.
+Dan Roth and Wen-Tau Yih, 2004. A Linear Programming
+Formulation for Global Inference in Natural Language
+Tasks, pages 1?8.
+Fabian M. Suchanek, Gjergji Kasneci, and Gerhard
+Weikum. 2007. Yago: a core of semantic knowledge.
+In WWW ?07: Proceedings of the 16th International
+Conference on World Wide Web, pages 697?706, New
+York, NY, USA. ACM.
+Partha Pratim Talukdar and Koby Crammer. 2009. New
+regularized algorithms for transductive learning. In
+Proceedings of the European Conference on Machine
+Learning and Knowledge Discovery in Databases: Part
+II, ECML PKDD ?09, pages 442?457, Berlin, Heidel-
+berg. Springer-Verlag.
+Partha Pratim Talukdar, Derry Wijaya, and Tom Mitchell.
+2012. Coupled temporal scoping of relational facts.
+In Proceedings of the Fifth ACM International Confer-
+ence on Web Search and Data Mining (WSDM), Seattle,
+Washington, USA, February. Association for Comput-
+ing Machinery.
+Marc Verhagen, Inderjeet Mani, Roser Sauri, Robert Knip-
+pen, Seok Bae Jang, Jessica Littman, Anna Rumshisky,
+John Phillips, and James Pustejovsky. 2005. Automat-
+ing temporal annotation with TARSQI. In ACL ?05:
+Proceedings of the ACL 2005 on Interactive poster and
+demonstration sessions, pages 81?84, Morristown, NJ,
+USA. Association for Computational Linguistics.
+Marc Verhagen, Robert Gaizauskas, Frank Schilder, Mark
+Hepple, Jessica Moszkowicz, and James Pustejovsky.
+2009. The tempeval challenge: identifying temporal
+relations in text. Language Resources and Evaluation,
+43:161?179.
+Yafang Wang, Bin Yang, Lizhen Qu, Marc Spaniol, and
+Gerhard Weikum. 2011. Harvesting facts from textual
+web sources by constrained label propagation. In Pro-
+ceedings of the 20th ACM international conference on
+Information and knowledge management, CIKM ?11,
+pages 837?846, New York, NY, USA. ACM.
+Katsumasa Yoshikawa, Sebastian Riedel, Masayuki Asa-
+hara, and Yuji Matsumoto. 2009. Jointly identifying
+temporal relations with markov logic. In Proceedings
+of the Joint Conference of the 47th Annual Meeting of
+the ACL and the 4th International Joint Conference on
+Natural Language Processing of the AFNLP: Volume 1
+- Volume 1, ACL ?09, pages 405?413, Stroudsburg, PA,
+USA. Association for Computational Linguistics.
+Qi Zhang, Fabian Suchanek, and Gerhard Weikum. 2008.
+TOB: Timely ontologies for business relations. In 11th
+International Workshop on Web and Databases 2008
+(WebDB 2008), Vancouver, Canada. ACM.
+237
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 133?138,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+HYENA-live: Fine-Grained Online Entity Type Classification from
+Natural-language Text
+Mohamed Amir Yosef1 Sandro Bauer2 Johannes Hoffart1
+Marc Spaniol1 Gerhard Weikum1
+(1) Max-Planck-Institut fu?r Informatik, Saarbru?cken, Germany
+(2) Computer Laboratory, University of Cambridge, UK
+{mamir|jhoffart|mspaniol|weikum}@mpi-inf.mpg.de
+sandro.bauer@cl.cam.ac.uk
+Abstract
+Recent research has shown progress in
+achieving high-quality, very fine-grained
+type classification in hierarchical tax-
+onomies. Within such a multi-level type
+hierarchy with several hundreds of types at
+different levels, many entities naturally be-
+long to multiple types. In order to achieve
+high-precision in type classification, cur-
+rent approaches are either limited to certain
+domains or require time consuming multi-
+stage computations. As a consequence, ex-
+isting systems are incapable of performing
+ad-hoc type classification on arbitrary input
+texts. In this demo, we present a novel Web-
+based tool that is able to perform domain
+independent entity type classification under
+real time conditions. Thanks to its efficient
+implementation and compacted feature rep-
+resentation, the system is able to process
+text inputs on-the-fly while still achieving
+equally high precision as leading state-of-
+the-art implementations. Our system offers
+an online interface where natural-language
+text can be inserted, which returns seman-
+tic type labels for entity mentions. Further
+more, the user interface allows users to ex-
+plore the assigned types by visualizing and
+navigating along the type-hierarchy.
+1 Introduction
+Motivation
+Web contents such as news, blogs and other so-
+cial media are full of named entities. Each en-
+tity belongs to one or more semantic types as-
+sociated with it. For instance, an entity such as
+Bob Dylan should be assigned the types Singer,
+Musician, Poet, etc., and also the correspond-
+ing supertype(s) (hypernyms) in a type hierarchy,
+in this case Person. Such fine-grained typing of
+entities in texts can be a great asset for various
+NLP tasks including semantic role labeling, sense
+disambiguation and named entity disambiguation
+(NED). For instance, noun phrases such as ?song-
+writer Dylan?, ?Google founder Page?, or ?rock
+legend Page? can be easily mapped to the entities
+Bob Dylan, Larry Page, and Jimmy Page if their re-
+spective types Singer, BusinessPerson, and
+Guitarist are available (cf. Figure 1 for an il-
+lustrative example).
+with 100,000$, Google wasFunded
+"
+founded by Brin and Page "
+his firstplayed on" guitar in 1952Page "
+Business_people
+Entrepreneur
+Entertainer
+Musician
+Figure 1: Fine-grained entity type classification
+Problem Statement
+Type classification is not only be based on hier-
+archical sub-type relationships (e.g. Musician
+isA Person), but also has to do on multi-labeling.
+Within a very fine-grained type hierarchy, many en-
+tities naturally belong to multiple types. For exam-
+ple, a guitarist is also a musician and a person, but
+may also be a singer, an actor, or even a politician.
+Consequently, entities should not only be assigned
+the most (fine-grained) label associated to them,
+but with all labels relevant to them. So we face
+a hierarchical multi-label classification problem
+(Tsoumakas et al, 2012).
+Contribution
+This paper introduces HYENA-live, which allows
+an on-the-fly computation of semantic types for en-
+tity mentions, based on a multi-level type hierarchy.
+Our approach uses a suite of features for a given
+entity mention, such as neighboring words and bi-
+133
+grams, part-of-speech tags, and also phrases from a
+large gazetteer derived from state-of-the-art knowl-
+edge bases. In order to perform ?live? entity type
+classification based on ad-hoc text inputs, several
+performance optimizations have been undertaken
+to operate under real-time conditions.
+2 Entity Type Classification Systems
+State-of-the-art tools for named entity recognition
+such as the Stanford NER Tagger (Finkel et al,
+2005) compute semantic tags only for a small set of
+coarse-grained types: Person, Location, and
+Organization (plus tags for non-entity phrases
+of type time, money, percent, and date). However,
+we are not aware of any online tool that performs
+fine-grained typing of entity mentions. The most
+common workaround to perform entity classifica-
+tion is a two-stage process: in first applying an on-
+line tool for Named-Entity Disambiguation (NED),
+such as DBpedia Spotlight (Mendes et al, 2011)
+or AIDA (Yosef et al, 2011; Hoffart et al, 2011),
+in order to map the mentions onto canonical enti-
+ties and subsequently query the knowledge base for
+their types. In fact, (Ling and Weld, 2012) followed
+this approach when comparing their entity classi-
+fication system results against those obtained by
+an adoption of the Illinois? Named-Entity Linking
+system (NEL) (Ratinov et al, 2011) and reached
+the conclusion that while NEL performed decently
+for prominent entities, it could not scale to cover
+long tail ones. Specifically, entity typing via NED
+has three major drawbacks:
+1. NED is an inherently hard problem, especially
+with highly ambiguous mentions. As a conse-
+quence, accurate NED systems come at a high
+computation costs.
+2. NED only works for those mentions that cor-
+respond to a canonical entity within a knowl-
+edge base. However, this fails for all out-of-
+knowledge-base entities like unregistered per-
+sons, start-up companies, etc.
+3. NED heavily depends on the quality of the un-
+derlying knowledge base. Yet, only very few
+knowledge bases have comprehensive class
+labeling of entities. Even more, in the best
+case, coverage drops sharply for relatively un-
+common entities.
+We decided to adopt one of the existing ap-
+proaches to make it suitable for online querying.
+We considered five systems. In the rest of this
+section we will briefly describe each of them.
+(Fleischman and Hovy, 2002) is one of the earli-
+est approaches to perform entity classification into
+subtypes of PERSON. They developed a decision-
+tree classifier based on contextual features that can
+be automatically extracted from the text. In order
+to account for scarcity of labeled training data, they
+tapped on WordNet synonyms to achieve higher
+coverage. While their approach is fundamentally
+suitable, their type system is very restricted. In or-
+der to account for more fine-grained classes, more
+features need to be added to their feature set.
+(Ekbal et al, 2010) considered 141 subtypes of
+WordNet class PERSON and developed a maximum
+entropy classifier exploiting the words surrounding
+the mentions together with their POS tags and other
+contextual features. Their type hierarchy is fine-
+grained, but still limited to sub classes of PERSON.
+In addition, their experimental results have been
+flagged as non-reproducible in the ACL Anthology.
+(Altaf ur Rahman and Ng, 2010) considered a
+two-level type hierarchy consisting of 29 top-level
+classes and a total of 92 sub-classes. These include
+many non-entity types such as date, time, percent,
+money, quantity, ordinal, cardinal, etc. They in-
+corporated a hierarchical classifier using a rich fea-
+ture set and made use of WordNet sense tagging.
+However, the latter requires human interception,
+which is not suitable for ad-hoc processing of out-
+of-domain texts.
+(Ling and Weld, 2012) developed FIGER,
+which classifies entity mentions onto a two-level
+taxonomy based on the Freebase knowledge base
+(Bollacker et al, 2008). This results in a two-level
+hierarchy with top-level topics and 112 types. They
+trained a CRF for the joint task of recognizing en-
+tity mentions and inferring type tags. Although
+they handle multi-label assignment, their test data
+is sparse. Many classes are absent and plenty of
+instances come with only a single label (e.g. 216
+of the 562 entities were of type PERSON without
+subtypes). Further, their results are instance based,
+which does not guarantee that the quality of their
+system will be reproducible for all the 112 types in
+their taxonomy.
+(Yosef et al, 2012) is the most recent work in
+multi-label type classification. The HYENA sys-
+tem incorporates a large hierarchy of 505 classes
+134
+organized under 5 top level classes, with 100 de-
+scendant classes under each of them. The hierarchy
+reaches a depth of up to 9 levels in some parts.
+The system is based on an SVM classifier using a
+comprehensive set of features and provides results
+for all classes of a large data set. In their exper-
+iments the superiority of the system in terms of
+precision and recall has been shown. However, the
+main drawback of HYENA comes from its large
+hierarchy and the extensive set of features extracted
+from the fairly large training corpus it requires. As
+a result, on-the-fly type classification with HYENA
+is impossible in its current implementation.
+We decided to build on top of HYENA sys-
+tem by spotting the bottlenecks in the architec-
+ture and modifying it accordingly to be suitable
+for online querying. In Section 3 we explain in
+details HYENA?s type taxonomy and their feature
+portfolio. Later on, we explain the engineering
+undertaken in order to develop the on-the-fly type
+classification system HYENA-live (cf. Section 4).
+3 Type Hierarchy and Feature Set
+3.1 Fine-grained Taxonomy
+The type system is an automatically gathered fine-
+grained taxonomy of 505 classes. The classes are
+organized under 5 top level classes, with 100 de-
+scendant classes under each. The YAGO knowl-
+edge base (Hoffart et al, 2013) is selected to de-
+rive the taxonomy from because of its highly pre-
+cise classification of entities into WordNet classes,
+which is a result of the accurate mapping YAGO
+has from Wikipedia Categories to WordNet synsets.
+We start with five top classes namely PERSON,
+LOCATION, ORGANIZATION, EVENT and
+ARTIFACT. Under each top class, the most 100
+prominent descendant classes are picked. Promi-
+nence is estimated by the number of YAGO entities
+tagged with this class. This results in a very-fine
+grained taxonomy of 505 types, represented as a
+directed acyclic graph with 9 levels in its deepest
+parts. While the classes are picked from the YAGO
+type system, the approach is generic and can be
+applied to derive type taxonomies from other
+knowledge bases such as Freebase or DBpedia
+(Auer et al, 2007) as in (Ling and Weld, 2012).
+3.2 Feature Set
+For the sake of generality and applicability to ar-
+bitrary text, we opted for features that can be au-
+tomatically extracted from the input text without
+any human interaction, or manual annotation. The
+extracted features fall under five categories, which
+we briefly explain in the rest of this section.
+Mention String
+We derive four features from the entity mention
+string. The mention string itself, a noun phrase
+consisting of one or more consecutive words. The
+other three features are unigrams, bigrams, and
+trigrams that overlap with the mention string.
+Sentence Surrounding Mention
+We also exploit a bounded-size window around the
+mention to extract four features: all unigrams, bi-
+grams, and trigrams. Two versions of those features
+are extracted, one to account for the occurrence of
+those tokens around the mention, and another to ac-
+count for the position at which they occurred with
+respect to the mention (before or after). In addition,
+unigrams are also included with their absolute dis-
+tance ignoring whether before of after the mention.
+Our demo is using a conservative threshold for the
+size of the window which is three tokens on each
+side of the mention.
+Mention Paragraph
+We also leverage the entire paragraph of the men-
+tion. This gives additional topical cues about the
+mention type (e.g., if the paragraph is about a mu-
+sic concert, this is a cue for mapping people names
+to musician types). We create three features here:
+unigrams, bigrams, and trigrams without including
+any distance information. In our demo, we extract
+those features from a bounded window of size 2000
+characters before and after the mention.
+Grammatical Features
+We exploit the semantics of the text by extracting
+four features. First, we use part-of-speech tags of
+the tokens in a size-bounded window around the
+mention in distance and absolute distance versions.
+Second and third, we create a feature for the first
+occurrence of a ?he? or ?she? pronoun in the same
+sentence and in the subsequent sentence following
+the mention, along with the distance to the mention.
+Finally, we use the closest verb-preposition pair
+preceding the mention as another feature.
+Gazetteer Features
+We leverage YAGO2 knowledge base even further
+by building a type-specific gazetteer of words oc-
+135
+# of articles 50,000
+# of instances (all types) 1,613,340
+# of location instances 489,003 (30%)
+# of person instances 426,467 (26.4%)
+# of organization instances 219,716 (13.6%)
+# of artifact instances 204,802 (12.7%)
+# of event instances 176,549 (10.9%)
+# instances in 1 top-level class 1,131,994 (70.2%)
+# instances in 2 top-level classes 182,508 (11.3%)
+# instances in more than 2 top-level classes 6,492 (0.4%)
+# instances not in any class 292,346 (18.1%)
+Table 1: Properties of the labeled data used for training HYENA-live
+curring in the names of the entities of that type.
+YAGO2 knowledge base comes with an exten-
+sive dictionary of name-entity pairs extracted from
+Wikipedia redirects and link-anchor texts. We con-
+struct, for each type, a binary feature that indicates
+if the mention contains a word occurring in this
+type?s gazetteer. Note that this is a fully automated
+feature construction, and it does by no means de-
+termine the mention type(s) already, as most words
+occur in the gazetteers of many different types. For
+example, ?Alice? occurs in virtually every subclass
+of Person but also in city names like ?Alice Springs?
+and other locations, as well as in songs, movies,
+and other products or organizations.
+4 System Implementation
+4.1 Overview
+As described in Section 3, HYENA classifies men-
+tions of named entities onto a hierarchy of 505
+types using large set of features. A random sub-
+set of the English Wikipedia has been used for
+training HYENA. By exploiting Wikipedia anchor
+links, mentions of named entities are automati-
+cally disambiguated to their correct entities. Each
+Wikipedia named entity has a corresponding YAGO
+entity labeled with an accurate set of types, and
+hence we effortlessly obtain a huge training data
+set (cf. data properties in Table 1).
+We build type-specific classifiers using the SVM
+software LIBLINEAR (cf. http://liblinear.
+bwaldvogel.de/). Each model comes with a com-
+prehensive feature set. While larger models (with
+more features) improve the accuracy, they signifi-
+cantly affect the applicability of the system. A sin-
+gle model file occupies around 150MB disk space
+leading to a total of 84.7GB for all models. As
+a consequence, there is a substantial setup time
+to load all models in memory and a high-memory
+server (48 cores with 512GB of RAM) is required
+for computation. An analysis showed that each sin-
+gle feature contributes to the overall performance
+of HYENA, but only a tiny subset of all features is
+relevant for a single classifier. Therefore, most of
+the models are extremely sparse.
+4.2 Sparse Models Representation
+There are several workarounds applicable to batch
+mode operations, e.g. by performing classifications
+per level only. However, this is not an option for
+on-the-fly computations. For that reason we opted
+for a sparse-model representation.
+LIBLINEAR model files are normalized textual
+files: a header (data about the model and the to-
+tal number of features), followed by listing the
+weights assigned to each feature (line number in-
+dicates the feature ID). Each model file has been
+post-processed to produce 2 files:
+? A compacted model file containing only fea-
+tures of non-zero weights. Its header reflects
+the reduced number of features.
+? A meta-data file. It maps the new features IDs
+to the original feature IDs.
+Due to the observed sparsity in the model files,
+particularly at deeper levels, there is a significant
+decrease in disk space consumption for the com-
+pacted model files and hence in the memory re-
+quirements.
+4.3 Sparse Models Classification
+By switching to the sparse model representation the
+architecture of the whole system is affected. In par-
+ticular, modified versions of feature vectors need
+to be generated for each classifier; this is because
+136
+,nSXt 
+7e[t
+)eatXre 
+([traFtor
+&lassifiFation 
+0odels
+6Sarse 0odels 
+0eta'ata
+6Sarse 0odel 
+5eSresentation
+3ost 
+3roFessing
+)eatXre 9eFtor
+&lassifier 
+'eFision
+0odel6SeFifiF 
+)eatXre 9eFtor
+Figure 2: Modified system architecture designed for handling sparse models
+a lot of features have been omitted from specific
+classifiers (those with zero weights). Consequently,
+the feature IDs need to be mapped to the new fea-
+ture space of each classifier. The conceptual design
+of the new architecture is illustrated in Figure 4.2.
+5 Demo Presentation
+HYENA-live has been fully implemented as a Web
+application. Figure 5 shows the user interface of
+HYENA-live in a Web browser:
+1) On top, there is a panel where a user can input
+any text, e.g. by copy-and-paste from news ar-
+ticles. We employ the Stanford NER Tagger to
+identify noun phrases as candidates of entity
+mentions. Alternatively, users can flag entity
+mentions by double brackets (e.g. ?Harry is
+the opponent of [[you know who]]?). For the
+sake of simplicity, detected entity mentions by
+HYENA-live are highlighted in yellow. Each
+mention is clickable to study its type classifi-
+cation results.
+2) The output of type classification is shown in-
+side a tabbed widget. Each tab corresponds
+to a detected mention by the system and tabs
+are sorted by the order of occurrence in the
+input text. To open a tab, the tab header or the
+corresponding mention in the input area needs
+to be clicked.
+3) The type classification of a mention is shown
+as a color-coded interactive tree. While the
+original type hierarchy is a directed acyclic
+graph, for the ease of navigation the classifi-
+cation output has been converted into a tree.
+In order to do so, nodes that belong to more
+than a parent have been duplicated. There are
+three different types of nodes:
+? Green Nodes: referring to a class that has
+been accepted by the classifier. These
+nodes can be further expanded in order
+to check which sub-classes have been
+accepted or rejected by HYENA-live.
+? Red Nodes: corresponding to a class that
+was rejected by the classifier, and hence
+HYENA-live did not traverse deeper to
+test its sub-classes.
+? White Nodes: matching classes that have
+not been tested. These nodes are either
+known upfront (e.g. ENTITY) or their
+super class was rejected by the system.
+It is worth noting that HYENA-live automati-
+cally adjusts the layouting so that as much as
+possible of the hierarchy is shown to the user.
+For the sake of explorability, this is being dy-
+namically adjusted once the user decides to
+navigate along a certain (child-)node.
+The system is available online at:
+d5gate.ag5.mpi-sb.mpg.de/webhyena/.
+The data transfer between the client and the server
+is done via JSON objects. Hence, we also provide
+HYENA-live as a JSON compliant entity classi-
+fication Web-service. As a result, the back-end
+becomes easily interchangeable (e.g. by a different
+classification technique or a different type taxon-
+omy) with minimum modifications required on the
+user interface side.
+Acknowledgments
+This work is supported by the 7th Framework IST programme
+of the European Union through the focused research project
+(STREP) on Longitudinal Analytics of Web Archive data
+(LAWA) under contract no. 258105.
+137
+Figure 3: Interactively exploring the types of the ?Battle of Waterloo? in the HYENA-live interface
+References
+Md. Altaf ur Rahman and Vincent Ng. 2010. Inducing
+fine-grained semantic classes via hierarchical and
+collective classification. In COLING, pages 931?
+939.
+So?ren Auer, Christian Bizer, Georgi Kobilarov, Jens
+Lehmann, and Zachary Ives. 2007. Dbpedia: A nu-
+cleus for a web of open data. In ISWC, pages 11?15.
+Springer.
+Kurt D. Bollacker, Colin Evans, Praveen Paritosh, Tim
+Sturge, and Jamie Taylor. 2008. Freebase: a col-
+laboratively created graph database for structuring
+human knowledge. In SIGMOD, pages 1247?1250.
+Asif Ekbal, Eva Sourjikova, Anette Frank, and Si-
+mone P. Ponzetto. 2010. Assessing the challenge of
+fine-grained named entity recognition and classifica-
+tion. In Named Entities Workshop, pages 93?101.
+Jenny Rose Finkel, Trond Grenager, and Christopher
+Manning. 2005. Incorporating non-local informa-
+tion into information extraction systems by gibbs
+sampling. In ACL, pages 363?370.
+Michael Fleischman and Eduard Hovy. 2002. Fine
+grained classification of named entities. In COLING,
+pages 1?7.
+Johannes Hoffart, Mohamed Amir Yosef, Ilaria Bor-
+dino, Hagen Fu?rstenau, Manfred Pinkal, Marc Span-
+iol, Bilyana Taneva, Stefan Thater, and Gerhard
+Weikum. 2011. Robust disambiguation of named
+entities in text. In EMNLP, pages 782?792.
+Johannes Hoffart, Fabian M. Suchanek, Klaus
+Berberich, and Gerhard Weikum. 2013. YAGO2: A
+spatially and temporally enhanced knowledge base
+from wikipedia. Artificial Intelligence, 194(0):28 ?
+61.
+Xiao Ling and Daniel S. Weld. 2012. Fine-grained
+entity recognition. In AAAI, pages 94?100.
+Pablo N. Mendes, Max Jakob, Andre?s Garc??a-Silva,
+and Christian Bizer. 2011. Dbpedia spotlight:
+shedding light on the web of documents. In I-
+SEMANTICS, pages 1?8.
+Lev-Arie Ratinov, Dan Roth, Doug Downey, and Mike
+Anderson. 2011. Local and global algorithms for
+disambiguation to wikipedia. In ACL, pages 1375?
+1384.
+Grigorios Tsoumakas, Min-Ling Zhang, and Zhi-Hua
+Zhou. 2012. Introduction to the special issue on
+learning from multi-label data. Machine Learning,
+88(1-2):1?4.
+Mohamed Amir Yosef, Johannes Hoffart, Ilaria Bor-
+dino, Marc Spaniol, and Gerhard Weikum. 2011.
+AIDA: An online tool for accurate disambiguation
+of named entities in text and tables. PVLDB,
+4(12):1450?1453.
+Mohamed Amir Yosef, Sandro Bauer, Johannes Hof-
+fart, Marc Spaniol, and Gerhard Weikum. 2012.
+HYENA: Hierarchical Type Classification for Entity
+Names. In COLING, pages 1361?1370.
+138
+Proceedings of the EMNLP 2014 Workshop on Arabic Natural Langauge Processing (ANLP), pages 187?195,
+October 25, 2014, Doha, Qatar.
+c?2014 Association for Computational Linguistics
+AIDArabic
+A Named-Entity Disambiguation Framework for Arabic Text
+Mohamed Amir Yosef, Marc Spaniol, Gerhard Weikum
+Max-Planck-Institut f?ur Informatik, Saarbr?ucken, Germany
+{mamir|mspaniol|weikum}@mpi-inf.mpg.de
+Abstract
+There has been recently a great progress in
+the field of automatically generated knowl-
+edge bases and corresponding disambigua-
+tion systems that are capable of mapping
+text mentions onto canonical entities. Ef-
+forts like the before mentioned have en-
+abled researchers and analysts from vari-
+ous disciplines to semantically ?understand?
+contents. However, most of the approaches
+have been specifically designed for the En-
+glish language and - in particular - sup-
+port for Arabic is still in its infancy. Since
+the amount of Arabic Web contents (e.g.
+in social media) has been increasing dra-
+matically over the last years, we see a
+great potential for endeavors that support
+an entity-level analytics of these data. To
+this end, we have developed a framework
+called AIDArabic that extends the existing
+AIDA system by additional components
+that allow the disambiguation of Arabic
+texts based on an automatically generated
+knowledge base distilled from Wikipedia.
+Even further, we overcome the still exist-
+ing sparsity of the Arabic Wikipedia by ex-
+ploiting the interwiki links between Arabic
+and English contents in Wikipedia, thus,
+enriching the entity catalog as well as dis-
+ambiguation context.
+1 Introduction
+1.1 Motivation
+Internet data including news articles and web pages,
+contain mentions of named-entities such as people,
+places, organizations, etc. While in many cases
+the intended meanings of the mentions is obvi-
+ous (and unique), in many others, the mentions
+are ambiguous and have many different possible
+meanings. Therefore, Named-Entity Disambigua-
+tion (NED) is essential for many application in the
+domain of Information Retrieval (such as informa-
+tion extraction). It also enables producing more
+useful and accurate analytics. The problem has
+been exhaustively studied in the literature. The
+essence of all NED techniques is using background
+information extracted from various sources (e.g.
+Wikipedia), and use such information to know the
+correct/intended meaning of the mention.
+The Arabic content is enormously growing on
+the Internet, nevertheless, background ground in-
+formation is clearly lacking behind other languages
+such as English. Consider Wikipedia for example,
+while the English Wikipedia contains more than 4.5
+million articles, the Arabic version contains less
+than 0.3 million ones
+1
+. As a result, and up to our
+knowledge, there is no serious work that has been
+done in the area of performing NED for Arabic
+input text.
+1.2 Problem statement
+NED is the problem of mapping ambiguous names
+of entities (mentions) to canonical entities regis-
+tered in an entity catalog (knowledgebase) such as
+Freebase (www.freebase.com), DBpedia (Auer et
+al., 2007), or Yago (Hoffart et al., 2013). For ex-
+ample, given the text ?I like to visit Sheikh Zayed.
+Despite being close to Cairo, it is known to be a
+quiet district?, or in Arabic,? qJ
+
+
+
+??@
+
+?PA K
+
+
+	
+P I
+.
+k
+
+@
+	
+?? A ?E
+.
+Q
+
+?
+	
+?? ?
+	
+?Q ?A K
+.
+Z?Y??A K
+.
+	
+Q
+
+
+
+?
+
+J
+
+
+K ?
+
+
+??
+	
+? . Y K
+
+
+@
+	
+P
+
+?Q?A
+
+?? @?. When processing this text automatically,
+we need to be able to tell that Sheikh Zayed de-
+notes the the city in Egypt
+2
+, not the mosque in
+Abu Dhabi
+3
+or the President of the United Arab
+1
+as of July 2014
+2
+http://en.wikipedia.org/wiki/Sheikh Zayed City
+http://ar.wikipedia.org/wiki/YK
+
+
+@
+	
+P_ qJ
+
+
+
+?.? @_
+
+?
+	
+JK
+
+
+Y?
+3
+http://en.wikipedia.org/wiki/Sheikh Zayed Mosque
+http://ar.wikipedia.org/wiki/YK
+
+
+@
+	
+P_ qJ
+
+
+
+?.? @_ ??Ag
+.
+187
+Emirates
+4
+. In order to automatically establish such
+mappings, the machine needs to be aware of the
+characteristic description of each entity, and try to
+find the most suitable one given the input context.
+In our example, knowing that the input text men-
+tioned the city of Cairo favors the Egyptian city
+over the mosque in Abu Dhabi, for example. In
+principle, state-of-the-art NED frameworks require
+main four ingredients to solve this problem:
+? Entity Repository: A predefined universal
+catalog of all entities known to the NED
+framework. In other words, each mention in
+the input text must be mapped to an entity in
+the repository, or to null indicating the correct
+entity is not included in the repository.
+? Name-Entity Dictionary: It is a many-to-
+many relation between possible mentions and
+the entities in the repository. It connects an
+entity with different possible mentions that
+might be used to refer to this entity, as well as
+connecting a mention with all potential candi-
+date entity it might denote.
+? Entity-Descriptions: It keeps per entity a
+bag of characteristic keywords or keyphrases
+that distinguishes an entity from another. In
+addition, they come with scoring scheme that
+signify the specificity of such keyword to that
+entity.
+? Entity-Entity Relatedness Model: For co-
+herent text, the entities that are used for map-
+ping all the mentions in the input text, should
+be semantically related. For that reason, an
+entity-entity relatedness model is required to
+asses the coherence.
+For the English language, all of the ingredi-
+ents mentioned above are richly available. For
+instance, the English Wikipedia is a comprehen-
+sive up-to-date resource. Many NED systems
+use Wikipedia as their entity repository. Further-
+more, many knowledge bases are extracted from
+Wikipedia as well. When trying to apply the exist-
+ing NED approaches on the Arabic text, we face
+the following challenges:
+? Entity Repository: There is no such compre-
+hensive entity catalog. Arabic Wikipedia is an
+4
+http://en.wikipedia.org/wiki/Zayed bin Sultan Al Nahyan
+http://ar.wikipedia.org/wiki/
+	
+?AJ
+
+
+?
+	
+E_ ?
+
+@_
+	
+?A???_
+	
+?K
+.
+_ YK
+
+
+@
+	
+P
+order of magnitude smaller than the English
+one. In addition, many entities in the Arabic
+Wikipedia are specific to the Arabic culture
+with no corresponding English counterpart.
+As a consequence, even many prominent enti-
+ties are missing from the Arabic Wikipedia.
+? Name-Entity Dictionary: Most of the name-
+entity dictionary entries originate from man-
+ual input (e.g. anchor links). Like outlined
+before, Arabic Wikipedia has fewer resources
+to extract name-entity mappings, caused by
+the lack of entities and lack of manual input.
+? Entity-Descriptions: As already mentioned,
+there is a scarcity of anchor links in the Arabic
+Wikipedia. Further, the categorization system
+of entities is insufficient, Both are essential
+sources of building the entities descriptions.
+Hence, it is more challenging to produce com-
+prehensive description of each entity.
+? Entity-Entity Relatedness Model: Related-
+ness estimation among entities is usually com-
+puted using the overlap in the entities descrip-
+tion and/or link structure of Wikipedia. Due to
+the previously mentioned scarcity of contents
+in the Arabic Wikipedia, it is also difficult to
+accurately estimate the entity-entity related-
+ness.
+As a consequence, the main challenge in per-
+forming NED on Arabic text is the lack of a com-
+prehensive entity catalog together with rich descrip-
+tions of each entity. We considered our open source
+AIDA system
+5
+(Hoffart et al., 2011)- mentioned as
+state-of-the-art NED System by (Ferrucci, 2012) -
+as a starting point and modified its data acquisition
+pipeline in order to generate a schema suitable for
+performing NED on Arabic text.
+1.3 Contribution
+We developed an approach to exploit and fuse cross-
+lingual evidences to enrich the background informa-
+tion we have about entities in Arabic to build a com-
+prehensive entity catalog together with their con-
+text that is not restricted to the Arabic Wikipedia.
+Our contributions can be summarized in the follow-
+ing points:
+? Entity Repository: We switched to
+YAGO3(Mahdisoltani et al., 2014), the
+5
+https://www.github.com/yago-naga/aida
+188
+multilingual version of YAGO2s. YAGO3
+comes with a more comprehensive catalog
+that covers entities from different languages
+(extracted from different Wikipedia dumps).
+While we selected YAGO3 to be our back-
+ground knowledge base, any multi-lingual
+knowledge base such as Freebase could be
+used as well.
+? Name-Entity Dictionary: We compiled a
+dictionary from YAGO3 and Freebase to pro-
+vide the potential candidate entities for each
+mention string. While the mention is in Ara-
+bic, the entity can belong to either the English
+or the Arabic Wikipedia.
+? Entity-Descriptions: We harnessed different
+ingredients in YAGO3, and Wikipedia to pro-
+duce a rich entity context schema. For the
+sake of precision, we did not employ any au-
+tomated translation.
+? Entity-Entity Relatedness Model: We
+fused the link structure of both the English
+and Arabic Wikipedia?s to compute a com-
+prehensive relatedness measure between the
+entities.
+2 Related Work
+NED is one of the classical NLP problems that
+is essential for many Information Retrieval tasks.
+Hence, it has been extensively addressed in NLP
+research. Most of NED approaches use Wikipedia
+as their knowledge repository. (Bunescu and Pasca,
+2006) defined a similarity measure that compared
+the context of a mention to the Wikipedia cate-
+gories of the entity candidate. (Cucerzan, 2007;
+Milne and Witten, 2008; Nguyen and Cao, 2008)
+extended this framework by using richer features
+for similarity comparison. (Milne and Witten,
+2008) introduced the notion of semantic related-
+ness and estimated it using the the co-occurrence
+counts in Wikipedia. They used the Wikipedia link
+structure as an indication of occurrence. Below,
+we give a brief overview on the most recent NED
+systems:
+The AIDA system is an open source system
+that employs contextual features extracted from
+Wikipedia (Hoffart et al., 2011; Yosef et al., 2011).
+It casts the NED problem into a graph problem
+with two types of nodes (mention nodes, and en-
+tity nodes). The weights on the edges between the
+mentions and the entities are the contextual similar-
+ity between mention?s context and entity?s context.
+The weights on the edges between the entities are
+the semantic relatedness among those entities. In a
+subsequent process, the graph is iteratively reduced
+to achieve a dense sub-graph where each mention
+is connected to exactly one entity.
+The CSAW system uses local scores computed
+from 12 features extracted from the context sur-
+rounding the mention, and the candidate entities
+(Kulkarni et al., 2009). In addition, it computes
+global scores that captures relatedness among anno-
+tations. The NED is then formulated as a quadratic
+programming optimization problem, which nega-
+tively affects the performance. The software, how-
+ever, is not available.
+DBpedia Spotlight uses Wikipedia anchors, ti-
+tles and redirects to search for mentions in the input
+text (Mendes et al., 2011). It casts the context of the
+mention and the entity into a vector-space model.
+Cosine similarity is then applied to identify the
+candidate with the highest similarity. Nevertheless,
+their model did not incorporate any semantic relat-
+edness among entities. The software is currently
+available as a service.
+TagMe 2 exploits the Wikipedia link structure to
+estimate the relatedness among entities (Ferragina
+and Scaiella, 2010). It uses the measure defined by
+(Milne and Witten, 2008) and incorporates a voting
+scheme to pick the right mapping. According to
+the authors, the system is geared for short input
+text with limited context. Therefore, the approach
+favors coherence among entities over contextual
+similarity. TagMe 2 is available a service.
+Illinois Wikifier formulates NED as an opti-
+mization problem with an objective function de-
+signed for higher global coherence among all men-
+tions (Ratinov et al., 2011). In contrast to AIDA
+and TagMe 2, it does not incorporate the link struc-
+ture of Wikipedia to estimate the relatedness among
+entities. Instead, it uses normalized Google sim-
+ilarity distance (NGD) and pointwise mutual in-
+formation. The software is as well available as a
+service.
+Wikipedia Miner is a machine-learning based
+approach (Milne and Witten, 2008). It exploits
+three features in order to train the classifier. The
+features it employs are prior probability that a men-
+tion refers to a specific entity, properties extracted
+from the mention context, and finally the entity-
+entity relatedness. The software of Wikipedia
+189
+YAGO3
+English 
+Wikipedia
+Arabic 
+Wikipedia
+YAGO
+Extractor
+Entities 
+Dictionary
+Categories 
+Dictionary
+Standard AIDA 
+Builder
+Mixed 
+AIDA
+Schema
+Translator
+Mixed
+AIDA
+Schema
+Filter
+Arabic
+AIDA
+Schema
+Freebase
+Freebase-to-YAGO 
+Dictionary
+Original AIDA Pipeline
+Extraction AIDA Schema Building Translation Filtration
+Figure 1: AIDArabic Architecture
+Miner is available on their Website.
+The approaches mentioned before have been de-
+veloped for English language NED. As such, none
+of them is ready to handle Arabic input without
+major modification.
+As of now, no previous research exploits cross-
+lingual resources to enable NED for Arabic text.
+Nevertheless, cross-lingual resources have been
+used to improve Arabic NER (Darwish, 2013).
+They used Arabic and English Wikipedia together
+with DBpedia in order to build a large Arabic-
+English dictionary for names. This augments the
+Arabic names with a capitalization feature, which
+is missing in the Arabic language.
+3 Architecture
+In order to build AIDArabic, we have extended the
+pipeline used for building an English AIDA schema
+from the YAGO knowledge base. The new archi-
+tecture is shown in Figure 1 and indicates those
+components, that have been added for AIDArabic.
+These are pre- and post-processing stages to the
+original AIDA schema extractor. The new pipeline
+can be divided into the following stages:
+Extraction
+We have configured a dedicated YAGO3 extrac-
+tor to provide the data necessary for AIDAra-
+bic. To this end, we feed the English and Arabic
+Wikipedia?s into YAGO3 extractor to provide three
+major outputs:
+? Entity Repository: A comprehensive set of
+entities that exist in both, the English and Ara-
+bic Wikipedia?s. In addition, the correspond-
+ing anchortexts, categories as well as links
+from and/to each entity.
+? Entity Dictionary: This is an automatically
+compiled mappings that captures the inter-
+wiki links among the English and the Arabic
+Wikipedia?s.
+? Categories Dictionary: This is also an auto-
+matically harvested list of mappings between
+the English and Arabic Wikipedia categories.
+More details about data generated by each and
+every extractor will be given in Section 4.
+AIDA Schema Building
+In this stage we invoke the original AIDA schema
+builder without any language information. How-
+ever, we additionally add the Freebase knowledge
+base to AIDA and map Freebase entities to YAGO3
+entities. Freebase is used here solely to harness its
+coverage of multi-lingual names of different enti-
+ties. It is worth noting that Freebase is used merely
+to enrich YAGO3, but the set of entities are gath-
+ered from YAGO. In other words, if there is an
+entity in Freebase without a YAGO counter part, it
+gets discarded.
+Translation
+Although it is generally viable to use machine trans-
+lation or ?off the shelf? English-Arabic dictionaries
+to translate the context of entities. However, we
+confine ourselves to the dictionaries extracted from
+Wikipedia that maps entities as well as categories
+190
+from English to Arabic. This is done in order to
+achieve a high precision derived from the manual
+labor inherent in interwiki links and assigned cate-
+gories.
+Filtration
+This is a final cleaning stage. Despite translating
+the context of entities using the Wikipedia-based
+dictionaries as comprehensive as possible, a con-
+siderable amount of context information remains
+in English (e.g. those English categories that do
+not have an Arabic counterpart). To this end, any
+remaining leftovers in English are being discarded.
+4 Implementation
+This section explains the implementation of the
+pipeline described in Section 3. We first high-
+light the differences between YAGO2 and YAGO3,
+which justify the switch of the underlying knowl-
+edge base. Then, we present the techniques we
+have developed in order to build the dictionary be-
+tween mentions and candidate entities. After that,
+we explain the context enrichment for Arabic enti-
+ties by exploiting cross-lingual evidences. Finally,
+we briefly explain the entity-entity relatedness mea-
+sure applied for disambiguation. In the following
+table (cf. Table 1 for details) we summarize the
+terminology used in the following section.
+4.1 Entity Repository
+YAGO3 has been specifically designed as a multi-
+lingual knowledge base. Hence, standard YAGO3
+extractors take as an input a set of Wikipedia dumps
+from different languages, and produce a unified
+repository of named entities across all languages.
+This is done by considering inter-wiki links. If an
+entity in language l ? L ? {en} has an English
+counter part, the English one is kept instead of
+that in language l, otherwise, the original entity
+is kept. For example, in our repository, the entity
+used to represent Egypt is ?Egypt? coming from
+the English Wikipedia instead of ?ar/Q???? coming
+from the Arabic Wikpedia. However, the entity that
+refers to the western part of Cairo is identified as
+?ar/
+
+?Q?A
+
+?? @ H
+.
+Q
+	
+?? because it has no counter-part in
+the English Wikipedia. Formally, the set of entities
+in YAGO3 are defined as follows:
+E = E
+en
+? E
+ar
+After the extraction is done, YAGO3 generates
+an entity dictionary for each and every language.
+This dictionary translates any language specific
+entity into the one that is used in YAGO3 (whether
+the original one, or the English counter part).
+Based on the the previous example, the following
+entries are created in the dictionary:
+ar/Q??? ? Egypt
+ar/
+
+?Q?A
+
+?? @ H
+.
+Q
+	
+? ? ar/
+
+?Q?A
+
+?? @ H
+.
+Q
+	
+?
+Such a dictionary is essential for all further pro-
+cessing we do over YAGO3 to enrich the Arabic
+knowledge base using the English one. It is worth
+noting here, that this dictionary is completely au-
+tomatically harvested from the inter-wiki links in
+Wikipedia, and hence no automated machine trans-
+lation and/or transliteration are invoked (e.g. for
+Person Names, Organization Names, etc.). While
+this may harm the coverage of our linkage, it guar-
+antees the precision of our mapping at the same
+time. This is thanks to the high quality of inter-
+wiki between named-entities in Wikipedia.
+4.2 Name-Entity Dictionary
+The dictionary in the context of NED refers to the
+relation that connects strings to canonical entities.
+In other words, given a mention string, the dictio-
+nary provides a list of potential canonical entities
+this string may refer to. In our original implemen-
+tation of AIDA, this dictionary was compiled from
+four sources extracted from Wikipedia (titles, dis-
+ambiguation pages, redirects, and anchor texts).
+We used the same sources after adapting them to
+the Arabic domain, and added to them entries com-
+ing from Freebase. In the following, we briefly
+summarize the main ingredients used to populate
+our dictionary:
+? Titles: The most natural possible name of a
+canonical entity is the title of its correspond-
+ing page in Wikipedia. This is different from
+the entity ID itself. For example, in our exam-
+ple for the entity ?Egypt? that gets its id from
+the English Wikipeida, we consider the title
+?Q???? coming from the Arabic Wikipedia.
+? Disambiguation Pages: These pages
+are called in the Arabic Wikipedia
+?iJ
+
+
+	
+??
+
+J? @
+
+HAj
+	
+???. They are dedicated
+pages to list the different possible meanings
+of a specific name. We harness all the links
+in a disambiguation page and add them as
+191
+l A language in Wikipedia
+L Set of all languages in Wikipedia
+e
+en
+An entity originated from the English WIkipedia
+e
+ar
+An entity originated from the Arabic WIkipedia
+e An entity in the final collection of YAGO3
+E Set of the corresponding entities
+Cat
+en
+(e) Set of Categories of an entity e in the English Wikipedia
+Cat
+ar
+(e) Set of Categories of an entity e in the Arabic Wikipedia
+Inlink
+en
+(e) Set of Incoming Links to an entity e in the English Wikipedia
+Inlink
+ar
+(e) Set of Incoming Links to an entity e in the Arabic Wikipedia
+Trans(S) Translation of each element in S from English to Arabic using the appropriate dictionaries
+en?ar
+Table 1: Terminology
+potential entities for that name. To this end,
+we extract our content solely from the Arabic
+Wikipedia. For instance, the phrase ?
+
+?
+	
+J K
+
+
+Y?
+YK
+
+
+@
+	
+P? has a disambiguation page that lists all
+the cities that all called Zayed including the
+ones in Egypt, Bahrain and United Arab Emi-
+rates.
+? Redirects: ?
+
+HCK
+
+
+?m

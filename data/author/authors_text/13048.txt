@@ -1,0 +1,2207 @@
+Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural
+Language Learning, pages 1125?1134, Jeju Island, Korea, 12?14 July 2012. c?2012 Association for Computational Linguistics
+Exact Sampling and Decoding in High-Order Hidden Markov Models
+Simon Carter?
+ISLA, University of Amsterdam
+Science Park 904, 1098 XH Amsterdam,
+The Netherlands
+s.c.carter@uva.nl
+Marc Dymetman Guillaume Bouchard
+Xerox Research Centre Europe
+6, chemin de Maupertuis
+38240 Meylan, France
+{first.last}@xrce.xerox.com
+Abstract
+We present a method for exact optimization
+and sampling from high order Hidden Markov
+Models (HMMs), which are generally han-
+dled by approximation techniques. Motivated
+by adaptive rejection sampling and heuris-
+tic search, we propose a strategy based on
+sequentially refining a lower-order language
+model that is an upper bound on the true
+model we wish to decode and sample from.
+This allows us to build tractable variable-order
+HMMs. The ARPA format for language mod-
+els is extended to enable an efficient use of the
+max-backoff quantities required to compute
+the upper bound. We evaluate our approach
+on two problems: a SMS-retrieval task and a
+POS tagging experiment using 5-gram mod-
+els. Results show that the same approach can
+be used for exact optimization and sampling,
+while explicitly constructing only a fraction of
+the total implicit state-space.
+1 Introduction
+In NLP, sampling is important for many real tasks,
+such as: (i) diversity in language generation or
+machine translation (proposing multiple alternatives
+which are not clustered around a single maximum);
+(ii) Bayes error minimization, for instance in Statis-
+tical Machine Translation (Kumar and Byrne, 2004);
+(iii) learning of parametric and non-parametric
+Bayesian models (Teh, 2006).
+However, most practical sampling algorithms are
+based on MCMC, i.e. they are based on local moves
+?This work was conducted during an internship at XRCE.
+starting from an initial valid configuration. Often,
+these algorithms are stuck in local minima, i.e. in
+a basin of attraction close to the initialization, and
+the method does not really sample the whole state
+space. This is a problem when there are ambiguities
+in the distribution we want to sample from: by hav-
+ing a local approach such as MCMC, we might only
+explore states that are close to a given configuration.
+The necessity of exact sampling can be ques-
+tioned in practice. Approximate sampling tech-
+niques have been developed over the last century
+and seem sufficient for most purposes. However,
+the cases where one actually knows the quality of
+a sampling algorithm are very rare, and it is com-
+mon practice to forget about the approximation and
+simply treat the result of a sampler as a set of i.i.d.
+data. Exact sampling provides a de-facto guarantee
+that the samples are truly independent. This is par-
+ticularly relevant when one uses a cascade of algo-
+rithms in complex NLP processing chains, as shown
+by (Finkel et al 2006) in their work on linguistic
+annotation pipelines.
+In this paper, we present an approach for exact
+decoding and sampling with an HMM whose hid-
+den layer is a high-order language model (LM),
+which innovates on existing techniques in the fol-
+lowing ways. First, it is a joint approach to sam-
+pling and optimization (i.e. decoding), which is
+based on introducing a simplified, ?optimistic?, ver-
+sion q(x) of the underlying language model p(x),
+for which it is tractable to use standard dynamic pro-
+gramming techniques both for sampling and opti-
+mization. We then formulate the problem of sam-
+pling/optimization with the original model p(x) in
+1125
+terms of a novel algorithm which can be viewed
+as a form of adaptive rejection sampling (Gilks
+and Wild, 1992; Gorur and Teh, 2008), in which
+a low acceptance rate (in sampling) or a low ratio
+p(x?)/q(x?) (in optimization, with x? the argmax
+of q) leads to a refinement of q, i.e., a slightly more
+complex and less optimistic q but with a higher ac-
+ceptance rate or ratio.
+Second, it is the first technique that we are aware
+of which is able to perform exact samplingwith such
+models. Known techniques for sampling in such
+situations have to rely on approximation techniques
+such as Gibbs or Beam sampling (see e.g. (Teh et
+al., 2006; Van Gael et al 2008)). By contrast, our
+technique produces exact samples from the start, al-
+though in principle, the first sample may be obtained
+only after a long series of rejections (and therefore
+refinements). In practice, our experiments indicate
+that a good acceptance rate is obtained after a rel-
+atively small number of refinements. It should be
+noted that, in the case of exact optimization, a sim-
+ilar technique to ours has been proposed in an im-
+age processing context (Kam and Kopec, 1996), but
+without any connection to sampling. That paper,
+written in the context of image processing, appears
+to be little known in the NLP community.
+Overall, our method is of particular interest be-
+cause it allows for exact decoding and sampling
+from HMMs where the applications of existing dy-
+namic programming algorithms such as Viterbi de-
+coding (Rabiner, 1989) or Forward-Backward sam-
+pling (Scott, 2002) are not feasible, due to a large
+state space.
+In Section 2, we present our approach and
+describe our joint algorithm for HMM sam-
+pling/optimization, giving details about our exten-
+sion of the ARPA format and refinement proce-
+dure. In Section 3 we define our two experimental
+tasks, SMS-retrieval and POS tagging, for which we
+present the results of our joint algorithm. We finally
+discuss perspectives and conclude in Section 4.
+2 Adaptive rejection sampling and
+heuristic search for high-order HMMs
+Notation Let x = {x1, x2, ...x?} be a given hid-
+den state sequence (e.g. each xi is an English word)
+which takes values in X = {1, ? ? ? , N}? where ?
+is the length of the sequence and N is the number
+of latent symbols. Subsequences (xa, xa+1, ? ? ? , xb)
+are denoted by xba, where 1 ? a ? b ? ?. Let
+o = {o1, o2, ...o?} be the set of observations asso-
+ciated to these words (e.g. oi is an acoustic realiza-
+tion of xi). The notations p, q and q? refer to un-
+normalized densities, i.e. non-negative measures on
+X . Since only discrete spaces are considered, we
+use for short p(x) = p({x}). When the context
+is not ambiguous, sampling according to p means
+sampling according to the distribution with density
+p?(x) = p(x)p(X ) , where p(X ) =
+?
+X p(x)dx is the total
+mass of the unnormalized distribution p.
+Sampling The objective is to sample a se-
+quence with density p?(x) proportional to p(x) =
+plm(x)pobs(o|x) where plm is the probability of the
+sequence x under a n-gram model and pobs(o|x)
+is the probability of observing the noisy sequence
+o given that the correct/latent sequence is x. As-
+suming the observations depend only on the current
+state, this probability becomes
+p(x) =
+??
+i=1
+plm(xi|x
+i?1
+i?n+1)pobs(oi|xi) . (1)
+To find the most likely sequence given an ob-
+servation, or to sample sequences from Equa-
+tion 1, standard dynamic programming techniques
+are used (Rabiner, 1989; Scott, 2002) by expand-
+ing the state space at each position. However, as
+the transition order n increases, or the number of la-
+tent tokens N that can emit to each observation ol
+increases, the dynamic programming approach be-
+comes intractable, as the number of operations in-
+creases exponentially in the order of O(?Nn).
+If one can find a proposal distribution q which is
+an upper bound of p ? i.e such that q(x) ? p(x) for
+all sequences x ? X ? and which it is easy to sam-
+ple from, the standard rejection sampling algorithm
+can be used:
+1. Sample x ? q/q(X ), with q(X ) =
+?
+X q(x)dx;
+2. Accept x with probability p(x)/q(x), other-
+wise reject x;
+To obtain multiple samples, the algorithm is re-
+peated several times. However, for simple bounds,
+1126
+!""#$%
+&'(% )(*%!" #!$ % !" %$& %&+,% -#./,)%!" #'( % !" )*+,(% %
+$% 0% 1% 2% 3%)(*4%!" %$&- %
+(a)
+!""#$%
+$% &%
+'()%
+*)+%
+*)+%
+!" #!$ % !% &$'(#!$ %
+!" &$' % #,-./*%'0/%
+*)+1% !" &$') %
+*)+1%!" &$') %2% 3%
+4%
+5%
+!" #*+ % !" ,-./+& %
+(b)
+Figure 1: An example of an initial q-automaton (a), and the refined q-automaton (b) Each state corresponds
+to a context (only state 6 has a non-empty context) and each edge represents the emission of a symbol.
+Thick edges are representing the path for the sampling/decoding of two dog(s) barked, thin edges
+corresponding to alternative symbols. By construction, w1(dog) ? w2(dog|two) so that the total weight
+of (b) is smaller than the total weight of (a).
+the average acceptance rate ? which is equal to
+p(X )/q(X ) ? can be so large that rejection sam-
+pling is not practical. In adaptive rejection sampling
+(ARS), the initial bound q is incrementally improved
+based on the values of the rejected elements. While
+often based on log-concave distributions which are
+easy to bound, ARS is valid for any type of bound,
+and in particular can be applied to the upper bounds
+on n-gram models introduced by (Kam and Kopec,
+1996) in the context of optimization. When a sam-
+ple is rejected, our algorithm assumes that a small
+set of refined proposals is available, say q?1, ? ? ? , q
+?
+m,
+where m is a small integer value. These refinements
+are improved versions of the current proposal q in
+the sense that they still upper-bound the target dis-
+tribution p, but their mass is strictly smaller than the
+mass of q, i.e. q?(X ) < q(X ). Thus, each such re-
+finement q?, while still being optimistic relative to
+the target distribution p, has higher average accep-
+tance rate than the previous upper bound q. A bound
+on the n-gram LM will be presented in Section 2.1.
+Optimization In the case of optimization, the ob-
+jective is to find the sequence maximizing p(x).
+Viterbi on high-order HMMs is intractable but we
+have access to an upper bound q, for which Viterbi
+is tractable. Sampling from q is then replaced by
+finding the maximum point x of q, looking at the ra-
+tio r(x) = p(x)/q(x), and accepting x if this ratio is
+equal to 1, otherwise refining q into q? exactly as in
+the sampling case. This technique is able to find the
+exact maximum of p, similarly to standard heuristic
+search algorithms based on optimistic bounds. We
+stop the process when q and p agree at the value
+maximizing q which implies that we have found the
+global maximum.
+2.1 Upper bounds for n-gram models
+To apply ARS on the target density given by
+Equation 1 we need to define a random se-
+quence of proposal distributions {q(t)}?t=1 such that
+q(t)(x) ? p(x), ?x ? X , ?t ? {0, 1, ? ? ? }.
+Each n-gram xi?n+1, ..., xi in the hidden layer con-
+tributes an n-th order factor wn(xi|x
+i?1
+i?n+1) ?
+plm(xi|x
+i?1
+i?n+1)pobs(oi|xi). The key idea is that
+these n-th order factors can be upper bounded by
+factors of order n? k by maximizing over the head
+(i.e. prefix) of the context, as if part of the con-
+text was ?forgotten?. Formally, we define the max-
+backoff weights as:
+wn?k(xi|x
+i?1
+i?n+1+k) ? max
+xi?n+ki?n+1
+wn(xi|x
+i?1
+i?n+1),
+(2)
+By construction, the max-backoff weights wn?k are
+factors of order n? k and can be used as surrogates
+to the original n-th order factors of Equation (1),
+leading to a nested sequence of upper bounds until
+reaching binary or unary factors:
+p(x) = ??i=1wn(xi|x
+i?1
+i?n+1) (3)
+? ??i=1wn?1(xi|x
+i?1
+i?n+2) (4)
+? ? ?
+? ??i=1w2(xi|xi?1) (5)
+? ??i=1w1(xi) := q
+(0)(x) . (6)
+Now, one can see that the loosest bound (6) based
+on unigrams corresponds to a completely factorized
+distribution which is straightforward to sample and
+optimize. The bigram bound (5) corresponds to a
+standard HMM probability that can be efficiently de-
+coded (using Viterbi algorithm) and sampled (using
+backward filtering-forward sampling). 1 In the con-
+text of ARS, our initial proposal q(0)(x) is set to
+1Backward filtering-forward sampling (Scott, 2002) refers
+to the process of running the Forward algorithm (Rabiner,
+1127
+the unigram bound (6). The bound is then incre-
+mentally improved by adaptively refining the max-
+backoff weights based on the values of the rejected
+samples. Here, a refinement refers to the increase
+of the order of some of the max-backoff weights in
+the current proposal (thus most refinements consist
+of n-grams with heterogeneous max-backoff orders,
+not only those shown in equations (3)-(6)). This
+operation tends to tighten the bound and therefore
+increase the acceptance probability of the rejection
+sampler, at the price of a higher sampling complex-
+ity. The are several possible ways of choosing the
+weights to refine; in Section 2.2 different refinement
+strategies will be discussed, but the main technical
+difficulty remains in the efficient exact optimization
+and sampling of a HMM with n-grams of variable
+orders. The construction of the refinement sequence
+{q(t)}t?0 can be easily explained and implemented
+through aWeighted Finite State Automaton (WFSA)
+referred as a q-automaton, as illustrated in the fol-
+lowing example.
+Example We give now a high-level description of
+the refinement process to give a better intuition of
+our method. In Fig. 1(a), we show a WFSA rep-
+resenting the initial proposal q(0) corresponding to
+an example with an acoustic realization of the se-
+quence of words (the, two, dogs, barked). The
+weights on edges of this q-automaton correspond to
+the unigram max-backoffs, so that the total weight
+corresponds to Equation (6). Considering sampling,
+we suppose that the first sample from q(0) produces
+x1 = (the, two, dog, barked), marked
+with bold edges in the drawing. Now, computing the
+ratio p(x1)/q(0)(x1) gives a result much below 1,
+because from the viewpoint of the full model p, the
+trigram (the two dog) is very unlikely; in other
+words the ratiow3(dog|the two)/w1(dog) (and,
+in fact, already the ratio w2(dog|two)/w1(dog))
+is very low. Thus, with high probability, x1 is re-
+jected. When this is the case, we produce a re-
+fined proposal q(1), represented by the WFSA in
+Fig. 1(b), which takes into account the more real-
+1989), which creates a lattice of forward probabilities that con-
+tains the probability of ending in a latent state at a specific time
+t, given the subsequence of previous observations ot1, for all the
+previous latent sub-sequences xt?11 , and then recursively mov-
+ing backwards, sampling a latent state based on these probabil-
+ities.
+Algorithm 1 ARS for HMM algorithm.
+1: while not Stop(h) do
+2: if Optimisation then
+3: Viterbi x ? q
+4: else
+5: Sample x ? q
+6: r ? p(x)/q(x)
+7: Accept-or-Reject(x, r)
+8: Update(h, x)
+9: if Rejected(x) then
+10: for all i ? {2, ? ? ? , ?} do
+11: q ? UpdateHMM (q, x, i)
+12: return q along with accepted x?s in h
+Algorithm 2 UpdateHMM
+Input: A triplet (q, x, i) where q is a WFSA, x is a se-
+quence determining a unique path in the WFSA and
+i is a position at which a refinement must be done.
+1: n :=ORDERi(xi1) + 1 #implies x
+i?1
+i?n+2 ? Si?1
+2: if xi?1i?n+1 /? Si?1 then
+3: CREATE-STATE(xi?1i?n+1, i? 1)
+4: #move incoming edges, keeping WFSA determin-
+istic
+5: for all s ? SUFi?2(xi?2i?n+1) do
+6: e := EDGE(s, xi?1)
+7: MOVE-EDGE-END(e,xi?1i?n+1)
+8: #create outgoing edges
+9: for all (s, l,?) ? Ti(xi?1i?n+2) do
+10: CREATE-EDGE(xi?1i?n+1,s,l,?)
+11: #update weights
+12: for all s ? SUFi?1(xi?1i?n+1) do
+13: weight of EDGE(s, xi) := wn(xi|x
+i?1
+i?n+1)
+14: return
+istic weight w2(dog|two) by adding a node (node
+6) for the context two. We then perform a sampling
+trial with q(1), which this time tends to avoid produc-
+ing dog in the context of two; if the new sample
+is rejected, the refinement process continues until
+we start observing that the acceptance rate reaches
+a fixed threshold value. The case of optimization is
+similar. Suppose that with q(0) the maximum is x1,
+then we observe that p(x1) is lower than q(0)(x1),
+reject suboptimal x1 and refine q(0) into q(1).
+2.2 Algorithm
+We describe in detail the algorithm and procedure
+for updating a q-automaton with a max-backoff of
+longer context.
+Algorithm 1 gives the pseudo-code of the sam-
+1128
+pling/optimization strategy. On line 1, h represents
+the history of all trials so far, where the stopping cri-
+terion for decoding is whether the last trial in the
+history has been accepted, and for sampling whether
+the ratio of accepted trials relative to all trials ex-
+ceeds a certain threshold. The WFSA is initial-
+ized so that all transitions only take into account
+the w1(xi) max-backoffs, i.e. the initial optimistic-
+bound ignores all contexts. Then depending on
+whether we are sampling or decoding, in lines 2-5,
+we draw an event from our automaton using either
+the Viterbi algorithm or Forward-Backward sam-
+pling. If the sequence is rejected at line 7, then the
+q-automaton is updated in lines 10 and 11. This is
+done by expanding all the factors involved in the
+sampling/decoding of the rejected sequence x to a
+higher order. That is, while sampling or decoding
+the automaton using the current proposal q(t), the
+contexts used in the path of the rejected sequence
+are replaced with higher order contexts in the new
+refined proposal qt+1(x).
+The update process of the q-automaton repre-
+sented as a WFSA is described in Algorithm 2. This
+procedure guarantees that a lower, more realistic
+weight is used in all paths containing the n-gram
+xii?n+1 while decoding/sampling the q-automaton,
+where n is the order at which xii?n+1 has been ex-
+panded so far. The algorithm takes as input a max-
+backoff function, and refines the WFSA such that
+any paths that include this n-gram have a smaller
+weight thanks to the fact that higher-order max-
+backoff have automatically smaller weights.
+The algorithm requires the following functions:
+? ORDERi(x) returns the order at which the n-
+gram has been expanded so far at position i.
+? Si returns the states at a position i.
+? Ti(s) returns end states, labels and weights of
+all edges that originate from this state.
+? SUFi(x) returns the states at iwhich have a suf-
+fix matching the given context x. For empty
+contexts, all states at i are returned.
+? EDGE(s, l) returns the edge which originates
+from s and has label l. Deterministic WFSA,
+such as those used here, can only have a single
+transition with a label l leaving from a state s.
+? CREATE-STATE(s, i) creates a state
+with name s at position i, CREATE-
+EDGE(s1, s2, l,?) creates an edge (s1, s2)
+between s1 and s2 with weight ? and label
+l, and MOVE-EDGE-END(e, s) sets the end
+of edge e to be the state s, keeping the same
+starting state, weight and label.
+At line 1, the expansion of the current n-gram is
+increased by one so that we only need to expand con-
+texts of size n ? 2. Line 2 checks whether the con-
+text state exists. If it doesn?t it is created at lines 3-
+10. Finally, the weight of the edges that could be in-
+volved in the decoding of this n-gram are updated to
+a smaller value given by a higher-order max-backoff
+weight.
+The creation of a new state in lines 3-10 is
+straightforward: At lines 5-7, incoming edges are
+moved from states at position i ? 2 with a match-
+ing context to the newly created edge. At lines 9-
+10 edges heading out of the context state are cre-
+ated. They are simply copied over from all edges
+that originate from the suffix of the context state, as
+we know these will be legitimate transitions (i.e we
+will always transition to a state of the same order or
+lower).
+Note that we can derive many other variants of
+Algorithm 2 which also guarantee a smaller total
+weight for the q-automaton. We chose to present this
+version because it is relatively simple to implement,
+and numerical experiments comparing different re-
+finement approaches (including replacing the max-
+backoffs with the highest-possible context, or pick-
+ing a single ?culprit? to refine) showed that this ap-
+proach gives a good trade-off between model com-
+plexity and running time.
+2.3 Computing Max-Backoff Factors
+An interesting property of the max-backoff weights
+is that they can be computed recursively; taking a
+3-gram LM as an example, we have:
+w1(xi) = max
+xi?1
+w2(xi|xi?1)
+w2(xi|xi?1) = max
+xi?2
+w3(xi|x
+i?1
+i?2)
+w3(xi|x
+i?1
+i?2) = p(xi|x
+i?1
+i?2) p(oi|xi).
+The final w3(xi|x
+i?1
+i?2) upper bound function is sim-
+ply equal to the true probability (multiplied by the
+1129
+conditional probability of the observation), as any
+extra context is discarded by the 3-gram language
+model. It?s easy to see that as we refine q(t) by
+replacing existing max-backoff weights with more
+specific contexts, the q(t) tends to p at t tends to in-
+finity.
+In the HMM formulation, we need to be able
+to efficiently compute at run-time the max-backoffs
+w1(the), w2(dog|the), ? ? ? , taking into account
+smoothing. To do so, we present a novel method for
+converting language models in the standard ARPA
+format used by common toolkits such as (Stolcke,
+2002) into a format that we can use. The ARPA file
+format is a table T composed of three columns: (1)
+an n-gram which has been observed in the training
+corpus, (2) the log of the conditional probability of
+the last word in the n-gram given the previous words
+(log f(.)), and (3) a backoff weight (bow(.)) used
+when unseen n?grams ?backoff? to this n-gram. 2
+The probability of any n-gram xii?n (in the pre-
+vious sense, i.e. writing p(xii?n) for p(xi|x
+i?1
+i?n)) is
+then computed recursively as:
+p(xii?n) =
+?
+f(xii?n) if x
+i
+i?n ? T
+bow(xi?1i?n) p(x
+i
+i?n+1) otherwise.
+(7)
+Here, it is understood that if xi?1i?n is in T , then its
+bow(.) is read from the table, otherwise it is taken to
+be 1.
+Different smoothing techniques will lead to dif-
+ferent calculations of f(xii?n) and bow(x
+i?1
+i?n), how-
+ever both backoff and linear-interpolation methods
+can be formulated using the above equation.
+Starting from the ARPA format, we pre-compute
+a new table MAX-ARPA, which has the same lines
+as ARPA, each corresponding to an n-gram xii?n ob-
+served in the corpus, and the same f and bow, but
+with two additional columns: (4) a max log prob-
+ability (log mf(xii?n)), which is equal to the maxi-
+mum log probability over all the n-grams extending
+the context of xii?n, i.e. which have x
+i
+i?n as a suffix;
+(5) a ?max backoff? weight (mbow(xii?n)), which is
+a number used for computing the max log probabil-
+ity of an n-gram not listed in the table. From the
+MAX-ARPA table, the max probability w of any n-
+2See www.speech.sri.com/projects/srilm/
+manpages/ngram-format.5.html, last accessed at
+1/3/2012, for further details.
+gram xii?n, i.e the maximum of p(x
+i
+i?n?k) over all
+n-grams extending the context of xii?n, can then be
+computed recursively (again very quickly) as:
+w(xii?n) =
+?
+mf(xii?n) if x
+i
+i?n ? T
+mbow(xi?1i?n) p(x
+i
+i?n) otherwise.
+(8)
+Here, if xi?1i?n is in T , then its mbow(.) is read
+from the table, otherwise it is taken to be 1. Also
+note that the procedure calls p, which is computed
+as described in Equation 7. 3
+3 Experiments
+In this section we empirically evaluate our joint, ex-
+act decoder and sampler on two tasks; SMS-retrieval
+(Section 3.1), and supervised POS tagging (Sec-
+tion 3.2).
+3.1 SMS-Retrieval
+We evaluate our approach on an SMS-message re-
+trieval task. A latent variable x ? {1, ? ? ? , N}?
+represents a sentence represented as a sequence of
+words: N is the number of possible words in the
+vocabulary and ? is the number of words in the
+sentence. Each word is converted into a sequence
+of numbers based on a mobile phone numeric key-
+pad. The standard character-to-numeric function
+num : {a,b, ? ? ? ,z, ., ? ? ? , ?}?{1, 2, ? ? ? , 9, 0} is
+used. For example, the words dog and fog
+are represented by the sequence (3, 6, 4) because
+num(d)=num(f)=3, num(o)=6 and num(g)=4.
+Hence, observed sequences are sequences of nu-
+meric strings separated by white spaces. To take
+into account typing errors, we assume we observe
+a noisy version of the correct numeric sequence
+(num(xi1), ? ? ? , num(xi|xi|) that encodes the word
+xi at the i-th position of the sentence x. The noise
+model is:
+p(oi|xi) ?
+|xi|?
+t=1
+1
+k ? d(oit, num(xit)) + 1
+, (9)
+where d(a, b) is the physical distance between the
+numeric keys a and b and k is a user provided con-
+3In this discussion of theMAX-ARPA table we have ignored
+the contribution of the observation p(oi|xi), which is a constant
+factor over the different max-backoffs for the same xi and does
+not impact the computation of the table.
+1130
+ 0 10 20 30 40
+ 50 60 70 80 90
+ 100
+ 1  2  3  4  5  6  7  8  9  10avg
+ 
+#
+i
+t
+e
+r
+a
+t
+i
+o
+n
+s
+input length3 4 5  0 50
+ 100 150 200 250 300
+ 350 400 450 500
+ 1  2  3  4  5  6  7  8  9 10av
+g
+ 
+#
+s
+t
+a
+t
+e
+s
+input length
+3 4 5
+Figure 2: On the left we report the average #
+of iterations taken to decode given different LMs
+over input sentences of different lengths, and on the
+right we show the average # of states in the final q-
+automaton once decoding is completed.
+stant that controls the ambiguity in the distribution;
+we use 64 to obtain moderately noisy sequences.
+We used the English side of the Europarl cor-
+pus (Koehn, 2005). The language model was trained
+using SRILM (Stolcke, 2002) on 90% of the sen-
+tences. On the remaining 10%, we randomly se-
+lected 100 sequences for lengths 1 to 10 to obtain
+1000 sequences from which we removed the ones
+containing numbers, obtaining a test set of size 926.
+Decoding Algorithm 1 was run in the optimization
+mode. In the left plot of Fig. 2, we show the number
+of iterations (running Viterbi then updating q) that
+the different n-gram models of size 3, 4 and 5 take
+to do exact decoding of the test-set. For a fixed sen-
+tence length, we can see that decoding with larger
+n-gram models leads to a sub-linear increase w.r.t.
+n in the number of iterations taken. In the right plot
+of Fig. 2, we show the average number of states in
+our variable-order HMMs.
+To demonstrate the reduced nature of our q-
+automaton, we show in Tab. 1 the distribution of
+n-grams in our final model for a specific input sen-
+tence of length 10. The number of n-grams in the
+full model is?3.0?1015. Exact decoding here is not
+tractable using existing techniques. Our HMM has
+only 9008 n-grams in total, including 118 5-grams.
+n: 1 2 3 4 5
+q: 7868 615 231 176 118
+Table 1: # of n-grams in our variable-order HMM.
+Finally, we show in Tab. 2 an example run of
+our algorithm in the optimization setting for a given
+input. Note that the weight according to our q-
+automaton for the first path returned by the Viterbi
+algorithm is high in comparison to the true log prob-
+ability according to p.
+Sampling For the sampling experiments, we limit
+the number of latent tokens to 100. We refine our q-
+automaton until we reach a certain fixed cumulative
+acceptance rate (AR). We also compute a rate based
+only on the last 100 trials (AR-100), as this tends to
+better reflect the current acceptance rate.
+In Fig. 3a, we plot a running average of the ratio
+at each iteration over the last 10 trials, for a single
+sampling run using a 5-gram model for an example
+input. The ratios start off at 10?20, but gradually in-
+crease as we refine our HMM. After ? 500 trials,
+we start accepting samples from p. In Fig. 3b, we
+show the respective ARs (bottom and top curves re-
+spectively), and the cumulative # of accepts (middle
+curve), for the same input. Because the cumulative
+accept ratio takes into account all trials, the final AR
+of 17.7% is an underestimate of the true accept ra-
+tio at the final iteration; this final accept ratio can be
+better estimated on the basis of the last 100 trials, for
+which we read AR-100 to be at around 60%.
+We note that there is a trade-off between the time
+needed to construct the forward probability lattice
+needed for sampling, and the time it takes to adapt
+the variable-order HMM. To resolve this, we pro-
+pose to use batch-updates: making B trials from the
+same q-automaton, and then updating our model in
+one step. By doing this, we noted significant speed-
+ups in sampling times. In Tab. 3, we show various
+input: 3637 843 66639 39478 *
+oracle: does the money exist ?
+best: does the money exist .
+Viterbi paths log q(x) log p(x)
+q1 does the money exist ) -0.11 -17.42
+q50 does the owned exist . -11.71 -23.54
+q100 ends the money exist . -12.76 -17.09
+q150 does vis money exist . -13.45 -23.74
+q170 does the money exist . -13.70 -13.70
+Table 2: Viterbi paths given different qt. Here, for
+the given input, it took 170 iterations to find the best
+sequence according to p, so we only show every 50th
+path.
+1131
+ 1e-20 1e-18 1e-16 1e-14 1e-12
+ 1e-10 1e-08 1e-06 0.0001 0.01
+ 1
+ 0  500 1000 1500 2000
+r
+a
+t
+i
+o
+iterations
+(a)
+ 0 10 20
+ 30 40 50
+ 60
+ 0  500  1000 1500 2000  0 100
+ 200 300 400
+ 500 600
+a
+c
+c
+e
+p
+t
+ 
+r
+a
+t
+i
+o
+ 
+%
+#
+ 
+a
+c
+c
+e
+p
+t
+s
+iterations
+#ACCARAR 100
+(b)
+ 100 200 300
+ 400 500 600
+ 700 800
+ 1  2  3  4  5  6  7  8  9  10avg
+ 
+#
+i
+t
+e
+r
+a
+t
+i
+o
+n
+s
+input length
+543
+(c)
+ 0 200 400 600
+ 800 1000 1200 1400
+ 1600 1800
+ 1  2  3  4  5  6  7  8  9 10av
+g
+ 
+#
+s
+t
+a
+t
+e
+s
+input length
+543
+(d)
+Figure 3: In 3a, we plot the running average over the last 10 trials of the ratio. In 3b, we plot the cumulative
+# of accepts (middle curve), the accept rate (bottom curve), and the accept rate based on the last 100
+samples (top curve). In 3c, we plot the average number of iterations needed to sample up to an AR of 20%
+for sentences of different lengths in our test set, and in 3d, we show the average number of states in our
+HMMs for the same experiment.
+B: 1 10 20 30 40 50 100
+time: 97.5 19.9 15.0 13.9 12.8 12.5 11.4
+iter: 453 456 480 516 536 568 700
+Table 3: In this table we show the average amount of
+time in seconds and the average number of iterations
+(iter) taken to sample sentences of length 10 given
+different values of B.
+statistics for sampling up to AR-100 = 20 given dif-
+ferent values for B. We ran this experiment using
+the set of sentences of length 10. A value of 1 means
+that we refine our automaton after each rejected trial,
+a value of 10 means we wait until rejecting 10 trials
+before updating our automaton in one step. We can
+see that while higher values of B lead to more iter-
+ations, as we do not need to re-compute the forward
+trellis needed for sampling, the time needed to reach
+the specific AR threshold actually decreases, from
+97.5 seconds to 11.4 seconds, an 8.5% speedup. Un-
+less explicitly stated otherwise, further experiments
+use a B = 100.
+We now present the full sampling results on our
+test-set in Fig. 3c and 3d, where we show the aver-
+age number of iterations and states in the final mod-
+els once refinements are finished (AR-100=20%) for
+different orders n over different lengths. We note
+a sub-linear increase in the average number of tri-
+als and states when moving to higher n; thus, for
+length=10, and for n = 3, 4, 5, # trials: 3-658.16,
+4-683.3, 5-700.9, and # states: 3-1139.5, 4-1494.0,
+5-1718.3.
+Finally, we show in Tab. 4, the ranked samples
+drawn from an input sentence, according to a 5-gram
+LM. After refining our model up to AR-100 = 20%,
+input: 3637 843 66639 39478 *
+oracle: does the money exist ?
+best: does the money exist .
+samples # log q(x) log p(x)
+does the money exist . 429 -13.70 -13.70
+does the money exist ? 211 -14.51 -14.51
+does the money exist ! 72 -15.49 -15.49
+does the moody exist . 45 -15.70 -15.70
+does the money exist : 25 -16.73 -16.73
+Table 4: Top-5 ranked samples for an example in-
+put. We highlight in bold the words which are differ-
+ent to the Viterbi best of the model. The oracle and
+best are not the same for this input.
+we continued drawing samples until we had 1000
+exact samples from p (out of ? 4.7k trials). We
+show the count of each sequence in the 1000 sam-
+ples, and the log probability according to p for that
+event. We only present the top-five samples, though
+in total there were 90 unique sequences sampled, 50
+of which were only sampled once.
+3.2 POS-tagging
+Our HMM is the same as that used in (Brants, 2001);
+the emission probability of a word given a POS
+tag xi is calculated using maximum likelihood tech-
+niques. That is, p(oi|xi) =
+c(oi,xi)
+c(xi)
+. Unseen words
+are handled by interpolating longer suffixes with
+shorter, more general suffixes. To train our language
+model, we use the SRILM toolkit (Stolcke, 2002)
+We build LMs of up to size 9. We present results
+on the WSJ Penn Treebank corpus (Marcus et al
+1993). We use sections 0-18 to train our emission
+and transitions probabilities, and report results on
+1132
+ 95.6 95.65 95.7
+ 95.75 95.8 95.85
+ 95.9 95.95
+ 3  4  5  6  7  8  9ac
+c
+u
+r
+a
+c
+y
+ 
+%
+n-gram order
+(a)
+ 0 2000 4000 6000
+ 8000 10000 12000 14000
+ 16000 18000
+ 3  4  5  6  7  8  9
+t
+i
+m
+e
+n-gram order
+ARSF
+(b)
+ 50 60 70 80
+ 90 100 110 120
+ 130
+ 3  4  5  6  7  8  9avg
+ 
+#
+i
+t
+e
+r
+a
+t
+i
+o
+n
+s
+n-gram order
+(c)
+ 100 200 300 400
+ 500 600 700 800
+ 900
+ 3  4  5  6  7  8  9av
+g
+ 
+#
+s
+t
+a
+t
+e
+s
+n-gram order
+(d)
+Figure 4: In 4a, we report the accuracy results given different n-gram models on the WSJ test-set. In 4b, we
+show the time taken (seconds) to decode the WSJ test-set given our method (ARS), and compare this to the
+full model (F). In 4c, the average number of iterations needed to sample the test-set given different n-gram
+language models is given, and 4d shows the average number of states in the variable-order HMMs.
+sections 22-24.
+We first present results for our decoding experi-
+ments. In Fig. 4a we show the accuracy results of
+our different models on the WSJ test-set. We see
+that the best result is achieved with the 5-gram LM
+giving an accuracy of 95.94%. After that, results
+start to drop, most likely due to over-fitting of the
+LM during training and an inability for the smooth-
+ing technique to correctly handle this.
+In Fig. 4b, we compare the time it takes in seconds
+to decode the test-set with the full model at each n-
+gram size; that is a WFSA with all context states
+and weights representing the true language model
+log probabilities. We can see that while increas-
+ing the n-gram model size, our method (ARS) ex-
+hibits a linear increase in decoding time, in contrast
+to the exponential factor exhibited when running the
+Viterbi algorithm over the full WFSA (F). Note for
+n-gram models of order 7 and higher, we could not
+decode the entire test set as creating the full WFSA
+was taking too long.
+Finally in both Figs 4c and 4d, we show the aver-
+age number of iterations taken to sample from the
+entire test-test, and the average number of states
+in our variable-order HMMs, with AR-100=60%.
+Again we note a linear increase in both Fig., in con-
+trast to the exponential nature of standard techniques
+applied to the full HMM.
+4 Conclusion and Perspectives
+We have presented a dual-purpose algorithm that can
+be used for performing exact decoding and sampling
+on high-order HMMs. We demonstrated the valid-
+ity of our method on SMS-retrieval and POS exam-
+ples, showing that the ?proposals? that we obtain re-
+quire only a fraction of the space that would result
+from explicitly representing the HMM. We believe
+that this ability to support exact inference (both ap-
+proximation and sampling) at a reasonable cost has
+important applications, in particular when moving
+from inference to learning tasks, which we see as a
+natural extension of this work.
+By proposing a common framework for sampling
+and optimization our approach has the advantage
+that we do not need separate skills or expertise to
+solve the two problems. In several situations, we
+might be interested not only in the most probable se-
+quence, but also in the distribution of the sequences,
+especially when diversity is important or in the pres-
+ence of underlying ambiguities.
+The interplay between optimization and sampling
+is a fruitful area of research that can lead to state-
+of-the art performances on inference and decod-
+ing tasks in the special case of high-order HMM
+decoding, but the method is generic enough to
+be generalized to many others models of interest
+for NLP applications. One family of models is
+provided by agreement-based models, for example
+HMM+PCFG, where distribution p takes the form
+of a product: p(x) = pHMM(x)pPCFG(x). Even
+if the factors pHMM(x) and pPCFG(x) can be de-
+coded and sampled efficiently, the product of them
+is intractable. Dual decomposition is a generic
+method that has been proposed for handling decod-
+ing (i.e. optimization) with such models, by decou-
+pling the problem into two alternating steps that can
+each be handled by dynamic programming or other
+polynomial-time algorithms (Rush et al 2010), an
+approach that has been applied to Statistical Ma-
+chine Translation (phrase-based (Chang and Collins,
+1133
+2011) and hierarchical (Rush and Collins, 2011))
+among others. However, sampling such distributions
+remains a difficult problem. We are currently ex-
+tending the approach described in this paper to han-
+dle such applications. Again, using ARS on a se-
+quence of upper bounds to the target distribution,
+our idea is to express one of the two models as a con-
+text free grammar and incrementally compute the
+intersection with the second model, maintaining a
+good trade-off between computational tractability of
+the refinement and a reasonable acceptance rate.
+References
+Thorsten Brants. 2001. Tnt - a statistical part-of-speech
+tagger. In Proceedings of the Sixth conference of
+Applied Natural Language Processing (ANLP 2001),
+pages 224?231.
+Yin-Wen Chang and Michael Collins. 2011. Exact de-
+coding of phrase-based translation models through la-
+grangian relaxation. In Proceedings of the Conference
+on Empirical Methods for Natural Language Process-
+ing (EMNLP 2011).
+Jenny Rose Finkel, Christopher D. Manning, and An-
+drew Y. Ng. 2006. Solving the problem of cascading
+errors: approximate bayesian inference for linguistic
+annotation pipelines. In Proceedings of the Confer-
+ence on Empirical Methods in Natural Language Pro-
+cessing (EMNLP 2006), pages 618?626.
+W. R. Gilks and P. Wild. 1992. Adaptive rejec-
+tion sampling for gibbs sampling. Applied Statistics,
+42(2):337?348.
+Dilan Gorur and Yee Whye Teh. 2008. Concave convex
+adaptive rejection sampling. Technical report, Gatsby
+Computational Neuroscience Unit.
+Anthony C. Kam and Gary E. Kopec. 1996. Document
+image decoding by heuristic search. IEEE Transac-
+tions on Pattern Analysis and Machine Intelligence,
+18:945?950.
+Philipp Koehn. 2005. Europarl: A parallel corpus for
+statistical machine translation. In Proceedings of Ma-
+chine Translation Summit (MT-Summit 2005), pages
+79?86.
+Shankar Kumar and William Byrne. 2004. Minimum
+bayes risk decoding for statistical machine translation.
+In Joint Conference of Human Language Technologies
+and the North American chapter of the Association for
+Computational Linguistics (HLT-NAACL 2004).
+Mitchell P. Marcus, Beatrice Santorini, and Mary Ann
+Marcinkiewicz. 1993. Building a large annotated cor-
+pus of english: the penn treebank. Computional Lin-
+guistics, 19:313?330.
+Lawrence R. Rabiner. 1989. A tutorial on hidden markov
+models and selected applications in speech recogni-
+tion. Proceedings of the IEEE, 77(2):257?286, Febru-
+ary.
+Alexander M. Rush and Michael Collins. 2011. Exact
+decoding of syntactic translation models through la-
+grangian relaxation. In Proceedings of the Conference
+on Empirical Methods for Natural Language Process-
+ing (EMNLP 2011), pages 26?37.
+Alexander M. Rush, David Sontag, Michael Collins, and
+Tommi Jaakkola. 2010. On dual decomposition and
+linear programming relaxations for natural language
+processing. In Proceedings of the Conference on
+Empirical Methods for Natural Language Processing
+(EMNLP 2010).
+Steven L. Scott. 2002. Bayesian methods for hidden
+markov models: Recursive computing in the 21st cen-
+tury. Journal of the American Statistical Association,
+97:337?351.
+Andreas Stolcke. 2002. Srilm - an extensible language
+modeling toolkit. In Proceedings of the International
+Conference of Spoken Language Processing (INTER-
+SPEECH 2002), pages 257?286.
+Yee Whye Teh, Michael I. Jordan, Matthew J. Beal, and
+David M. Blei. 2006. Hierarchical dirichlet pro-
+cesses. Journal of the American Statistical Associa-
+tion, 101(476):1566?1581.
+Yee Whye Teh. 2006. A hierarchical bayesian language
+model based on pitman-yor processes. In Proceedings
+of the 21st International Conference on Computational
+Linguistics and the 44th annual meeting of the As-
+sociation for Computational Linguistics (ACL 2006),
+pages 985?992.
+Jurgen Van Gael, Yunus Saatci, Yee Whye Teh, and
+Zoubin Ghahramani. 2008. Beam sampling for the in-
+finite hidden Markov model. In Proceedings of the In-
+ternational Conference on Machine Learning (ICML
+2008), volume 25.
+1134
+Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 233?243,
+Seattle, Washington, USA, 18-21 October 2013. c?2013 Association for Computational Linguistics
+Structured Penalties for Log-linear Language Models
+Anil Nelakanti,*? Ce?dric Archambeau,* Julien Mairal,? Francis Bach,? Guillaume Bouchard*
+*Xerox Research Centre Europe, Grenoble, France
+?INRIA-LEAR Project-Team, Grenoble, France
+?INRIA-SIERRA Project-Team, Paris, France
+firstname.lastname@xrce.xerox.com firstname.lastname@inria.fr
+Abstract
+Language models can be formalized as log-
+linear regression models where the input fea-
+tures represent previously observed contexts
+up to a certain length m. The complexity
+of existing algorithms to learn the parameters
+by maximum likelihood scale linearly in nd,
+where n is the length of the training corpus
+and d is the number of observed features. We
+present a model that grows logarithmically
+in d, making it possible to efficiently leverage
+longer contexts. We account for the sequen-
+tial structure of natural language using tree-
+structured penalized objectives to avoid over-
+fitting and achieve better generalization.
+1 Introduction
+Language models are crucial parts of advanced nat-
+ural language processing pipelines, such as speech
+recognition (Burget et al, 2007), machine trans-
+lation (Chang and Collins, 2011), or information
+retrieval (Vargas et al, 2012). When a sequence
+of symbols is observed, a language model pre-
+dicts the probability of occurrence of the next sym-
+bol in the sequence. Models based on so-called
+back-off smoothing have shown good predictive
+power (Goodman, 2001). In particular, Kneser-Ney
+(KN) and its variants (Kneser and Ney, 1995) are
+still achieving state-of-the-art results for more than a
+decade after they were originally proposed. Smooth-
+ing methods are in fact clever heuristics that require
+tuning parameters in an ad-hoc fashion. Hence,
+more principled ways of learning language mod-
+els have been proposed based on maximum en-
+tropy (Chen and Rosenfeld, 2000) or conditional
+random fields (Roark et al, 2004), or by adopting
+a Bayesian approach (Wood et al, 2009).
+In this paper, we focus on penalized maxi-
+mum likelihood estimation in log-linear models.
+In contrast to language models based on unstruc-
+tured norms such as `2 (quadratic penalties) or
+`1 (absolute discounting), we use tree-structured
+norms (Zhao et al, 2009; Jenatton et al, 2011).
+Structured penalties have been successfully applied
+to various NLP tasks, including chunking and named
+entity recognition (Martins et al, 2011), but not lan-
+guage modelling. Such penalties are particularly
+well-suited to this problem as they mimic the nested
+nature of word contexts. However, existing optimiz-
+ing techniques are not scalable for large contexts m.
+In this work, we show that structured tree norms
+provide an efficient framework for language mod-
+elling. For a special case of these tree norms, we
+obtain an memory-efficient learning algorithm for
+log-linear language models. Furthermore, we aslo
+give the first efficient learning algorithm for struc-
+tured `? tree norms with a complexity nearly lin-
+ear in the number of training samples. This leads to
+a memory-efficient and time-efficient learning algo-
+rithm for generalized linear language models.
+The paper is organized as follows. The model
+and other preliminary material is introduced in Sec-
+tion 2. In Section 3, we review unstructured penal-
+ties that were proposed earlier. Next, we propose
+structured penalties and compare their memory and
+time requirements. We summarize the characteris-
+tics of the proposed algorithms in Section 5 and ex-
+perimentally validate our findings in Section 6.
+233
+34
+6
+6
+5 7
+7
+7
+(a) Trie-structured vector.
+w = [ 3 4 6 6 4 5 7 7 ]>.
+3
+4
+6 [2]
+4 5
+7 [2]
+(b) Tree-structured vector.
+w = [ 3 4 6 6 4 5 7 7 ]>.
+2.8
+3.5
+4.8
+4.3
+2.3 3
+5.6
+4.9
+(c) `T2 -proximal ?`T2
+(w, 0.8) =
+[ 2.8 3.5 4.8 4.3 2.3 3 5.6 4.9 ]>.
+3
+4
+5.2 [2]
+3.2 4.2
+5.4 [2]
+(d) `T?-proximal ?`T? (w, 0.8) =
+[ 3 4 5.2 5.2 3.2 4.2 5.4 5.4 ]>.
+Figure 1: Example of uncollapsed (trie) and corresponding collapsed (tree) structured vectors and proximal
+operators applied to them. Weight values are written inside the node. Subfigure (a) shows the complete
+trie S and Subfigure (b) shows the corresponding collapsed tree T . The number in the brackets shows the
+number of nodes collapsed. Subfigure (c) shows vector after proximal projection for `T2 -norm (which cannot
+be collapsed), and Subfigure (d) that of `T?-norm proximal projection which can be collapsed.
+2 Log-linear language models
+Multinomial logistic regression and Poisson regres-
+sion are examples of log-linear models (McCullagh
+and Nelder, 1989), where the likelihood belongs
+to an exponential family and the predictor is lin-
+ear. The application of log-linear models to lan-
+guage modelling was proposed more than a decade
+ago (Della Pietra et al, 1997) and it was shown to
+be competitive with state-of-the-art language mod-
+elling such as Knesser-Ney smoothing (Chen and
+Rosenfeld, 2000).
+2.1 Model definition
+Let V be a set of words or more generally a set of
+symbols, which we call vocabulary. Further, let xy
+be a sequence of n+1 symbols of V , where x ? V n
+and y ? V . We model the probability that symbol y
+succeeds x as
+P (y = v|x) =
+ew
+>
+v ?m(x)
+?
+u?V e
+w>u ?m(x)
+, (1)
+where W = {wv}v?V is the set of parameters, and
+?m(x) is the vector of features extracted from x, the
+sequence preceding y. We will describe the features
+shortly.
+Let x1:i denote the subsequence of x starting at
+the first position up to the ith position and yi the next
+symbol in the sequence. Parameters are estimated by
+minimizing the penalized log-loss:
+W ? ? argmin
+W?K
+f(W ) + ??(W ), (2)
+where f(W ) := ?
+?n
+i=1 ln p(yi|x1:i;W ) and K is
+a convex set representing the constraints applied on
+the parameters. Overfitting is avoided by adjust-
+ing the regularization parameter ?, e.g., by cross-
+validation.
+2.2 Suffix tree encoding
+Suffix trees provide an efficient way to store and
+manipulate discrete sequences and can be con-
+structed in linear time when the vocabulary is
+fixed (Giegerich and Kurtz, 1997). Recent examples
+include language models based on a variable-length
+Markovian assumption (Kennington et al, 2012)
+and the sequence memoizer (Wood et al, 2011). The
+suffix tree data structure encodes all the unique suf-
+fixes observed in a sequence up to a maximum given
+length. It exploits the fact that the set of observed
+contexts is a small subset of all possible contexts.
+When a series of suffixes of increasing lengths are
+234
+Algorithm 1 W ? := argmin {f(X,Y ;W )+
+??(W )} Stochastic optimization algorithm (Hu et
+al., 2009)
+1 Input: ? regularization parameter , L Lipschitz constant of
+?f , ? coefficient of strong-convexity of f + ??, X design
+matrix, Y label set
+2 Initialize: W = Z = 0, ? = ? = 1, ? = L+ ?
+3 repeat until maximum iterations
+4 #estimate point for gradient update
+W = (1? ?)W + ?Z
+5 #use mini-batch {X?, Y?} for update
+W = ParamUpdate(X?, Y?, W , ?, ?)
+6 #weighted combination of estimates
+Z = 1??+?
+(
+(1? ?)Z + (?? ?)W + ?W
+)
+7 #update constants
+? = L+ ?/?, ? =
+?
+4?+?2??
+2 , ? = (1? ?)?
+Procedure: W := ParamUpdate(X?, Y?, W , ?, ?)
+1 W ? = W ? 1??f(X?, Y?,W ) #gradient step
+2 W = [W ]+ #projection to non-negative orthant
+3 W = ??(w, ?) #proximal step
+always observed in the same context, the successive
+suffixes are collapsed into a single node. The un-
+collapsed version of the suffix tree T is called a suf-
+fix trie, which we denote S. A suffix trie also has
+a tree structure, but it potentially has much larger
+number of nodes. An example of a suffix trie S and
+the associated suffix tree T are shown in Figures 1(a)
+and 1(b) respectively. We use |S| to denote the num-
+ber of nodes in the trie S and |T | for the number of
+nodes in the tree T .
+Suffix tree encoding is particularly helpful in ap-
+plications where the resulting hierarchical structures
+are thin and tall with numerous non-branching paths.
+In the case of text, it has been observed that the num-
+ber of nodes in the tree grows slower than that of
+the trie with the length of the sequence (Wood et
+al., 2011; Kennington et al, 2012). This is a signif-
+icant gain in the memory requirements and, as we
+will show in Section 4, can also lead to important
+computational gains when this structure is exploited.
+The feature vector ?m(x) encodes suffixes (or
+contexts) of increasing length up to a maximum
+length m. Hence, the model defined in (1) is simi-
+lar tom-gram language models. Naively, the feature
+vector ?m(x) corresponds to one path of length m
+starting at the root of the suffix trie S. The entries
+in W correspond to weights for each suffix. We thus
+have a trie structure S on W (see Figure 1(a)) con-
+straining the number of free parameters. In other
+words, there is one weight parameter per node in the
+trie S and the matrix of parameters W is of size |S|.
+In this work, however, we consider models where
+the number of parameters is equal to the size of the
+suffix tree T , which has much fewer nodes than S.
+This is achieved by ensuring that all parameters cor-
+responding to suffixes at a node share the same pa-
+rameter value (see Figure 1(b)). These parameters
+correspond to paths in the suffix trie that do not
+branch i.e. sequence of words that always appear to-
+gether in the same order.
+2.3 Proximal gradient algorithm
+The objective function (2) involves a smooth convex
+loss f and a possibly non-smooth penalty ?. Sub-
+gradient descent methods for non-smooth ? could
+be used, but they are unfortunately very slow to con-
+verge. Instead, we choose proximal methods (Nes-
+terov, 2007), which have fast convergence rates
+and can deal with a large number of penalties ?,
+see (Bach et al, 2012).
+Proximal methods iteratively update the current
+estimate by making a generalized gradient update at
+each iteration. Formally, they are based on a lin-
+earization of the smooth function f around a param-
+eter estimate W , adding a quadratic penalty term
+to keep the updated estimate in the neighborhood
+of W . At iteration t, the update of the parameter W
+is given by
+W t+1 = argmin
+W?K
+{
+f(W ) + (W ?W )>?f(W )
++?(W ) +
+L
+2
+?W ?W?22
+}
+, (3)
+where L > 0 is an upper-bound on the Lipschitz
+constant of the gradient ?f . The matrix W could
+either be the current estimate W t or its weighted
+combination with the previous estimate for accel-
+erated convergence depending on the specific algo-
+rithm used (Beck and Teboulle, 2009). Equation (3)
+can be rewritten to be solved in two independent
+steps: a gradient update from the smooth part fol-
+lowed by a projection depending only on the non-
+smooth penalty:
+W ? = W ?
+1
+L
+?f(W ), (4)
+235
+W t+1 = argmin
+W?K
+1
+2
+?
+?W ?W ?
+?
+?2
+2 +
+??(W )
+L
+. (5)
+Update (5) is called the proximal operator of W ?
+with parameter ?L that we denote ??
+(
+W ?, ?L
+)
+. Ef-
+ficiently computing the proximal step is crucial to
+maintain the fast convergence rate of these methods.
+2.4 Stochastic proximal gradient algorithm
+In language modelling applications, the number of
+training samples n is typically in the range of 105
+or larger. Stochastic version of the proximal meth-
+ods (Hu et al, 2009) have been known to be well
+adapted when n is large. At every update, the
+stochastic algorithm estimates the gradient on a
+mini-batch, that is, a subset of the samples. The size
+of the mini-batches controls the trade-off between
+the variance in the estimate of gradient and the time
+required for compute it. In our experiments we use
+mini-batches of size 400. The training algorithm is
+summarized in Algorithm 1. The acceleration is ob-
+tained by making the gradient update at a specific
+weighted combination of the current and the previ-
+ous estimates of the parameters. The weighting is
+shown in step 6 of the Algorithm 1.
+2.5 Positivity constraints
+Without constraining the parameters, the memory
+required by a model scales linearly with the vocabu-
+lary size |V |. Any symbol in V observed in a given
+context is a positive example, while any symbols
+in V that does not appear in this context is a neg-
+ative example. When adopting a log-linear language
+model, the negative examples are associated with a
+small negative gradient step in (4), so that the solu-
+tion is not sparse accross multiple categories in gen-
+eral. By constraining the parameters to be positive
+(i.e., the set of feasible solutions K is the positive
+orthant), the projection step 2 in Algorithm 1 can be
+done with the same complexity, while maintaining
+sparse parameters accross multiple categories. More
+precisely, the weights for the category k associated
+to a given context x, is always zeros if the category k
+never occured after context x. A significant gain in
+memory (nearly |V |-fold for large context lengths)
+was obtained without loss of accuracy in our exper-
+iments.
+3 Unstructured penalties
+Standard choices for the penalty function ?(W ) in-
+clude the `1-norm and the squared `2-norm. The
+former typically leads to a solution that is sparse
+and easily interpretable, while the latter leads to a
+non-sparse, generally more stable one. In partic-
+ular, the squared `2 and `1 penalties were used in
+the context of log-linear language models (Chen and
+Rosenfeld, 2000; Goodman, 2004), reporting perfor-
+mances competitive with bi-gram and tri-gram inter-
+polated Kneser-Ney smoothing.
+3.1 Proximal step on the suffix trie
+For squared `2 penalties, the proximal step
+?`22(w
+t, ?2 ) is the element-wise rescaling operation:
+w(t+1)i ? w
+(t)
+i (1 + ?)
+?1 (6)
+For `1 penalties, the proximal step ?`1(w
+t, ?)] is the
+soft-thresholding operator:
+w(t+1)i ? max(0, w
+(t)
+i ? ?). (7)
+These projections have linear complexity in the
+number of features.
+3.2 Proximal step on the suffix tree
+When feature values are identical, the corresponding
+proximal (and gradient) steps are identical. This can
+be seen from the proximal steps (7) and (6), which
+apply to single weight entries. This property can be
+used to group together parameters for which the fea-
+ture values are equal. Hence, we can collapse suc-
+cessive nodes that always have the same values in a
+suffix trie (as in Figure 1(b)), that is to say we can
+directly work on the suffix tree. This leads to a prox-
+imal step with complexity that scales linearly with
+the number of symbols seen in the corpus (Ukkonen,
+1995) and logarithmically with context length.
+4 Structured penalties
+The `1 and squared `2 penalties do not account for
+the sequential dependencies in the data, treating suf-
+fixes of different lengths equally. This is inappro-
+priate considering that longer suffixes are typically
+observed less frequently than shorter ones. More-
+over, the fact that suffixes might be nested is disre-
+garded. Hence, we propose to use the tree-structured
+236
+Algorithm 2 w := ?`T2 (w, ?) Proximal projection
+step for `T2 on grouping G.
+1 Input: T suffix tree, w trie-structured vector, ? threshold
+2 Initialize: {?i} = 0, {?i} = 1
+3 ? = UpwardPass(?, ?, ?, w)
+4 w = DownwardPass(?, w)
+Procedure: ? := UpwardPass(?, ?, ?, w)
+1 for x ? DepthFirstSuffixTraversal(T, PostOrder)
+2 ?x = w2x +
+?
+h?children(x) ?h
+3 ?x = [1? ?/
+?
+?x]+
+4 ?x = ?2x?x
+Procedure: w := DownwardPass(?, w)
+1 for x ? DepthFirstSuffixTraversal(T, PreOrder)
+2 wx = ?xwx
+3 for h ? children(x)
+4 ?h = ?x?h
+a DepthFirstSuffixTraversal(T,Order) returns observed suf-
+fixes from the suffix tree T by depth-first traversal in the order
+prescribed by Order.
+b wx is the weights corresponding to the suffix x from the
+weight vector w and children(x) returns all the immediate
+children to suffix x in the tree.
+norms (Zhao et al, 2009; Jenatton et al, 2011),
+which are based on the suffix trie or tree, where sub-
+trees correspond to contexts of increasing lengths.
+As will be shown in the experiments, this prevents
+the model to overfit unlike the `1- or squared `2-
+norm.
+4.1 Definition of tree-structured `Tp norms
+Definition 1. Let x be a training sequence. Group
+g(w, j) is the subvector of w associated with the
+subtree rooted at the node j of the suffix trie S(x).
+Definition 2. Let G denote the ordered set of nodes
+of the tree T (x) such that for r < s, g(w, r) ?
+g(w, s) = ? or g(w, r) ? g(w, s). The tree-
+structured `p-norm is defined as follows:
+`Tp (w) =
+?
+j?G
+?g(w, j)?p . (8)
+We specifically consider the cases p = 2,? for
+which efficient optimization algorithms are avail-
+able. The `Tp -norms can be viewed as a group
+sparsity-inducing norms, where the groups are or-
+ganized in a tree. This means that when the weight
+associated with a parent in the tree is driven to zero,
+the weights associated to all its descendants should
+also be driven to zero.
+Algorithm 3 w := ?`T?(w, ?) Proximal projection
+step for `T? on grouping G.
+Input: T suffix tree, w=[v c] tree-structured vector v with
+corresponding number of suffixes collapsed at each node in
+c, ? threshold
+1 for x ? DepthFirstNodeTraversal(T, PostOrder)
+2 g(v, x) := pi`T?( g(v, x), cx? )
+Procedure: q := pi`?(q, ?)
+Input: q = [v c], qi = [vi ci], i = 1, ? ? ? , |q|
+Initialize: U = {}, L = {}, I = {1, ? ? ? , |q|}
+1 while I 6= ?
+2 pick random ? ? I #choose pivot
+3 U = {j|vj ? v?} #larger than v?
+4 L = {j|vj < v?} #smaller than v?
+5 ?S =
+?
+i?U vi ? ci, ?C =
+?
+i?U ci
+6 if (S + ?S)? (C + ?C)? < ?
+7 S := (S + ?S), C := (C + ?C), I := L
+8 else I := U\{?}
+9 r = S??C , vi := vi ?max(0, vi ? r) #take residuals
+a DepthFirstNodeTraversal(T,Order) returns nodes x from the
+suffix tree T by depth-first traversal in the order prescribed
+by Order.
+For structured `Tp -norm, the proximal step
+amounts to residuals of recursive projections on the
+`q-ball in the order defined by G (Jenatton et al,
+2011), where `q-norm is the dual norm of `p-norm1.
+In the case `T2 -norm this comes to a series of pro-
+jections on the `2-ball. For `T?-norm it is instead
+projections on the `1-ball. The order of projections
+defined by G is generated by an upward pass of the
+suffix trie. At each node through the upward pass,
+the subtree below is projected on the dual norm ball
+of size ?, the parameter of proximal step. We detail
+the projections on the norm ball below.
+4.2 Projections on `q-ball for q = 1, 2
+Each of the above projections on the dual norm ball
+takes one of the following forms depending on the
+choice of the norm. Projection of vector w on the
+`2-ball is equivalent to thresholding the magnitude
+of w by ? units while retaining its direction:
+w ? [||w||2 ? ?]+
+w
+||w||2
+. (9)
+This can be performed in time linear in size of w,
+O(|w|). Projection of a non-negative vectorw on the
+`1-ball is more involved and requires thresholding
+1`p-norm and `q-norm are dual to each other if 1p +
+1
+q = 1.
+`2-norm is self-dual while the dual of `?-norm is the `1-norm.
+237
+by a value such that the entries in the resulting vector
+add up to ?, otherwise w remains the same:
+w ? [w ? ? ]+ s.t. ||w||1 = ? or ? = 0. (10)
+? = 0 is the case where w lies inside the `1-ball
+of size ? with ||w||1 < ?, leaving w intact. In the
+other case, the threshold ? is to be computed such
+that after thresholding, the resulting vector has an
+`1-norm of ?. The simplest way to achieve this is
+to sort by descending order the entries w = sort(w)
+and pick the k largest values such that the (k + 1)th
+largest entry is smaller than ? :
+k?
+i=1
+wi ? ? = ? and ? > wk+1. (11)
+We refer to wk as the pivot and are only interested in
+entries larger than the pivot. Given a sorted vector,
+it requires looking up to exactly k entries, however,
+sorting itself take O(|w| log |w|).
+4.3 Proximal step
+Naively employing the projection on the `2-ball de-
+scribed above leads to an O(d2) algorithm for `T2
+proximal step. This could be improved to a linear al-
+gorithm by aggregating all necessary scaling factors
+while making an upward pass of the trie S and ap-
+plying them in a single downward pass as described
+in (Jenatton et al, 2011). In Algorithm 2, we detail
+this procedure for trie-structured vectors.
+The complexity of `T?-norm proximal step de-
+pends directly on that of the pivot finding algorithm
+used within its `1-projection method. Naively sort-
+ing vectors to find the pivot leads to an O(d2 log d)
+algorithm. Pivot finding can be improved by ran-
+domly choosing candidates for the pivot and the
+best known algorithm due to (Bruckner, 1984) has
+amortized linear time complexity in the size of the
+vector. This leaves us with O(d2) complexity for
+`T?-norm proximal step. (Duchi et al, 2008) pro-
+poses a method that scales linearly with the num-
+ber of non-zero entries in the gradient update (s)
+but logarithmically in d. But recursive calls to
+`1-projection over subtrees will fail the sparsity
+assumption (with s ? d) making proximal step
+quadratic. Procedure for ?`T? on trie-structured vec-
+tors using randomized pivoting method is described
+in Algorithm 3.
+We next explain how the number of `1-projections
+can be reduced by switching to the tree T instead of
+trie S which is possible due to the good properties of
+`T?-norm. Then we present a pivot finding method
+that is logarithmic in the feature size for our appli-
+cation.
+4.4 `T?-norm with suffix trees
+We consider the case where all parameters are ini-
+tialized with the same value for the optimization pro-
+cedure, typically with zeros. The condition that the
+parameters at any given node continue to share the
+same value requires that both the gradient update (4)
+and proximal step (5) have this property. We mod-
+ify the tree structure to ensure that after gradient up-
+dates parameters at a given node continue to share a
+single value. Nodes that do not share a value after
+gradient update are split into multiple nodes where
+each node has a single value. We formally define
+this property as follows:
+Definition 3. A constant value non-branching path
+is a set of nodes P ? P(T,w) of a tree structure T
+w.r.t. vector w if P has |P | nodes with |P |?1 edges
+between them and each node has at most one child
+and all nodes i, j ? P have the same value in vector
+w as wi = wj .
+The nodes of Figure 1(b) correspond to constant
+value non-branching paths when the values for all
+parameters at each of the nodes are the same. Next
+we show that this tree structure is retained after
+proximal steps of `T?-norm.
+Proposition 1. Constant value non-branching paths
+P(T,w) of T structured vector w are preserved un-
+der the proximal projection step ?`T?(w, ?).
+Figure 1(d) illustrates this idea showing `T? pro-
+jection applied on the collapsed tree. This makes it
+memory efficient but the time required for the prox-
+imal step remains the same since we must project
+each subtree of S on the `1-ball. The sequence of
+projections at nodes of S in a non-branching path
+can be rewritten into a single projection step using
+the following technique bringing the number of pro-
+jections from |S| to |T |.
+Proposition 2. Successive projection steps for sub-
+trees with root in a constant value non-branching
+path P = {g1, ? ? ? , g|P |} ? P(T,w) for ?`T?(w, ?)
+238
+is pig|P | ?? ? ??pig1(w, ?) applied in bottom-up order
+defined by G. The composition of projections can be
+rewritten into a single projection step with ? scaled
+by the number of projections |P | as,
+pig|P |(w, ?|P |) ? pig|P | ? ? ? ? ? pig1(w, ?).
+The above propositions show that `T?-norm can be
+used with the suffix tree with fewer projection steps.
+We now propose a method to further improve each
+of these projection steps.
+4.5 Fast proximal step for `T?-norm
+Let k be the cardinality of the set of values larger
+than the pivot in a vector to compute the thresh-
+old for `1-projection as referred in (11). This value
+varies from one application to another, but for lan-
+guage applications, our experiments on 100K en-
+glish words (APNews dataset) showed that k is gen-
+erally small: its value is on average 2.5, and its
+maximum is around 10 and 20, depending on the
+regularization level. We propose using a max-heap
+data structure (Cormen et al, 1990) to fetch the k-
+largest values necessary to compute the threshold.
+Given the heap of the entries the cost of finding the
+pivot is O(k log(d)) if the pivot is the kth largest en-
+try and there are d features. This operation is per-
+formed d times for `T?-norm as we traverse the tree
+bottom-up. The heap itself is built on the fly dur-
+ing this upward pass. At each subtree, the heap is
+built by merging those of their children in constant
+time by using Fibonacci heaps. This leaves us with a
+O(dk log(d)) complexity for the proximal step. This
+procedure is detailed in Algorithm 4.
+5 Summary of the algorithms
+Table 1 summarizes the characteristics of the algo-
+rithms associated to the different penalties:
+1. The unstructured norms `p do not take into
+account the varying sparsity level with con-
+text length. For p=1, this leads to a sparse
+solution and for p=2, we obtain the classical
+quadratic penalty. The suffix tree representa-
+tion leads to an efficient memory usage. Fur-
+thermore, to make the training algorithm time
+efficient, the parameters corresponding to con-
+texts which always occur in the same larger
+Algorithm 4 w := ?`T?(w, ?) Proximal projection
+step for `T? on grouping G using heap data structure.
+Input: T suffix tree, w=[v c] tree-structured vector v with
+corresponding number of suffixes collapsed at each node in
+c, ? threshold
+InitializeH = {}# empty set of heaps
+1 for x ? DepthFirstNodeTraversal(T, PostOrder)
+g(v, x) := pi`T?(w, x, cx?,H )
+Procedure: q := pi`?(w, x, ?,H )
+1 Hx = NewHeap(vx, cx, vx)
+2 for j ? children(x) # merge with child heaps
+?x = ?x + ?j # update `1-norm
+Hx = Merge(Hx,Hj),H = H\Hj
+3 H = H ?Hx, S = 0, C = 0, J = {}
+4 ifHx(?) < ?, setHx = 0 return
+5 for j ? OrderedIterator(Hx) # get max values
+if vj >
+S+(vj?cj)??
+C+cj
+S = S + (vj ?cj), C = C + cj , J = J ? {j}
+else break
+6 r = S??C , ? = 0 # compute threshold
+7 for j ? J # apply threshold
+? = min(vj , r), ? = ? + (vj ? ?)
+Hj(v) = ?
+8 Hx(?) = Hj(?)? ? # update `1-norm
+a. Heap structure on vector w holds three values (v, c, ?) at
+each node. v, c being value and its count, ? is the `1-norm of
+the sub-vector below. Tuples are ordered by decreasing value
+of v and Hj refers to heap with values in sub-tree rooted at
+j. Merge operation merges the heaps passed. OrderedIterator
+returns values from the heap in decreasing order of v.
+context are grouped. We will illustrate in the
+experiments that these penalties do not lead to
+good predictive performances.
+2. The `T2 -norm nicely groups features by subtrees
+which concurs with the sequential structure of
+sequences. This leads to a powerful algorithm
+in terms of generalization. But it can only be
+applied on the uncollapsed tree since there is
+no closure property of the constant value non-
+branching path for its proximal step making it
+less amenable for larger tree depths.
+3. The `T?-norm groups features like the `
+T
+2 -norm
+while additionally encouraging numerous fea-
+ture groups to share a single value, leading to
+a substantial reduction in memory usage. The
+generalization properties of this algorithm is as
+good as the generalization obtained with the `T2
+penalty, if not better. However, it has the con-
+stant value non-branching path property, which
+239
+Penalty good generalization memory efficient time efficient
+unstructured `1 and `22 no yes O(|T |) yes O(|T |)
+struct.
+`T2 yes no O(|S|) no O(|S|)
+`T? rand. pivot yes yes O(|T |) no O(|T |2)
+`T? heap yes yes O(|T |) yes O(|T | log |T |)
+Table 1: Properties of the algorithms proposed in this paper. Generalization properties are as compared by
+their performance with increasing context length. Memory efficiency is measured by the number of free
+parameters of W in the optimization. Note that the suffix tree is much smaller than the trie (uncollapsed
+tree): |T | << |S|. Time complexities reported are that of one proximal projection step.
+2 4 6 8 10 12210220
+230240250
+260
+order of language model
+perplexity
+ 
+ KN`22`1`T2`T?
+(a) Unweighted penalties.
+2 4 6 8 10 12210220
+230240250
+260
+order of language model
+perplexity
+ 
+ KNw`22w`1w`T2w`T?
+(b) Weighted penalties.
+2 4 6 8 10 1202
+46
+8x 105
+order of language model#o
+fparame
+ters
+ 
+ KNw`T2w`T?
+(c) Model complexity for structured
+penalties.
+Figure 2: (a) compares average perplexity (lower is better) of different methods from 2-gram through 12-
+gram on four different 100K-20K train-test splits. (b) plot compares the same with appropriate feature
+weighting. (c) compares model complexity for weighted structured penalties w`T2 and w`
+T
+? measure by
+then number of parameters.
+means that the proximal step can be applied di-
+rectly to the suffix tree. There is thus also a
+significant gain of performances.
+6 Experiments
+In this section, we demonstrate empirically the prop-
+erties of the algorithms summarized in Table 1. We
+consider four distinct subsets of the Associated Press
+News (AP-news) text corpus with train-test sizes of
+100K-20K for our experiments. The corpus was
+preprocessed as described in (Bengio et al, 2003)
+by replacing proper nouns, numbers and rare words
+with special symbols ??proper noun??, ?#n? and
+??unknown?? respectively. Punctuation marks are
+retained which are treated like other normal words.
+Vocabulary size for each of the training subsets was
+around 8,500 words. The model was reset at the start
+of each sentence, meaning that a word in any given
+sentence does not depend on any word in the previ-
+ous sentence. The regularization parameter ? is cho-
+sen for each model by cross-validation on a smaller
+subset of data. Models are fitted to training sequence
+of 30K words for different values of ? and validated
+against a sequence of 10K words to choose ?.
+We quantitatively evaluate the proposed model
+using perplexity, which is computed as follows:
+P ({xi, yi},W ) = 10
+{
+?1
+nV
+?n
+i=1 I(yi?V ) log p(yi|x1:i;W )
+}
+,
+where nV =
+?
+i I(yi ? V ). Performance is mea-
+sured for varying depth of the suffix trie with dif-
+ferent penalties. Interpolated Kneser-Ney results
+were computed using the openly available SRILM
+toolkit (Stolcke, 2002).
+Figure 2(a) shows perplexity values averaged over
+four data subsets as a function of the language model
+order. It can be observed that performance of un-
+structured `1 and squared `2 penalties improve until
+a relatively low order and then degrade, while `T2
+penalty does not show such degradation, indicating
+240
+2 4 6 8 10 1220
+4060
+tree depth
+time(sec)
+ 
+ rand-pivotrand-pivot-col
+(a) Iteration time of random-pivoting on
+the collapsed and uncollapsed trees.
+1 2 3 4 5x 106
+2040
+60
+train size
+time(sec
+)
+ 
+ k-best heaprand-pivot-col
+(b) Iteration time of random-pivoting and
+k-best heap on the collapsed tree.
+Figure 3: Comparison of different methods for performing `T? proximal projection. The rand-pivot
+is the random pivoting method of (Bruckner, 1984) and rand-pivot-col is the same applied with the
+nodes collapsed. The k-best heap is the method described in Algorithm 4.
+that taking the tree-structure into account is benefi-
+cial. Moreover, the log-linear language model with
+`T2 penalty performs similar to interpolated Kneser-
+Ney. The `T?-norm outperforms all other models
+at order 5, but taking the structure into account
+does not prevent a degradation of the performance
+at higher orders, unlike `T2 . This means that a single
+regularization for all model orders is still inappro-
+priate.
+To investigate this further, we adjust the penal-
+ties by choosing an exponential decrease of weights
+varying as ?m for a feature at depth m in the suffix
+tree. Parameter ? was tuned on a smaller validation
+set. The best performing values for these weighted
+models w`22, w`1, w`
+T
+2 and w`
+T
+? are 0.5, 0.7, 1.1
+and 0.85 respectively. The weighting scheme fur-
+ther appropriates the regularization at various levels
+to suit the problem?s structure. Perplexity plots for
+weighted models are shown in Figure 2(b). While
+w`1 improves at larger depths, it fails to compare
+to others showing that the problem does not admit
+sparse solutions. Weighted `22 improves consider-
+ably and performs comparably to the unweighted
+tree-structured norms. However, the introduction of
+weighted features prevents us from using the suf-
+fix tree representation, making these models inef-
+ficient in terms of memory. Weighted `T? is cor-
+rected for overfitting at larger depths and w`T2 gains
+more than others. Optimal values for ? are frac-
+tional for all norms except w`T2 -norm showing that
+the unweighted model `T2 -norm was over-penalizing
+features at larger depths, while that of others were
+under-penalizing them. Interestingly, perplexity im-
+proves up to about 9-grams with w`T2 penalty for
+the data set we considered, indicating that there is
+more to gain from longer dependencies in natural
+language sentences than what is currently believed.
+Figure 2(c) compares model complexity mea-
+sured by the number of parameters for weighted
+models using structured penalties. The `T2 penalty
+is applied on trie-structured vectors, which grows
+roughly at a linear rate with increasing model order.
+This is similar to Kneser-Ney. However, the number
+of parameters for the w`T? penalty grows logarith-
+mically with the model order. This is due to the fact
+that it operates on the suffix tree-structured vectors
+instead of the suffix trie-structured vectors. These
+results are valid for, both, weighted and unweighted
+penalties.
+Next, we compare the average time taken per iter-
+ation for different implementations of the `T? prox-
+imal step. Figure 3(a) shows this time against in-
+creasing depth of the language model order for ran-
+dom pivoting method with and without the collaps-
+ing of parameters at different constant value non-
+branching paths. The trend in this plot resembles
+that of the number of parameters in Figure 2(c). This
+shows that the complexity of the full proximal step
+is sublinear when accounting for the suffix tree data
+structure. Figure 3(b) plots time per iteration ran-
+dom pivoting and k-best heap against the varying
+size of training sequence. The two algorithms are
+operating directly on the suffix tree. It can be ob-
+served that the heap-based method are superior with
+241
+increasing size of training data.
+7 Conclusion
+In this paper, we proposed several log-linear lan-
+guage models. We showed that with an efficient
+data structure and structurally appropriate convex
+regularization schemes, they were able to outper-
+form standard Kneser-Ney smoothing. We also de-
+veloped a proximal projection algorithm for the tree-
+structured `T?-norm suitable for large trees.
+Further, we showed that these models can be
+trained online, that they accurately learn the m-gram
+weights and that they are able to better take advan-
+tage of long contexts. The time required to run the
+optimization is still a concern. It takes 7583 min-
+utes on a standard desktop computer for one pass of
+the of the complete AP-news dataset with 13 mil-
+lion words which is little more than time reported
+for (Mnih and Hinton, 2007). The most time con-
+suming part is computing the normalization factor
+for the log-loss. A hierarchical model in the flavour
+of (Mnih and Hinton, 2008) should lead to signifi-
+cant improvements to this end. Currently, the com-
+putational bottleneck is due to the normalization fac-
+tor in (1) as it appears in every gradient step com-
+putation. Significant savings would be obtained by
+computing it as described in (Wu and Khundanpur,
+2000).
+Acknowledgements
+The authors would like to thank anonymous review-
+ers for their comments. This work was partially
+supported by the CIFRE grant 1178/2010 from the
+French ANRT.
+References
+F. Bach, R. Jenatton, J. Mairal, and G. Obozinski. 2012.
+Optimization with sparsity-inducing penalties. Foun-
+dations and Trends in Machine Learning, pages 1?
+106.
+A. Beck and M. Teboulle. 2009. A fast itera-
+tive shrinkage-thresholding algorithm for linear in-
+verse problems. SIAM Journal of Imaging Sciences,
+2(1):183?202.
+Y. Bengio, R. Ducharme, P. Vincent, and C. Jauvin. 2003.
+A neural probabilistic language model. Journal of Ma-
+chine Learning Research, 3:1137?1155.
+P. Bruckner. 1984. An o(n) algorithm for quadratic
+knapsack problems. Operations Research Letters,
+3:163?166.
+L. Burget, P. Matejka, P. Schwarz, O. Glembek, and J.H.
+Cernocky. 2007. Analysis of feature extraction and
+channel compensation in a GMM speaker recognition
+system. IEEE Transactions on Audio, Speech and
+Language Processing, 15(7):1979?1986, September.
+Y-W. Chang and M. Collins. 2011. Exact decoding
+of phrase-based translation models through lagrangian
+relaxation. In Proc. Conf. Empirical Methods for Nat-
+ural Language Processing, pages 26?37.
+S. F. Chen and R. Rosenfeld. 2000. A survey of
+smoothing techniques for maximum entropy models.
+IEEE Transactions on Speech and Audio Processing,
+8(1):37?50.
+T. H. Cormen, C. E. Leiserson, and R. L. Rivest. 1990.
+An Introduction to Algorithms. MIT Press.
+S. Della Pietra, V. Della Pietra, and J. Lafferty. 1997.
+Inducing features of random fields. IEEE Transac-
+tions on Pattern Analysis and Machine Intelligence,
+19(4):380?393.
+J. Duchi, S. Shalev-Shwartz, Y. Singer, and T. Chandra.
+2008. Efficient projections onto the `1-ball for learn-
+ing in high dimensions. Proc. 25th Int. Conf. Machine
+Learning.
+R. Giegerich and S. Kurtz. 1997. From ukkonen to Mc-
+Creight and weiner: A unifying view of linear-time
+suffix tree construction. Algorithmica.
+J. Goodman. 2001. A bit of progress in language mod-
+elling. Computer Speech and Language, pages 403?
+434, October.
+J. Goodman. 2004. Exponential priors for maximum en-
+tropy models. In Proc. North American Chapter of the
+Association of Computational Linguistics.
+C. Hu, J.T. Kwok, and W. Pan. 2009. Accelerated gra-
+dient methods for stochastic optimization and online
+learning. Advances in Neural Information Processing
+Systems.
+R. Jenatton, J. Mairal, G. Obozinski, and F. Bach.
+2011. Proximal methods for hierarchical sparse cod-
+ing. Journal of Machine Learning Research, 12:2297?
+2334.
+C. R. Kennington, M. Kay, and A. Friedrich. 2012. Sufx
+trees as language models. Language Resources and
+Evaluation Conference.
+R. Kneser and H. Ney. 1995. Improved backing-off for
+m-gram language modeling. In Proc. IEEE Int. Conf.
+Acoustics, Speech and Signal Processing, volume 1.
+A. F. T. Martins, N. A. Smith, P. M. Q. Aguiar, and
+M. A. T. Figueiredo. 2011. Structured sparsity in
+structured prediction. In Proc. Conf. Empirical Meth-
+ods for Natural Language Processing, pages 1500?
+1511.
+242
+P. McCullagh and J. Nelder. 1989. Generalized linear
+models. Chapman and Hall. 2nd edition.
+A. Mnih and G. Hinton. 2007. Three new graphical mod-
+els for statistical language modelling. Proc. 24th Int.
+Conference on Machine Learning.
+A. Mnih and G. Hinton. 2008. A scalable hierarchical
+distributed language model. Advances in Neural In-
+formation Processing Systems.
+Y. Nesterov. 2007. Gradient methods for minimizing
+composite objective function. CORE Discussion Pa-
+per.
+B. Roark, M. Saraclar, M. Collins, and M. Johnson.
+2004. Discriminative language modeling with con-
+ditional random fields and the perceptron algorithm.
+Proc. Association for Computation Linguistics.
+A. Stolcke. 2002. Srilm- an extensible language mod-
+eling toolkit. Proc. Int. Conf. Spoken Language Pro-
+cessing, 2:901?904.
+E. Ukkonen. 1995. Online construction of suffix trees.
+Algorithmica.
+S. Vargas, P. Castells, and D. Vallet. 2012. Explicit rel-
+evance models in intent-oriented information retrieval
+diversification. In Proc. 35th Int. ACM SIGIR Conf.
+Research and development in information retrieval,
+SIGIR ?12, pages 75?84. ACM.
+F. Wood, C. Archambeau, J. Gasthaus, J. Lancelot, and
+Y.-W. Teh. 2009. A stochastic memoizer for sequence
+data. In Proc. 26th Intl. Conf. on Machine Learning.
+F. Wood, J. Gasthaus, C. Archambeau, L. James, and
+Y. W. Teh. 2011. The sequence memoizer. In Com-
+munications of the ACM, volume 54, pages 91?98.
+J. Wu and S. Khundanpur. 2000. Efficient training meth-
+ods for maximum entropy language modeling. Proc.
+6th Inter. Conf. Spoken Language Technologies, pages
+114?117.
+P. Zhao, G. Rocha, and B. Yu. 2009. The compos-
+ite absolute penalties family for grouped and hierar-
+chical variable selection. The Annals of Statistics,
+37(6A):3468?3497.
+243
+Named Entity Generation using Sampling-based Structured Prediction
+Guillaume Bouchard
+Xerox Research Centre Europe
+6 Chemin de Maupertuis
+38240 Meylan, France
+guillaume.bouchard@xerox.com
+Abstract
+The problem of Named Entity Generation
+is expressed as a conditional probability
+model over a structured domain. By defin-
+ing a factor-graph model over the men-
+tions of a text, we obtain a compact pa-
+rameterization of what is learned using the
+SampleRank algorithm.
+1 Introduction
+This document describes the participa-
+tion of the Xerox Research Centre Eu-
+rope team in the GREC-NEG?10 challenge
+(http://www.nltg.brighton.ac.uk/research/gen
+chal10/grec/)
+2 Model
+Conditional random fields are conditional prob-
+ability models that define a distribution over
+a complex output space. In the context of
+the Named-Entity Generation challenge, the
+output space is the set of possible referring
+expressions for all the possible mentions of the
+text. For example, assuming that we have the
+following text with holes (numbers are entity IDs):
+#1 was a Scottish mathematician,
+son of #2. #1 is most remembered
+as the inventor of logarithms
+and Napier?s bones.
+Then the possibilities associated with the entity #1
+are:
+1. John Napier of Merchistoun,
+2. Napier,
+3. he,
+4. who,
+and the possibilities associated with the entity #2
+are:
+1. Sir Archibald Napier of Merchiston,
+2. he,
+3. who.
+Then, the output space is Y = {1, 2, 3, 4} ?
+{1, 2, 3} ? {1, 2, 3, 4}, representing all the possi-
+ble combination of choices for the mentions. The
+solution y = (1, 1, 3) corresponds to inserting the
+texts ?John Napier of Merchiston?, ?Sir Archibald
+Napier of Merchiston? and ?he? in the holes of the
+text in the same order. This is the combination
+that is the closest to the original text, but a human
+could also consider that solution y = (1, 1, 2) as
+being equally valid.
+Denoting x the input, i.e. the text with the typed
+holes, the objective of the task is to find the combi-
+nation y ? Y that is as close as possible to natural
+texts.
+We model the distribution of y given x by a fac-
+tor graph: p(y|x) ?
+?
+c?C ?c(x, y), where C is
+the set of factors defined over the input and output
+variables. In this work, we considered 3 types of
+exponential potentials:
+? Unary potentials defined on each individual
+output yi. They include more than 100 fea-
+tures corresponding to the position of the
+mention in the sentence, the previous and
+next part of speech (POS), the syntactic cat-
+egory and funciton of the mention, the type
+and case of the corresponding referring ex-
+pression, etc.
+? Binary potentials over contiguous mentions
+include the distance between them, and the
+joint distribution of the types and cases.
+? Binary potentials that are activated only be-
+tween mentions and the previous time the
+same entity was referred to by a name. The
+purpose of this is to reduce the use of pro-
+nouns referring to a person when the men-
+tions are distant to each other.
+To learn the parameter of the factor graph, we used
+the SampleRank algorithm (Wick et al, 2009)
+which casts the prediction problem as a stochas-
+tic search algorithms. During learning, an optimal
+ranking function is estimated.
+3 Results
+Using the evaluation software supplied by the
+GREC-NEG organizers, we obtained the folloing
+performances:
+total slots : 907
+reg08 type matches : 693
+reg08 type accuracy : 0.764057331863286
+reg08 type matches
+including embedded : 723
+reg08 type precision : 0.770788912579957
+reg08 type recall : 0.770788912579957
+total peer REFs : 938
+total reference REFs : 938
+string matches : 637
+string accuracy : 0.702315325248071
+mean edit distance : 0.724366041896362
+mean normalised
+edit distance : 0.279965348873838
+BLEU 1 score : 0.7206
+BLEU 2 score : 0.7685
+BLEU 3 score : 0.7702
+BLEU 4 score : 0.754
+NIST score : 5.1208
+References
+Michael Wick, Khashayar Rohanimanesh, Aron Cu-
+lotta, and Andrew McCallum. 2009. SampleRank:
+Learning preferences from atomic gradients. Neural
+Information Processing Systems (NIPS) Workshop
+on Advances in Ranking.

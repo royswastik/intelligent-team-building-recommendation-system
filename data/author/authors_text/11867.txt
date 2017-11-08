@@ -1,0 +1,3414 @@
+Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing, pages 609?618,
+Singapore, 6-7 August 2009.
+c
+?2009 ACL and AFNLP
+Matching Reviews to Objects using a Language Model
+Nilesh Dalvi Ravi Kumar Bo Pang Andrew Tomkins
+Yahoo! Research
+701 First Ave
+Sunnyvale, CA 94089
+{ndalvi,ravikumar,bopang,atomkins}@yahoo-inc.com
+Abstract
+We develop a general method to match un-
+structured text reviews to a structured list
+of objects. For this, we propose a lan-
+guage model for generating reviews that
+incorporates a description of objects and a
+generic review language model. This mix-
+ture model gives us a principled method to
+find, given a review, the object most likely
+to be the topic of the review. Extensive
+experiments and analysis on reviews from
+Yelp show that our language model-based
+method vastly outperforms traditional tf-
+idf-based methods.
+1 Introduction
+Consider a user searching for reviews of
+?Casablanca Moroccan Restaurant.? The search
+engine would like to obtain as many reviews of
+this restaurant as possible, both to offer a high-
+quality result set for even obscure restaurants, and
+to enable advanced applications such as aggrega-
+tion/summarization/categorization of reviews and
+recommendation of alternate restaurants. To solve
+this problem, it faces two high-level challenges:
+first, identify the restaurant review pages on the
+Web; and second, given a review, identify the
+restaurant that is being reviewed. There has been
+previous work addressing the first challenge (Sec-
+tion 2). We focus in this paper on the second.
+The Web is replete with restaurant reviews
+available on top restaurant verticals such as Yelp
+and CitySearch, as well as newspaper articles,
+newsgroup discussions, blog posts, small local re-
+view aggregators and so forth. Ideally, the search
+engine would like to obtain reviews from all pos-
+sible sources. While identifying the subject mat-
+ter of a given review on the large sites may be
+amenable to structured extraction through wrapper
+induction or related techniques, it is typically not
+cost-effective to apply such techniques to smaller
+?tail? sites, and purely unstructured sources re-
+quire alternate approaches altogether. In this pa-
+per, we explore the setting of matching reviews to
+objects using only their textual content. Note that
+matching reviews to objects is a pervasive prob-
+lem beyond the restaurant domain. Shopping ver-
+ticals like to aggregate camera reviews, entertain-
+ment verticals wish to collect movie reviews, and
+so on. We use restaurant reviews as a running ex-
+ample, but the techniques are general.
+More specifically, the problem we consider in
+this paper is the following. Given a list of struc-
+tured objects (restaurants/cameras/movies) and a
+text review, identify the object from the list that
+is the topic of the review. Our focus on tex-
+tual content allows us to expand the universe of
+sources from which we can extract reviews to in-
+clude sources that are purely textual, such as fo-
+rum posts, blog posts, newsgroup postings, and
+the like. In fact, even among collections of ?struc-
+tured? sources like review aggregators, there are
+no highly accurate unsupervised techniques to
+match a known review page to an object. Struc-
+tured (e.g., HTML) cues provide valuable lever-
+age in attacking this problem, but the types of tex-
+tual cues we focus on are also a key part of the
+puzzle; in such a context, our techniques can still
+contribute to the overall matching problem.
+It is important to contrast our problem against
+two settings of related flavor ? entity matching,
+whose goal is to find the correspondence between
+two structured objects and information retrieval
+(IR), whose goal is to match unstructured short
+text (query) against unstructured text (document).
+Our problem is considerably harder than entity
+matching for the following reasons. In matching
+two structured objects there is often a natural cor-
+respondence between their attributes, whereas no
+such correspondence exists between an object and
+609
+its review. For instance, while trying to match a
+review to a restaurant object, it is unclear if a spe-
+cific portion of the review refers to the name of the
+restaurant, or to its location, or is a statement not
+concerning specifics of the restaurant. Moreover,
+even if we wish to use entity matching, we must
+first recognize the entities from a review. There
+are two methods to do this, namely, wrapper in-
+duction and information extraction. Wrapper in-
+duction methods have serious limitations: they are
+applicable only to highly-structured websites and
+involve human labeling effort that is expensive and
+error-prone and entails constant maintenance to
+keep wrappers up-to-date. Information extraction
+methods (Cardie, 1997; Sarawagi, 2008), on the
+other hand, often have limited accuracy.
+Our problem is also not amenable to classical
+IR methods such as tf-idf. For example, suppose
+we want to find the relevant restaurant for a given
+review. The standard tf-idf will treat the review as
+the query, the set of restaurant as documents and
+compute the tf-idf scores. Now consider a restau-
+rant called ?Food.?
+1
+Since the term ?food? is rare
+as a restaurant name, it will get a very high idf
+score and hence will likely be the top match for all
+reviews containing the word ?food.? In fact, unlike
+in traditional IR, a ?query? (i.e., review) is long
+and a ?document? (i.e., restaurant) is short ? this
+demands adapting established IR concepts such as
+inverse document frequency and document length
+normalization to our setting. If we take the op-
+posite view by considering reviews as documents
+and restaurants as queries, we still deviate from the
+IR setting, since now we need to rank and find the
+best ?query? for a given ?document.? In Section
+3.4, we illustrate the shortcomings of both these
+approaches.
+In fact, the nature of the object database we con-
+sider provides several unique opportunities over
+traditional IR. First the ?document?, i.e., the ob-
+ject to be matched, has more semantics, since
+each document is associated with one or more se-
+mantic attribute, such as the name/location of the
+restaurant. Second, the ?query?, i.e., the text we
+are matching is known to be a review of the ob-
+ject, and hence is rendered in a language that is
+?review-like? ? this can be modeled by a genera-
+tive process that produces reviews from objects.
+Third, the set of objects we are interested in is
+1
+1569 Lexington Ave., New York, NY 10029. (212) 348-
+0200.
+given a priori, and we only seek to match reviews
+with one of these objects; this makes our problem
+more tractable than open-ended entity recognition.
+Our contributions. We propose a general
+method to match reviews to objects. To this end,
+we postulate a language model for generating re-
+views. The intuition behind our model is simple
+and natural: when a review is written about an ob-
+ject, each word in the review is drawn either from a
+description of the object or from a generic review
+language that is independent of the object. This
+mixture model leads to a method to find, given a
+review, the object most likely to be the topic of the
+review.
+Our method is light-weight and scalable and
+can be viewed as obviating the need for highly-
+expensive information extraction. Since the
+method is text-based and does not rely on any
+HTML structural clues, it is especially applicable
+to reviews present in blogs and the so-called tail
+web sites ? web sites for which it is not feasible
+to maintain wrappers to automatically extract the
+object of a review.
+We then report results on over 11K restaurant
+reviews from Yelp. The experiments and our ex-
+tensive analysis show that our language model-
+based method significantly outperforms traditional
+tf-idf based methods, which fail to take full ad-
+vantage of the properties that are specific to our
+setting.
+2 Related work
+Opinion topic identification is the work closest
+to ours. In a recent paper, Stoyanov and Cardie
+(2008) approach this problem by treating it as an
+exercise in topic coreference resolution. Though
+they have to deal with topic ambiguities and a lack
+of explicit topic mentions as in our case, their no-
+tion of a topic is not driven by a structured list-
+ing. There has been some work on fine-grained
+opinion extraction from reviews (Kobayashi et al,
+2004; Yi et al, 2003; Popescu and Etzioni, 2005;
+Hu and Liu, 2004); see (Pang and Lee, 2008) for a
+comprehensive survey. Most of this body of work
+focused on identifying product features of the ob-
+ject under review, rather than identifying the prod-
+uct itself. Note that while a dictionary of prod-
+ucts is often more readily available than a dictio-
+nary of product features, identifying objects of re-
+views is non-trivial even with the help of the for-
+mer. Indeed, it has been reported that lexicon-
+610
+lookup methods have limited success on general
+non-product review texts (Stoyanov and Cardie,
+2008). In general, this line of work is more rooted
+in the information extraction literature, where text
+spans covering the object (or features of the ob-
+ject) were extracted as the first step; in contrast,
+we do not have an explicit extraction phase. Since
+the (very extensive) list of candidate objects are
+given as input, our task is to rank all matching ob-
+jects, and in this sense is closer in nature to infor-
+mation retrieval tasks. There has been some work
+on detecting reviews in large-scale collections (Ng
+et al, 2006; Barbosa et al, 2009); this is a logical
+step that precedes the review matching step, the
+topic of our paper.
+Language modeling is becoming a powerful
+paradigm in the realm of information retrieval ap-
+plications (Ponte and Croft, 1998; Hiemstra, 1998;
+Song and Croft, 1999; Lafferty and Zhai, 2003;
+Zhai, 2008). The basic theme behind language
+modeling is to first postulate a model for each doc-
+ument and for a given query select the document
+that is most likely to have generated the query;
+smoothing is an important means to manage data
+sparsity in language models (Zhai and Lafferty,
+2004). As noted earlier, language models devel-
+oped for IR are unsuitable for our setting. Further-
+more, there are opportunities, such as the presence
+of structure in our data, which we use in this work
+(Section 3.2). In fact, in a subsequent paper, we
+show how a language model specific to each at-
+tribute can further improve the accuracy of review
+matching (Dalvi et al, 2009).
+Entity matching is a well-studied topic in
+databases. There are several approaches to entity
+matching: non-relational approaches, which con-
+sider pairwise attribute similarities between enti-
+ties (Newcombe et al, 1959; Fellegi and Sunter,
+1969), relational approaches, which exploit the re-
+lationships that exist between entities (Ananthakr-
+ishna et al, 2002; Kalashnikov et al, 2005), and
+collective approaches, which exploit the relation-
+ship between various matching decisions, (Bhat-
+tacharya and Getoor, 2007; McCallum and Well-
+ner, 2004). The EROCS system (Chakaravarthy et
+al., 2006), which uses information extraction and
+entity matching, is closest in spirit to our problem;
+they, however, employ tf-idf to match, which we
+show to be significantly sub-optimal in our set-
+ting.
+3 Model and method
+In this section we present the problem formula-
+tion, the basic generative model for reviews, a
+method based on this model to associate an object
+with a review, and the techniques to estimate the
+parameters of this model.
+Problem formulation. Let E denote a set of ob-
+jects. Each object e ? E has a set of attributes
+and let text(e) denote the union of the textual con-
+tent of all its attributes. Suppose we have a col-
+lection of reviews R, where each review is writ-
+ten (mainly) about one of the objects in the listing
+E . The problem now is to correctly associate each
+r ? R with exactly one of e ? E .
+We model each review as a bag of words.
+Therefore, notation such as ?w ? r? for a word
+w and a review r makes sense. For a review r and
+an object e, let r
+e
+= r ? text(e).
+As a running example, we use E to denote the
+set of all restaurants and R to denote the set of all
+restaurant reviews.
+3.1 A generative model for reviews
+We first state the intuition behind our generative
+model: when a review r is written about an object
+e, some words in r (e.g., the name and the address
+of the restaurant) are drawn from text(e) to refer
+to the object under discussion, while some other
+words are drawn from a generic review language
+independent of e.
+Formally, let ? ? (0, 1) be a parameter.
+Let P
+e
+(?) denote a distribution whose support is
+text(e); this corresponds to the distribution of
+words specific to the object e, taken from the de-
+scription text(e). We use P
+e
+(w) to denote the
+probability the word w is chosen according to this
+distribution. Let P (?) be an object-independent
+distribution whose support is the review language,
+i.e., all the words that can be used to write a re-
+view; we use P (w) to denote the probability the
+word w is chosen according to this distribution.
+Now, for a given object e, a review r is gener-
+ated as follows. Each word in r is generated in-
+dependently: with probability ?, a word w is cho-
+sen with probability P
+e
+(w) and with probability
+1 ? ?, a word w is chosen with probability P (w).
+Thus, the review generation process is a multino-
+mial, where the underlying process is a mixture of
+object-specific language and a generic review lan-
+guage.
+611
+Given a review r and an object e, by our inde-
+pendence assumption,
+Pr[r | e] = Z(r)
+?
+w?r
+Pr[w | e]
+= Z(r)
+?
+w?r
+((1 ? ?)P (w) + ?P
+e
+(w)), (1)
+where Z(r) is a normalizing term that only de-
+pends on the length of r and the counts of the
+words in it. Recalling r
+e
+= r ? text(e), we note
+that P
+e
+(w) assigns zero probability to w 6? r
+e
+.
+From (1), we get
+Pr[r | e] = Z(r)
+?
+w?r\r
+e
+(1 ? ?)P (w)?
+?
+w?r
+e
+((1 ? ?)P (w) + ?P
+e
+(w))
+= Z(r)
+?
+w?r
+(1 ? ?)P (w) ?
+?
+w?r
+e
+(
+1 +
+?
+1 ? ?
+P
+e
+(w)
+P (w)
+)
+. (2)
+Note that Eq. (2) appears similar to the formula
+obtained in the language model approach for IR
+(Hiemstra and Kraaij, 1998); the interpretation of
+terms, however, is very different. For instance,
+P (w) in our case is computed over the ?query?
+corpus whereas the analogous term (collection fre-
+quency) in (Hiemstra and Kraaij, 1998) is com-
+puted over the ?document? corpus. As the ?Food?
+restaurant example in Section 1 suggests, using
+the ?document? frequency is undesirable. The use
+of ?query? corpus frequency arises naturally from
+our generative story and also guides us to a differ-
+ent way to estimate P (w); see Section 3.3.
+3.2 Matching a review to an object
+Given the above review language model (RLM),
+we now state how to match a given review to an
+object. According to our model, the most likely
+object e
+?
+to have generated a review r is given by
+e
+?
+= argmax
+e
+Pr[e | r] = argmax
+e
+Pr[e]
+Pr[r]
+?Pr[r | e].
+In the absence of any information, we assume
+a uniform distribution for Pr[e]. (Additional
+information about objects, such as their rat-
+ing/popularity, can be used to model Pr[e] more
+accurately.) From this, we get
+e
+?
+= argmax
+e
+Pr[r | e],
+or equivalently,
+e
+?
+= argmax
+e
+log Pr[r | e].
+Since Z(r)
+?
+w?r
+((1??)P (w)) is independent of
+e, using (2), we have
+e
+?
+= argmax
+e
+?
+w?r
+e
+log
+(
+1 +
+?
+1 ? ?
+P
+e
+(w)
+P (w)
+)
+.
+(3)
+3.3 Estimating the parameters
+We now describe how to estimate the parameters
+of the model, namely, P (?), P
+e
+(?), and ?.
+Recall that P (?) is the distribution of generic re-
+view language. Ideally, for each review r, if we
+know the component r
+(e)
+that came from the dis-
+tribution P
+e
+(?) and the component r
+(g)
+that came
+from P (?), then we can collect the r
+(g)
+compo-
+nents of all the reviews in R, denoted as R
+(g)
+, and
+estimate P (?) by the fraction of occurrences of w
+in R
+(g)
+. More specifically, let c(w,R
+(g)
+) denote
+the number of times w occurs in R
+(g)
+. With add-
+one smoothing, we estimate
+P (w) =
+c(w,R
+(g)
+) + 1
+?
+w
+?
+c(w
+?
+,R
+(g)
+) + |V |
+,
+where |V | is the vocabulary size.
+In reality, we only have access to r and not to the
+components r
+(e)
+and r
+(g)
+. If we have an aligned
+review corpus R
+?
+, where for each review r, we
+know the true object e that generated it, we can
+closely approximate r
+(e)
+with r
+e
+.
+2
+Let no-obj(R
+?
+)
+be the set of processed reviews where for each
+review-object pair (r, e), words in text(e) are re-
+moved from r. By treating no-obj(R
+?
+) as an ap-
+proximation of R
+(g)
+, we can compute P (w) in the
+aforementioned manner. If we only have access
+to a review collection R
+?
+with no object align-
+ment, there are other ways to effectively approx-
+imate R
+(g)
+; see Section 5.3 for more details.
+Unlike P (?), we cannot learn an individual lan-
+guage model P
+e
+(?) for each e, since we cannot ex-
+pect to have training examples of reviews for each
+possible object e in the dataset. Thus, we need
+a simpler way to model P
+e
+(w). The most naive
+way would be to assume a uniform distribution,
+i.e., P
+e
+(w) = 1/|text(e)|. However, each word
+2
+There can be exceptions to this, e.g., review of a restau-
+rant called ?Tasty Bites? might use the word ?tasty? from the
+review language, but not to refer to the restaurant. Nonethe-
+less, we believe these will be rare exceptions and will not
+have significant effect in the estimation of P (?).
+612
+in text(e) may not be generated with equal prob-
+ability. In our running example, consider the case
+when text(e) contains the full name of the restau-
+rant, i.e., ?Casablanca Moroccan Restaurant.? A
+review for this restaurant is more likely to choose
+the word ?Casablanca? than any other word to re-
+fer to this restaurant since this is arguably more in-
+formative than ?Moroccan? or ?Restaurant.? This
+can be captured by using the frequency f
+w
+of the
+word w in R or in {text(e) | e ? E}. For a suit-
+able function g(w) that is inversely growing as f
+w
+(say, g(w) = log(1/f
+w
+)), we let
+P
+e
+(w) =
+g(w)
+?
+w
+?
+?text(e)
+g(w
+?
+)
+.
+Alternatively, it is possible to construct models
+where P
+e
+(w) is more directly estimated from the
+data; in fact, one can also use suitable transla-
+tion models to estimate P
+e
+(w) for w that may not
+even occur in text(e) ? this will help in cases
+where reviews use an abbreviation such as ?Casa?
+or ?CMR? to refer to our running example. Such
+models require either fine-grained labeled exam-
+ples or, as we show in (Dalvi et al, 2009), more
+sophisticated estimation techniques.
+It is tempting to assume that common words
+such as ?Restaurant? may not contribute towards
+matching a review to an object and hence one can
+conveniently set P
+e
+(w) = 0 for such words w.
+(Such a list of words can easily be compiled using
+a domain-specific stopword list.) This may hurt ?
+in our example, the presence of the word ?Restau-
+rant? in a review might help to disambiguate the
+object of reference, if the listing were also to con-
+tain a ?Casablanca Moroccan Cafe?.
+3.4 Properties of the model
+Eq. (3) indicates that our method (denoted as
+RLM) gives less importance to common words
+with high P (w). This corresponds to the intuition
+behind the standard tf-idf scheme. Why, then, do
+we expect RLM to be more effective? Here, we
+discuss the salient features of our method, con-
+trasting it with tf-idf in particular.
+First, we take a closer look at different ways to
+apply tf-idf techniques to our setting. Since the
+task is to find the most relevant object given a re-
+view, a naive way to apply the standard tf-idf (de-
+noted TFIDF) will treat each review to be the query
+and each object to be a document and score docu-
+ments using the standard tf-idf scoring. This, how-
+ever, leads to severe problems since this computes
+the inverse document scores over the object corpus
+? recall the ?Food? example in Section 1.
+A more reasonable way to apply tf-idf is to
+instead treat objects as queries and reviews as
+documents for computing tf-idf scores (denoted
+TFIDF
++
+). For a word w, let Q(w) =
+df(w)
+N
+,
+where N is the number of reviews in the corpus
+and df(w) is the number of reviews containing w.
+Given a review r and an object e, the score of the
+object is given by
+?
+w?r
+e
+log (1/Q(w)), and we
+want to pick the object with the maximum score.
+As we will discuss later, document-length nor-
+malization (i.e., normalizing by object description
+length so that a restaurant with a long name does
+not get an unfair disadvantage) is still non-trivial
+here.
+As noted earlier, Eq. (3), used by RLM for
+matching reviews with objects, has a striking re-
+semblance to the TFIDF
++
+scoring function. Both
+have the form
+e
+?
+= argmax
+e
+?
+w?r
+e
+log f(w),
+where for RLM,
+f(w) = f
+R
+(w) = 1 +
+?
+1 ? ?
+P
+e
+(w)
+P (w)
+,
+and for TFIDF
++
+,
+f(w) = f
+B
+(w) =
+1
+Q(w)
+.
+In both cases, f(w) is monotonically decreas-
+ing in the frequency of w in the corpus. How-
+ever, there are several differences between the two
+cases. We highlight some of them here, with the
+aim of illustrating the power of our review lan-
+guage model (RLM).
+Object length normalization. First note that the
+P
+e
+(w) term in f
+R
+(w) acts as an object length nor-
+malizing term, i.e., it adds up to one for each
+e and weighs down P (w) for objects with long
+text(e). This also has the effect of penalizing re-
+views that are missing critical words in the object
+description. In contrast, f
+B
+(w) is unnormalized
+with respect to the object length. The standard
+document normalization techniques in IR do not
+apply well to our setting since our ?documents?
+(i.e., object descriptions) are short. E.g., if the ob-
+ject description contains only one token, the stan-
+dard cosine-normalization technique (Salton et al,
+613
+1975) will yield a normalized score of 1 irre-
+spective of the token. Thus for a review contain-
+ing the words ?Food? and ?Casablanca?, the stan-
+dard normalization will yield the same score for a
+restaurant named ?Food? and a restaurant named
+?Casablanca?, ignoring the fact that ?Food? is
+much more likely to be an object-independent
+term. Note that this only becomes a problem when
+the entire ?document? is part of the match, which
+rarely happens in an IR setting where the docu-
+ments are typically much longer than the queries.
+Indeed, in our experiments, we observe lower per-
+formance when we apply cosine-normalization to
+the tf-idf scores. On the other hand, in f
+R
+(w), the
+P (w) term can still distinguish the two aforemen-
+tioned objects even when P
+e
+(w) are equal.
+Dampening. With ? < 1, f
+R
+(w) is effectively
+a dampened version of
+P
+e
+(w)
+P (w)
+. In other words, dif-
+ferences between very frequent words and very in-
+frequent words are somewhat smoothed out. In-
+deed, if we modify TFIDF
++
+by introducing a sim-
+ilar dampening factor into f
+B
+(w), we observe im-
+provement in its performance (Section 5.4).
+Removingmentions of an object. Another differ-
+ence is that in RLM, P (w) is estimated on reviews
+with object mentions removed, since the model in-
+dicate that P (w) accounts for object-independent
+review language. In contrast, TFIDF
++
+computes
+Q(w) on full reviews. We illustrate the differ-
+ence on the following example. Consider a review
+that reads ?. . .Maggiano?s has great Fondue.? If
+?Maggiano?s? and ?Fondue? both occur the same
+number of times in the corpus, then they get the
+same idf (i.e., Q(w)) score. In RLM, however,
+?Maggiano?s? will get much smaller probability
+in the generic review distribution P (?) than ?Fon-
+due?, since ?Maggiano?s? almost always occurs in
+reviews as restaurant name mentions, thus is re-
+moved from the estimation of its P (?) probabil-
+ity. On the other hand, the word ?Fondue? is more
+likely to retain higher probability in P (?) since it
+tends to appear as dish names. As a result, our
+model will assign higher weight to ?Maggiano?s
+Restaurant? than ?Fondue Restaurant?. As we can
+see, RLM evaluates the ability of a word to identify
+the review object rather than rely on the absolute
+rarity of the word, which is done by tf-idf.
+Using term counts. One last difference is that
+f
+R
+(w) uses term counts of words rather than the
+standard document counts used by f
+B
+(w). Our
+evaluation suggests that at least in practice, this
+does not have a big impact on the overall accuracy.
+In the experiments we show that these factors
+together account for the performance difference
+between RLM and tf-idf. Our model gives a prin-
+cipled way to introduce these factors, however.
+4 Data
+In this section we describe the dataset constructed
+for the task of matching restaurant reviews to the
+corresponding restaurant objects. Our goal is to
+obtain a large collection of reviews on which to
+estimate the generic language model, with a sig-
+nificant portion of them aligned with the objects
+for which the reviews were written; this portion
+will serve as the gold-standard test set.
+To this end, we obtained a set of reviews from
+the Yelp website, yelp.com. This website con-
+tains a collection of reviews about various busi-
+nesses and for each business, has a webpage con-
+taining the business information and a list of re-
+views. We crawled all restaurant pages from Yelp.
+For each restaurant, we extracted its name and
+city location from the business information sec-
+tion via HTML cues, and a list of no more than
+40 reviews. We obtained the textual content of
+299,762 reviews, each aligned with one of a set
+of 12,408 unique restaurants hosted on Yelp. Note
+that while our technique is not targeted for head
+sites like Yelp (where wrapper induction might
+be a more accurate approach), this provides a
+large-scale dataset, conveniently labeled with ob-
+ject information, and simulates the tail-site sce-
+nario where we rely heavily on the textual content
+of reviews to identify objects.
+Many of the reviews in Yelp do not contain any
+identifying information. In fact, some of them are
+as short as ?Great place. Awesome food!!?. We
+processed the dataset to retain only reviews that
+mention the name of the restaurant, even if par-
+tially, and, when the restaurant name is a common
+word, also the city of the restaurant. Each of the
+remaining reviews is expected to have enough in-
+formation for a human to identify the restaurant
+corresponding to the review.
+To further increase the difficulty of the match-
+ing task, we obtained a much more extensive list
+of restaurant objects in the Yahoo! Local database,
+which contains 681,320 restaurants. Our task
+is to match a given Yelp review, using only its
+free-form textual content, with its corresponding
+614
+restaurant in the Yahoo! Local database. We then
+proceeded to generate the gold standard that con-
+tains the correct restaurant in the Yahoo! Local
+database for each review. We employed geocoding
+to match addresses across the two databases along
+with approximate name matches. Note that in the
+final dataset, only half of the restaurants have the
+exact same name listed in both Yelp and Yahoo!
+Local; this limits the success of naive dictionary-
+based methods.
+The final aligned dataset contained 24,910 Yelp
+reviews (R), covering 6,010 restaurants. We set
+aside half of the reviews (R
+?
+) to estimate the mod-
+els and the other half (R
+test
+) to evaluate our tech-
+nique. We also set aside 1,000 reviews as devel-
+opment set, on which we conducted initial exper-
+iments. The total size of the test corpus, R
+test
+was 11,217. The splitting of R into R
+?
+, R
+test
+,
+and the development set was done in such a way
+that there are no overlapping restaurants between
+them. Also, the reviews that were filtered out
+because of lack of identifying information were
+added back to R
+?
+for learning the review language
+model, expandingR
+?
+to a total of 205,447 reviews.
+5 Evaluation
+In this section we evaluate our proposed review-
+language based matching algorithm RLM.
+5.1 Experimental considerations
+Baseline system. We use the TFIDF and TFIDF
++
+algorithms described in Section 3.4 as baseline
+algorithms. Since we are comparing objects
+that can have varying lengths, we tried the stan-
+dard cosine-normalization techniques for docu-
+ment length normalization. For reasons described
+in Section 3.4, however, the normalization signif-
+icantly lowered the accuracy. All the numbers re-
+ported here are using tf-idf scores without normal-
+ization.
+Efficiency. For both RLM and the baseline algo-
+rithms, it is impractical to compute the similar-
+ity of a review with each object in the database.
+Since all objects that do not intersect with the re-
+view have a zero score, we built an inverted in-
+dex to retrieve all objects containing a given word.
+Even a simple inverted index can be very ineffi-
+cient since for each review, words such as ?Restau-
+rant? or ?Cafe? retrieve a substantial fraction of
+the whole database. Hence, we further optimized
+the index by looking at the document frequencies
+of the words and considering word bigrams in ob-
+ject descriptions. The index only retrieves ob-
+jects that have a non-trivial overlap with the re-
+view; e.g., an overlap of ?Casablanca? is consid-
+ered non-trivial while an overlap of ?Restaurant?
+is considered trivial. Once these candidates are re-
+trieved, our scoring function takes into account all
+overlapping tokens.
+For the YELP dataset, the index returns an av-
+erage of 200 restaurants for each review. This
+points to the general difficulty of review match-
+ing over a large corpus of objects, since a simple
+dictionary-based named-entity recognition will hit
+at least 200 objects for many reviews.
+Experiment settings. For RLM, we conducted
+initial experiments and performed parameter esti-
+mation on the development data. The experimen-
+tal settings we used for RLM are as follows: we
+set g(w) = log(1/f
+w
+) for P
+e
+, where f
+w
+is esti-
+mated on the review collection. P (w) is estimated
+on all reviews in R
+?
+, where for each review, all to-
+kens of its corresponding text(e), if present, are
+removed, in order to approximate the generic re-
+view language independent of e, as required by
+our generative model. We estimate ? to be 0.002,
+tuned on the development set; in our experiments,
+we observe that the performance is not very sensi-
+tive to ?.
+5.2 Main results
+In this section we present the main comparisons
+between RLM and the baseline in details.
+Performance measure. Our task resembles a
+standard IR task in that our algorithm ranks can-
+didate objects for a given review by their ?about-
+ness? level. Unlike a standard IR task, however,
+we are not interested in retrieving multiple ?rel-
+evant? objects, as each review in our dataset has
+only one single correct match from E . A review
+match is correct if the top-1 prediction (i.e., e
+?
+) is
+accurate. In what follows, we report the average
+accuracy for various experimental settings. Note
+that we can take the average accuracy over all re-
+views (reported as micro-average), regardless of
+which restaurants they are about; or we can first
+compute the average for reviews about the same
+restaurant, and report the average over all restau-
+rants (macro-average). When not specified, we re-
+port the micro-average.
+Main comparisons. Table 1(a) summarizes the
+main comparison. Our proposed algorithm RLM
+615
+Method Micro-avg. Macro-avg.
+RLM 0.647 0.576
+TFIDF
++
+0.518 0.481
+TFIDF 0.314 0.317
+(a) Main comparison.
+Method Micro-avg. Macro-avg.
+RLM-UNIFORM 0.634 0.562
+RLM-UNCUT 0.627 0.546
+RLM-DECAP 0.640 0.573
+(b) RLM variants.
+Method Micro-avg. Macro-avg.
+TFIDF
++
+-N 0.586 0.523
+TFIDF
++
+-D 0.593 0.533
+TFIDF
++
+-O 0.522 0.488
+TFIDF
++
+-ND 0.628 0.549
+TFIDF
++
+-NDO 0.647 0.576
+(c) TFIDF
++
+variants.
+Table 1: Average accuracy of the top-1 prediction
+for various techniques. Micro-average computed
+over 11,217 reviews inR
+test
+; macro-average com-
+puted over 2,810 unique restaurants in R
+test
+.
+clearly outperforms the TFIDF
++
+baseline mea-
+sured by either micro- or macro-average accuracy.
+The standard TFIDF, as predicted, performs the
+worst.
+Some reviews can be particularly difficult to
+match, which can be reflected in a low matching
+score. Nonetheless, we predict the most likely ob-
+ject. Suppose we impose a threshold and return
+the most likely object only when its score is above
+threshold, we can then compute precision and re-
+call at different thresholds. Figure 1 presents the
+precision?recall curve (using micro-average) for
+both RLM and TFIDF
++
+. Again, RLM clearly out-
+performs TFIDF
++
+across the board.
+We then generalize the definition of accuracy
+into accuracy@k: a review is considered as cor-
+rectly matched if one of the top-k objects returned
+is the correct match. We plot accuracy@k as a
+function of k. While the gap between RLM and
+TFIDF
++
+is smaller as k increases, RLM clearly
+outperforms TFIDF
++
+for all k ? {1, . . . , 10}.
+One final comparison is accuracy@1 as a func-
+tion of the review length. Given our current set-
+ting, longer reviews might be more difficult to
+match since they may include more proper nouns
+such as dish names and related restaurants, and
+Figure 1: Precision?recall curve (of top one pre-
+diction): RLM vs. TFIDF
++
+baseline.
+Figure 2: Accuracy@k (percentage of reviews
+whose correct match is returned in one of its top-k
+predictions): RLM vs. TFIDF
++
+baseline.
+Figure 3: Average accuracy of the top-1 prediction
+for reviews with different length (on test set): RLM
+vs. TFIDF
++
+baseline.
+616
+yield a longer list of highly competitive candi-
+date objects. Interestingly, the gap between RLM
+and TFIDF
++
+is much smaller for shorter reviews.
+As reviews get longer, the performance of RLM
+is relatively stable, whereas the performance of
+TFIDF
++
+drops down significantly.
+5.3 Experimental choices for RLM
+We now examine the experimental choices we
+made for different components of RLM by defin-
+ing the following variations of RLM.
+RLM-UNIFORM: rather than setting g(w) =
+log(1/f
+w
+) for P
+e
+, we use the uniform distribution
+P
+e
+(w) = 1/|text(e)|. From the third line of Table
+1 (b), there is a slight accuracy drop of ? 1.3%.
+RLM-UNCUT: suppose we only have access to
+a review corpus with no alignment to text(e), and
+thus have to approximate P (w) by estimating it
+on the set of original ?un-cut? reviews, how much
+does that affect our performance? As indicated in
+the fourth row of Table 1 (b), this reduces accuracy
+by about 2% on our test data.
+RLM-DECAP: as an alternative way to deal with
+lack of aligned data, we consider a variation of
+the above algorithm by removing all the capital-
+ized words from un-annotated reviews. Clearly,
+this can result in both ?over-cutting? and ?under-
+cutting? of true restaurant name mentions. How-
+ever, as indicated in the fourth row of Table 1 (b),
+this is very close to the best accuracy achieved.
+Thus, an effective model can be learned even with-
+out aligned data.
+5.4 Revisiting TFIDF
++
+: what?s amiss?
+In this section we revisit the main differences be-
+tween our model and the TFIDF
++
+outlined in Sec-
+tion 3.4, and investigate their empirical impor-
+tance by introducing these features into TFIDF
++
+and examine their effectiveness in that framework.
+Object length normalization. We con-
+sider a modified TFIDF
++
+measure f
+M
+(w) =
+P
+e
+(w)/Q(w), which we call TFIDF
++
+-N (normal-
+ized). As shown in Table 1 (c), this change alone
+can increase the average accuracy by nearly 7%.
+Dampening. We consider a modified TFIDF
++
+measure f
+M
+(w) = 1 + ? ?
+N
+df(w)
+, which we call
+TFIDF
++
+-D. Table 1 (c) reports the performance of
+using this measure, with ? = 0.1 (set on develop-
+ment data). Again, this measure alone can induce
+over 7% increase in accuracy. Indeed, combin-
+ing normalization and dampening, (i.e., f
+M
+(w) =
+1+? ?P
+e
+(w) ?
+N
+df(w)
+), denoted as TFIDF
++
+-ND, we
+get comparable performance to RLM-UNCUT.
+Removing mentions of objects. Again, we can
+incorporate this in a heuristic way in TFIDF
++
+,
+which we denote by TFIDF
++
+-O. Interestingly,
+while using the original f
+B
+(w) function with
+df(w) computed on the object-removed review
+collection does not yield a big improvement, this
+does bring the performance of the fully modified
+TFIDF
++
+to the same level of the standard RLM
+(see line marked TFIDF
++
+-NDO.)
+Using term counts. Our investigation suggests
+that at least in practice, using Q(w) vs. P (w) is
+not a critical decision, as a fully modified TFIDF
++
+can achieve the same performance using df(w) to
+quantify frequency of the word. Our experiments
+on this dataset show that each of the other model-
+ing decisions incorporated in RLM is important.
+6 Conclusions
+We proposed a generative model for reviews
+where reviews are generated from the mixture of
+a distribution involving object terms and a generic
+review language model. The model provides us
+a principled way to match reviews to objects.
+Our evaluation on a real-world dataset shows that
+our techniques vastly outperforms standard tf-idf
+based techniques.
+Acknowledgments
+We thank Don Metzler for many discussions and
+the anonymous reviewers for their comments.
+References
+R. Ananthakrishna, S. Chaudhuri, and V. Ganti. 2002.
+Eliminating fuzzy duplicates in data warehouses. In
+Proc. 28th VLDB, pages 586?596.
+L. Barbosa, R. Kumar, B. Pang, and A. Tomkins. 2009.
+For a few dollars less: Identifying review pages sans
+human labels. In Proc. NAACL.
+I. Bhattacharya and L. Getoor. 2007. Collective entity
+resolution in relational data. ACM TKDD, 1(1).
+C. Cardie. 1997. Empirical methods in information
+extraction. AI Magazine, 18(4):65?80.
+V. T. Chakaravarthy, H. Gupta, P. Roy, and M. Mo-
+hania. 2006. Efficiently linking text documents
+with relevant structured information. In Proc. 32nd
+VLDB, pages 667?678.
+617
+N. Dalvi, R. Kumar, B. Pang, and A. Tomkins. 2009.
+A translation model for matching reviews to objects.
+Manuscript.
+I. P. Fellegi and A. B. Sunter. 1969. A theory for record
+linkage. JASIS, 64:1183?1210.
+D. Hiemstra and W. Kraaij. 1998. Twenty-one at
+TREC7: Ad-hoc and cross-language track. In Proc.
+7th TREC, pages 174?185.
+D. Hiemstra. 1998. A linguistically motivated prob-
+abilistic model of information retrieval. In Proc.
+ECDL, pages 569?584.
+M. Hu and B. Liu. 2004. Mining opinion features in
+customer reviews. In Proc. AAAI, pages 755?760.
+D. V. Kalashnikov, S. Mehrotra, and Z. Chen. 2005.
+Exploiting relationships for domain-independent
+data cleaning. In Proc. 5th SDM.
+N. Kobayashi, K. Inui, Y. Matsumoto, K. Tateishi, and
+T. Fukushima. 2004. Collecting evaluative expres-
+sions for opinion extraction. In Proc. 1st IJCNLP,
+pages 596?605.
+J. Lafferty and C. Zhai. 2003. Probabilistic relevance
+models based on document and query generation. In
+W. B. Croft and J. Lafferty, editors, Language Mod-
+eling and Information Retrieval. Academic Publish-
+ers.
+A. McCallum and B. Wellner. 2004. Conditional mod-
+els of identity uncertainty with application to noun
+coreference. In Proc. 17th NIPS.
+H. B. Newcombe, J. M. Kennedy, S. J. Axford, and
+A. P. James. 1959. Automatic linkage of vital
+records. Science, 130:954?959.
+V. Ng, S. Dasgupta, and S. M. Niaz Arifin. 2006. Ex-
+amining the role of linguistic knowledge sources in
+the automatic identification and classification of re-
+views. In Proc. 21st COLING/44th ACL, pages 611?
+618.
+Bo Pang and Lillian Lee. 2008. Opinion mining and
+sentiment analysis. Foundations and Trends in In-
+formation Retrieval, 2(1-2):1?135.
+J. M. Ponte and W. B. Croft. 1998. A language model-
+ing approach to information retrieval. In Proc. 21st
+SIGIR, pages 275?281.
+A.-M. Popescu and O. Etzioni. 2005. Extracting prod-
+uct features and opinions from reviews. In Proc.
+HLT/EMNLP.
+G. Salton, A. Wong, and C. S. Yang. 1975. A vec-
+tor space model for automatic indexing. Commun.
+ACM, 18(11):613?620.
+S. Sarawagi. 2008. Information extraction. Founda-
+tions and Trends in Databases, 1(3):261?377.
+F. Song and W. B. Croft. 1999. A general language
+model for information retrieval. In Proc. 22nd SI-
+GIR, pages 279?280.
+V. Stoyanov and C. Cardie. 2008. Topic identification
+for fine-grained opinion analysis. In Proc. COLING.
+J. Yi, T. Nasukawa, R. Bunescu, and W. Niblack. 2003.
+Sentiment analyzer: Extrating sentiments about a
+given topic. In Proc. 3rd ICDM, pages 427?434.
+C. Zhai and J. Lafferty. 2004. A study of smoothing
+methods for language models applied to information
+retrieval. ACM TOIS, 22(2):179?214.
+C. Zhai. 2008. Statistical language models for infor-
+mation retrieval a critical review. Foundations and
+Trends in Information Retrieval, 2(3):137?213.
+618
+Human Language Technologies: The 2009 Annual Conference of the North American Chapter of the ACL, pages 494?502,
+Boulder, Colorado, June 2009. c?2009 Association for Computational Linguistics
+For a few dollars less: Identifying review pages sans human labels
+Luciano Barbosa
+Dept. of Computer Science
+University of Utah
+Salt Lake City, UT 84112, USA.
+lbarbosa@cs.utah.edu
+Ravi Kumar Bo Pang Andrew Tomkins
+Yahoo! Research
+701 First Ave
+Sunnyvale, CA 94089, USA.
+{ravikumar,bopang,atomkins}@yahoo-inc.com
+Abstract
+We address the problem of large-scale auto-
+matic detection of online reviews without us-
+ing any human labels. We propose an efficient
+method that combines two basic ideas: Build-
+ing a classifier from a large number of noisy
+examples and using the structure of the web-
+site to enhance the performance of this classi-
+fier. Experiments suggest that our method is
+competitive against supervised learning meth-
+ods that mandate expensive human effort.
+1 Introduction
+Shoppers are migrating to the web and online re-
+views are playing a critical role in affecting their
+shopping decisions, online and offline. According
+to two surveys published by comScore (2007) and
+Horrigan (2008), 81% of web users have done on-
+line research on a product at least once. Among
+readers of online reviews, more than 70% reported
+that the reviews had a significant influence on their
+purchases. Realizing this economic potential, search
+engines have been scrambling to cater to such user
+needs in innovative ways. For example, in response
+to a product-related query, a search engine might
+want to surface only review pages, perhaps via a ?fil-
+ter by? option, to the user. More ambitiously, they
+might want to dissect the reviews, segregate them
+into novice and expert judgments, distill sentiments,
+and present an aggregated ?wisdom of the crowds?
+opinion to the user. Identifying review pages is the
+indispensable enabler to fulfill any such ambition;
+nonetheless, this problem does not seem to have
+been addressed at web scale before.
+Detecting review webpages in a few, review-only
+websites is an easy, manually-doable task. A large
+fraction of the interesting review content, however,
+is present on pages outside such websites. This is
+where the task becomes challenging. Review pages
+might constitute a minority and can be buried in
+a multitude of ways among non-review pages ?
+for instance, the movie review pages in nytimes.
+com, which are scattered among all news articles, or
+the product review pages in amazon.com, which
+are accessible from the product description page. An
+automatic and scalable method to identify reviews
+is thus a practical necessity for the next-generation
+search engines. The problem is actually more gen-
+eral than detecting reviews: it applies to detecting
+any ?horizontal? category such as buying guides, fo-
+rums, discussion boards, FAQs, etc.
+Given the nature of these problems, it is tempt-
+ing to use supervised classification. A formidable
+barrier is the labeling task itself since human la-
+bels need time and money. On the other hand, it
+is easier to generate an enormous number of low-
+quality labeled examples through purely automatic
+methods. This prompts the question: Can we do re-
+view detection by focusing just on the textual con-
+tent of a large number of automatically obtained but
+low-quality labeled examples, perhaps also utilizing
+the site structure specific to each website? And how
+will it compare to the best supervised classification
+method? We address these questions in this paper.
+Main contributions. We propose the first end-to-
+end method that can operate at web scale to effi-
+ciently detect review pages. Our method is based
+on using simple URL-based clues to automatically
+494
+partition a large collection of webpages into two
+noisy classes: One that consists mostly of review
+webpages and another that consists of a mixture
+of some review but predominantly non-review web-
+pages (more details in Section 4.2).
+We analyze the use of a naive Bayes classifier in
+this noisy setting and present a simple algorithm for
+review page classification. We further enhance the
+performance of this classifier by incorporating infor-
+mation about the structure of the website that is man-
+ifested through the URLs of the webpages. We do
+this by partitioning the website into clusters of web-
+pages, where the clustering delicately balances the
+information in the site-unaware labels provided by
+the classifier in the previous step and the site struc-
+ture encoded in the URL tokens; a decision tree is
+used to accomplish this. Our classification method
+for noisily-labeled examples and the use of site-
+specific cues to improve upon a site-independent
+classifier are general techniques that may be appli-
+cable in other large-scale web analyses.
+Experiments on 2000 hand-labeled webpages
+from 40 websites of varying sizes show that besides
+being computationally efficient, our human-label-
+free method not only outperforms those based on
+off-the-shelf subjectivity detection but also remains
+competitive against the state-of-the-art supervised
+text classification that relies on editorial labels.
+2 Related work
+The related work falls into roughly four categories:
+Document- and sentence-level subjectivity detec-
+tion, sentiment analysis in the context of reviews,
+learning from noisy labeled examples, and exploit-
+ing site structure for classification.
+Given the subjective nature of reviews, document-
+level subjectivity classification is closely related to
+our work. There have been a number of approaches
+proposed to address document-level subjectivity in
+news articles, weblogs, etc. (Yu and Hatzivas-
+siloglou, 2003; Wiebe et al, 2004; Finn and Kush-
+merick, 2006; Ni et al, 2007; Stepinski and Mit-
+tal, 2007). Ng et al (2006) experiment with review
+identification for known domains using datasets with
+clean labels (e.g., movie reviews vs. movie-related
+non-reviews), a setting different from that of ours.
+Pang and Lee (2008b) present a method on re-
+ranking documents that are web search results for a
+specific query (containing the word review) based
+on the subjective/objective distinction. Given the na-
+ture of the query, they implicitly detect reviews from
+unknown sources. But their re-ranking algorithm
+only applies to webpages known to be (roughly) re-
+lated to the same narrow subject. Since the web-
+pages in our datasets cover not only a diverse range
+of websites but also a diverse range of topics, their
+approach does not apply. To the best of our knowl-
+edge, there has been no work on identifying review
+pages at the scale and diversity we consider.
+Subjectivity classification of within-document
+items, such as terms, has been an active line of re-
+search (Wiebe et al (2004) present a survey). Iden-
+tifying subjective sentences in a document via off-
+the-shelf packages is an alternative way of detect-
+ing reviews without (additional) human annotations.
+In particular, the OpinionFinder system (Riloff and
+Wiebe, 2003; Wiebe and Riloff, 2005) is a state-of-
+the-art knowledge-rich sentiment-analysis system.
+We will use it as one of our baselines and compare
+its performance with our methods.
+There has been a great deal of previous work in
+sentiment analysis that worked with reviews, but
+they were typically restricted to using reviews ex-
+tracted from one or two well-known sources, by-
+passing automatic review detection. Examples of
+such early work include (Turney, 2002; Pang et al,
+2002; Dave et al, 2003; Hu and Liu, 2004; Popescu
+and Etzioni, 2005). See Pang and Lee (2008a) for
+a more comprehensive survey. Building a collection
+of diverse review webpages, not limited to one or
+two hosts, can better facilitate such research.
+Learning from noisy examples has been studied
+for a long time in the learning theory community
+(Angluin and Laird, 1988). Learning naive Bayes
+classifiers from noisy data (either features or labels
+or both) was studied by Yang et al (2003). Their
+focus, however, is to reconstruct the underlying con-
+ditional probability distributions from the observed
+noisy dataset. We, on the other hand, rely on the vol-
+ume of labels to drown the noise. Along this spirit,
+Snow et al (2008) show that obtaining multiple low-
+quality labels (through Mechanical Turk) can ap-
+proach high-quality editorial labels. Unlike in their
+setting, we do not have multiple low-quality labels
+for the same URL. The extensive body of work in
+495
+semi-supervised learning or learning from one class
+is also somewhat relevant to our work. A major dif-
+ference is that they tend to work with small amount
+of clean, labeled data. In addition, many semi-
+supervised/transductive learning algorithms are not
+efficient for web-scale data.
+Using site structure for web analysis tasks has
+been addressed in a variety of contexts. For ex-
+ample, Kening et al (2005) exploit the structure
+of a website to improve classification. On a re-
+lated note, co-training has also been used to utilize
+inter-page link information in addition to intra-page
+textual content: Blum and Mitchell (1998) use an-
+chor texts pointing to a webpage as the alternative
+?view? of the page in the context of webpage clas-
+sification. Their algorithm is largely site-unaware
+in that it does not explicitly exploit site structures.
+Utilizing site structures also has remote connections
+to wrapper induction, and there is extensive litera-
+ture on this topic. Unfortunately, the methods in all
+of these work require human labeling, which is pre-
+cisely what our work is trying to circumvent.
+3 Methodology
+In this section we describe our basic methodology
+for identifying review pages. Our method consists
+of two main steps. The first is to use a large amount
+of noisy training examples to learn a basic classifier
+for review webpages; we adapt a simple naive Bayes
+classifier for this purpose. The second is to improve
+the performance of this basic classifier by exploiting
+the website structure; we use a decision tree for this.
+Let P be the set of all webpages. Let C+ denote
+the positive class, i.e., the set of all review pages and
+let C? denote the negative class, i.e., the set of all
+non-review pages. Each webpage p is exactly in one
+of C+ or C?, and is labeled +1 or ?1 respectively.
+3.1 Learning from large amounts of noisy data
+Previous work using supervised or semi-supervised
+learning approaches for sentiment analysis assumes
+relatively high-quality labels that are produced ei-
+ther via human annotation or automatically gener-
+ated through highly accurate rules (e.g., assigning
+positive or negative label to a review according to
+automatically extracted star ratings).
+We examine a different scenario where we can au-
+tomatically generate large amount of relatively low-
+quality labels. Section 4.2 describes the process
+in more detail, but briefly, in a collection of pages
+crawled from sites that are very likely to host re-
+views, those with the word review in their URLs
+are very likely to contain reviews (the noisy posi-
+tive set C?+) and the rest of the pages on those sites
+are less likely to contain reviews (the more noisy
+negative set C??). More formally, for a webpage
+p, suppose Pr[p ? C+ | p ? C?+] = ? and
+Pr[p ? C+ | p ? C??] = ?, where 1 > ?  ? > 0.
+Can we still learn something useful from C?+ and C??
+despite the labels being highly noisy?
+The following analysis is based on a naive Bayes
+classifier. We chose naive Bayes classifier since the
+learning phase can easily be parallelized.
+Given a webpage (or a document) p represented
+as a bag of features {fi}, we wish to assign a class
+argmaxc?{C+,C?} Pr[c | p] to this webpage. Naive
+Bayes classifiers assume fi?s to be conditionally in-
+dependent and we have Pr[p | c] = ?Pr[fi | c].
+Let ri = Pr[fi | C+]/Pr[fi | C?] denote the con-
+tribution of each feature towards classification, and
+rc = Pr[C+]/Pr[C?] denote the ratio of class pri-
+ors. First note that
+log Pr[C+|p]Pr[C?|p] = log
+(
+Pr[C+]
+Pr[C?] ?
+Pr[p|C+]
+Pr[p|C?]
+)
+= log
+(
+Pr[C+]
+Pr[C?] ?
+?
+ri
+)
+= log rc +? log ri.
+A webpage p receives label +1 iff Pr[C+ | p] >
+Pr[C? | p], and by above, if and only if ? log ri >
+? log rc.
+When we do not have a reasonable estimate of
+Pr[C+] and Pr[C?], as in our setting, the best we
+can do is to assume rc = 1. In this case, p receives
+label +1 if and only if? log ri > 0. Thus, a feature
+fi with log ri > 0 has a positive contribution to-
+wards p being labeled +1; call fi to be a ?positive?
+feature. Typically we use relative-frequency estima-
+tion of Pr[c] and Pr[fi | c] for c ? {C+, C?}. Now,
+how does the estimation from a dataset with noisy
+labels compare with the estimation from a dataset
+with clean labels?
+To examine this, we calculate the following:
+Pr[fi | C?+] = ?Pr[fi | C+] + (1? ?) Pr[fi | C?],
+Pr[fi | C??] = ? Pr[fi | C+] + (1? ?) Pr[fi | C?].
+Let r?i = Pr[fi| eC+]Pr[fi| eC?] =
+?ri+(1??)
+?ri+(1??) . Clearly r?i is mono-
+tonic but not linear in ri. Furthermore, it is bounded:
+496
+(1? ?)/(1? ?) ? r?i ? ?/?. However,
+r?i > 1 ?? ?ri + (1? ?) > ?ri + (1? ?)
+?? (???)ri > (???) ?? ri > 1,where
+the last step used ? > ?. Thus, the sign of log r?i is
+the same as that of log ri, i.e., a feature contribut-
+ing positively to? log ri will continue to contribute
+positively to? log r?i (although its magnitude is dis-
+torted) and vice versa.
+The above analysis motivates an alternative model
+to naive Bayes. Instead of each feature fi placing
+a weighted vote log r?i in the final decision, we trust
+only the sign of log r?i, and let each feature fi place a
+vote for the class C+ (respectively, C?) if log r?i > 0
+(respectively, log r?i < 0). Intuitively, this model
+just compares the number of ?positive? features and
+the number of ?negative? features, ignoring the mag-
+nitude (since it is distorted anyway). This is pre-
+cisely our algorithm: For a given threshold ?, the
+final label nbu?(p) of a webpage p is given by
+nbu?(p) = sgn (? sgn(log r?i)? ?) ,
+where sgn is the sign function. For comparison
+purposes, we also indicate the ?weighted? version:
+nbw?(p) = sgn (? log r?i ? ?) .
+If ? = 0, we omit ? and use nb to denote a generic
+label assigned by any of the above algorithms.
+Note that even though our discussions were for
+two-class and in particular, review classification,
+they are equally applicable to a wide range of clas-
+sification tasks in large-scale web-content analysis.
+Our analysis of learning from automatically gener-
+ated noisy examples is thus of independent interest.
+3.2 Utilizing site structure
+Can the structure of a website be exploited to im-
+prove the classification of webpages given by nb(?)?
+While not all websites are well-organized, quite a
+number of them exhibit certain structure that makes
+it possible to identify large subsites that contain only
+review pages. Typically but not always this structure
+is manifested through the tokens in the URL corre-
+sponding to the webpage. For instance, the pattern
+http://www.zagat.com/verticals/
+PropertyDetails.aspx?VID=a&R=b,
+where a,b are numbers, is indicative of all
+webpages in zagat.com that are reviews of
+restaurants. In fact, we can think of this as a
+generalization of having the keyword review in
+the URL. Now, suppose we have an initial labeling
+nb(p) ? {?1} for each webpage p produced by a
+classifier (as in the previous section, or one that is
+trained on a small set of human annotated pages),
+can we further improve the labeling using the
+pattern in the URL structure?
+It is not immediate how to best use the URL
+structure to identify the review subsites. First,
+URLs contain irrelevant information (e.g., the to-
+ken verticals in the above example), thus clus-
+tering by simple cosine similarity may not dis-
+cover the review subsites. Second, the subsite
+may not correspond to a subtree in the URL hi-
+erarchy, i.e., it is not reasonable to expect all
+the review URLs to share a common prefix.
+Third, the URLs contain a mixture of path com-
+ponents (e.g., www.zagat.com/verticals/
+PropertyDetails.aspx) and key-value pairs
+(e.g., VID=a and R=b) and hence each token (re-
+gardless of its position) in the URL could play a
+role in determining the review subsite. Furthermore,
+conjunction of presence/absence of certain tokens in
+the URL may best correspond to subsite member-
+ship. In light of these, we represent each URL (and
+hence the corresponding webpage) by a bag {gi} of
+tokens obtained from the URL. We perform a crude
+form of feature selection by dropping tokens that
+are either ubiquitous (occurring in more than 99%
+of URLs) or infrequent (occurring in fewer than 1%
+of URLs) in a website; neither yields useful infor-
+mation.
+Our overall approach will be to use gi?s to par-
+tition P into clusters {Ci} of webpages such that
+each cluster Ci is predominantly labeled as either
+review or non-review by nb(?). This automati-
+cally yields a new label cls(p) for each page p,
+which is the majority label of the cluster of p:
+cls(p) = sgn
+(?
+q?C(p) nb(q)
+)
+,
+where C(p) is the cluster of p. To this end, we use
+a decision tree classifier to build the clusters. This
+classifier will use the features {gi} and the target la-
+bels nb(?). The classifier is trained on all the web-
+pages in the website and in the obtained decision
+tree, each leaf, consisting of pages with the same
+set of feature values leading down the path, corre-
+sponds to a cluster of webpages. Note that the clus-
+ters delicately balance the information in the site-
+unaware labels nb(?) and the site structure encoded
+497
+in the URLs (given by gi?s). Thus the label cls(p)
+can be thought of as a smoothed version of nb(p).
+Even though we can expect most clusters to be ho-
+mogeneous (i.e., pure reviews or non-reviews), the
+above method can produce clusters that are inher-
+ently heterogeneous. This can happen if the web-
+site URLs are organized such that many subsites
+contain both review and non-review webpages. To
+take this into account, we propose the following
+hybrid approach that interpolates between the un-
+smoothed labels given by nb(?) and the smoothed
+labels given by cls(?). For a cluster Ci, the dis-
+crepancy disc(Ci) = ?p?Ci [cls(p) 6= nb(p)]; thisquantity measures the number of disagreements be-
+tween the majority label cls(p) and the original label
+nb(p) for each page p in the cluster. The decision
+tree guarantees disc(Ci) ? |Ci|/2. We call a cluster
+Ci to be ?-homogeneous if disc(Ci) ? ?|Ci|, where
+? ? [0, 1/2]. For a fixed ?, the hybrid label of a web-
+page p is given by
+hyb?(p) =
+{ cls(p) if C(p) is ?-homogeneous,
+nb(p) otherwise.
+Note that hyb1/2(p) = cls(p) and hyb0(p) = nb(p).
+Note that in the above discussions, any clustering
+method that can incorporate the site-unaware labels
+nb(?) and the site-specific tokens in gi?s could have
+been used; off-the-shelf decision tree was merely a
+specific way to realize this.
+4 Data
+It is crucial for this study to create a dataset that
+is representative of a diverse range of websites that
+host reviews over different topics in different styles.
+We are not aware of any extensive index of online
+review websites and we do not want to restrict our
+study to a few well-known review aggregation web-
+sites (such as yelp.com or zagat.com) since
+this will not represent the less popular and more spe-
+cialized ones. Instead, we utilized user-generated
+tags for webpages, available on social bookmarking
+websites such as del.icio.us.
+We obtained (a sample of) a snapshot of URL?tag
+pairs from del.icio.us. We took the top one
+thousand sites with review* tags; these websites
+hopefully represent a broad coverage. We were able
+to crawl over nine hundred of these sites and the re-
+sulting collection of webpages served as the basis
+of the experiments in this paper. We refer to these
+websites (or the webpages from these sites, when it
+is clear from the context) as Sall.
+4.1 Gold-standard test set
+When the websites are as diverse as represented in
+Sall, there is no perfect automatic way to generate
+the ground truth labels. Thus we sampled a number
+of pages for human labeling as follows.
+First, we set aside 40 sites as the test sites (S40).
+In order to represent different types of websites (to
+the best we can), we sampled the 40 sites so that S40
+covers different size ranges, since large-scale web-
+sites and small-scale websites are often quite dif-
+ferent in style, topic, and content. We uniformly
+sampled 10 sites from each of the four size cate-
+gories (roughly, sites with 100?5K, 5K?25K, 25K?
+100K, and 100K+ webpages)1. Indeed, S40 (as did
+Sall) covered a wide range of topics (e.g., games,
+books, restaurants, movies, music, and electronics)
+and styles (e.g., dedicated review sites, product sites
+that include user reviews, newspapers with movie re-
+view sections, religious sites hosting book reviews,
+and non-English review sites).
+We then sampled 50 pages to be labeled from each
+site in S40. Since there are some fairly large sites
+that have only a small number of review pages, a
+uniform sampling may yield no review webpages
+from those sites. To reflect the natural distribu-
+tion on a website and to represent pages from both
+classes, the webpages were sampled in the follow-
+ing way. For each website in S40, 25 pages were
+uniformly sampled (representing the natural distri-
+bution) and 25 pages were sampled from among
+?equivalence classes? based on URLs so that pages
+from each major URL pattern were represented.
+Here, each webpage in the site is represented by a
+URL signature containing the most frequent tokens
+that occur in the URLs in that site and all pages with
+the same signature form an equivalence class.
+For our purposes, a webpage is considered a re-
+view if it contains significant amount of textual in-
+formation expressing subjective opinions on or per-
+sonal experiences with a given product / service.
+When in doubt, the guiding principle is whether
+1As we do not want to waste human annotation on sites with
+no reviews at all, a quick pre-screening process eliminated can-
+didate sites that did not seem to host any reviews.
+498
+a page can be a satisfactory result page for users
+searching for reviews. More specifically, the human
+annotation labeled each webpage, after thoroughly
+examining the content, with one of the following
+seven intuitive labels: ?single? (contains exactly one
+review), ?multiple? (concatenation of more than one
+review), ?no? (clearly not a review page), ?empty?
+(looks like a page that could contain reviews but had
+none), ?login? (a valid user login needed to look at
+the content), ?hub? (a pointer to one or more review
+pages), and ?ambiguous? (border-line case, e.g., a
+webpage with a one line review). The first two labels
+were treated as +1 (i.e., reviews) and the last five la-
+bels were treated as ?1 (i.e., non-reviews). Out of
+the 2000 pages, we obtained 578 pages labeled +1
+and the 1422 pages labeled ?1. On a pilot study us-
+ing two human judges, we obtained 78% inter-judge
+agreement for the seven labels and 92% inter-judge
+agreement if we collapse the labels to ?1. Percent-
+ages of reviews in our samples from different sites
+range from 14.6% to 93.9%.
+Preprocessing for text-based analysis. We pro-
+cessed the crawled webpages using lynx to ex-
+tract the text content. To discard templated content,
+which is an annoying issue in large-scale web pro-
+cessing, and HTML artifacts, we used the following
+preprocessing. First, the HTML tags <p>, <br>,
+</tr>, and </td> were interpreted as paragraph
+breaks, the ?.? inside a paragraph was interpreted as
+a sentence break, and whitespace was used to tok-
+enize words in a sentence. A sentence is considered
+?good? if it has at least seven alphabetic words and
+a paragraph is considered ?good? if it has at least
+two good sentences. After extracting the text us-
+ing lynx, only the good paragraphs were retained.
+This effectively removes most of the templated con-
+tent (e.g., navigational phrases) and retains most of
+the ?natural language? texts. Because of this pre-
+processing, 485 pages out of 2000 turned out to be
+empty and these were discarded (human labels on
+97% of these empty pages were ?1).
+4.2 Dataset with noisy labels
+As discussed in Section 3.1, our goal is to obtain a
+large noisy set of positive and negative labeled ex-
+amples. We obtained these labels for the webpages
+in the training sites, Srest, which is essentially Sall \
+S40. First, the URLs in Srest were tokenized using a
+unigram model based on an English dictionary; this
+is so that strings such as reviewoftheday are
+properly interpreted.
+C?+: To be labeled +1, the path-component of
+the URL of the webpage has to contain the token
+review. Our assumption is that such pages are
+highly likely to be review pages. On a uniform sam-
+ple of 100 such pages in Sall, 90% were found to be
+genuine reviews. Thus, we obtained a collection of
+webpages with slightly noisy positive labels.
+C??: The rest of the pages in Srest were labeled
+?1. Clearly this is a noisy negative set since not all
+pages containing reviews have review as part of
+their URLs (recall the example from zagat.com);
+thus many pages in C?? can still be reviews.
+While the negative labels in Srest are more noisy
+than the positive labels, we believe most of the non-
+review pages are in C??, and as most websites con-
+tain a significant number of non-review pages, the
+percentage of reviews in C?? is smaller than that in
+C?+ (the assumption ?  ? in Section 3.1).
+We collected all the paragraphs (as defined ear-
+lier) from both C?+ and C?? separately. We elim-
+inated duplicate paragraphs (this further mitigates
+the templates issue, especially for sites generated
+by content-management software), and trained a un-
+igram language model as in Section 3.1.
+5 Evaluations
+The evaluations were conducted on the 1515 labeled
+(non-empty) pages in S40 described in Section 4.1.
+We report the accuracy (acc.) as well as precision
+(prec.), recall (rec.), and f-measure (fmeas.) for C+.
+Trivial baselines. Out of the 1515 labeled pages,
+565 were labeled +1 and 950 were labeled ?1. Ta-
+ble 1 summarizes the performance of baselines that
+always predict one of the classes and a baseline that
+randomly select a class according to the class dis-
+tribution S40. As we can see, the best accuracy
+is .63, the best f-measure is .54, and they cannot
+be achieved by the same baseline. Before present-
+acc. prec. rec. fmeas.
+always C? .63 - 0 -
+always C+ .37 .37 1 .54
+random .53 .37 .37 .37
+Table 1: Trivial baseline performances.
+499
+ing the main results of our methods, we introduce
+a much stronger baseline that utilizes a knowledge-
+rich subjectivity detection package.
+5.1 Using subjectivity detectors
+This baseline is motivated by the fact that reviews
+often contain extensive subjective content. There are
+many existing techniques that detect subjectivity in
+text. OpinionFinder (http://www.cs.pitt.
+edu/mpqa/opinionfinderrelease/) is a
+well-known system that processes documents and
+automatically identifies subjective sentences in
+them. OpinionFinder uses two subjective sentence
+classifiers (Riloff and Wiebe, 2003; Wiebe and
+Riloff, 2005). The first (denoted opfA) focuses on
+yielding the highest accuracy; the second (denoted
+opfB) optimizes precision at the expense of recall.
+The methods underlying OpinionFinder incorporate
+extensive tools from linguistics (including, speech
+activity verbs, psychological verbs, FrameNet verbs
+and adjectives with frame ?experiencer?, among oth-
+ers) and machine learning. In terms of performance,
+previous work has shown that OpinionFinder is a
+challenging system to improve upon for review re-
+trieval (Pang and Lee, 2008b). Computationally,
+OpinionFinder is very expensive and hence unattrac-
+tive for large-scale webpage analysis (running Opin-
+ionFinder on 1515 pages took about five hours).
+Therefore, we also propose a light-weight subjectiv-
+ity detection mechanism called lwd, which counts
+the number of opinion words in each sentence in the
+text. The opinion words (5403 of them) were ob-
+tained from an existing subjectivity lexicon (http:
+//www.cs.pitt.edu/mpqa).
+We ran both opfA and opfB on the tokenized text
+(running them on raw HTML produced worse re-
+sults). Each sentence in the text was labeled subjec-
+tive or objective. We experimented with two ways
+to label a document using sentence-level subjectiv-
+ity labels. We labeled a document +1 if it contained
+at least k subjective sentences (denoted as opf?(k),
+where k > 0 is the absolute threshold), or at least
+f fraction of its sentences were labeled subjective
+(denoted as opf?(f), where f ? (0, 1] is the rela-
+tive threshold). We conducted exhaustive parameter
+search with both opfA and opfB. For instance, the
+performances of opfA as a function of the thresh-
+olds, both absolute and relative, is shown in Fig-
+ure 1. Table 2 summarizes the best performances
+of opf?(k) (first two rows) and opf?(f) (next two
+rows), in terms of accuracy and f-measure (bold-
+faced). Similarly, for lwd, we labeled a document
++1 if at least k sentences have at least ` opin-
+ion words (denoted lwd(k, `).) Table 2 once again
+shows the best performing parameters for both accu-
+racy and f-measure for lwd. Our results indicate that
+a simple method such as lwd can come very close to
+a sophisticated system such as opf?.
+acc. prec. rec. fmeas.
+opfA(2) .704 .597 .634 .615
+opfB(2) .659 .526 .857 .652
+opfA(.17) .652 .529 .614 .568
+opfB(.36) .636 .523 .797 .632
+lwd(1, 4) .716 .631 .572 .600
+lwd(1, 1) .666 .538 .740 .623
+Table 2: Best performances of opf? and lwd methods.
+Figure 1: Performance of opfA as a function of thresh-
+olds: Absolute and relative.
+5.2 Main results
+As stated earlier, we do not have any prior knowl-
+edge about the value of ? and hence have to work
+with ? = 0. To investigate the implications of
+this assumption, we study the performance of nbu?
+and nbw? as a function of ?. The accuracy and f-
+measures are plotted in Figure 2. There are three
+500
+acc. prec. rec. fmeas.
+nbu .753 .652 .726 .687
+cls .756 .696 .616 .654
+hyb1/3 .777 .712 .674 .693
+Table 3: Performance of our methods.
+conclusions that can be drawn from this study: (i)
+The peak values of accuracy and f-measure are com-
+parable for both nbu? and nbw? , (ii) at ? = 0, nbu is
+much better than nbw, in terms of both accuracy and
+f-measure, and (iii) the best performance of nbu? oc-
+curs at ? ? 0. Given the difficulty of obtaining ? if
+one were to use nbw? , the above conclusions vali-
+date our intuition and the algorithm in Section 3.1.
+Figure 2: Performance as threshold changes: Comparing
+nbu? (marked as (u)) with nbw? (marked as (w)).
+Table 3 shows the performance of the site-specific
+method outlined in Section 3.2. The clusters
+were generated using the unpruned J48 decision
+tree in Weka (www.cs.waikato.ac.nz/ml/
+weka). In our experiments, we set ? = 1/3 as a
+natural choice for the hybrid method. As we see
+the performance of nbu is about 7% better than the
+best performance using a subjectivity-based method
+(in terms of accuracy). The performance of the
+smoothed labels (decision tree-based clustering) is
+comparable to that of nbu. However, the hybrid
+method hyb1/3 yields an additional 3% relative im-
+provement over nbu. Paired t-test over the accura-
+cies for these 40 sites shows both hyb1/3 and nbu
+to be statistically significantly better than the opf?
+with best accuracy (with p < 0.05, p < 0.005,
+respectively), and hyb1/3 to be statistically signifi-
+cantly better than nbu (with p < 0.05).
+5.3 Cross-validation on S40
+While the main focus of our paper is to study
+how to detect reviews without human labels, we
+present cross validation results on S40 as a compar-
+ison point. The goal of this experiment is to get a
+sense of the best possible accuracy and f-measure
+numbers using labeled data and the state-of-the-
+art method for text classification, namely, SVMs.
+In other words, the performance numbers obtained
+through SVMs and cross-validation can be thought
+of as realistic ?upper bounds? on the performance of
+content-based review detection. We used SVMlight
+(svmlight.joachims.org) for this purpose.
+The cross-validation experiment was conducted
+as follows. We split the data by site to simulate the
+more realistic setting where pages in the test set do
+not necessarily come from a known site. Each fold
+consisted of one site from each size category; thus,
+36 of the 40 sites in S40 were used for training and
+the remainder for testing. Over ten folds, the aver-
+age performance was: accuracy .795, precision .759,
+recall .658, and f-measure .705.
+Thus our methods in Section 3 come reason-
+ably close to the ?upper bound? given by SVMs
+and human-labeled data. In fact, while the su-
+pervised SVMs statistically significantly outperform
+nbu, they are statistically indistinguishable from
+hyb1/3 via paired t-test over site-level accuracies.
+6 Conclusions
+In this paper we proposed an automatic method to
+perform efficient and large-scale detection of re-
+views. Our method is based on two principles:
+Building a classifier from a large number of noisy
+labeled examples and using the site structure to im-
+prove the performance of this classifier. Extensive
+experiments suggest that our method is competitive
+against supervised learning methods that depend on
+expensive human labels. There are several interest-
+ing avenues for future research, including improv-
+ing the current method for exploiting the site struc-
+ture. On a separate note, previous research has ex-
+plicitly studied sentiment analysis as an application
+of transfer learning (Blitzer et al, 2007). Given the
+diverse range of topics present in our dataset, ad-
+dressing topic-dependency is also an interesting fu-
+ture research direction.
+501
+References
+Dana Angluin and Philip D. Laird. 1988. Learning from
+noisy examples. Machine Learning, 2(4):343?370.
+John Blitzer, Mark Dredze, and Fernando Pereira. 2007.
+Biographies, Bollywood, boom-boxes and blenders:
+Domain adaptation for sentiment classification. In
+Proceedings of 45th ACL.
+Avrim Blum and Tom Mitchell. 1998. Combining la-
+beled and unlabeled data with co-training. In Proceed-
+ings of 11th COLT, pages 92?100.
+comScore. 2007. Online consumer-generated re-
+views have significant impact on offline pur-
+chase behavior. Press Release, November.
+http://www.comscore.com/press/
+release.asp?press=1928.
+Kushal Dave, Steve Lawrence, and David M. Pennock.
+2003. Mining the peanut gallery: Opinion extraction
+and semantic classification of product reviews. In Pro-
+ceedings of 12th WWW, pages 519?528.
+Aidan Finn and Nicholas Kushmerick. 2006. Learn-
+ing to classify documents according to genre. JASIST,
+7(5):1506?1518.
+John A. Horrigan. 2008. Online shopping. Pew Internet
+& American Life Project Report.
+Minqing Hu and Bing Liu. 2004. Mining opinion fea-
+tures in customer reviews. In Proceedings of 19th
+AAAI, pages 755?760.
+Gao Kening, Yang Leiming, Zhang Bin, Chai Qiaozi, and
+Ma Anxiang. 2005. Automatic classification of web
+information based on site structure. In Cyberworlds,
+pages 552?558.
+Vincent Ng, Sajib Dasgupta, and S. M. Niaz Arifin. 2006.
+Examining the role of linguistic knowledge sources in
+the automatic identification and classification of re-
+views. In Proceedings of 21st COLING/44th ACL
+Poster, pages 611?618.
+Xiaochuan Ni, Gui-Rong Xue, Xiao Ling, Yong Yu, and
+Qiang Yang. 2007. Exploring in the weblog space
+by detecting informative and affective articles. In Pro-
+ceedings of 16th WWW, pages 281?290.
+Bo Pang and Lillian Lee. 2008a. Opinion mining and
+sentiment analysis. Foundations and Trends in Infor-
+mation Retrieval, 2(1-2):1?135.
+Bo Pang and Lillian Lee. 2008b. Using very simple
+statistics for review search: An exploration. In Pro-
+ceedings of 22nd COLING. Poster.
+Bo Pang, Lillian Lee, and Shivakumar Vaithyanathan.
+2002. Thumbs up? Sentiment classification using ma-
+chine learning techniques. In Proceedings of EMNLP,
+pages 79?86.
+Ana-Maria Popescu and Oren Etzioni. 2005. Extracting
+product features and opinions from reviews. In Pro-
+ceedings of HLT/EMNLP, pages 339?346.
+Ellen Riloff and Janyce Wiebe. 2003. Learning extrac-
+tion patterns for subjective expressions. In Proceed-
+ings of EMNLP, pages 105?112.
+Rion Snow, Brendan O?Connor, Daniel Jurafsky, and
+Andrew Y. Ng. 2008. Cheap and fast - but is it
+good? Evaluating non-expert annotations for natural
+language tasks. In Proceedings of EMNLP.
+Adam Stepinski and Vibhu Mittal. 2007. A fact/opinion
+classifier for news articles. In Proceedings of 30th SI-
+GIR, pages 807?808.
+Peter Turney. 2002. Thumbs up or thumbs down? Se-
+mantic orientation applied to unsupervised classifica-
+tion of reviews. In Proceedings of 40th ACL, pages
+417?424.
+Janyce M. Wiebe and Ellen Riloff. 2005. Creating sub-
+jective and objective sentence classifiers from unanno-
+tated texts. In Proceedings of CICLing, pages 486?
+497.
+Janyce M. Wiebe, Theresa Wilson, Rebecca Bruce,
+Matthew Bell, and Melanie Martin. 2004. Learn-
+ing subjective language. Computational Linguistics,
+30(3):277?308.
+Yirong Yang, Yi Xia, Yun Chi, and Richard R. Muntz.
+2003. Learning naive Bayes classifier from noisy data.
+Technical Report 56, UCLA.
+Hong Yu and Vasileios Hatzivassiloglou. 2003. Towards
+answering opinion questions: Separating facts from
+opinions and identifying the polarity of opinion sen-
+tences. In Proceedings of EMNLP, pages 129?136.
+502
+Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics:shortpapers, pages 135?140,
+Portland, Oregon, June 19-24, 2011. c?2011 Association for Computational Linguistics
+Search in the Lost Sense of ?Query?: Question Formulation in Web Search
+Queries and its Temporal Changes
+Bo Pang Ravi Kumar
+Yahoo! Research
+701 First Ave
+Sunnyvale, CA 94089
+{bopang,ravikumar}@yahoo-inc.com
+Abstract
+Web search is an information-seeking activ-
+ity. Often times, this amounts to a user seek-
+ing answers to a question. However, queries,
+which encode user?s information need, are
+typically not expressed as full-length natural
+language sentences ? in particular, as ques-
+tions. Rather, they consist of one or more text
+fragments. As humans become more search-
+engine-savvy, do natural-language questions
+still have a role to play in web search?
+Through a systematic, large-scale study, we
+find to our surprise that as time goes by, web
+users are more likely to use questions to ex-
+press their search intent.
+1 Introduction
+A web search query is the text users enter into the
+search box of a search engine to describe their infor-
+mation need. By dictionary definition, a ?query? is
+a question. Indeed, a natural way to seek informa-
+tion is to pose questions in a natural-language form
+(?how many calories in a banana?). Present day web
+search queries, however, have largely lost the orig-
+inal semantics of the word query: they tend to be
+fragmented phrases (?banana calories?) instead of
+questions. This could be a result of users learning
+to express their information need in search-engine-
+friendly forms: shorter queries fetch more results
+and content words determine relevance.
+We ask a simple question: as users become
+more familiar with the nuances of web search,
+are question-queries ? natural-language questions
+posed as queries ? gradually disappearing from the
+search vernacular? If true, then the need for search
+engines to understand question-queries is moot.
+Anecdotal evidence from Google trends suggests
+it could be the opposite. For specific phrases, one
+can observe how the fraction of query traffic con-
+taining the phrase1 changes over time. For instance,
+as shown next, the fraction of query traffic contain-
+ing ?how to? has in fact been going up since 2007.
+However, such anecdotal evidence cannot fully
+support claims about general behavior in query for-
+mulation. In particular, this upward trend could
+be due to changes in the kind of information users
+are now seeking from the Web, e.g., as a result of
+growing popularity of Q&A sites or as people en-
+trust search engines with more complex information
+needs; supporting the latter, in a very recent study,
+Aula et al (2010) noted that users tend to formu-
+late more question-queries when faced with difficult
+search tasks. We, on the other hand, are interested in
+a more subtle trend: for content that could easily be
+reached via non-question-queries, are people more
+likely to use question-queries over time?
+We perform a systematic study of question-
+queries in web search. We find that question-queries
+account for ? 2% of all the query traffic and ? 6%
+of all unique queries. Even when averaged over in-
+tents, the fraction of question-queries to reach the
+1www.google.com/intl/en/trends/about.html
+135
+same content is growing over the course of one year.
+The growth is measured but statistically significant.
+The study of long-term temporal behavior of
+question-queries, we believe, is novel. Previous
+work has explored building question-answering sys-
+tems using web knowledge and Wikipedia (see Du-
+mais et al (2002) and the references therein). Our
+findings call for a greater synergy between QA and
+IR in the web search context and an improved un-
+derstanding of question-queries by search engines.
+2 Related work
+There has been some work on studying and exploit-
+ing linguistic structure in web queries. Spink and
+Ozmultu (2002) investigate the difference in user
+behavior between a search engine that encouraged
+questions and one that did not; they did not explore
+intent aspects. Barr et al (2008) analyze the occur-
+rence of POS tags in queries.
+Query log analysis is an active research area.
+While we also analyze queries, our goal is very dif-
+ferent: we are interested in certain linguistic aspects
+of queries, which are usually secondary in log anal-
+ysis. For a comprehensive survey on this topic, see
+the monograph of Silvestri (2010). There has been
+some work on short-term (hourly) temporal analysis
+of query logs, e.g., Beitzel et al (2004) and on long
+queries, e.g., Bendersky and Croft (2009).
+Using co-clicking to infer query-query relation-
+ships was proposed by Baeza-Yates and Tiberi
+(2007). Their work, however, is more about the
+query-click graph and its properties. There has also
+been a lot of work on query clustering by common
+intent using this graph, e.g., Yi and Maghoul (2009)
+and Wen et al (2002). We focus not on clustering
+but on understanding the expression of intent.
+3 Method
+We address the main thesis of the work by retrospec-
+tively studying queries issued to a search engine over
+the course of 12 consecutive months.
+Q-queries. First we define a notion of question
+queries based on the standard definition of questions
+in English. A query is a Q-query if it contains at
+least two tokens and satisfies one of the following
+criteria.
+(i) Starts with one of the interrogative words, or
+Q-words (?how, what, which, why, where, when,
+who, whose?).
+(ii) Starts with ?do, does, did, can, could, has,
+have, is, was, are, were, should?. While this ensures
+a legitimate question in well-formed English texts,
+in queries, we may get ?do not call list?. Thus, we
+insist that the second token cannot be ?not?.
+(iii) Ends with a question mark (???).
+Otherwise it is a Q-query. The list of key-
+words (Q-words) is chosen using an English lexi-
+con. Words such as ?shall? and ?will?, even though
+interrogative in nature, introduce more ambiguity
+(e.g., ?shall we dance lyrics? or ?will smith?) and
+do not account for much traffic in general; discard-
+ing such words will not impact the findings.
+Co-click data on ?stable? URLs. We work with the
+set of queries collected between Dec 2009 and Nov
+2010 from the Yahoo! querylog. We gradually refine
+this raw data to study changes in query formulation
+over comparable and consistent search intents.
+1. Sall consists of all incoming search queries af-
+ter preprocessing: browser cookies2 that correspond
+to possible robots/automated queries and queries
+with non-alphanumeric characters are discarded; all
+punctuations, with the exception of ???, are re-
+moved; all remaining tokens are lower-cased, with
+the original word ordering preserved.
+2. Call consists of queries formulated for similar
+search intent, where intent was approximated by the
+result URL clicked in response to the query. That is,
+we assume queries that lead to a click on the same
+URL are issued with similar information need. To
+reduce the noise introduced by this approximation
+when users explore beyond their original intent, we
+focus on (query, URL) pairs where the URL u was
+clicked from top-10 search results3 for query q.
+3. Uc50Q is our final dataset with queries grouped
+over ?stable? intents. First, for each month m, we
+collect the multiset Ci of all (q, ui) pairs for each
+clicked URL ui, where the size of Ci is the to-
+tal number of clicks received by ui during m. Let
+2We approximate user identity via the browser cookie
+(which are anonymized for privacy). While browser cookies
+can be unreliable (e.g, they can be cleared), in practice, they are
+the best proxy for unique users.
+3In any case, clicks beyond top-10 results (i.e., the first result
+page) only account for a small fraction of click traffic.
+136
+U (m) be all URLs for month m. We restrict to
+U =
+?
+m U
+(m). This set represents intents and con-
+tents that persist over the 12-month period, allowing
+us to examine query formulation changes over time.
+We then extract a subset UQ of U consisting of
+the URLs associated with at least one Q-query in
+one of the months. Interestingly, we observe that
+|UQ|
+|U | = 0.55: roughly half of the ?stable? URLs are
+associated with at least one Q-query!
+Finally, we restrict to URLs with at least 50
+clicks in each month to obtain reliable statistics later
+on. U c50Q consists of a random sample of such
+URLs, with 423,672 unique URLs and 231M unique
+queries (of which 21M (9%) are Q-queries).
+Q-level. For each search intent (i.e., a click on u), to
+capture the degree to which people express that in-
+tent via Q-queries, we define its Q-level as the frac-
+tion of clicks on u from Q-queries. Since we are
+interested in general query formulation behavior, we
+do not want our analysis to be dominated by trends
+in popular intents. Thus, we take macro-average
+of Q-level over different URLs in a given month,
+and our main aim is to explore long-term temporal
+changes in this value.
+4 Results
+4.1 Characteristics of Q-queries
+Are Q-queries really questions? We examine 100
+random queries from the least frequent Q-queries
+in our dataset. Only two are false-positives: ?who
+wants to be a millionaire game? (TV show-based
+game) and ?can tho nail florida? (a local business).
+The rest are indeed question-like: while they are not
+necessarily grammatical, the desire to express the in-
+tent by posing it as a question is unmistakable.
+Still, are they mostly ostensible questions like
+?how find network key?, or well-formed full-length
+questions like ?where can i watch one tree hill sea-
+son 7 episode 2?? (Both are present in our dataset.)
+Given the lack of syntactic parsers that are ap-
+propriate for search queries, we address this ques-
+tion using a more robust measure: the probability
+mass of function words. In contrast to content words
+(open class words), function words (closed class
+words) have little lexical meaning ? they mainly
+provide grammatical information and are defined by
+their syntactic behavior. As a result, most function
+words are treated as stopwords in IR systems, and
+web users often exclude them from queries. A high
+fraction of function words is a signal of queries be-
+having more like normal texts in terms of the amount
+of tokens ?spent? to be structurally complete.
+We use the list of function words from Sequence
+Publishing4, and augment the auxiliary verbs with
+a list from Wikipedia5. Since most of the Q-words
+used to identifyQ-queries are function words them-
+selves, a higher fraction of function words in Q-
+queries is immediate. We remove the word used for
+Q-query identification from the input string to avoid
+trivial observations. That is, ?how find network key?
+becomes ?find network key?, with zero contribution
+to the probability mass of function words.
+The following table summarizes the probabil-
+ity mass of function words in all unique Q-
+queries and Q-queries in U c50Q , compared to two
+natural-language corpora: a sample of 6.6M ques-
+tions posted by web users on a community-based
+question-answering site, Yahoo! Answers (QY!A),
+and the Brown corpus6 (Br). All datasets went
+through the same query preprocessing steps, as well
+as the Q-word-removal step described above.
+Type Q-q Q-q QY!A Br
+Auxiliary verbs 0.4 8.5 8.1 5.8
+Conjunctions 1.2 1.4 3.4 4.5
+Determiners 2.0 8.7 8.2 10.1
+Prepositions 6.5 13.7 10.1 13.3
+Pronouns 0.7 3.4 9.1 5.9
+Quantifiers 0.1 0.7 0.4 0.6
+Ambiguous 2.1 2.7 4.6 7.0
+Total 12.9 39.0 43.9 47.1
+Clearly, Q-queries are more similar to the two
+natural-language corpora in terms of this shallow
+measure of structural completeness. Notably, they
+contain a much higher fraction of function words
+compared to Q-queries, even though they express
+similar search intent.
+This trend is consistent when we break down by
+type, except that Q-queries contain fewer conjunc-
+tions and pronouns compared to QY!A and Br. This
+happens since Q-queries do not tend to have com-
+plex sentence or discourse structures. Our results
+4www.sequencepublishing.com/academic.html.
+5en.wikipedia.org/wiki/List_of_English_
+auxiliary_verbs
+6khnt.aksis.uib.no/icame/manuals/brown/
+137
+suggest that if users express their information need
+in a question form, they are more likely to express it
+in a structurally complete fashion.
+Lastly, we examine the length of Q-queries and
+Q-queries in each multiset Ci. If Q-queries con-
+tain other content words in place of Q-words to ex-
+press similar intent (e.g., ?steps to publish a book?
+vs. ?how to publish a book?), we should observe a
+similar length distribution. Instead, we find that on
+average Q-queries tend to be longer than Q-queries
+by 3.58 tokens. Even if we remove theQ-word and a
+companion function word, Q-queries would still be
+one to two words longer. In web search, where the
+overall query traffic averages at shorter than 3 to-
+kens, this is a significant difference in length ? ap-
+parently people are more generous with words when
+they write in the question mode.
+4.2 Trend of Q-level
+We have just confirmed that Q-queries resemble
+natural-language questions to a certain degree. Next
+we turn to our central question: how does Q-level
+(macro-averaged over different intents) change over
+time? To this end, we compute a linear regression
+of Q-level across 12 months, conduct a hypothesis
+test (with the null hypothesis being the slope of the
+regression equal to zero), and report the P -value for
+two-tailed t-test.
+As shown in Figure 1(a), there is a mid-range cor-
+relation between Q-level and time in U c50Q (corre-
+lation coefficient r = 0.78). While the trend is
+measured with slope = 0.000678 (it would be sur-
+prising if the slope for the average behavior of this
+many users were any steeper!), it is statistically sig-
+nificant that Q-level is growing over time: the null
+hypothesis is rejected with P < 0.001. That is, over
+a large collection of intents and contents, users are
+becoming more likely to formulate queries in ques-
+tion forms, even though such content could easily be
+reached via non-question-queries.
+One may question if this is an artifact of using
+?stable? clicked URLs. Could it be that search en-
+gines learn from user behavior data and gradually
+present such URLs in lower ranks (i.e., shown ear-
+lier in the page; e.g., first result returned), which in-
+creases the chance of them being seen and clicked?
+This is indeed true, but it holds for both Q-queries
+andQ-queries. More specifically, if we consider the
+ 0.039
+ 0.041
+ 0.045
+ 2  4  6  8  10  12
+Q-le
+vel
+month
+slope = 0.000678
+(a) Q-level
+ 0.013
+ 0.015
+ 0.017
+ 0.019
+ 0.021
+ 1  10  100  1000
+ave
+rage
+ Q-ra
+te
+user activity level in a month
+(b) Q-rate
+Figure 1: Q-level for different months in U c50Q ; Q-rate
+for users with different activity levels in Sall.
+rank of the clicked URL as a measure of search re-
+sult quality (the lower the better), we observe im-
+provements for both Q-queries and Q-queries over
+time (and the gap is shortening). However, the av-
+erage click position for Q-queries is consistently
+higher in rank throughout the time. Thus, it is
+not because the search engine is answering the Q-
+queries better than Q-queries that users start to use
+Q-queries more. While we might still postulate that
+the decreasing gap in search quality (as measured
+by click positions) might have contributed to the in-
+crease in Q-level, if we examine the co-click data
+without the stability constraint, we observe the fol-
+lowing: an increasing click traffic from Q-queries
+and an increasing gap in click positions between Q-
+queries and Q-queries.
+In addition, we also observe an upward trend for
+the overall incoming query traffic accounted for by
+Q-queries in Sall (slope = 0.000142, r = 0.618,
+P < 0.05). The upward trend in the fraction of
+unique queries coming fromQ-queries is even more
+pronounced (slope = 0.000626, r = 0.888, P <
+0.001). While this trend could be partly due to dif-
+138
+ferences in search intent, it nonetheless reinforces
+the general message of increases inQ-queries usage.
+This is also consistent with the anecdotal evidence
+from Google trends (Section 1) suggesting that the
+trends we observe are not search-engine specific and
+have been in existence for over a year.7
+4.3 Observations in the overall query traffic
+Note that in U c50Q , Q-level averages ? 4%; recall
+also for a rather significant portion of the web con-
+tent, at least one user chose to formulate his/her in-
+tent in Q-queries ( |UQ||U | = 0.55). Both reflect the
+prevalence of Q-queries. Is that specific to well-
+constrained datasets like U c50Q ? We examine the
+overall incoming queries represented in Sall. On av-
+erage, Q-queries account for 1.8% of query traffic.
+5.7% of all unique queries are Q-queries, indicating
+greater diversity in Q-queries.
+What types of questions do users ask? The table
+below shows the top Q-words in the query traffic;
+?how? and ?what? lead the chart.
+word % word % word %
+how 0.7444 what 0.4360 where 0.0928
+? 0.0715 who 0.0684 is 0.0676
+can 0.0658 why 0.0648 when 0.0549
+do 0.0295 does 0.0294 are 0.0193
+which 0.0172 did 0.0075 should 0.0072
+How does the query traffic associated with differ-
+ent Q-words change over time? We observe that all
+slopes are positive (though not all are statistically
+significant), indicating that the increase inQ-queries
+happens for different types of questions.
+Is it only a small number of amateur users who
+persist withQ-queries? We defineQ-rate for a given
+user (approximated by browser cookie b) as the frac-
+tion of query traffic accounted for byQ-queries. We
+plot this against b?s activity level, measured by the
+number of queries issued by b in a month. We binned
+users by their activity levels on the log2-scale and
+compute the average Q-rate for that bin. As shown
+in Figure 1(b), relatively light users who issue up
+to 30 queries per month do not differ much in Q-
+rate on an aggregate level. Interestingly, mid-range
+users (around 300 queries per month) exhibit higher
+7An explanation of why the upward trend starts at the end
+of 2007 is beyond the scope of this work; we postulate that this
+coincides with the rise in popularity of community-based Q&A
+sites.
+Q-rate than the light users. And for the most heavy
+users, the Q-rate tapers down.
+Furthermore, taking the data from the last month
+in Sall, we observe that for users who issued at least
+258 queries, more than half of them have issued at
+least one Q-query in that month ? using Q-queries
+is rather prevalent among non-amateur users.
+5 Concluding remarks
+In this paper we study the prevalence and charac-
+teristics of natural-language questions in web search
+queries. To the best of our knowledge, this is the
+first study of such kind. Our study shows that ques-
+tions in web search queries are both prevalent and
+temporally increasing. Our central observation is
+that this trend holds in terms of how people formu-
+late queries for the same search intent (in the care-
+fully constructed dataset U c50Q ). The message is re-
+inforced as we observe a similar trend in the per-
+centage of overall incoming query traffic being Q-
+queries; in addition, anectodal evidence can be ob-
+tained from Google trends.
+We recall the following two findings from our
+study. (a) Given the construction of U c50Q , the up-
+ward trend we observe is not a direct result of users
+looking for different types of information, although
+it is possible that the rise of Q&A sites and users
+entrusting search engines with more complex infor-
+mation needs could have indirect influences. (b) The
+results in Section 4.2 suggest that in U c50Q ,Q-queries
+receive inferior results than Q-queries (i.e., higher
+average rank for clicked results for Q-queries for
+similar search intents), thus the rise in the use of
+Q-queries is not a direct result of users learning the
+most effective query formulation for the search en-
+gine. These suggest an interesting research question:
+what is causing the rise in question-query usage?
+Irrespective of the cause, given that there is an
+increased use of Q-queries in spite of the seem-
+ingly inferior search results, there is a strong need
+for the search engines to improve their handling of
+question-queries.
+Acknowledgments
+We thank Evgeniy Gabrilovich, Lillian Lee, D.
+Sivakumar, and the anonymous reviewers for many
+useful suggestions.
+139
+References
+Anne Aula, Rehan M. Khan, and Zhiwei Guan. 2010.
+How does search behavior change as search becomes
+more difficult? In Proc. 28th CHI, pages 35?44.
+Ricardo Baeza-Yates and Alessandro Tiberi. 2007. Ex-
+tracting semantic relations from query logs. In Proc.
+13th KDD, pages 76?85.
+Cory Barr, Rosie Jones, and Moira Regelson. 2008. The
+linguistic structure of English web-search queries. In
+Proc. EMNLP, pages 1021?1030.
+Steven M. Beitzel, Eric C. Jensen, Abdur Chowdhury,
+David Grossman, and Ophir Frieder. 2004. Hourly
+analysis of a very large topically categorized web
+query log. In Proc. 27th SIGIR, pages 321?328.
+M. Bendersky and W. B. Croft. 2009. Analysis of long
+queries in a large scale search log. In Proc. WSDM
+Workshop on Web Search Click Data.
+Susan Dumais, Michele Banko, Eric Brill, Jimmy Lin,
+and Andrew Ng. 2002. Web question answering: Is
+more always better? In Proc. 25th SIGIR, pages 291?
+298.
+Mark Kro?ll and Markus Strohmaier. 2009. Analyzing
+human intentions in natural language text. In Proc.
+5th K-CAP, pages 197?198.
+Cody Kwok, Oren Etzioni, and Daniel S. Weld. 2001.
+Scaling question answering to the web. ACM TOIS,
+19:242?262.
+Josiane Mothe and Ludovic Tanguy. 2005. Linguistic
+features to predict query difficulty. In Proc. SIGIR
+Workshop on Predicting Query Difficulty - Methods
+and Applications.
+Marius Pasca. 2007. Weakly-supervised discovery of
+named entities using web search queries. In Proc. 16th
+CIKM, pages 683?690.
+Fabrizio Silvestri. 2010. Mining Query Logs: Turning
+Search Usage Data into Knowledge. Foundations and
+Trends in Information Retrieval, 4(1):1?174.
+Amanda Spink and H. Cenk Ozmultu. 2002. Char-
+acteristics of question format web queries: An ex-
+ploratory study. Information Processing and Manage-
+ment, 38(4):453?471.
+Markus Strohmaier and Mark Kro?ll. 2009. Studying
+databases of intentions: do search query logs capture
+knowledge about common human goals? In Proc. 5th
+K-CAP, pages 89?96.
+Ji-Rong Wen, Jian-Yun Nie, and Hong-Jiang Zhang.
+2002. Query clustering using user logs. ACM TOIS,
+20:59?81.
+Jeonghee Yi and Farzin Maghoul. 2009. Query cluster-
+ing using click-through graph. In Proc. 18th WWW,
+pages 1055?1056.
+140
+Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics, pages 1014?1022,
+Sofia, Bulgaria, August 4-9 2013. c?2013 Association for Computational Linguistics
+Summarization Through Submodularity and Dispersion
+Anirban Dasgupta
+Yahoo! Labs
+Sunnyvale, CA 95054
+anirban@yahoo-inc.com
+Ravi Kumar
+Google
+Mountain View, CA 94043
+tintin@google.com
+Sujith Ravi
+Google
+Mountain View, CA 94043
+sravi@gooogle.com
+Abstract
+We propose a new optimization frame-
+work for summarization by generalizing
+the submodular framework of (Lin and
+Bilmes, 2011). In our framework the sum-
+marization desideratum is expressed as a
+sum of a submodular function and a non-
+submodular function, which we call dis-
+persion; the latter uses inter-sentence dis-
+similarities in different ways in order to
+ensure non-redundancy of the summary.
+We consider three natural dispersion func-
+tions and show that a greedy algorithm
+can obtain an approximately optimal sum-
+mary in all three cases. We conduct ex-
+periments on two corpora?DUC 2004
+and user comments on news articles?and
+show that the performance of our algo-
+rithm outperforms those that rely only on
+submodularity.
+1 Introduction
+Summarization is a classic text processing prob-
+lem. Broadly speaking, given one or more doc-
+uments, the goal is to obtain a concise piece
+of text that contains the most salient points in
+the given document(s). Thanks to the om-
+nipresent information overload facing all of us,
+the importance of summarization is gaining; semi-
+automatically summarized content is increasingly
+becoming user-facing: many newspapers equip
+editors with automated tools to aid them in choos-
+ing a subset of user comments to show. Summa-
+rization has been studied for the past in various
+settings?a large single document, multiple docu-
+ments on the same topic, and user-generated con-
+tent.
+Each domain throws up its own set of idiosyn-
+crasies and challenges for the summarization task.
+On one hand, in the multi-document case (say, dif-
+ferent news reports on the same event), the text is
+often very long and detailed. The precision/recall
+requirements are higher in this domain and a se-
+mantic representation of the text might be needed
+to avoid redundancy. On the other hand, in the
+case of user-generated content (say, comments on
+a news article), even though the text is short, one
+is faced with a different set of problems: volume
+(popular articles generate more than 10,000 com-
+ments), noise (most comments are vacuous, lin-
+guistically deficient, and tangential to the article),
+and redundancy (similar views are expressed by
+multiple commenters). In both cases, there is a
+delicate balance between choosing the salient, rel-
+evant, popular, and diverse points (e.g., sentences)
+versus minimizing syntactic and semantic redun-
+dancy.
+While there have been many approaches to au-
+tomatic summarization (see Section 2), our work
+is directly inspired by the recent elegant frame-
+work of (Lin and Bilmes, 2011). They employed
+the powerful theory of submodular functions for
+summarization: submodularity embodies the ?di-
+minishing returns? property and hence is a natural
+vocabulary to express the summarization desider-
+ata. In this framework, each of the constraints (rel-
+evance, redundancy, etc.) is captured as a submod-
+ular function and the objective is to maximize their
+sum. A simple greedy algorithm is guaranteed to
+produce an approximately optimal summary. They
+used this framework to obtain the best results on
+the DUC 2004 corpus.
+Even though the submodularity framework is
+quite general, it has limitations in its expressiv-
+ity. In particular, it cannot capture redundancy
+constraints that depend on pairwise dissimilarities
+between sentences. For example, a natural con-
+straint on the summary is that the sum or the mini-
+mum of pairwise dissimilarities between sentences
+chosen in the summary should be maximized; this,
+unfortunately, is not a submodular function. We
+call functions that depend on inter-sentence pair-
+1014
+wise dissimilarities in the summary as dispersion
+functions. Our focus in this work is on signif-
+icantly furthering the submodularity-based sum-
+marization framework to incorporate such disper-
+sion functions.
+We propose a very general graph-based sum-
+marization framework that combines a submod-
+ular function with a non-submodular dispersion
+function. We consider three natural dispersion
+functions on the sentences in a summary: sum
+of all-pair sentence dissimilarities, the weight of
+the minimum spanning tree on the sentences, and
+the minimum of all-pair sentence dissimilarities.
+These three functions represent three different
+ways of using the sentence dissimilarities. We
+then show that a greedy algorithm can obtain ap-
+proximately optimal summary in each of the three
+cases; the proof exploits some nice combinatorial
+properties satisfied by the three dispersion func-
+tions. We then conduct experiments on two cor-
+pora: the DUC 2004 corpus and a corpus of user
+comments on news articles. On DUC 2004, we
+obtain performance that matches (Lin and Bilmes,
+2011), without any serious parameter tuning; note
+that their framework does not have the dispersion
+function. On the comment corpus, we outperform
+their method, demonstrating that value of disper-
+sion functions. As part of our methodology, we
+also use a new structured representation for sum-
+maries.
+2 Related Work
+Automatic summarization is a well-studied prob-
+lem in the literature. Several methods have been
+proposed for single- and multi-document summa-
+rization (Carbonell and Goldstein, 1998; Con-
+roy and O?Leary, 2001; Takamura and Okumura,
+2009; Shen and Li, 2010).
+Related concepts have also been used in several
+other scenarios such as query-focused summariza-
+tion in information retrieval (Daume? and Marcu,
+2006), microblog summarization (Sharifi et al,
+2010), event summarization (Filatova, 2004), and
+others (Riedhammer et al, 2010; Qazvinian et al,
+2010; Yatani et al, 2011).
+Graph-based methods have been used for sum-
+marization (Ganesan et al, 2010), but in a dif-
+ferent context?using paths in graphs to produce
+very short abstractive summaries. For a detailed
+survey on existing automatic summarization tech-
+niques and other related topics, see (Kim et al,
+2011; Nenkova and McKeown, 2012).
+3 Framework
+In this section we present the summarization
+framework. We start by describing a generic ob-
+jective function that can be widely applied to sev-
+eral summarization scenarios. This objective func-
+tion is the sum of a monotone submodular cov-
+erage function and a non-submodular dispersion
+function. We then describe a simple greedy algo-
+rithm for optimizing this objective function with
+provable approximation guarantees for three natu-
+ral dispersion functions.
+3.1 Preliminaries
+Let C be a collection of texts. Depending on the
+summarization application, C can refer to the set
+of documents (e.g., newswire) related to a partic-
+ular topic as in standard summarization; in other
+scenarios (e.g., user-generated content), it is a col-
+lection of comments associated with a news article
+or a blog post, etc. For each document c ? C,
+let S(c) denote the set of sentences in c. Let
+U = ?c?CS(c) be the universe of all sentences;
+without loss of generality, we assume each sen-
+tence is unique to a document. For a sentence
+u ? U , let C(u) be the document corresponding
+to u.
+Each u ? U is associated with a weight w(u),
+which might indicate, for instance, how similar u
+is to the main article (and/or the query, in query-
+dependent settings). Each pair u, v ? U is as-
+sociated with a similarity s(u, v) ? [0, 1]. This
+similarity can then be used to define an inter-
+sentence distance d(?, ?) as follows: let d?(u, v) =
+1 ? s(u, v) and define d(u, v) to be the shortest
+path distance from u to v in the graph where the
+weight of each edge (u, v) is d?(u, v). Note that
+d(?, ?) is a metric unlike d?(?, ?), which may not be
+a metric. (In addition to being intuitive, d(?, ?) be-
+ing a metric helps us obtain guarantees on the al-
+gorithm?s output.) For a set S, and a point u 6? S,
+define d(u, S) = minv?S d(u, v).
+Let k > 0 be fixed. A summary of U is a subset
+S ? U, |S| = k. Our aim is to find a summary that
+maximizes
+f(S) = g(S) + ?h(S), (1)
+where g(S) is the coverage function that is non-
+negative, monotone, and submodular1, h(S) is a
+1A function f : U ? < is submodular if for every
+1015
+dispersion function, and ? ? 0 is a parameter that
+can be used to scale the range of h(?) to be com-
+parable to that of g(?).
+For two sets S and T , let P be the set of un-
+ordered pairs {u, v} where u ? S and v ? T . Our
+focus is on the following dispersion functions: the
+sum measure hs(S, T ) = ?{u,v}?P d(u, v), the
+spanning tree measure ht(S, T ) given by the cost
+of the minimum spanning tree of the set S?T , and
+the min measure hm(S, T ) = min{u,v}?P d(u, v).
+Note that these functions span from consider-
+ing the entire set of distances in S to consider-
+ing only the minimum distance in S; also it is
+easy to construct examples to show that none of
+these functions is submodular. Define h?(u, S) =
+h?({u}, S) and h?(S) = h?(S, S).
+Let O be the optimal solution of the function
+f . A summary S? is a ?-approximation if f(S?) ?
+?f(O).
+3.2 Algorithm
+Maximizing (1) is NP-hard even if ? = 0 or if
+g(?) = 0 (Chandra and Halldo?rsson, 2001). For
+the special case ? = 0, since g(?) is submodular,
+a classical greedy algorithm obtains a (1 ? 1/e)-
+approximation (Nemhauser et al, 1978). But if
+? > 0, since the dispersion function h(?) is not
+submodular, the combined objective f(?) is not
+submodular as well. Despite this, we show that
+a simple greedy algorithm achieves a provable ap-
+proximation factor for (1). This is possible due to
+some nice structural properties of the dispersion
+functions we consider.
+Algorithm 2 Greedy algorithm, parametrized by
+the dispersion function h; here, U, k, g, ? are fixed.
+S0 ? ?; i? 0
+for i = 0, . . . , k ? 1 do
+v ? argmaxu?U\Si g(Si+u)+?h(Si+u)
+Si+1 ? Si ? {v}
+end for
+3.3 Analysis
+In this section we obtain a provable approximation
+for the greedy algorithm. First, we show that a
+greedy choice is well-behaved with respect to the
+dispersion function h?(?).
+Lemma 1. Let O be any set with |O| = k. If S is
+such that |S| = ` < k, then
+(i)?u?O\S hs(u, S) ? |O \ S| `hs(O)k(k?1) ;
+A,B ? U , we have f(A)+f(B) ? f(A?B)+f(A?B).
+(ii)?u?O\S d(u, S) ? 12ht(O)? ht(S); and(iii) there exists u ? O \ S such that hm(u, S) ?
+hm(O)/2.
+Proof. The proof for (i) follows directly from
+Lemma 1 in (Borodin et al, 2012).
+To prove (ii) let T be the tree obtained by adding
+all points of O \S directly to their respective clos-
+est points on the minimum spanning tree of S. T
+is a spanning tree, and hence a Steiner tree, for the
+points in set S ? O. Hence, cost(T ) = ht(S) +?
+u?O\S d(u, S). Let smt(S) denote the cost of
+a minimum Steiner tree of S. Thus, cost(T ) ?
+smt(O ? S). Since a Steiner tree of O ? S is also
+a Steiner tree of O, smt(O ? S) ? smt(O). Since
+this is a metric space, smt(O) ? 12ht(O) (see, forexample, (Cieslik, 2001)). Thus,
+ht(S) +
+?
+u?O\S
+d(u, S) ? 12ht(O)
+?
+?
+u?O\S
+d(u, S) ? 12ht(O)? ht(S).
+To prove (iii), let O = {u1, . . . , uk}. By def-
+inition, for every i 6= j, d(ui, uj) ? hm(O).
+Consider the (open) ball Bi of radius hm(O)/2
+around each element ui. By construction for each
+i, Bi ? O = {ui} and for each pair i 6= j,
+Bi ?Bj = ?. Since |S| < k, and there are k balls
+Bi, there exists k?` ballsBi such that S?Bi = ?,
+proving (iii).
+We next show that the tree created by the greedy
+algorithm for h = ht is not far from the optimum.
+Lemma 2. Let u1, . . . , uk be a sequence of points
+and let Si = {uj , j ? i}. Then, ht(Sk) ?
+1/log k
+?
+2?j?k d(uj , Sj?1).
+Proof. The proof follows by noting that we get a
+spanning tree by connecting each ui to its closest
+point in Si?1. The cost of this spanning tree is?
+2?j?k d(uj , Sj?1) and this tree is also the re-
+sult of the greedy algorithm run in an online fash-
+ion on the input sequence {u1, . . . , uk}. Using the
+result of (Imase and Waxman, 1991), the compet-
+itive ratio of this algorithm is log k, and hence the
+proof.
+We now state and prove the main result about
+the quality of approximation of the greedy algo-
+rithm.
+1016
+Theorem 3. For k > 1, there is a polynomial-time
+algorithm that obtains a ?-approximation to f(S),
+where ? = 1/2 for h = hs, ? = 1/4 for h = hm,
+and ? = 1/3 log k for h = ht.
+Proof. For hs and ht, we run Algorithm 1 using
+a new dispersion function h?, which is a slightly
+modified version of h. In particular, for h = hs,
+we use h?(S) = 2hs(S). For h = ht, we
+abuse notation and define h? to be a function over
+an ordered set S = {u1, . . . , uk} as follows:
+h?(S) =
+?
+j?|S| d(uj , Sj?1), where Sj?1 =
+{u1, . . . , uj?1}. Let f ?(S) = g(S) + ?h?(S).
+Consider the ith iteration of the algorithm. By
+the submodularity of g(?),
+?
+u?O\Si
+g(Si ? {u})? g(Si) (2)
+? g(O ? Si)? g(Si) ? g(O)? g(Sk),
+where we use monotonicity of g(?) to infer g(O ?
+Si) ? g(O) and g(Si) ? g(Sk).
+For h = hs, the proof follows by Lemma 1(i)
+and by Theorem 1 in (Borodin et al, 2012).
+For ht, using the above argument of submodu-
+larity and monotonicity of g, and the result from
+Lemma 1(ii), we have
+?
+u?O\Si
+g(Si ? u)? g(Si) + ?d(u, Si)
+? g(O)? g(Si) + ?(ht(O)/2? ht(Si))
+? (g(O) + ?ht(O)/2)? (g(Si) + ?ht(Si))
+? f(O)/2? (g(Si) + ?ht(Si)).
+Also, ht(Si) ? 2 smt(Si) since this is a met-
+ric space. Using the monotonicity of the Steiner
+tree cost, smt(Si) ? smt(Sk) ? ht(Sk). Hence,
+ht(Si) ? 2ht(Sk). Thus,
+?
+u?O\Si
+g(Si ? u)? g(Si) + ?d(u, Si)
+? f(O)/2? (g(Si) + ?ht(Si))
+? f(O)/2? (g(Sk) + 2?ht(Sk))
+? f(O)/2? 2f(Sk). (3)
+By the greedy choice of ui+1,
+f ?(Si ? ui+1)? f ?(Si)
+= g(Si ? ui+1)? g(Si) + ?d(ui+1, Si)
+? (f(O)/2? 2f(Sk))/|O \ Si|
+? 1k (
+f(O)/2? 2f(Sk)).
+Summing over all i ? [1, k ? 1],
+f ?(Sk) ? (k?1)/k(f(O)/2? 2f(Sk)). (4)
+Using Lemma 2 we obtain
+f(Sk) = g(Sk) + ?ht(Sk) ?
+f ?(Sk)
+log k
+? 1?
+1/k
+log k (f(O)/2? 2f(Sk)).
+By simplifying, we obtain f(Sk) ? f(O)/3 log k.
+Finally for hm, we run Algorithm 1 twice: once
+with g as given and h ? 0, and the second
+time with g ? 0 and h ? hm. Let Sg and
+Sh be the solutions in the two cases. Let Og
+and Oh be the corresponding optimal solutions.
+By the submodularity and monotonicity of g(?),
+g(Sg) ? (1 ? 1/e)g(Og) ? g(Og)/2. Similarly,
+using Lemma 1(iii), hm(Sh) ? hm(Oh)/2 since
+in any iteration i < k we can choose an ele-
+ment ui+1 such that hm(ui+1, Si) ? hm(Oh)/2.
+Let S = argmaxX?{Sg ,Sh} f(X). Using an av-eraging argument, since g and hm are both non-
+negative,
+f(X) ? (f(Sg)+f(Sh))/2 ? (g(Og)+?hm(Oh))/4.
+Since by definition g(Og) ? g(O) and hm(Oh) ?
+hm(O), we have a 1/4-approximation.
+3.4 A universal constant-factor
+approximation
+Using the above algorithm that we used for hm,
+it is possible to give a universal algorithm that
+gives a constant-factor approximation to each of
+the above objectives. By running the Algorithm 1
+once for g ? 0 and next for h ? 0 and taking
+the best of the two solutions, we can argue that the
+resulting set gives a constant factor approximation
+to f . We do not use this algorithm in our exper-
+iments, as it is oblivious of the actual dispersion
+functions used.
+4 Using the Framework
+Next, we describe how the framework described
+in Section 3 can be applied to our tasks of interest,
+i.e., summarizing documents or user-generated
+content (in our case, comments). First, we repre-
+sent the elements of interest (i.e., sentences within
+comments) in a structured manner by using depen-
+dency trees. We then use this representation to
+1017
+generate a graph and instantiate our summariza-
+tion objective function with specific components
+that capture the desiderata of a given summariza-
+tion task.
+4.1 Structured representation for sentences
+In order to instantiate the summarization graph
+(nodes and edges), we first need to model each
+sentence (in multi-document summarization) or
+comment (i.e., set of sentences) as nodes in the
+graph. Sentences have been typically modeled
+using standard ngrams (unigrams or bigrams) in
+previous summarization work. Instead, we model
+sentences using a structured representation, i.e., its
+syntax structure using dependency parse trees. We
+first use a dependency parser (de Marneffe et al,
+2006) to parse each sentence and extract the set
+of dependency relations associated with the sen-
+tence. For example, the sentence ?I adore tennis?
+is represented by the dependency relations (nsubj:
+adore, I) and (dobj: adore, tennis).
+Each sentence represents a single node u in
+the graph (unless otherwise specified) and is com-
+prised of a set of dependency relations (or ngrams)
+present in the sentence. Furthermore, the edge
+weights s(u, v) represent pairwise similarity be-
+tween sentences or comments (e.g., similarity be-
+tween views expressed in different comments).
+The edge weights are then used to define the
+inter-sentence distance metric d(u, v) for the dif-
+ferent dispersion functions. We identify simi-
+lar views/opinions by computing semantic simi-
+larity rather than using standard similarity mea-
+sures (such as cosine similarity based on ex-
+act lexical matches between different nodes in
+the graph). For each pair of nodes (u, v) in
+the graph, we compute the semantic similarity
+score (using WordNet) between every pair of
+dependency relation (rel: a, b) in u and v as:
+s(u, v) =
+?
+reli?u,relj?v
+reli=relj
+WN(ai, aj)?WN(bi, bj),
+where rel is a relation type (e.g., nsubj) and a, b
+are the two arguments present in the dependency
+relation (b does not exist for some relations).
+WN(wi, wj) is defined as the WordNet similar-
+ity score between words wi and wj .2 The edge
+weights are then normalized across all edges in the
+2There exists various semantic relatedness measures
+based on WordNet (Patwardhan and Pedersen, 2006). In our
+experiments, for WN we pick one that is based on the path
+length between the two words in the WordNet graph.
+graph.
+This allows us to perform approximate match-
+ing of syntactic treelets obtained from the depen-
+dency parses using semantic (WordNet) similar-
+ity. For example, the sentences ?I adore tennis?
+and ?Everyone likes tennis? convey the same view
+and should be assigned a higher similarity score
+as opposed to ?I hate tennis?. Using the syntac-
+tic structure along with semantic similarity helps
+us identify useful (valid) nuggets of information
+within comments (or documents), avoid redun-
+dancies, and identify similar views in a semantic
+space.
+4.2 Components of the coverage function
+Our coverage function is a linear combination of
+the following.
+(i) Popularity. One of the requirements for a good
+summary (especially, for user-generated content)
+is that it should include (or rather not miss) the
+popular views or opinions expressed by several
+users across multiple documents or comments. We
+model this property in our objective function as
+follows.
+For each node u, we define w(u) as the num-
+ber of documents |Curel ? C| from the collection
+such that at least one of the dependency relations
+rel ? u appeared in a sentence within some doc-
+ument c ? Curel . The popularity scores are then
+normalized across all nodes in the graph. We then
+add this component to our objective function as
+w(S) =
+?
+u?S w(u).
+(ii) Cluster contribution. This term captures the
+fact that we do not intend to include multiple sen-
+tences from the same comment (or document).
+Define B to be the clustering induced by the sen-
+tence to comment relation, i.e., two sentences in
+the same comment belong to the same cluster. The
+corresponding contribution to the objective func-
+tion is ?B?B |S ?B|1/2.
+(iii) Content contribution. This term promotes the
+diversification of content. We look at the graph of
+sentences where the weight of each edge is s(u, v).
+This graph is then partitioned based on a local
+random walk based method to give us clusters
+D = {D1, . . . , Dn}. The corresponding contribu-
+tion to the objective function is?D?D |S?D|1/2.
+(iv) Cover contribution. We also measure the
+cover of the set S as follows: for each element
+s in U first define cover of an element u by a
+set S? as cov(u, S?) = ?v?S? s(u, v). Then, the
+1018
+cover value of the set S is defined as cov(S) =?
+u?S min(cov(u, S), 0.25cov(u, U)).3
+Thus, the final coverage function is: g(S) =
+w(S) + ?
+?
+B?B |S ? B|1/2 + ?
+?
+D?D |S ?
+D|1/2 + ?cov(S), where ?, ?, ? are non-negative
+constants. By using the monotone submodularity
+of each of the component functions, and the fact
+that addition preserves submodularity, the follow-
+ing is immediate.
+Fact 4. g(S) is a monotone, non-negative, sub-
+modular function.
+We then apply Algorithm 1 to optimize (1).
+5 Experiments
+5.1 Data
+Multi-document summarization. We use the
+DUC 2004 corpus4 that comprises 50 clusters (i.e.,
+50 different summarization tasks) with 10 docu-
+ments per cluster on average. Each document con-
+tains multiple sentences and the goal is to produce
+a summary of all the documents for a given cluster.
+Comments summarization. We extracted a set
+of news articles and corresponding user comments
+from Yahoo! News website. Our corpus contains a
+set of 34 articles and each article is associated with
+anywhere from 100?500 comments. Each com-
+ment contains more than three sentences and 36
+words per sentence on average.
+5.2 Evaluation
+For each summarization task, we compare the
+system output (i.e., summaries automatically pro-
+duced by the algorithm) against the human-
+generated summaries and evaluate the perfor-
+mance in terms of ROUGE score (Lin, 2004), a
+standard recall-based evaluation measure used in
+summarization. A system that produces higher
+ROUGE scores generates better quality summary
+and vice versa.
+We use the following evaluation settings in our
+experiments for each summarization task:
+(1) For multi-document summarization, we
+compute the ROUGE-15 scores that was the main
+evaluation criterion for DUC 2004 evaluations.
+3The choice of the value 0.25 in the cover component is
+inspired by the observations made by (Lin and Bilmes, 2011)
+for the ? value used in their cover function.
+4http://duc.nist.gov/duc2004/tasks.html
+5ROUGE v1.5.5 with options: -a -c 95 -b 665 -m -n 4 -w
+1.2
+(2) For comment summarization, the collection
+of user comments associated with a given arti-
+cle is typically much larger. Additionally, indi-
+vidual comments are noisy, wordy, diverse, and
+informally written. Hence for this task, we use
+a slightly different evaluation criterion that is in-
+spired from the DUC 2005-2007 summarization
+evaluation tasks.
+We represent the content within each comment
+c (i.e., all sentences S(c) comprising the com-
+ment) as a single node in the graph. We then run
+our summarization algorithm on the instantiated
+graph to produce a summary for each news article.
+In addition, each news article and corresponding
+set of comments were presented to three human
+annotators. They were asked to select a subset of
+comments (at most 20 comments) that best rep-
+resented a summary capturing the most popular
+as well as diverse set of views and opinions ex-
+pressed by different users that are relevant to the
+given news article. We then compare the auto-
+matically generated comment summaries against
+the human-generated summaries and compute the
+ROUGE-1 and ROUGE-2 scores.6
+This summarization task is particularly hard for
+even human annotators since user-generated com-
+ments are typically noisy and there are several
+hundreds of comments per article. Similar to ex-
+isting work in the literature (Sekine and Nobata,
+2003), we computed inter-annotator agreement for
+the humans by comparing their summaries against
+each other on a small held-out set of articles. The
+average ROUGE-1 F-scores observed for humans
+was much higher (59.7) than that of automatic sys-
+tems measured against the human-generated sum-
+maries (our best system achieved a score of 28.9
+ROUGE-1 on the same dataset). This shows that
+even though this is a new type of summariza-
+tion task, humans tend to generate more consistent
+summaries and hence their annotations are reliable
+for evaluation purposes as in multi-document sum-
+marization.
+5.3 Results
+Multi-document summarization. (1) Table 1
+compares the performance of our system with
+the previous best reported system that partici-
+pated in the DUC 2004 competition. We also in-
+clude for comparison another baseline?a version
+6ROUGE v1.5.5 with options: -a -n 2 -x -m -2 4 -u -c 95
+-r 1000 -f A -p 0.5 -t 0 -d -l 150
+1019
+of our system that approximates the submodular
+objective function proposed by (Lin and Bilmes,
+2011).7 As shown in the results, our best system8
+which uses the hs dispersion function achieves a
+better ROUGE-1 F-score than all other systems.
+(2) We observe that the hm and ht dispersion func-
+tions produce slightly lower scores than hs, which
+may be a characteristic of this particular summa-
+rization task. We believe that the empirical results
+achieved by different dispersion functions depend
+on the nature of the summarization tasks and there
+are task settings under which hm or ht perform
+better than hs. For example, we show later how us-
+ing the ht dispersion function yields the best per-
+formance on the comments summarization task.
+Regardless, the theoretical guarantees presented in
+this paper cover all these cases.
+(3) We also analyze the contributions of individ-
+ual components of the new objective function to-
+wards summarization performance by selectively
+setting certain parameters to 0. Table 2 illustrates
+these results. We clearly see that each component
+(popularity, cluster contribution, dispersion) indi-
+vidually yields a reasonable summarization per-
+formance but the best result is achieved by the
+combined system (row 5 in the table). We also
+contrast the performance of the full system with
+and without the dispersion component (row 4 ver-
+sus row 5). The results show that optimizing for
+dispersion yields an improvement in summariza-
+tion performance.
+(4) To understand the effect of utilizing syntactic
+structure and semantic similarity for constructing
+the summarization graph, we ran the experiments
+using just the unigrams and bigrams; we obtained
+a ROUGE-1 F-score of 37.1. Thus, modeling
+the syntactic structure (using relations extracted
+7Note that Lin & Bilmes (2011) report a slightly higher
+ROUGE-1 score (F-score 38.90) on DUC 2004. This is be-
+cause their system was tuned for the particular summarization
+task using the DUC 2003 corpus. On the other hand, even
+without any parameter tuning our method yields good perfor-
+mance, as evidenced by results on the two different summa-
+rization tasks. However, since individual components within
+our objective function are parametrized it is easy to tune them
+for a specific task or genre.
+8For the full system, we weight certain parameters per-
+taining to cluster contributions and dispersion higher (? =
+? = ? = 5) compared to the rest of the objective function
+(? = 1). Lin & Bilmes (2011) also observed a similar find-
+ing (albeit via parameter tuning) where weighting the cluster
+contribution component higher yielded better performance.
+If the maximum number of sentences/comments chosen were
+k, we brought both hs and ht to the same approximate scale
+as hm by dividing hs by k(k ? 1)/2 and ht by k ? 1.
+from dependency parse tree) along with comput-
+ing similarity in semantic spaces (using WordNet)
+clearly produces an improvement in the summa-
+rization quality (+1.4 improvement in ROUGE-1
+F-score). However, while the structured represen-
+tation is beneficial, we observed that dispersion
+(and other individual components) contribute sim-
+ilar performance gains even when using ngrams
+alone. So the improvements obtained from the
+structured representation and dispersion are com-
+plementary.
+System ROUGE-1 F
+Best system in DUC 2004 37.9
+(Lin and Bilmes, 2011), no tuning 37.47
+Our algorithm with h = hm 37.5
+h = hs 38.5
+h = ht 36.8
+Table 1: Performance on DUC 2004.
+Comments summarization. (1) Table 3 com-
+pares the performance of our system against a
+baseline system that is constructed by picking
+comments in order of decreasing length, i.e., we
+first pick the longest comment (comprising the
+most number of characters), then the next longest
+comment and so on, to create an ordered set of
+comments. The intuition behind this baseline is
+that longer comments contain more content and
+possibly cover more topics than short ones.
+From the table, we observe that the new sys-
+tem (using either dispersion function) outperforms
+the baseline by a huge margin (+44% relative
+improvement in ROUGE-1 and much bigger im-
+provements in ROUGE-2 scores). One reason be-
+hind the lower ROUGE-2 scores for the baseline
+might be that while long comments provide more
+content (in terms of size), they also add noise and
+irrelevant information to the generated summaries.
+Our system models sentences using the syntactic
+structure and semantics and jointly optimizes for
+multiple summarization criteria (including disper-
+sion) which helps weed out the noise and identify
+relevant, useful information within the comments
+thereby producing better quality summaries. The
+95% confidence interval scores for the best system
+on this task is [36.5?46.9].
+(2) Unlike the multi-document summarization,
+here we observe that the ht dispersion function
+yields the best empirical performance for this
+task. This observation supports our claim that the
+choice of the specific dispersion function depends
+1020
+Objective function components ROUGE-1 F
+? = ? = ? = ? = 0 35.7
+w(S) = ? = ? = ? = 0 35.1
+h = hs, w(S) = ? = ? = ? = 0 37.1
+? = 0 37.4
+w(S), ?, ?, ?, ? > 0 38.5
+Table 2: Performance with different parameters
+(DUC).
+on the summarization task and that the dispersion
+functions proposed in this paper have a wider va-
+riety of use cases.
+(3) Results showing contributions from individual
+components of the new summarization objective
+function are listed in Table 4. We observe a sim-
+ilar pattern as with multi-document summariza-
+tion. The full system using all components out-
+perform all other parameter settings, achieving the
+best ROUGE-1 and ROUGE-2 scores. The table
+also shows that incorporating dispersion into the
+objective function yields an improvement in sum-
+marization quality (row 4 versus row 5).
+System ROUGE-1 ROUGE-2
+Baseline (decreasing length) 28.9 2.9
+Our algorithm with h = hm 39.2 13.2
+h = hs 40.9 15.0
+h = ht 41.6 16.2
+Table 3: Performance on comments summariza-
+tion.
+Objective function ROUGE-1 ROUGE-2
+components
+? = ? = ? = ? = 0 36.1 9.4
+w(S) = ? = ? = ? = 0 32.1 4.9
+h = ht, w(S) = ? = ? = ? = 0 37.8 11.2
+? = 0 38.0 11.6
+w(S), ?, ?, ?, ? > 0 41.6 16.2
+Table 4: Performance with different parameters
+(comments).
+6 Conclusions
+We introduced a new general-purpose graph-based
+summarization framework that combines a sub-
+modular coverage function with a non-submodular
+dispersion function. We presented three natural
+dispersion functions that represent three different
+ways of ensuring non-redundancy (using sentence
+dissimilarities) for summarization and proved that
+a simple greedy algorithm can obtain an approxi-
+mately optimal summary in all these cases. Exper-
+iments on two different summarization tasks show
+that our algorithm outperforms algorithms that
+rely only on submodularity. Finally, we demon-
+strated that using a structured representation to
+model sentences in the graph improves summa-
+rization quality.
+For future work, it would be interesting to in-
+vestigate other related developments in this area
+and perhaps combine them with our approach to
+see if further improvements are possible. Firstly,
+it would interesting to see if dispersion offers sim-
+ilar improvements over a tuned version of the sub-
+modular framework of Lin and Bilmes (2011). In a
+very recent work, Lin and Bilmes (2012) demon-
+strate a further improvement in performance for
+document summarization by using mixtures of
+submodular shells. This is an interesting exten-
+sion of their previous submodular framework and
+while the new formulation permits more complex
+functions, the resulting function is still submodu-
+lar and hence can be combined with the dispersion
+measures proposed in this paper. A different body
+of work uses determinantal point processes (DPP)
+to model subset selection problems and adapt it
+for document summarization (Kulesza and Taskar,
+2011). Note that DPPs use similarity kernels for
+performing inference whereas our measures are
+combinatorial and not kernel-representable. While
+approximation guarantees for DPPs are open, it
+would be interesting to investigate the empiri-
+cal gains by combining DPPs with dispersion-like
+functions.
+Acknowledgments
+We thank the anonymous reviewers for their many
+useful comments.
+References
+Allan Borodin, Hyun Chul Lee, and Yuli Ye. 2012.
+Max-sum diversification, monotone submodular
+functions and dynamic updates. In Proc. PODS,
+pages 155?166.
+Jaime Carbonell and Jade Goldstein. 1998. The use of
+MMR, diversity-based reranking for reordering doc-
+uments and producing summaries. In Proc. SIGIR,
+pages 335?336.
+Barun Chandra and Magnu?s Halldo?rsson. 2001. Facil-
+ity dispersion and remote subgraphs. J. Algorithms,
+38(2):438?465.
+Dietmar Cieslik. 2001. The Steiner Ratio. Springer.
+1021
+John M. Conroy and Dianne P. O?Leary. 2001. Text
+summarization via hidden Markov models. In Proc.
+SIGIR, pages 406?407.
+Hal Daume?, III and Daniel Marcu. 2006. Bayesian
+query-focused summarization. In Proc. COL-
+ING/ACL, pages 305?312.
+Marie-Catherine de Marneffe, Bill Maccartney, and
+Christopher D. Manning. 2006. Generating typed
+dependency parses from phrase structure parses. In
+Proc. LREC, pages 449?454.
+Elena Filatova. 2004. Event-based extractive summa-
+rization. In Proc. ACL Workshop on Summarization,
+pages 104?111.
+Kavita Ganesan, ChengXiang Zhai, and Jiawei Han.
+2010. Opinosis: A graph based approach to abstrac-
+tive summarization of highly redundant opinions. In
+Proc. COLING.
+Makoto Imase and Bernard M. Waxman. 1991. Dy-
+namic Steiner tree problem. SIAM J. Discrete Math-
+ematics, 4(3):369?384.
+Hyun Duk Kim, Kavita Ganesan, Parikshit Sondhi, and
+ChengXiang Zhai. 2011. Comprehensive review of
+opinion summarization. Technical report, Univer-
+sity of Illinois at Urbana-Champaign.
+Alex Kulesza and Ben Taskar. 2011. Learning deter-
+minantal point processes. In Proc. UAI, pages 419?
+427.
+Hui Lin and Jeff Bilmes. 2011. A class of submodu-
+lar functions for document summarization. In Proc.
+ACL, pages 510?520.
+Hui Lin and Jeff Bilmes. 2012. Learning mixtures
+of submodular shells with application to document
+summarization. In Proc. UAI, pages 479?490.
+Chin-Yew Lin. 2004. ROUGE: A package for auto-
+matic evaluation of summaries. In Workshop on Text
+Summarization Branches Out: Proc. ACL Work-
+shop, pages 74?81.
+G. L. Nemhauser, L. A. Wolsey, and M. L. Fisher.
+1978. An analysis of approximations for maximiz-
+ing submodular set functions I. Mathematical Pro-
+gramming, 14(1):265?294.
+Ani Nenkova and Kathleen McKeown. 2012. A survey
+of text summarization techniques. In Charu C. Ag-
+garwal and ChengXiang Zhai, editors, Mining Text
+Data, pages 43?76. Springer.
+Siddharth Patwardhan and Ted Pedersen. 2006. Us-
+ing WordNet-based context vectors to estimate the
+semantic relatedness of concepts. In Proc. EACL
+Workshop on Making Sense of Sense: Bringing
+Computational Linguistics and Psycholinguistics
+Together, pages 1?8.
+Vahed Qazvinian, Dragomir R. Radev, and Arzucan
+O?zgu?r. 2010. Citation summarization through
+keyphrase extraction. In Proc. COLING, pages 895?
+903.
+Korbinian Riedhammer, Benoit Favre, and Dilek
+Hakkani-Tu?r. 2010. Long story short?Global
+unsupervised models for keyphrase based meeting
+summarization. Speech Commun., 52(10):801?815.
+Satoshi Sekine and Chikashi Nobata. 2003. A survey
+for multi-document summarization. In Proc. HLT-
+NAACL Workshop on Text Summarization, pages
+65?72.
+Beaux Sharifi, Mark-Anthony Hutton, and Jugal Kalita.
+2010. Summarizing microblogs automatically. In
+Proc. HLT/NAACL, pages 685?688.
+Chao Shen and Tao Li. 2010. Multi-document summa-
+rization via the minimum dominating set. In Proc.
+COLING, pages 984?992.
+Hiroya Takamura and Manabu Okumura. 2009. Text
+summarization model based on maximum coverage
+problem and its variant. In Proc. EACL, pages 781?
+789.
+Koji Yatani, Michael Novati, Andrew Trusty, and
+Khai N. Truong. 2011. Review spotlight: A user in-
+terface for summarizing user-generated reviews us-
+ing adjective-noun word pairs. In Proc. CHI, pages
+1541?1550.
+1022

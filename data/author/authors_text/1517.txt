@@ -1,0 +1,1830 @@
+Proceedings of the COLING/ACL 2006 Main Conference Poster Sessions, pages 168?175,
+Sydney, July 2006. c?2006 Association for Computational Linguistics
+Automatically Extracting Nominal Mentions of Events with a
+Bootstrapped Probabilistic Classifier?
+Cassandre Creswell? and Matthew J. Beal? and John Chen?
+Thomas L. Cornell? and Lars Nilsson? and Rohini K. Srihari??
+?Janya, Inc.
+1408 Sweet Home Road, Suite 1
+Amherst NY 14228
+{ccreswell,jchen,cornell,
+lars,rohini}@janyainc.com
+?Dept. of Computer Science and Engineering
+University at Buffalo
+The State University of New York
+Amherst NY 14260
+mbeal@cse.buffalo.edu
+Abstract
+Most approaches to event extraction focus
+on mentions anchored in verbs. However,
+many mentions of events surface as noun
+phrases. Detecting them can increase the
+recall of event extraction and provide the
+foundation for detecting relations between
+events. This paper describes a weakly-
+supervised method for detecting nominal
+event mentions that combines techniques
+from word sense disambiguation (WSD)
+and lexical acquisition to create a classifier
+that labels noun phrases as denoting events
+or non-events. The classifier uses boot-
+strapped probabilistic generative models
+of the contexts of events and non-events.
+The contexts are the lexically-anchored se-
+mantic dependency relations that the NPs
+appear in. Our method dramatically im-
+proves with bootstrapping, and comfort-
+ably outperforms lexical lookup methods
+which are based on very much larger hand-
+crafted resources.
+1 Introduction
+The goal of information extraction is to generate
+a set of abstract information objects that repre-
+sent the entities, events, and relations of particu-
+lar types mentioned in unstructured text. For ex-
+ample, in a judicial domain, relevant event types
+might be ARREST, CHARGING, TRIAL, etc.
+Although event extraction techniques usually
+focus on extracting mentions textually anchored
+by verb phrases or clauses, e.g. (Aone and Ramos-
+? This work was supported in part by SBIR grant
+FA8750-05-C-0187 from the Air Force Research Laboratory
+(AFRL)/IFED.
+Santacruz, 2000), many event mentions, espe-
+cially subsequent mentions of events that are the
+primary topic of a document, are referred to with
+nominals. Because of this, detecting nominal
+event mentions, like those in (1), can increase the
+recall of event extraction systems, in particular for
+the most important events in a document.1
+(1) The slain journalist was a main organizer of the mas-
+sive demonstrations that forced Syria to withdraw its
+troops from Lebanon last April, after Assad was widely
+accused of planningHariri?s assassination in a Febru-
+ary car bombing that was similar to today?s blast.
+Detecting event nominals is also an important
+step in detecting relations between event men-
+tions, as in the causal relation between the demon-
+strations and the withdrawal and the similarity re-
+lation between the bombing and the blast in (1).
+Finally, detecting nominal events can improve
+detection and coreference of non-named mentions
+of non-event entities (e.g. persons, locations, and
+organizations) by removing event nominals from
+consideration as mentions of entities.
+Current extraction techniques for verbally-
+anchored events rest on the assumption that most
+verb phrases denote eventualities. A system to ex-
+tract untyped event mentions can output all con-
+stituents headed by a non-auxiliary verb with a
+filter to remove instances of to be, to seem, etc.
+A statistical or rule-based classifier designed to
+detect event mentions of specific types can then
+be applied to filter these remaining instances.
+Noun phrases, in contrast, can be used to denote
+anything?eventualities, entities, abstractions, and
+only some are suitable for event-type filtering.
+1For example, in the 2005 Automatic Content Extraction
+training data, of the 5,349 event mentions, over 35% (1934)
+were nominals.
+168
+1.1 Challenges of nominal event detection
+Extraction of nominal mentions of events encom-
+passes many of the fundamental challenges of
+natural language processing. Creating a general
+purpose lexicon of all potentially event-denoting
+terms in a language is a labor-intensive task. On
+top of this, even utilizing an existing lexical re-
+source like WordNet requires sense disambigua-
+tion at run-time because event nominals display
+the full spectrum of sense distinction behaviors
+(Copestake and Briscoe, 1995), including idiosyn-
+cratic polysemy, as in (2); constructional poly-
+semy, as in (3); coactivation, (4); and copredica-
+tion, as in (5).
+(2) a. On May 30 a group of Iranian mountaineers hoisted
+the Iranian tricolor on the summit.
+b. EU Leaders are arriving here for their two-day
+summit beginning Thursday.
+(3) Things are getting back to normal in the Baywood Golf
+Club after a chemical spill[=event]. Clean-up crews
+said the chemical spill[=result] was 99 percent water
+and shouldn?t cause harm to area residents.
+(4) Managing partner Naimoli said he wasn?t concerned
+about recent media criticism.
+(5) The construction lasted 30 years and was inaugurated
+in the presence of the king in June 1684.
+Given the breadth of lexical sense phenom-
+ena possible with event nominals, no existing ap-
+proach can address all aspects. Lexical lookup,
+whether using a manually- or automatically-
+constructed resource, does not take context into
+consideration and so does not allow for vagueness
+or unknown words. Purely word-cooccurrence-
+based approaches (e.g. (Schu?tze, 1998)) are un-
+suitable for cases like (3) where both senses are
+possible in a single discourse. Furthermore, most
+WSD techniques, whether supervised or unsuper-
+vised, must be retrained for each individual lexical
+item, a computationally expensive procedure both
+at training and run time. To address these limita-
+tions, we have developed a technique which com-
+bines automatic lexical acquisition and sense dis-
+ambiguation into a single-pass weakly-supervised
+algorithm for detecting event nominals.
+The remainder of this paper is organized as fol-
+lows: Section 2 describes our probabilistic clas-
+sifier. Section 3 presents experimental results of
+this model, assesses its performance when boot-
+strapped to increase its coverage, and compares it
+to a lexical lookup technique. We describe related
+work in Section 4 and present conclusions and im-
+plications for future work in Section 5.
+2 Weakly-supervised, simultaneous
+lexical acquisition and disambiguation
+In this section we present a computational method
+that learns the distribution of context patterns that
+correlate with event vs. non-event mentions based
+on unambiguous seeds. Using these seeds we
+build two Bayesian probabilistic generative mod-
+els of the data, one for non-event nominals and the
+other for event nominals. A classifier is then con-
+structed by comparing the probability of a candi-
+date instance under each model, with the winning
+model determining the classification. In Section 3
+we show that this classifier?s coverage can be in-
+creased beyond the initial labeled seed set by au-
+tomatically selecting additional seeds from a very
+large unlabeled, parsed corpus.
+The technique proceeds as follows. First, two
+lexicons of seed terms are created by hand. One
+lexicon includes nominal terms that are highly
+likely to unambiguously denote events; the other
+includes nominal terms that are highly likely to
+unambiguously denote anything other than events.
+Then, a very large corpus (>150K documents) is
+parsed using a broad-coverage dependency parser
+to extract all instantiations of a core set of seman-
+tic dependency relations, including verb-logical
+subject, verb-logical object, subject-nominal pred-
+icate, noun phrase-appositive-modifier, etc.
+Format of data: Each instantiation is in the
+form of a dependency triple, (wa, R,wb), where
+R is the relation type and where each argument is
+represented just by its syntactic head, wn. Each
+partial instantiation of the relation?i.e. either wa
+or wb is treated as a wild card ? that can be filled
+by any term?becomes a feature in the model. For
+every common noun term in the corpus that ap-
+pears with at least one feature (including each en-
+try in the seed lexicons), the times it appears with
+each feature are tabulated and stored in a matrix
+of counts. Each column of the matrix represents
+a feature, e.g. (occur,Verb-Subj, ?); each row rep-
+resents an individual term,2 e.g. murder; and each
+entry is the number of times a term appeared with
+the feature in the corpus, i.e. as the instantiation of
+?. For each row, if the corresponding term appears
+in a lexicon it is given that designation, i.e. EVENT
+or NONEVENT, or if it does not appear in either
+lexicon, it is left unlabeled.
+2A term is any common noun whether it is a single or
+multiword expression.
+169
+Probabilistic model: Here we present the de-
+tails of the EVENT model?the computations for
+the NONEVENT model are identical. The probabil-
+ity model is built using a set of seed words labeled
+as EVENTs and is designed to address two desider-
+ata: (I) the EVENT model should assign high prob-
+ability to an unlabeled vector, v, if its features (as
+recorded in the count matrix) are similar to the
+vectors of the EVENT seeds; (II) each seed term
+s should contribute to the model in proportion to
+its prevalence in the training data.3 These desider-
+ata can be incorporated naturally into a mixture
+model formalism, where there are as many com-
+ponents in the mixture model as there are EVENT
+seed terms. Desideratum (I) is addressed by hav-
+ing each component of the mixture model assign-
+ing a multinomial probability to the vector, v. For
+the ith mixture component built around the ith
+seed, s(i), the probability is
+p(v|s(i)) =
+F?
+f=1
+(
+s(i)f
+)vf
+,
+where s(i)f is defined as the proportion of the times
+the seed was seen with feature f compared to the
+number of times the seed was seen with any fea-
+ture f ? ? F . Thus s(i)f is simply the (i, f)th entry
+in a row-sum normalized count matrix,
+s(i)f =
+s(i)f
+?F
+f ?=1 s
+(i)
+f ?
+.
+Desideratum (II) is realized using a mixture den-
+sity by forming a weighted mixture of the above
+multinomial distributions from all the provided
+seeds i ? E . The weighting of the ith compo-
+nent is fixed to be the ratio of the number of oc-
+currences of the ith EVENT seed, denoted |s(i)|, to
+the total number of all occurrences of event seed
+words. This gives more weight to more prevalent
+seed words:
+p(s(i)) =
+|s(i)|
+?
+i??E |s
+(i?)|
+.
+The EVENT generative probability is then:
+p(v|EVENT) =
+?
+i?E
+[
+p(s(i)) ? p(v|s(i))
+]
+.
+An example of the calculation for a model with
+just two event seeds and three features is given in
+Figure 1. A second model is built from the non-
+3The counts used here are the number of times a term is
+seen with any feature in the training corpus because the in-
+dexing tool used to calculate counts does not keep track of
+which instances appeared simultaneously with more than one
+feature. We do not expect this artifact to dramatically change
+the relative seed frequencies in our model.
+f1 f2 f3
+event seed vector s(1) 3 1 8
+event seed vector s(2) 4 6 1
+unlabeled mention vector v 2 0 7
+p(v|event) =
+12
+23
+?
+?
+3
+12
+?2? 1
+12
+?0? 8
+12
+?7
++
+11
+23
+?
+?
+4
+11
+?2? 6
+11
+?0? 1
+11
+?7
+= 0.0019
+Figure 1: Example of calculating the probability of unla-
+beled instance v under the event distribution composed of
+two event seeds s(1) and s(2).
+event seeds as well, and a corresponding probabil-
+ity p(v|NONEVENT) is computed. The following
+difference (log odds-ratio)
+d(v) = log p(v|EVENT) ? log p(v|NONEVENT)
+is then calculated. An instance v encoded as the
+vector v is labeled as EVENT or NONEVENT by
+examining the sign of d(v). A positive difference
+d(v) classifies v as EVENT; a negative value of
+d(v) classifies v as NONEVENT. Should d=0 the
+classifier is considered undecided and abstains.
+Each test instance is composed of a term and
+the dependency triples it appears with in context
+in the test document. Therefore, an instance can
+be classified by (i: word): Find the unlabeled fea-
+ture vector in the training data corresponding to
+the term and apply the classifier to that vector,
+i.e. classify the instance based on the term?s be-
+havior summed across many occurrences in the
+training corpus; (ii: context): Classify the instance
+based only on its immediate test context vector; or
+(iii: word+context): For each model, multiply the
+probability information from the word vector (=i)
+and the context vector (=ii). In our experiments,
+all terms in the test corpus appeared at least once
+(80% appearing at least 500 times) in the training
+corpus, so there were no cases of unseen terms?
+not suprising with a training set 1,800 times larger
+than the test set. However, the ability to label
+an instance based only on its immediate context
+means that there is a backoff method in the case of
+unseen terms.
+3 Experimental Results
+3.1 Training, test, and seed word data
+In order to train and test the model, we created
+two corpora and a lexicon of event and non-event
+seeds. The training corpus consisted of 156,000
+newswire documents, ?100 million words, from
+the Foreign Broadcast Information Service, Lexis
+170
+Nexis, and other online news archives. The cor-
+pus was parsed using Janya?s information extrac-
+tion application, Semantex, which creates both
+shallow, non-recursive parsing structures and de-
+pendency links, and all (wi, R,wj) statistics were
+extracted as described in Section 2. From the
+1.9 million patterns, (wi, R, ?) and (?, R,wj) ex-
+tracted from the corpus, the 48,353 that appeared
+more than 300 times were retained as features.
+The test corpus was composed of 77 additional
+documents (?56K words), overlapping in time
+and content but not included in the training set.
+These were annotated by hand to mark event nom-
+inals. Specifically, every referential noun phrase
+headed by a non-proper noun was considered
+for whether it denoted an achievement, accom-
+plishment, activity, or process (Parsons, 1990).
+Noun heads denoting any of these were marked
+as EVENT, and all others were left unmarked.
+All documents were first marked by a junior an-
+notator, and then a non-blind second pass was per-
+formed by a senior annotator (first author). Sev-
+eral semantic classes were difficult to annotate be-
+cause they are particularly prone to coactivation,
+including terms denoting financial acts, legal acts,
+speech acts, and economic processes. In addition,
+for terms like mission, plan, duty, tactic, policy,
+it can be unclear whether they are hyponyms of
+EVENT or another abstract concept. In every case,
+however, the mention was labeled as an event or
+non-event depending on whether its use in that
+context appeared to be more or less event-like,
+respectively. Tests for the ?event-y?ness of the
+context included whether an unambiguous word
+would be an acceptable substitute there (e.g. funds
+[=only non-event] for expenditure [either]).
+To create the test data, the annotated documents
+were also parsed to automatically extract all com-
+mon noun-headed NPs and the dependency triples
+they instantiate. Those with heads that aligned
+with the offsets of an event annotation were la-
+beled as events; the remainder were labeled as
+non-events. Because of parsing errors, about 10%
+of annotated event instances were lost, that is re-
+mained unlabeled or were labeled as non-events.
+So, our results are based on the set of recover-
+able event nominals as a subset of all common-
+noun headed NPs that were extracted. In the
+test corpus there were 9,381 candidate instances,
+1,579 (17%) events and 7,802 (83%) non-events.
+There were 2,319 unique term types; of these, 167
+types (7%) appeared both as event tokens and non-
+event tokens. Some sample ambiguous terms in-
+clude: behavior, attempt, settlement, deal, viola-
+tion, progress, sermon, expenditure.
+We constructed two lexicons of nominals to use
+as the seed terms. For events, we created a list of
+95 terms, such as election, war, assassination, dis-
+missal, primarily based on introspection combined
+with some checks on individual terms in WordNet
+and other dictionaries and using Google searches
+to judge how ?event-y? the term was.
+To create a list of non-events, we used WordNet
+and the British National Corpus. First, from the
+set of all lexemes that appear in only one synset
+in WordNet, all nouns were extracted along with
+the topmost hypernym they appear under. From
+these we retained those that both appeared on a
+lemmatized frequency list of the 6,318 words with
+more than 800 occurrences in the whole 100M-
+word BNC (Kilgarriff, 1997) and had one of the
+hypernyms GROUP, PSYCHOLOGICAL, ENTITY,
+POSSESSION. We also retained select terms from
+the categories STATE and PHENOMENON were la-
+beled non-event seeds. Examples of the 295 non-
+event seeds are corpse, electronics, bureaucracy,
+airport, cattle.
+Of the 9,381 test instances, 641 (6.8%) had a
+term that belonged to the seed list. With respect
+to types, 137 (5.9%) of the 2,319 term types in the
+test data also appeared on the seed lists.
+3.2 Experiments
+Experiments were performed to investigate the
+performance of our models, both when using orig-
+inal seed lists, and also when varying the content
+of the seed lists using a bootstrapping technique
+that relies on the probabilistic framework of the
+model. A 1,000-instance subset of the 9,381 test
+data instances was used as a validation set; the re-
+maining 8,381 were used as evaluation data, on
+which we report all results (with the exception of
+Table 3 which is on the full test set).
+EXP1: Results using original seed sets Prob-
+abilistic models for non-events and events were
+built from the full list of 295 non-event and 95
+event seeds, respectively, as described above.
+Table 1 (top half: original seed set) shows the
+results over the 8,381 evaluation data instances
+when using the three classification methods de-
+scribed above: (i) word, (ii) context, and (iii)
+word+context. The first row (ALL) reports scores
+where all undecided responses are marked as in-
+171
+B
+O
+O
+T
+S
+T
+R
+A
+P
+P
+E
+D
+O
+R
+IG
+IN
+A
+L
+S
+E
+E
+D
+S
+E
+T
+S
+E
+E
+D
+S
+E
+T
+EVENT NONEVENT TOTAL AVERAGE
+Input Vector Correct Acc (%) Att (%) Correct Acc (%) Att (%) Correct Acc (%) Att (%) Acc (%)
+A
+L
+L
+word 1236 87.7 100.0 4217 60.5 100.0 5453 65.1 100.0 74.1
+context 627 44.5 100.0 2735 39.2 100.0 3362 40.1 100.0 41.9
+word+context 1251 88.8 100.0 4226 60.6 100.0 5477 65.4 100.0 74.7
+FA
+IR
+word 1236 89.3 98.3 4217 60.7 99.6 5453 65.5 99.4 75.0
+context 627 69.4 64.2 2735 62.5 62.8 3362 63.6 63.0 65.9
+word+context 1251 89.3 99.5 4226 60.7 99.9 5477 65.5 99.8 75.0
+A
+L
+L
+word 1110 78.8 100.0 5517 79.1 100.0 6627 79.1 100.0 79.0
+context 561 39.8 100.0 2975 42.7 100.0 3536 42.2 100.0 41.3
+word+context 1123 79.8 100.0 5539 79.4 100.0 6662 79.5 100.0 79.6
+FA
+IR
+word 1110 80.2 98.3 5517 79.4 99.6 6627 79.5 99.4 79.8
+context 561 62.1 64.2 2975 67.9 62.8 3536 66.9 63.0 65.0
+word+context 1123 80.2 99.5 5539 79.5 99.9 6662 79.7 99.8 79.9
+LEX 1 1114 79.1 100.0 5074 72.8 100.0 6188 73.8 100.0 75.9
+total counts 1408 6973 8381
+Table 1: (EXP1, EXP3) Accuracies of classifiers in terms of correct classifications, % correct, and % attempted (if allowed to
+abstain), on the evaluation test set. (Row 1) Classifiers built from original seed set of size (295, 95); (Row 2) Classifiers built
+from 15 iterations of bootstrapping; (Row 3) Classifier built from Lexicon 1. Accuracies in bold are those plotted in related
+Figures 2, 3(a) and 3(b).
+correct. In the second row (FAIR), undecided an-
+swers (d = 0) are left out of the total, so the
+number of correct answers stays the same, but the
+percentage of correct answers increases.4 Scores
+are measured in terms of accuracy on the EVENT
+instances, accuracy on the NONEVENT instances,
+TOTAL accuracy across all instances, and the sim-
+ple AVERAGE of accuracies on non-events and
+events (last column). The AVERAGE score as-
+sumes that performance on non-events and events
+is equally important to us.
+?From EXP1, we see that the behavior of a term
+across an entire corpus is a better source of infor-
+mation about whether a particular instance of that
+term refers to an event than its immediate context.
+We can further infer that this is because the imme-
+diate context only provides definitive evidence for
+the models in 63.0% of cases; when the context
+model is not penalized for indecision, its accuracy
+improves considerably. Nonetheless, in combina-
+tion with the word model, immediate context does
+not appear to provide much additional information
+over only the word. In other words, based only
+on a term?s distribution in the past, one can make
+a reasonable prediction about how it will be used
+when it is seen again. Consequently, it seems that
+a well-constructed, i.e. domain customized, lexi-
+con can classify nearly as well as a method that
+also takes context into account.
+EXP2: Results on ACE 2005 event data In ad-
+dition to using the data set created specifically for
+this project, we also used a subset of the anno-
+4Note that Att(%) does not change with bootstrapping?
+an artifact of the sparsity of certain feature vectors in the
+training and test data, and not the model?s constituents seeds.
+Input Vector Acc (%) Att (%)
+word 96.1 97.2
+context 72.8 63.1
+word+context 95.5 98.9
+LEX 1 76.5 100.0
+Table 2: (EXP2) Results on ACE event nominals: %correct
+(accuracy) and %attempted, for our classifiers and LEX 1.
+tated training data created for the ACE 2005 Event
+Detection and Recognition (VDR) task. Because
+only event mentions of specific types are marked
+in the ACE data, only recall of ACE event nomi-
+nals can be measured rather than overall recall of
+event nominals and accuracy on non-event nom-
+inals. Results on the 1,934 nominal mentions of
+events (omitting cases of d = 0) are shown in Ta-
+ble 2. The performance of the hand-crafted Lex-
+icon 1 on the ACE data, described in Section 3.3
+below, is also included.
+The fact that our method performs somewhat
+better on the ACE data than on our own data, while
+the lexicon approach is worse (7 points higher
+vs. 3 points lower, respectively) can likely be ex-
+plained by the fact that in creating our introspec-
+tive seed set for events, we consulted the annota-
+tion manual for ACE event types and attempted
+to include in our list any unambiguous seed terms
+that fit those types.
+EXP3: Increasing seed set via Bootstrapping
+There are over 2,300 unlabeled vectors in the train-
+ing data that correspond to the words that appear
+as lexical heads in the test data. These unlabeled
+training vectors can be powerfully leveraged us-
+ing a simple bootstrapping algorithm to improve
+the individual models for non-events and events,
+as follows: Step 1: For each vector v in the unla-
+beled portion of training data, row-sum normalize
+172
+100 1 5 10 15      LEX160
+65
+70
+75
+80
+85
+90 non?events
+eventstotal
+average
+Figure 2: Accuracies vs. iterations of bootstrapping. Bold
+symbols on left denote classifier built from initial (295, 95)
+seeds; and bold (disconnected) symbols at right are LEX 1.
+it to produce v? and compute a normalized mea-
+sure of confidence of the algorithm?s prediction,
+given by the magnitude of d(v?). Step 2: Add
+those vectors most confidently classified as either
+non-events or events to the seed set for non-events
+or events, according to the sign of d(v?). Step 3:
+Recalculate the model based on the new seed lists.
+Step 4: Repeat Steps 1?3 until either no more un-
+labeled vectors remain or the validation accuracy
+no longer increases.
+In our experiments we added vectors to each
+model such that the ratio of the size of the seed
+sets remained constant, i.e. 50 non-events and
+16 events were added at each iteration. Using
+our validation set, we determined that the boot-
+strapping should stop after 15 iterations (despite
+continuing for 21 iterations), at which point the
+average accuracy leveled out and then began to
+drop. After 15 iterations the seed set is of size
+(295, 95)+(50, 16)?15 = (1045, 335). Figure 2
+shows the change in the accuracy of the model as
+it is bootstrapped through 15 iterations.
+TOTAL accuracy improves with bootstrapping,
+despite EVENT accuracy decreasing, because the
+test data is heavily populated with non-events,
+whose accuracy increases substantially. The AV-
+ERAGE accuracy also increases, which proves that
+bootstrapping is doing more than simply shifting
+the bias of the classifier to the majority class. The
+figure also shows that the final bootstrapped clas-
+sifier comfortably outperforms Lexicon 1, impres-
+sive because the lexicon contains at least 13 times
+more terms than the seed lists.
+EXP4: Bootstrapping with a reduced number
+of seeds The size of the original seed lists were
+chosen somewhat arbitrarily. In order to deter-
+mine whether similar performance could be ob-
+tained using fewer seeds, i.e. less human effort, we
+experimented with reducing the size of the seed
+lexicons used to initialize the bootstrapping.
+To do this, we randomly selected a fixed frac-
+tion, f%, of the (295, 95) available event and non-
+event seeds, and built a classifier from this sub-
+set of seeds (and discarded the remaining seeds).
+We then bootstrapped the classifier?s models us-
+ing the 4-step procedure described above, using
+candidate seed vectors from the unlabeled train-
+ing corpus, and incrementing the number of seeds
+until the classifier consisted of (295, 95) seeds.
+We then performed 15 additional bootstrapping it-
+erations, each adding (50, 16) seeds. Since the
+seeds making up the initial classifier are chosen
+stochastically, we repeated this entire process 10
+times and report in Figures 3(a) and 3(b) the mean
+of the total and average accuracies for these 10
+folds, respectively. Both plots have five traces,
+with each trace corresponding the fraction f =
+(20, 40, 60, 80, 100)% of labeled seeds used to
+build the initial models. As a point of reference,
+note that initializing with 100% of the seed lexicon
+corresponds to the first point of the traces in Fig-
+ure 2 (where the x-axis is marked with f =100%).
+Interestingly, there is no discernible difference
+in accuracy (total or average) for fractions f
+greater than 20%. However, upon bootstrapping
+we note the following trends. First, Figure 3(b)
+shows that using a larger initial seed set increases
+the maximum achievable accuracy, but this max-
+imum occurs after a greater number bootstrap-
+ping iterations; indeed the maximum for 100% is
+achieved at 15 (or greater) iterations. This reflects
+the difference in rigidity of the initial models, with
+smaller initial models more easily misled by the
+seeds added by bootstrapping. Second, the final
+accuracies (total and average) are correlated with
+the initial seed set size, which is intuitively satisfy-
+ing. Third, it appears from Figure 3(a) that the to-
+tal accuracy at the model size (295,95) (or 100%)
+is in fact anti-correlated with the size of the ini-
+tial seed set, with 20% performing best. This is
+correct, but highlights the sometimes misleading
+interpretation of the total accuracy: in this case
+the model is defaulting to classifying anything as
+a non-event (the majority class), and has a consid-
+erably impoverished event model.
+If one wants to do as well as Lexicon 1 after 15
+iterations of bootstrapping then one needs at least
+173
+EVENT NONEVENT TOTAL AVERAGE
+Corr (%) Corr (%) Corr (%) (%)
+LEX 1 1256 79.5 5695 73.0 6951 74.1 76.3
+LEX 2 1502 95.1 4495 57.6 5997 63.9 76.4
+LEX 3 349 22.1 7220 92.5 7569 80.7 57.3
+Total 1579 7802 9381
+Table 3: Accuracy of several lexicons, showing number and
+percentage of correct classifications on the full test set.
+an initial seed set of size 60%. An alternative is
+to perform fewer iterations, but here we see that
+using 100% of the seeds comfortably achieves the
+highest total and average accuracies anyway.
+3.3 Comparison with existing lexicons
+In order to compare our weakly-supervised proba-
+bilistic method with a lexical lookup method based
+on very large hand-created lexical resources, we
+created three lexicons of event terms, which were
+used as very simple classifiers of the test data. If
+the test instance term belongs to the lexicon, it is
+labeled EVENT; otherwise, it is labeled as NON-
+EVENT. The results on the full test set using these
+lexicons are shown in Table 3.
+Lex 1 5,435 entries from NomLex (Macleod et
+al., 1998), FrameNet(Baker et al, 1998), CELEX
+(CEL, 1993), Timebank(Day et al, 2003).
+Lex 2 13,659 entries from WordNet 2.0 hypernym
+classes EVENT, ACT, PROCESS, COGNITIVE PRO-
+CESS, & COMMUNICATION combined with Lex 1.
+Lex 3 Combination of pre-existing lexicons in the
+information extraction application from WordNet,
+Oxford Advanced Learner?s Dictionary, etc.
+As shown in Tables 1 and 3, the relatively
+knowledge-poor method developed here using
+around 400 seeds performs well compared to the
+use of the much larger lexicons. For the task of
+detecting nominal events, using Lexicon 1 might
+be the quickest practical solution. In terms of ex-
+tensibility to other semantic classes, domains, or
+languages lacking appropriate existing lexical re-
+sources, the advantage of our trainable method is
+clear. The primary requirement of this method is
+a dependency parser and a system user-developer
+who can provide a set of seeds for a class of in-
+terest and its complement. It should be possi-
+ble in the next few years to create a dependency
+parser for a language with no existing linguistic re-
+sources (Klein and Manning, 2002). Rather than
+having to spend the considerable person-years it
+takes to create resources like FrameNet, CELEX,
+and WordNet, a better alternative will be to use
+weakly-supervised semantic labelers like the one
+described here.
+4 Related Work
+In recent years an array of new approaches have
+been developed using weakly-supervised tech-
+niques to train classifiers or learn lexical classes
+or synonyms, e.g. (Mihalcea, 2003; Riloff and
+Wiebe, 2003). Several approaches make use of de-
+pendency triples (Lin, 1998; Gorman and Curran,
+2005). Our vector representation of the behavior
+of a word type across all its instances in a corpus is
+based on Lin (1998)?s DESCRIPTION OF A WORD.
+Yarowsky (1995) uses a conceptually similar
+technique for WSD that learns from a small set of
+seed examples and then increases recall by boot-
+strapping, evaluated on 12 idiosyncratically poly-
+semous words. In that task, often a single disam-
+biguating feature can be found in the context of a
+polysemous word instance, motivating his use of
+the decision list algorithm. In contrast, the goal
+here is to learn how event-like or non-event-like
+a set of contextual features together are. We do
+not expect that many individual features correlate
+unambiguously with references to events (or non-
+events), only that the presence of certain features
+make an event interpretation more or less likely.
+This justifies our probabilistic Bayesian approach,
+which performs well given its simplicity.
+Thelen and Riloff (2002) use a bootstrapping al-
+gorithm to learn semantic lexicons of nouns for
+six semantic categories, one of which is EVENTS.
+For events, only 27% of the 1,000 learned words
+are correct. Their experiments were on a much
+smaller scale, however, using the 1,700 document
+MUC-4 data as a training corpus and using only
+10 seeds per category.
+Most prior work on event nominals does not try
+to classify them as events or non-events, but in-
+stead focuses on labeling the argument roles based
+on extrapolating information about the argument
+structure of the verbal root (Dahl et al, 1987; La-
+pata, 2002; Pradhan et al, 2004). Meyers, et al
+(1998) describe how to extend a tool for extrac-
+tion of verb-based events to corresponding nomi-
+nalizations. Hull and Gomez (1996) design a set
+of rule-based algorithms to determine the sense of
+a nominalization and identify its arguments.
+5 Conclusions
+We have developed a novel algorithm for label-
+ing nominals as events that combines WSD and
+lexical acquisition. After automatically bootstrap-
+ping the seed set, it performs better than static lex-
+icons many times the original seed set size. Also,
+174
+further bootstrap iterations?? initial seed setfraction (%) ?
+20 40 60 80 100 1 5 10 15      LEX164
+66
+68
+70
+72
+74
+76
+78
+80
+82
+20%40%60%80%100%
+(a) Total Accuracy
+further bootstrap iterations?
+?
+initial seed set
+fraction (%) ?
+20 40 60 80 100 1 5 10 15      LEX164
+66
+68
+70
+72
+74
+76
+78
+80
+82
+20%40%60%80%100%
+(b) Average Accuracy
+Figure 3: Accuracies of classifiers built from different-sized initial seed sets, and then bootstrapped onwards to the equivalent
+of 15 iterations as before. Total (a) and Average (b) accuracies highlight different aspects of the bootstrapping mechanism.
+Just as in Figure 2, the initial model is denoted with a bold symbol in the left part of the plot. Also for reference the relevant
+Lexicon 1 accuracy (LEX 1) is denoted with a ? at the far right.
+it is more robust than lexical lookup as it can also
+classify unknown words based on their immediate
+context and can remain agnostic in the absence of
+sufficient evidence.
+Future directions for this work include applying
+it to other semantic labeling tasks and to domains
+other than general news. An important unresolved
+issue is the difficulty of formulating an appropriate
+seed set to give good coverage of the complement
+of the class to be labeled without the use of a re-
+source like WordNet.
+References
+C. Aone and M. Ramos-Santacruz. 2000. REES: A
+large-scale relation and event extraction system. In
+6th ANLP, pages 79?83.
+C. F. Baker, C. J. Fillmore, and J. B. Lowe. 1998. The
+Berkeley FrameNet project. In Proc. COLING-ACL.
+Centre of Lexical Information, Nijmegen, 1993.
+CELEX English database, E25, online edition.
+A. Copestake and T. Briscoe. 1995. Semi-productive
+polysemy and sense extension. Journal of Seman-
+tics, 12:15?67.
+D. Dahl, M. Palmer, and R. Passonneau. 1987. Nomi-
+nalizations in PUNDIT. In Proc. of the 25th ACL.
+D. Day, L. Ferro, R. Gaizauskas, P. Hanks, M. Lazo,
+J. Pustejovsky, R. Sauri, A. See, A. Setzer, and
+B. Sundheim. 2003. The TIMEBANK corpus. In
+Corpus Linguistics 2003, Lancaster UK.
+J. Gorman and J. Curran. 2005. Approximate search-
+ing for distributional similarity. In Proc. of the
+ACL-SIGLEX Workshop on Deep Lexical Acquisi-
+tion, pages 97?104.
+R. Hull and F. Gomez. 1996. Semantic interpretation
+of nominalizations. In Proc. of the 13th National
+Conf. on Artificial Intelligence, pages 1062?1068.
+A. Kilgarriff. 1997. Putting frequencies in the dictio-
+nary. Int?l J. of Lexicography, 10(2):135?155.
+D. Klein and C. Manning. 2002. A generative
+constituent-context model for improved grammar in-
+duction. In Proc. of the 40th ACL.
+M. Lapata. 2002. The disambiguation of nominalisa-
+tions. Computational Linguistics, 28(3):357?388.
+D. K. Lin. 1998. Automatic retrieval and clustering of
+similar words. In Proc. of COLING-ACL ?98.
+C. Macleod, R. Grishman, A. Meyers, L. Barrett, and
+R. Reeves. 1998. NOMLEX: A lexicon of nominal-
+izations. In Proc. of EURALEX?98.
+A. Meyers, C. Macleod, R. Yangarber, R. Grishman,
+L. Barrett, and R. Reeves. 1998. Using NOMLEX
+to produce nominalization patterns for information
+extraction. In Proc. of the COLING-ACL Workshop
+on the Computational Treatment of Nominals.
+R. Mihalcea. 2003. Unsupervised natural language
+disambiguation using non-ambiguous words. In
+Proc. of Recent Advances in Natural Language Pro-
+cessing, pages 387?396.
+T. Parsons. 1990. Events in the Semantics of English.
+MIT Press, Boston.
+S. Pradhan, H. Sun, W. Ward, J. Martin, and D. Juraf-
+sky. 2004. Parsing arguments of nominalizations in
+English and Chinese. In Proc. of HLT-NAACL.
+E. Riloff and J. Wiebe. 2003. Learning extraction pat-
+terns for subjective expressions. In Proc. EMNLP.
+H. Schu?tze. 1998. Automatic word sense disambigua-
+tion. Computational Linguistics, 24(1):97?124.
+M. Thelen and E. Riloff. 2002. A bootstrapping
+method for learning semantic lexicons using extrac-
+tion pattern contexts. In Proc. of EMNLP.
+D. Yarowsky. 1995. Unsupervised word sense disam-
+biguation rivaling supervised methods. In Proc. of
+the 33rd ACL, pages 189?196.
+175
+  
+InfoXtract: A Customizable Intermediate Level Information 
+Extraction Engine?  
+ 
+Rohini K. Srihari 
+Cymfony, Inc. 
+State University of New York at Buffalo 
+rohini@Cymfony.com
+Wei Li, Cheng Niu and Thomas Cornell 
+Cymfony Inc. 
+600 Essjay Road, Williamsville, NY 14221, USA 
+{wei, cniu, cornell}@Cymfony.com
+ 
+Keywords: Information Extraction, Named Entity Tagging, Machine Learning, Domain Porting 
+ 
+                                                     
+? This work was supported in part by SBIR grants F30602-01-C-0035, F30602-03-C-0156, and 
+F30602-02-C-0057 from the Air Force Research Laboratory (AFRL)/IFEA. 
+ 
+Abstract 
+Information extraction (IE) systems assist 
+analysts to assimilate information from 
+electronic documents. This paper focuses on 
+IE tasks designed to support information 
+discovery applications. Since information 
+discovery implies examining large volumes 
+of documents drawn from various sources for 
+situations that cannot be anticipated a priori, 
+they require IE systems to have breadth as 
+well as depth. This implies the need for a 
+domain-independent IE system that can 
+easily be customized for specific domains: 
+end users must be given tools to customize 
+the system on their own. It also implies the 
+need for defining new intermediate level IE 
+tasks that are richer than the 
+subject-verb-object (SVO) triples produced 
+by shallow systems, yet not as complex as the 
+domain-specific scenarios defined by the 
+Message Understanding Conference (MUC). 
+This paper describes a robust, scalable IE 
+engine designed for such purposes. It 
+describes new IE tasks such as entity profiles, 
+and concept-based general events which 
+represent realistic goals in terms of what can 
+be accomplished in the near-term as well as 
+providing useful, actionable information. 
+These new tasks also facilitate the correlation 
+of output from an IE engine with existing 
+structured data. Benchmarking results for the 
+core engine and applications utilizing the 
+engine are presented. 
+1 Introduction 
+This paper focuses on new intermediate level 
+information extraction tasks that are defined and 
+implemented in an IE engine, named InfoXtract. 
+InfoXtract is a domain independent, but portable 
+information extraction engine that has been designed 
+for information discovery applications. 
+The last decade has seen great advances in the area 
+of IE. In the US, MUC [Chinchor & Marsh 1998] has 
+been the driving force for developing this technology.  
+The most successful IE task thus far has been 
+Named Entity (NE) tagging. The state-of-the-art 
+exemplified by systems such as NetOwl [Krupka & 
+Hausman 1998], IdentiFinder [Miller et al1998] and 
+InfoXtract [Srihari et al2000] has reached near human 
+performance, with 90% or above F-measure. On the 
+other hand, the deep level MUC IE task Scenario 
+Template (ST) is designed to extract detailed 
+information for predefined event scenarios of interest. 
+It involves filling the slots of complicated templates. It 
+is generally felt that this task is too ambitious for 
+commercial application at present.  
+Information Discovery (ID) is a term which has 
+traditionally been used to describe efforts in data 
+mining [Han 1999]. The goal is to extract novel 
+patterns of transactions which may reveal interesting 
+trends. The key assumption is that the data is already 
+in a structured form. ID in this paper is defined within 
+the context of unstructured text documents; it is the 
+ability to extract, normalize/disambiguate, merge and 
+link entities, relationships, and events which provides 
+significant support for ID applications. Furthermore, 
+there is a need to accumulate information across 
+documents about entities and events. Due to rapidly 
+changing events in the real world, what is of no 
+interest one day, may be especially interesting the 
+following day. Thus, information discovery 
+applications demand breadth and depth in IE 
+technology.  
+A variety of IE engines, reflecting various goals in 
+terms of extraction as well as architectures are now 
+available. Among these, the most widely used are the 
+GATE system from the University of Sheffield 
+[Cunningham et al2003], the IE components from 
+Clearforest (www.clearforest.com), SIFT from BBN 
+[Miller et al1998], REES from SRA [Aone & 
+Ramon-Santacruz 1998] and various tools provided 
+by Inxight (www.inxight.com). Of these, the GATE 
+system most closely resembles InfoXtract in terms of 
+its goals as well as the architecture and customization 
+tools. Cymfony differentiates itself by using a hybrid 
+  
+model that efficiently combines statistical and 
+grammar-based approaches, as well as by using an 
+internal data structure known as a token-list that can 
+represent hierarchical linguistic structures and IE 
+results for multiple modules to work on.  
+The research presented here focuses on a new 
+intermediate level of information extraction which 
+supports information discovery. Specifically, it 
+defines new IE tasks such as Entity Profile (EP) 
+extraction, which is designed to accumulate 
+interesting information about an entity across 
+documents as well as within a discourse. Furthermore, 
+Concept-based General Event (CGE) is defined as a 
+domain-independent, representation of event 
+information but more feasible than MUC ST.  
+InfoXtract represents a hybrid model for extracting 
+both shallow and intermediate level IE: it exploits 
+both statistical and grammar-based paradigms. A key 
+feature is the ability to rapidly customize the IE engine 
+for a specific domain and application. Information 
+discovery applications are required to process an 
+enormous volume of documents, and hence any IE 
+engine must be able to scale up in terms of processing 
+speed and robustness; the design and architecture of 
+InfoXtract reflect this need.  
+In the remaining text, Section 2 defines the new 
+intermediate level IE tasks. Section 3 presents 
+extensions to InfoXtract to support cross-document 
+IE. Section 4 presents the hybrid technology. Section 
+5 delves into the engineering architecture and 
+implementation of InfoXtract. Section 6 discusses 
+domain porting. Section 7 presents two applications 
+which have exploited InfoXtract, and finally, Section 
+8 summarizes the research contributions. 
+2 InfoXtract: Defining New IE Tasks 
+InfoXtract [Li & Srihari 2003, Srihari et al2000] is a 
+domain-independent and domain-portable, inter- 
+mediate level IE engine. Figure 1 illustrates the 
+overall architecture of the engine. 
+A description of the increasingly sophisticated IE 
+outputs from the InfoXtract engine is given below: 
+ 
+? NE:  Named Entity objects represent key items 
+such as proper names of person, organization, 
+product, location, target, contact information 
+such as address, email, phone number, URL, time 
+and numerical expressions such as date, year and 
+various measurements weight, money, 
+percentage, etc.  
+? CE:  Correlated Entity objects capture relation- 
+ship mentions between entities such as the 
+affiliation relationship between a person and his 
+employer. The results will be consolidated into 
+the information object Entity Profile (EP) based 
+on co-reference and alias support. 
+? EP:  Entity Profiles are complex rich information 
+objects that collect entity-centric information, in 
+particular, all the CE relationships that a given 
+entity is involved in and all the events this entity 
+is involved in. This is achieved through 
+document-internal fusion and cross-document 
+fusion of related information based on support 
+from co-reference, including alias association. 
+Work is in progress to enhance the fusion by 
+correlating the extracted information with 
+information in a user-provided existing database. 
+? GE:  General Events are verb-centric information 
+objects representing ?who did what to whom 
+when and where? at the logical level. 
+Concept-based GE (CGE) further requires that 
+participants of events be filled by EPs instead of 
+NEs and that other values of the GE slots (the 
+action, time and location) be disambiguated and 
+normalized.  
+? PE:  Predefined Events are domain specific or 
+user-defined events of a specific event type, such 
+as Product Launch and Company Acquisition in 
+the business domain. They represent a simplified 
+version of MUC ST. InfoXtract provides a toolkit 
+that allows users to define and write their own 
+PEs based on automatically generated PE rule 
+templates.  
+ 
+The InfoXtract engine has been deployed both 
+internally to support Cymfony?s Brand Dashboard? 
+product and externally to a third-party integrator for 
+building IE applications in the intelligence domain.  
+ 
+Document Processor
+Knowledge Resources
+Lexicon
+Resources
+Grammars
+Process
+Manager
+Tokenlist
+Legend
+Output
+Manager
+Source
+Document
+NLP/IE Processor(s)Tokenizer
+Tokenlist
+Lexicon Lookup
+ POS Tagging
+Named Entity
+Detection
+Shallow
+Parsing
+Deep Parsing
+Relationship
+Detection
+Document
+pool
+NE
+CE
+EP
+SVO
+Time
+Normalization
+Alias and
+Coreference
+Profile/Event
+Linking/Merging
+Abbreviations
+POS = Part of Speech
+NE = Named Entity
+CE = Correlated Entity
+EP = Entity Profile
+SVO = Subject-Verb-Object
+GE = General Event
+PE = Predefined Event
+Grammar Module
+Procedure or
+Statistical Model
+Hybrid
+Module
+GE
+Statistical
+Models
+Location
+Normalizationli ti
+PE
+InfoXtract
+Repository
+Event
+Extraction
+Case Restoration
+ 
+Figure 1:  InfoXtract Engine Architecture 
+  
+3 Hybrid Technology 
+InfoXtract represents a hybrid model for IE since it 
+combines both grammar formalisms as well as 
+machine learning. Achieving the right balance of these 
+two paradigms is a major design objective of 
+InfoXtract. The core of the parsing and information 
+extraction process in InfoXtract is organized very 
+simply as a pipeline of processing modules. All 
+modules operate on a single in-memory data structure, 
+called a token list. A token list is essentially a 
+sequence of tree structures, overlaid with a graph 
+whose edges define relations that may be either 
+grammatical or informational in nature. The nodes of 
+these trees are called tokens. InfoXtract?s typical 
+mode of processing is to skim along the roots of the 
+trees in the token list, building up structure 
+?strip-wise?. So even non-terminal nodes behave, in 
+the typical case, as complex tokens. Representing a 
+marked up text using trees explicitly, rather than 
+implicitly as an interpretation of paired bracket 
+symbols, has several advantages. For example, it 
+allows a somewhat richer organization of the 
+information contained ?between the brackets,? 
+allowing us to construct direct links from a root node 
+to its semantic head, for example. 
+The processing modules that act on token lists can 
+range from lexical lookup to the application of hand 
+written grammars to statistical analysis based on 
+machine learning all the way to arbitrary procedures 
+written in C++. The configuration of the InfoXtract 
+processing pipeline is controlled by a configuration 
+file, which handles pre-loading required resources as 
+well as ordering the application of modules. Despite 
+the variety of implementation strategies available, 
+InfoXtract Natural Language Processing (NLP) 
+modules are restricted in what they can do to the token 
+list to actions of the following three types : 
+ 
+1. Assertion and erasure of token properties 
+(features, normal forms, etc.) 
+2. Grouping token sequences into higher level 
+constituent tokens. 
+3. Linking token pairs with a relational link. 
+ 
+Grammatical analysis of the input text makes use of a 
+combination of phrase structure and relational 
+approaches to grammar. Basically, early modules 
+build up structure to a certain level (including 
+relatively simple noun phrases, verb groups and 
+prepositional phrases), after which further 
+grammatical structure is represented by asserting 
+relational links between tokens. This mix of phrase 
+structural and relational approaches is very similar to 
+the approach of Lexical Functional Grammar (LFG) 
+[Kaplan & Bresnan 1982], much scaled down.  
+Our grammars are written in a formalism 
+developed for our own use, and also in a modified 
+formalism developed for outside users, based on our 
+in-house experiences. In both cases, the formalism 
+mixes regular expressions with boolean expressions. 
+Actions affecting the token list are implemented as 
+side effects of pattern matching. So although our 
+processing modules are in the technical sense token 
+list transducers, they do not resemble Finite State 
+Transducers (FSTs) so much as the regular expression 
+based pattern-action rules used in Awk or Lex. 
+Grammars can contain (non-recursive) macros, with 
+parameters. 
+This means that some long-distance dependencies, 
+which are very awkward to represent directly in finite 
+state automata can be represented very compactly in 
+macro form. While this has the advantage of 
+decreasing grammar sizes, it does increase the size of 
+the resulting automata. Grammars are compiled to a 
+special type of finite state automata. These token list 
+automata can be thought of as an extension of tree 
+walking automata [M?nnich et al2001, Aho & 
+Ullman 1971, Engelfriet et al1999]. These are linear 
+automata (as opposed to standard finite state tree 
+automata [G?cseg &  Steinby 1997], which are more 
+naturally thought of as parallel) which run over trees. 
+The problem with linear automata on trees is that there 
+can be a number of ?next? nodes to move the read 
+head to: right sister, left sister, parent, first child, etc. 
+So the vocabulary of the automaton is increased to 
+include not only symbols that might appear in the text 
+(test instructions) but also symbols that indicate where 
+to move the read head (directive instructions). We 
+have extended the basic tree walking formalism in 
+several directions. First we extend the power of test 
+instructions to allow them to check features of the 
+current node and to perform string matching against 
+the semantic head of the current node (so that a 
+syntactically complex constituent can be matched 
+against a single word). Second, we include symbols 
+for action instructions, to implement side effects. 
+Finally, we allow movement not only along the root 
+sequence (string-automaton style) and branches of a 
+tree (tree-walking style) but also along the the 
+terminal frontier of the tree and along relational links. 
+These extensions to standard tree walking 
+automata extend the power of that formalism 
+tremendously, and could pose problems. However, the 
+grammar formalisms that compile into these token list 
+walking automata are restrictive, in the sense that 
+there exist many token list transductions that are 
+implementable as automata that are not 
+implementable as grammars. Also the nature of the 
+shallow parsing task itself is such that we only need to 
+dip into the reserves of power that this representation 
+affords us on relatively rare occasions. As a result, the 
+automata that we actually plug into the InfoXtract 
+NLP pipeline generally run very fast. 
+Recently, we have developed an extended finite 
+state formalism named Expert Lexicon, following the 
+general trend of lexicalist approaches to NLP. An 
+  
+expert lexicon rule consists of both grammatical 
+components as well as proximity-based keyword 
+matching. All Expert Lexicon entries are indexed, 
+similar to the case for the finite state tool in INTEX 
+[Silberztein 2000]. The pattern matching time is 
+therefore reduced dramatically compared to a 
+sequential finite state device.  
+Some unique features of this formalism include: (i) 
+the flexibility of inserting any number of Expert 
+Lexicons at any level of the process; (ii) the capability 
+of proximity checking within a window size as rule 
+constraints in addition to pattern matching using an 
+FST call, so that the rule writer can exploit the 
+combined advantages of both; and (iii) support for the 
+propagation of semantic tagging results, to 
+accommodate principles like one sense per discourse. 
+Expert lexicons are used in customization of lexicons, 
+named entity glossaries, and alias lists, as well as 
+concept tagging. 
+Both supervised machine learning and unsuper- 
+vised learning are used in InfoXtract. Supervised 
+learning is used in hybrid modules such as NE [Srihari 
+et al2000], NE Normalization [Li et al2002] and 
+Co-reference. It is also used in the preprocessing 
+module for orthographic case restoration of case 
+insensitive input [Niu et al2003]. Unsupervised 
+learning involves acquisition of lexical knowledge 
+and rules from a raw corpus. The former includes 
+word clustering, automatic name glossary acquisition 
+and thesaurus construction. The latter involves 
+bootstrapped learning of NE and CE rules, similar to 
+the techniques used in [Riloff 1996]. The results of 
+unsupervised learning can be post-edited and added as 
+additional resources for InfoXtract processing.  
+ 
+Table 1: SVO/CE Benchmarking 
+ SVO CE 
+ CORRECT 196 48 
+ INCORRECT 13 0 
+ SPURIOUS 10 2 
+ MISSING 31 10 
+ PRECISION 89.50% 96.0% 
+ RECALL 81.67% 82.8% 
+ F-MEASURE 85.41% 88.9% 
+ 
+Accuracy 
+InfoXtract has been benchmarked using the MUC-7 
+data sets which are recognized as standards by the 
+research community. Precision and recall figures for 
+the person and location entity types were above 90%. 
+For organization entity types, precision and recall 
+were in the high 80?s reflecting the fact that 
+organization names tend to be very domain specific. 
+InfoXtract provides the ability to create customized 
+named entity glossaries, which will boost the 
+performance of organization tagging for a given 
+domain. No such customization was done in the 
+testing just described. The accuracy of shallow 
+parsing is well over 90% reflecting very high 
+performance part-of-speech tagging and named entity 
+tagging. Table 1 shows the benchmarks for CE 
+relationships which are the basis for EPs and for the 
+SVO parsing which supports event extraction.  
+4 Engineering Architecture 
+The InfoXtract engine has been developed as a 
+modular, distributed application and is capable of 
+processing up to 20 MB per hour on a single 
+processor. The system has been tested on very large (> 
+1 million) document collections. The architecture 
+facilitates the incorporation of the engine into external 
+applications requiring an IE subsystem. Requests to 
+process documents can be submitted through a web 
+interface, or via FTP. The results of processing a 
+document can be returned in XML. Since various 
+tools are available to automatically populate databases 
+based on XML data models, the results are easily 
+usable in web-enabled database applications. 
+Configuration files enable the system to be used with 
+different lexical/statistical/grammar resources, as well 
+as with subsets of the available IE modules.  
+InfoXtract supports two modes of operation, active 
+and passive. It can act as an active retriever of 
+documents to process or act as a passive receiver of 
+documents to process. When in active mode, 
+InfoXtract is capable of retrieving documents via 
+HTTP, FTP, or local file system. When in passive 
+mode, InfoXtract is capable of accepting documents 
+via HTTP. Figure 2 illustrates a multiple processor 
+configuration of InfoXtract focusing on the typical 
+deployment of InfoXtract within an application. 
+ 
+Server B
+Server C
+Server A
+Processor 4
+Processor 6
+Processor 2
+Document
+Retriever
+InfoXtract
+Controller
+Document
+Manager
+Processor 1
+Processor 3
+Processor 5
+Extracted info
+database
+Documents
+External Content
+Provider
+Java InfoXtract
+(JIX)
+External
+Application
+Figure 2:  High Level Architecture 
+ 
+The architecture facilitates scalability by 
+supporting multiple, independent Processors. The 
+Processors can be running on a single server (if 
+multiple CPUs are available) and on multiple servers. 
+The Document Manager distributes requests to 
+process documents to all available Processors. Each 
+component is an independent application. All direct 
+  
+inter-module communication is accomplished using 
+the Common Object Request Broker Architecture 
+(CORBA). CORBA provides a robust, programming 
+language independent, and platform neutral 
+mechanism for developing and deploying distributed 
+applications. Processors can be added and removed 
+without stopping the InfoXTract engine. All modules 
+are self-registering and will announce their presence 
+to other modules once they have completed 
+initialization.  
+The Document Retriever module is only used in 
+the active retriever mode. It is responsible for 
+retrieving documents from a content provider and 
+storing the documents for use by the InfoXtract 
+Controller. The Document Retriever handles all 
+interfacing with the content provider?s retrieval 
+process, including interface protocol (authentication, 
+retrieve requests, etc.), throughput management, and 
+document packaging. It is tested to be able to retrieve 
+documents from content providers such as Northern 
+Light, Factiva, and LexisNexis. Since the Document 
+Retriever and the InfoXtract Controller do not 
+communicate directly, it is possible to run the 
+Document Retriever standalone and process all 
+retrieved documents in a batch mode at a later time.  
+The InfoXtract Controller module is used only in 
+the active retriever mode. It is responsible for 
+retrieving documents to be processed, submitting 
+documents for processing, storing extracted 
+information, and system logging. The InfoXtract 
+Controller is a multi-threaded application that is 
+capable of submitting multiple simultaneous requests 
+to the Document Manager. As processing results are 
+returned, they are stored to a repository or database, an 
+XML file, or both. 
+The Document Manager module is responsible for 
+managing document submission to available 
+Processors. As Processors are initialized, they register 
+with the Document Manager. The Document Manager 
+uses a round robin scheduling algorithm for sending 
+documents to available Processors. A document queue 
+is maintained with a size of four documents per 
+Processor. The Processor module forms the core of the 
+IE engine. InfoXtract utilizes a multi-level approach 
+to NLP. Each level utilizes the results of the previous 
+levels in order to achieve more sophisticated parsing. 
+The JIX module is a web application that is 
+responsible for accepting requests for documents to be 
+processed. This module is only used in the passive 
+mode. The document requests are received via the 
+HTTP Post request. Processing results are returned in 
+XML format via the HTTP Post response.  
+In Table 2 we present an example of the 
+performance that can be expected based on the 
+application of all modules within the engine. It should 
+be noted that considerably faster processing per 
+processor can be achieved if output is restricted to a 
+certain IE level, such as named entity tagging only. 
+The output in this benchmark includes all major tasks 
+such as NE, EP, parsing and event extraction as well 
+as XML generation.  
+This configuration provides throughput of 
+approximately 12,000 documents (avg. 10KB) per 
+day. A smaller average document size will increase 
+the document throughput. Increased throughput can 
+be achieved by dedicating a CPU for each running 
+Processor. Each Processor instance requires 
+approximately 500 MB of RAM to run efficiently. 
+Processing speed increases linearly with additional 
+Processors/CPUs, and CPU speed. In the current state, 
+with no speed optimization, using a bank of eight 
+processors, it is able to process approximately 
+100,000 documents per day. Thus, InfoXtract is 
+suitable for high volume deployments. The use of 
+CORBA provides seamless inter-process and 
+over-the-wire communication between modules. 
+Computing resources can be dynamically assigned to 
+handle increases in document volume.  
+ 
+Table 2:  Benchmark for Efficiency 
+Server 
+Configuration 
+2 CPU @ 1 GHz, 2 GB 
+RAM 
+Operating System Redhat Linux 7.2 
+Document 
+Collection Size 
+500 Documents, 5 MB 
+total size 
+Engine 
+Configuration 
+InfoXtract Controller, 
+Document Manager, 
+and 2 Processors 
+running on a single 
+server 
+Processing Time 30 Minutes 
+ 
+A standard document input model is used to 
+develop effective preprocessing capabilities. 
+Preprocessing adapts the engine to the source by 
+presenting metadata, zoning information in a 
+standardized format and performing restoration tasks 
+(e.g. case restoration). Efforts are underway to 
+configure the engine such that zone-specific 
+processing controls are enabled. For example, zones 
+identified as titles or subtitles must be tagged using 
+different criteria than running text. The engine has 
+been deployed on a variety of input formats including 
+HUMINT documents (all uppercase), the Foreign 
+Broadcast Information Services feed (FBIS), live 
+feeds from content providers such as Factiva (Dow 
+Jones/Reuters), LexisNexis, as well as web pages. A 
+user-trainable, high-performance case restoration 
+module [Niu et al2003] has been developed that 
+transforms case insensitive input such as speech 
+transcripts into mixed-case before being processed by 
+the engine. The case restoration module eliminates the 
+need for separate IE engines for case-insensitive and 
+case-sensitive documents; this is easier and more cost 
+effective to maintain. 
+  
+5 Corpus-level IE 
+Efforts have extended IE from the document level to 
+the corpus level. Although most IE systems perform 
+corpus-level information consolidation at an 
+application level, it is felt that much can be gained by 
+doing this as an extended step in the IE engine. A 
+repository has been developed for InfoXtract that is 
+able to hold the results of processing an entire corpus. 
+A proprietary indexing scheme for indexing token-list 
+data has been developed that enables querying over 
+both the linguistic structures as well as statistical 
+similarity queries (e.g., the similarity between two 
+documents or two entity profiles). The repository is 
+used by a fusion module in order to generate 
+cross-document entity profiles as well as for text 
+mining operations. The results of the repository 
+module can be subsequently fed into a relational 
+database to support applications. This has the 
+advantage of filtering much of the noise from the 
+engine level and doing sophisticated information 
+consolidation before populating a relational database. 
+The architecture of these subsequent stages is shown 
+in Figure 3. 
+ 
+Databases
+Fusion
+Module
+Corpus-
+level IEInfoXtract
+Text
+Mining
+FBIS, Newswire
+Documents
+InfoXtract
+Repository 1
+InfoXtract
+Repository 2
+IDP
+Figure 3:  Extensions to InfoXtract 
+ 
+Information Extraction has two anchor points: (i) 
+entity-centric information which leads to an EP, and 
+(ii) action-centric information which leads to an event 
+scenario. Compared with the consolidation of 
+extracted events into cross-document event scenario, 
+cross-document EP merging and consolidation is a 
+more tangible task, based mainly on resolving aliases. 
+Even with modest recall, the corpus-level EP 
+demonstrates tremendous value in collecting 
+information about an entity.  This is as shown in Table 
+3 for only part of the profile of ?Mohamed Atta? from 
+one experiment based on a collection of news articles. 
+The extracted EP centralizes a significant amount of 
+valuable information about this terrorist. 
+6 Domain Porting 
+Considerable efforts have been made to keep the core 
+engine as domain independent as possible; domain 
+specialization or tuning happens with minimum 
+change to the core engine, assisted by automatic or 
+semi-automatic domain porting tools we have 
+developed.  
+Cymfony has taken several distinct approaches in 
+achieving domain portability: (i) the use of a standard 
+document input model, pre-processors and 
+configuration scripts in order to tailor input and output 
+formats for a given application, (ii) the use of tools in 
+order to customize lexicons and grammars, and (iii) 
+unsupervised machine learning techniques for 
+learning new named entities (e.g. weapons) and 
+relationships based on sample seeds provided by a 
+user.  
+Table 3:  Sample Entity Profile 
+Name Mohamed Atta 
+Aliases Atta; Mohamed  
+Position apparent mastermind;  
+ring leader; engineer; leader  
+Age 33; 29; 33-year-old; 
+34-year-old  
+Where-from United Arab Emirates; 
+Spain; Hamburg; Egyptian; 
+?? 
+Modifiers on the first plane; evasive; 
+ready; in Spain; in seat 8D? 
+Descriptors hijacker; al-Amir; purported 
+ringleader; a square-jawed 
+33-year-old pilot; ?? 
+Association bin Laden; Abdulaziz 
+Alomari; Hani Hanjour; 
+Madrid; American Media 
+Inc.; ?? 
+Involved-events move-events (2); 
+accuse-events (9), 
+convict-events (10), 
+confess-events (2), 
+arrest-events (3), 
+ rent-events (3),  ..... 
+ 
+It has been one of Cymfony?s primary objectives 
+to facilitate domain portability [Srihari 1998] [Li & 
+Srihari 2000a,b, 2003].  This has resulted in a 
+development/customization environment known as 
+the Lexicon Grammar Development Environment 
+(LGDE). The LGDE permits users to modify named 
+entity glossaries, alias lexicons and general-purpose 
+lexicons.  It also supports example-based grammar 
+writing; users can find events of interest in sample 
+documents, process these through InfoXtract and 
+modify the constraints in the automatically generated 
+rule templates for event detection. With some basic 
+training, users can easily use the LGDE to customize 
+InfoXtract for their applications. This facilitates 
+customization of the system in user applications 
+where access to the input data to InfoXtract is 
+restricted. 
+  
+7 Applications 
+The InfoXtract engine has been used in two 
+applications, the Information Discovery Portal (IDP) 
+and Brand Dashboard (www.branddashboard. 
+com). The IDP supports both the traditional top-down 
+methods of browsing through large volumes of 
+information as well as novel, data-driven browsing. A 
+sample user interface is shown in Figure 4.  
+Users may select ?watch lists? of entities (people, 
+organizations, targets, etc.) that they are interested in 
+monitoring. Users may also customize the sources of 
+information they are interested in processing. 
+Top-down methods include topic-centric browsing 
+whereby documents are classified by topics of 
+interest. IE-based browsing techniques include 
+entity-centric and event-centric browsing. 
+Entity-centric browsing permits users to track key 
+entities (people, organizations, targets) of interest and 
+monitor information pertaining to them. Event-centric 
+browsing focuses on significant actions including 
+money movement and people movement events.  
+Visualization of extracted information is a key 
+component of the IDP.  The Information Mesh enables 
+a user to visualize an entity, its attributes and its 
+relation to other entities and events. Starting from an 
+entity (or event), relationship chains can be traversed 
+to explore related items. Timelines facilitate 
+visualization of information in the temporal axis. 
+Information Discovery Portal 
+Associations 
+Who/what is being 
+associated with al-
+Qaeda ?
+Organizations
+    Religious
+    Political
+    Terrorist
+     - al-Jihad (34)
+     - HAMAS (16)
+     - Hizballah (5)
+     - ?more
+People
+Incidents
+  - Attacks (125)
+  - Bombing (64)
+  - Threats (45)
+  - ?more
+Locations
+Weapons
+Governments
+Overall 
+Coverage 
+Events Info. Sources Documents 
+Track... Organizations People Targets 
+al-Qaeda 
+Overall Coverage of  al-Qaeda Over Time 
+0 10 
+20 30 
+40 50 
+5/7/2001 5/14/2001 5/21/2001 5/28/2001 6/4/2001 6/11/2001 6/18/2001 6/25/2001 7/2/2001 7/9/2001 7/16/2001 7/23/2001 7/30/2001 
+# 
+Re
+por
+ts 
+Alerts for Week of August 6, 2001 
+(3)  new reports of al-Qaeda terrorist activity 
+(1)  new report of  bin Laden sighting 
+(4)  new quotes by bin Laden 
+(1)  new target identified 
+Figure 4:  Information Discovery Portal 
+Recent efforts have included a tight integration of 
+InfoXtract with visualization tools such as the 
+Web-based Timeline Analysis System (WebTAS) 
+(http://www.webtas.com). The IDP reflects the ability 
+for users to select events of interest and automatically 
+export them to WebTAS for visualization. Efforts are 
+underway to integrate higher-level event scenario 
+analysis tools such as the Terrorist Modus Operandi 
+Detection System (TMODS) (www.21technologies 
+.com) into the IDP. 
+ 
+Brand Dashboard is a commercial application for 
+marketing and public relations organizations to 
+measure and assess media perception of consumer 
+brands. The InfoXtract engine is used to analyze 
+several thousand electronic sources of information 
+provided by various content aggregators (Factiva, 
+LexisNexis, etc.). The engine is focused on tagging 
+and generating brand profiles that also capture salient 
+information such as the descriptive phrases used in 
+describing brands (e.g. cost-saving, non-habit 
+forming) as well as user-configurable specific 
+messages that companies are trying to promote and 
+track (safe and reliable, industry leader, etc.). The 
+output from the engine is fed into a database-driven 
+web application which then produces report cards for 
+brands containing quantitative metrics pertaining to 
+brand perception, as well as qualitative information 
+describing characteristics. A sample screenshot from 
+Brand Dashboard is presented in Figure 5. It depicts a 
+report card for a particular brand, highlighting brand 
+strength as well as highlighting metrics that have 
+changed the most in the last time period. The ?buzz 
+box? on the right hand side illustrates 
+companies/brands, people, analysts, and messages 
+most frequently associated with the brand in question.  
+Figure 5:  Report Card from Brand Dashboard 
+8 Summary and Future Work 
+This paper has described the motivation behind 
+InfoXtract, a domain independent, portable, 
+intermediate-level IE engine. It has also discussed the 
+architecture of the engine, both from an algorithmic 
+perspective and software engineering perspective. 
+Current efforts to improve InfoXtract include the 
+following: support for more diverse input formats, 
+more use of metadata in the extraction tasks, support 
+ 
+  
+for structured data, and capabilities for processing 
+foreign languages. Finally, support for more intuitive 
+domain customization tools, especially the 
+semi-automatic learning tools is a major focus.  
+Acknowledgments 
+The authors wish to thank Carrie Pine of AFRL for 
+reviewing and supporting this work. 
+References 
+[Aho & Ullman 1971] Alfred V. Aho and Jeffrey 
+D. Ullman. Translations on a context-free grammar. 
+Information and Control, 19(5):439?475, 1971. 
+[Aone & Ramos-Santacruz 1998] REES: A 
+Large-Scale Relation and Event Extraction System.  
+url: http://acl.ldc.upenn.edu/A/A00/A00-1011.pdf 
+[Chinchor & Marsh 1998] Chinchor, N. & Marsh, 
+E. 1998. MUC-7 Information Extraction Task 
+Definition (version 5.1), Proceedings of MUC-7.  
+[Cunningham et al2003] Hamish Cunningham et 
+al.  Developing Language Processing Components 
+with GATE: A User Guide. 
+http://gate.ac.uk/sale/tao/index.html#annie 
+[Engelfriet et al1999] Joost Engelfriet, Hendrik 
+Jan Hoogeboom, and Jan-Pascal Van Best. Trips on 
+trees. Acta Cybernetica, 14(1):51?64, 1999. 
+[G?cseg & Steinby 1997] Ferenc G?cseg and 
+Magnus Steinby. Tree languages. In Grzegorz 
+Rozenberg and Arto Salomaa, editors, Handbook of 
+Formal Languages: Beyond Words, volume 3, pages 
+1?68, Berlin, 1997. Springer 
+[Han 1999] Han, J. Data Mining. 1999.  In J. 
+Urban and P. Dasgupta (eds.), Encyclopedia of 
+Distributed Computing, Kluwer Academic Publishers. 
+[Hobbs 1993] J. R. Hobbs, 1993.  FASTUS: A 
+System for Extracting Information from Text, 
+Proceedings of the DARPA workshop on Human 
+Language Technology?, Princeton, NJ, 133-137. 
+[Kaplan & Bresnan 1982] Ronald M. Kaplan and 
+Joan Bresnan. Lexical-Functional Grammar: A formal 
+system for grammatical representation. In Joan 
+Bresnan, editor, The Mental Representation of 
+Grammatical Relations, pages 173?281. The MIT 
+Press, Cambridge, MA, 1982.  
+[Krupka & Hausman 1998] G. R Krupka and K. 
+Hausman, ?IsoQuest Inc: Description of the NetOwl 
+Text Extraction System as used for MUC-7?, MUC-7 
+[Li et al2002] Li, H., R. Srihari, C. Niu, and W. Li 
+(2002).  Localization Normalization for Information 
+Extraction.  COLING 2002, 549?555, Taipei, Taiwan. 
+[Li, W & R. Srihari 2000a]. A Domain 
+Independent Event Extraction Toolkit, Final 
+Technical Report, Air Force Research Laboratory, 
+Information Directorate, Rome Research Site, New 
+York 
+[Li, W & R. Srihari 2000b]. Flexible Information 
+Extraction Learning Algorithm, Final Technical 
+Report, Air Force Research Laboratory, Information 
+Directorate, Rome Research Site, New York  
+[Li & Srihari 2003] Li, W. and R. K. Srihari (2003) 
+Intermediate-Level Event Extraction for Temporal 
+and Spatial Analysis and Visualization, Final 
+Technical Report AFRL-IF-RS-TR-2002-245, Air 
+Force Research Laboratory, Information Directorate, 
+Rome Research Site, New York. 
+[Miller et al1998] Miller, Scott; Crystal, Michael; 
+Fox, Heidi; Ramshaw, Lance; Schwartz, Richard; 
+Stone, Rebecca; Weischedel, Ralph; and Annotation 
+Group, the 1998. Algorithms that Learn to Extract 
+Information; BBN: Description of the SIFT System as 
+Used for MUC-7.  
+[M?nnich et al2001] Uwe M?nnich, Frank 
+Morawietz, and Stephan Kepser. A regular query for 
+context-sensitive relations. In Steven Bird, Peter 
+Buneman, and Mark Liberman, editors, IRCS 
+Workshop Linguistic Databases 2001, pages 
+187?195, 2001 
+[Niu et al2003] Niu, C., W. Li, J. Ding, and R.K. 
+Srihari (to appear 2003).  Orthographic Case 
+Restoration Using Supervised Learning Without 
+Manual Annotation.  Proceedings of The 16th 
+FLAIRS, St. Augustine, FL 
+[Riloff 1996] [Automatically Generating 
+Extraction Patterns from Untagged Text. AAAI-96. 
+[Roche & Schabes 1997] Emmanuel Roche & 
+Yves Schabes, 1997. Finite-State Language 
+Processing, The MIT Press, Cambridge, MA. 
+[Silberztein 1999] Max Silberztein, (1999). 
+INTEX: a Finite State Transducer toolbox, in 
+Theoretical Computer Science #231:1, Elsevier 
+Science 
+[Srihari 1998]. A Domain Independent Event 
+Extraction Toolkit, AFRL-IF-RS-TR-1998-152 Final 
+Technical Report, Air Force Research Laboratory, 
+Information Directorate, Rome Research Site, New 
+York  
+[Srihari et al2000] Srihari, R, C. Niu and W. Li. 
+(2000).  A Hybrid Approach for Named Entity and 
+Sub-Type Tagging.  In Proceedings of ANLP 2000, 
+247?254, Seattle, WA. 

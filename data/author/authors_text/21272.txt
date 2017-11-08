@@ -1,0 +1,2757 @@
+Proceedings of the 13th Conference of the European Chapter of the Association for Computational Linguistics, pages 514?523,
+Avignon, France, April 23 - 27 2012. c?2012 Association for Computational Linguistics
+Joint Satisfaction of Syntactic and Pragmatic Constraints
+Improves Incremental Spoken Language Understanding
+Andreas Peldszus
+University of Potsdam
+Department for Linguistics
+peldszus@uni-potsdam.de
+Okko Bu?
+University of Potsdam
+Department for Linguistics
+okko@ling.uni-potsdam.de
+Timo Baumann
+University of Hamburg
+Department for Informatics
+baumann@informatik.uni-hamburg.de
+David Schlangen
+University of Bielefeld
+Department for Linguistics
+david.schlangen@uni-bielefeld.de
+Abstract
+We present a model of semantic processing
+of spoken language that (a) is robust against
+ill-formed input, such as can be expected
+from automatic speech recognisers, (b) re-
+spects both syntactic and pragmatic con-
+straints in the computation of most likely
+interpretations, (c) uses a principled, ex-
+pressive semantic representation formalism
+(RMRS) with a well-defined model the-
+ory, and (d) works continuously (produc-
+ing meaning representations on a word-
+by-word basis, rather than only for full
+utterances) and incrementally (computing
+only the additional contribution by the new
+word, rather than re-computing for the
+whole utterance-so-far).
+We show that the joint satisfaction of syn-
+tactic and pragmatic constraints improves
+the performance of the NLU component
+(around 10% absolute, over a syntax-only
+baseline).
+1 Introduction
+Incremental processing for spoken dialogue sys-
+tems (i. e., the processing of user input even while
+it still may be extended) has received renewed at-
+tention recently (Aist et al 2007; Baumann et
+al., 2009; Bu? and Schlangen, 2010; Skantze and
+Hjalmarsson, 2010; DeVault et al 2011; Purver
+et al 2011). Most of the practical work, how-
+ever, has so far focussed on realising the poten-
+tial for generating more responsive system be-
+haviour through making available processing re-
+sults earlier (e. g. (Skantze and Schlangen, 2009)),
+but has otherwise followed a typical pipeline ar-
+chitecture where processing results are passed
+only in one direction towards the next module.
+In this paper, we investigate whether the other
+potential advantage of incremental processing?
+providing ?higher-level?-feedback to lower-level
+modules, in order to improve subsequent process-
+ing of the lower-level module?can be realised as
+well. Specifically, we experimented with giving a
+syntactic parser feedback about whether semantic
+readings of nominal phrases it is in the process of
+constructing have a denotation in the given con-
+text or not. Based on the assumption that speak-
+ers do plan their referring expressions so that they
+can successfully refer, we use this information to
+re-rank derivations; this in turn has an influence
+on how the derivations are expanded, given con-
+tinued input. As we show in our experiments, for
+a corpus of realistic dialogue utterances collected
+in a Wizard-of-Oz setting, this strategy led to an
+absolute improvement in computing the intended
+denotation of around 10% over a baseline (even
+more using a more permissive metric), both for
+manually transcribed test data as well as for the
+output of automatic speech recognition.
+The remainder of this paper is structured as fol-
+lows: We discuss related work in the next section,
+and then describe in general terms our model and
+its components. In Section 4 we then describe the
+data resources we used for the experiments and
+the actual implementation of the model, the base-
+lines for comparison, and the results of our exper-
+iments. We close with a discussion and an outlook
+on future work.
+2 Related Work
+The idea of using real-world reference to inform
+syntactic structure building has been previously
+explored by a number of authors. Stoness et al
+(2004, 2005) describe a proof-of-concept imple-
+514
+mentation of a ?continuous understanding? mod-
+ule that uses reference information in guiding a
+bottom-up chart-parser, which is evaluated on a
+single dialogue transcript. In contrast, our model
+uses a probabilistic top-down parser with beam
+search (following Roark (2001)) and is evalu-
+ated on a large number of real-world utterances
+as processed by an automatic speech recogniser.
+Similarly, DeVault and Stone (2003) describe a
+system that implements interaction between a
+parser and higher-level modules (in this case, even
+more principled, trying to prove presuppositions),
+which however is also only tested on a small, con-
+structed data-set.
+Schuler (2003) and Schuler et al(2009) present
+a model where information about reference is
+used directly within the speech recogniser, and
+hence informs not only syntactic processing but
+also word recognition. To this end, the processing
+is folded into the decoding step of the ASR, and
+is realised as a hierarchical HMM. While techni-
+cally interesting, this approach is by design non-
+modular and restricted in its syntactic expressiv-
+ity.
+The work presented here also has connections
+to work in psycholinguistics. Pado? et al(2009)
+present a model that combines syntactic and se-
+mantic models into one plausibility judgement
+that is computed incrementally. However, that
+work is evaluated for its ability to predict reading
+time data and not for its accuracy in computing
+meaning.
+3 The Model
+3.1 Overview
+Described abstractly, the model computes the
+probability of a syntactic derivation (and its ac-
+companying logical form) as a combination of a
+syntactic probability (as in a typical PCFG) and
+a semantic or pragmatic plausibility.1 The prag-
+matic plausibility here comes from the presuppo-
+sition that the speaker intended her utterance to
+successfully refer, i. e. to have a denotation in the
+current situation (a unique one, in the case of def-
+inite reference). Hence, readings that do have a
+denotation are preferred over those that do not.
+1Note that, as described below, in the actual implemen-
+tation the weights given to particular derivations are not real
+probabilities anymore, as derivations fall out of the beam and
+normalisation is not performed after re-weighting.
+The components of our model are described in
+the following sections: first the parser which com-
+putes the syntactic probability in an incremental,
+top-down manner; the semantic construction al-
+gorithm which associates (underspecified) logi-
+cal forms to derivations; the reference resolution
+component that computes the pragmatic plausi-
+bility; and the combination that incorporates the
+feedback from this pragmatic signal.
+3.2 Parser
+Roark (2001) introduces a strategy for incremen-
+tal probabilistic top-down parsing and shows that
+it can compete with high-coverage bottom-up
+parsers. One of the reasons he gives for choosing
+a top-down approach is that it enables fully left-
+connected derivations, where at every process-
+ing step new increments directly find their place
+in the existing structure. This monotonically en-
+riched structure can then serve as a context for in-
+cremental language understanding, as the author
+claims, although this part is not further developed
+by Roark (2001). He discusses a battery of dif-
+ferent techniques for refining his results, mostly
+based on grammar transformations and on con-
+ditioning functions that manipulate a derivation
+probability on the basis of local linguistic and lex-
+ical information.
+We implemented a basic version of his parser
+without considering additional conditioning or
+lexicalizations. However, we applied left-facto-
+rization to parts of the grammar to delay cer-
+tain structural decisions as long as possible. The
+search-space is reduced by using beam search. To
+match the next token, the parser tries to expand
+the existing derivations. These derivations are
+stored in a priorized queue, which means that the
+most probable derivation will always be served
+first. Derivations resulting from rule expansions
+are kept in the current queue, derivations result-
+ing from a successful lexical match are pushed in
+a new queue. The parser proceeds with the next
+most probable derivation until the current queue
+is empty or until a threshhold is reached at which
+remaining analyses are pruned. This threshhold
+is determined dynamically: If the probability of
+the current derivation is lower than the product of
+the best derivation?s probability on the new queue,
+the number of derivations in the new queue, and a
+base beam factor (an initial parameter for the size
+of the search beam), then all further old deriva-
+515
+FormulaIU
+CandidateAnalysisIU
+TagIU
+TextualWordIU
+FormulaIU[ [l0:a1:i2]{ [l0:a1:i2] } ] FormulaIU[ [l0:a1:e2]{ [l0:a1:e2] }ARG1(a1,x8),l6:a7:addressee(x8),l0:a1:_nehmen(e2)]
+CandidateAnalysisIULD=[s*/s, s/vp, vp/vvimp-v1, m(vvimp)]P=0.49S=[V1, S!]
+CandidateAnalysisIULD=[]P=1.00S=[S*,S!]
+TagIUvvimp
+FormulaIU...
+CandidateAnalysisIULD=[s*/s,kon,s*, s/vp, vp/vvimp-v1, m(vvimp)]P=0.14S=[V1, kon, S*, S!]
+FormulaIU[ [l0:a1:e2]{ [l18:a19:x14] [l0:a1:e2] }ARG1(a1,x8),l6:a7:addressee(x8),l0:a1:_nehmen(e2),ARG2(a1,x14),BV(a13,x14),RSTR(a13,h21),BODY(a13,h22),l12:a13:_def(),qeq(h21,l18)]
+CandidateAnalysisIULD=[v1/np-vz, np/det-n1, m(det)]P=0.2205S=[N1, VZ, S!]
+TagIUdet
+FormulaIU...
+CandidateAnalysisIULD=[v1/np-vz, np/pper, i(det)]P=0.00441S=[pper, VZ, S!]
+FormulaIU[ [l0:a1:e2]{ [l29:a30:x14] [l0:a1:e2] }ARG1(a1,x8),l6:a7:addressee(x8),l0:a1:_nehmen(e2),ARG2(a1,x14),BV(a13,x14),RSTR(a13,h21),BODY(a13,h22),l12:a13:_def(),l18:a19:_winkel(x14),qeq(h21,l18)]
+CandidateAnalysisIULD=[n1/nn-nz, m(nn)]P=0.06615S=[NZ, VZ, S!]
+TagIUnn
+FormulaIU...
+CandidateAnalysisIULD=[n1/adjp-n1, adjp/adja, i(nn)]P=0.002646S=[adja, N1, VZ, S!]
+FormulaIU...
+CandidateAnalysisIULD=[n1/nadj-nz, nadj/adja, i(nn)]P=0.000441S=[adja, NZ, VZ, S!]
+FormulaIU[ [l0:a1:e2]{ [l42:a43:x44] [l29:a30:x14] [l0:a1:e2] }ARG1(a1,x8),l6:a7:addressee(x8),l0:a1:_nehmen(e2),ARG2(a1,x14),BV(a13,x14),RSTR(a13,h21),BODY(a13,h22),l12:a13:_def(),l18:a19:_winkel(x14),ARG1(a40,x14),ARG2(a40,x44),l39:a40:_in(e41),qeq(h21,l18)]
+CandidateAnalysisIULD=[nz/pp-nz, pp/appr-np, m(appr)]P=0.0178605S=[NP, NZ, VZ, S!]
+TagIUappr
+FormulaIU...
+CandidateAnalysisIULD=[nz/advp-nz, advp/adv, i(appr)]P=0.0003969S=[adv, NZ, VZ, S!]
+FormulaIU...
+CandidateAnalysisIULD=[nz/eps, vz/advp-vz, advp/adv, i(appr)]P=0.00007938S=[adv, VZ, S!]
+TagIU$TopOfTags
+TextualWordIUnimm TextualWordIUden TextualWordIUwinkel TextualWordIUinTextualWordIU$TopOfWords
+Figure 1: An example network of incremental units, including the levels of words, POS-tags, syntactic derivations
+and logical forms. See section 3 for a more detailed description.
+tions are pruned. Due to probabilistic weighing
+and the left factorization of the rules, left recur-
+sion poses no direct threat in such an approach.
+Additionally, we implemented three robust lex-
+ical operations: insertions consume the current
+token without matching it to the top stack item;
+deletions can ?consume? a requested but actu-
+ally non-existent token; repairs adjust unknown
+tokens to the requested token. These robust op-
+erations have strong penalties on the probability
+to make sure they will survive in the derivation
+only in critical situations. Additionally, only a
+single one of them is allowed to occur between
+the recognition of two adjacent input tokens.
+Figure 1 illustrates this process for the first few
+words of the example sentence ?nimm den winkel
+in der dritten reihe? (take the bracket in the third
+row), using the incremental unit (IU) model to
+represent increments and how they are linked; see
+(Schlangen and Skantze, 2009).2 Here, syntactic
+2Very briefly: rounded boxes in the Figures represent
+IUs, and dashed arrows link an IU to its predecessor on the
+same level, where the levels correspond to processing stages.
+The Figure shows the levels of input words, POS-tags, syn-
+tactic derivations and logical forms. Multiple IUs sharing
+derivations (?CandidateAnalysisIUs?) are repre-
+sented by three features: a list of the last parser ac-
+tions of the derivation (LD), with rule expansions
+or (robust) lexical matches; the derivation proba-
+bility (P); and the remaining stack (S), where S*
+is the grammar?s start symbol and S! an explicit
+end-of-input marker. (To keep the Figure small,
+we artificially reduced the beam size and cut off
+alternatives paths, shown in grey.)
+3.3 Semantic Construction Using RMRS
+As a novel feature, we use for the representation
+of meaning increments (that is, the contributions
+of new words and syntactic constructions) as well
+as for the resulting logical forms the formalism
+Robust Minimal Recursion Semantics (Copestake,
+2006). This is a representation formalism that was
+originally constructed for semantic underspecifi-
+cation (of scope and other phenomena) and then
+adapted to serve the purposes of semantics repre-
+the same predecessor can be regarded as alternatives. Solid
+arrows indicate which information from a previous level an
+IU is grounded in (based on); here, every semantic IU is
+grounded in a syntactic IU, every syntactic IU in a POS-tag-
+IU, and so on.
+516
+sentations in heterogeneous situations where in-
+formation from deep and shallow parsers must be
+combined. In RMRS, meaning representations of
+a first order logic are underspecified in two ways:
+First, the scope relationships can be underspeci-
+fied by splitting the formula into a list of elemen-
+tary predications (EP) which receive a label ` and
+are explicitly related by stating scope constraints
+to hold between them (e.g. qeq-constraints). This
+way, all scope readings can be compactly repre-
+sented. Second, RMRS allows underspecification
+of the predicate-argument-structure of EPs. Ar-
+guments are bound to a predicate by anchor vari-
+ables a, expressed in the form of an argument re-
+lation ARGREL(a,x). This way, predicates can
+be introduced without fixed arity and arguments
+can be introduced without knowing which predi-
+cates they are arguments of. We will make use of
+this second form of underspecification and enrich
+lexical predicates with arguments incrementally.
+Combining two RMRS structures involves at
+least joining their list of EPs and ARGRELs and
+of scope constraints. Additionally, equations be-
+tween the variables can connect two structures,
+which is an essential requirement for semantic
+construction. A semantic algebra for the combi-
+nation of RMRSs in a non-lexicalist setting is de-
+fined in (Copestake, 2007). Unsaturated semantic
+increments have open slots that need to be filled
+by what is called the hook of another structure.
+Hook and slot are triples [`:a:x] consisting of a
+label, an anchor and an index variable. Every vari-
+able of the hook is equated with the corresponding
+one in the slot. This way the semantic representa-
+tion can grow monotonically at each combinatory
+step by simply adding predicates, constraints and
+equations.
+Our approach differs from (Copestake, 2007)
+only in the organisation of the slots: In an incre-
+mental setting, a proper semantic representation
+is desired for every single state of growth of the
+syntactic tree. Typically, RMRS composition as-
+sumes that the order of semantic combination is
+parallel to a bottom-up traversal of the syntactic
+tree. Yet, this would require for every incremental
+step first to calculate an adequate underspecified
+semantic representation for the projected nodes
+on the lower right border of the tree and then to
+proceed with the combination not only of the new
+semantic increments but of the complete tree. For
+our purposes, it is more elegant to proceed with
+semantic combination in synchronisation with the
+syntactic expansion of the tree, i.e. in a top-down
+left-to-right fashion. This way, no underspecifica-
+tion of projected nodes and no re-interpretation of
+already existing parts of the tree is required. This,
+however, requires adjustments to the slot structure
+of RMRS. Left-recursive rules can introduce mul-
+tiple slots of the same sort before they are filled,
+which is not allowed in the classic (R)MRS se-
+mantic algebra, where only one named slot of
+each sort can be open at a time. We thus organize
+the slots as a stack of unnamed slots, where mul-
+tiple slots of the same sort can be stored, but only
+the one on top can be accessed. We then define
+a basic combination operation equivalent to for-
+ward function composition (as in standard lambda
+calculus, or in CCG (Steedman, 2000)) and com-
+bine substructures in a principled way across mul-
+tiple syntactic rules without the need to represent
+slot names.
+Each lexical items receives a generic represen-
+tation derived from its lemma and the basic se-
+mantic type (individual, event, or underspecified
+denotations), determined by its POS tag. This
+makes the grammar independent of knowledge
+about what later (semantic) components will ac-
+tually be able to process (?understand?).3 Parallel
+to the production of syntactic derivations, as the
+tree is expanded top-down left-to-right, seman-
+tic macros are activated for each syntactic rule,
+composing the contribution of the new increment.
+This allows for a monotonic semantics construc-
+tion process that proceeds in lockstep with the
+syntactic analysis.
+Figure 1 (in the ?FormulaIU? box) illustrates
+the results of this process for our example deriva-
+tion. Again, alternatives paths have been cut to
+keep the size of the illustration small. Notice that,
+apart from the end-of-input marker, the stack of
+semantic slots (in curly brackets) is always syn-
+chronized with the parser?s stack.
+3.4 Computing Noun Phrase Denotations
+Formally, the task of this module is, given a model
+M of the current context, to compute the set of
+all variable assignments such that M satisfies ?:
+G = {g | M |=g ?}. If |G| > 1, we say that ?
+refers ambiguously; if |G| = 1, it refers uniquely;
+3This feature is not used in the work presented here, but
+it could be used for enabling the system to learn the meaning
+of unknown words.
+517
+and if |G| = 0, it fails to refer. This process does
+not work directly on RMRS formulae, but on ex-
+tracted and unscoped first-order representations of
+their nominal content.
+3.5 Parse Pruning Using Reference
+Information
+After all possible syntactic hypotheses at an in-
+crement have been derived by the parser and
+the corresponding semantic representations have
+been constructed, reference resolution informa-
+tion can be used to re-rank the derivations. If
+pragmatic feedback is enabled, the probability of
+every reprentation that does not resolve in the cur-
+rent context is degraded by a constant factor (we
+used 0.001 in our experiments described below,
+determined by experimentation). The degradation
+thus changes the derivation order in the parsing
+queue for the next input item and increases the
+chances of degraded derivations to be pruned in
+the following parsing step.
+4 Experiments and Results
+4.1 Data
+We use data from the Pentomino puzzle piece do-
+main (which has been used before for example
+by (Ferna?ndez and Schlangen, 2007; Schlangen et
+al., 2009)), collected in a Wizard-of-Oz study. In
+this specific setting, users gave instructions to the
+system (the wizard) in order to manipulate (select,
+rotate, mirror, delete) puzzle pieces on an upper
+board and to put them onto a lower board, reach-
+ing a pre-specified goal state. Figure 2 shows an
+example configuration. Each participant took part
+in several rounds in which the distinguishing char-
+acteristics for puzzle pieces (color, shape, pro-
+posed name, position on the board) varied widely.
+In total, 20 participants played 284 games.
+We extracted the semantics of an utterance
+from the wizard?s response action. In some cases,
+such a mapping was not possible to do (e. g. be-
+cause the wizard did not perform a next action,
+mimicking a non-understanding by the system),
+or potentially unreliable (if the wizard performed
+several actions at or around the end of the utter-
+ance). We discarded utterances without a clear se-
+mantics alignment, leaving 1687 semantically an-
+notated user utterances. The wizard of course was
+able to use her model of the previous discourse for
+resolving references, including anaphoric ones; as
+Figure 2: The game board used in the study, as pre-
+sented to the player: (a) the current state of the game
+on the left, (b) the goal state to be reached on the right.
+our study does not focus on these, we have dis-
+regarded another 661 utterances in which pieces
+are referred to by pronouns, leaving us with 1026
+utterances for evaluation. These utterances con-
+tained on average 5.2 words (median 5 words;
+std dev 2 words).
+In order to test the robustness of our method,
+we generated speech recognition output using an
+acoustic model trained for spontaneous (German)
+speech. We used leave-one-out language model
+training, i. e. we trained a language model for ev-
+ery utterance to be recognized which was based
+on all the other utterances in the corpus. Unfor-
+tunately, the audio recordings of the first record-
+ing day were too quiet for successful recognition
+(with a deletion rate of 14%). We thus decided
+to limit the analysis for speech recognition out-
+put to the remaining 633 utterances from the other
+recording days. On this part of the corpus word
+error rate (WER) was at 18%.
+The subset of the full corpus that we used for
+evaluation, with the utterances selected according
+to the criteria described above, nevertheless still
+only consists of natural, spontaneous utterances
+(with all the syntactic complexity that brings) that
+are representative for interactions in this type of
+domain.
+4.2 Grammar and Resolution Model
+The grammar used in our experiments was hand-
+constructed, inspired by a cursory inspection of
+the corpus and aiming to reach good coverage
+518
+Words Predicates Status
+nimm nimm(e) -1
+nimm den nimm(e,x) def(x) 0
+nimm den Winkel nimm(e,x) def(x) winkel(x) 0
+nimm den Winkel in nimm(e,x) def(x) winkel(x) in(x,y) 0
+nimm den Winkel in der nimm(e,x) def(x) winkel(x) in(x,y) def(y) 0
+nimm den Winkel in der dritten nimm(e,x) def(x) winkel(x) in(x,y) def(y) third(y) 1
+nimm den Winkel in der dritten Reihe nimm(e,x) def(x) winkel(x) in(x,y) def(y) third(y) row(y) 1
+Table 1: Example of logical forms (flattened into first-order base-language formulae) and reference resolution
+results for incrementally parsing and resolving ?nimm den winkel in der dritten reihe?
+for a core fragment. We created 30 rules, whose
+weights were also set by hand (as discussed be-
+low, this is an obvious area for future improve-
+ment), sparingly and according to standard intu-
+itions. When parsing, the first step is the assign-
+ment of a POS tag to each word. This is done by
+a simple lookup tagger that stores the most fre-
+quent tag for each word (as determined on a small
+subset of our corpus).4
+The situation model used in reference resolu-
+tion is automatically derived from the internal
+representation of the current game state. (This
+was recorded in an XML-format for each utter-
+ance in our corpus.) Variable assignments were
+then derived from the relevant nominal predicate
+structures,5 consisting of extracted simple pred-
+ications, e. g. red(x) and cross(x) for the NP in
+a phrase such as ?take the red cross?. For each
+unique predicate argument X in these EP struc-
+tures (such as as x above), the set of domain ob-
+jects that satisfied all predicates of which X was
+an argument were determined. For example for
+the phrase above, X mapped to all elements that
+were red and crosses.
+Finally, the size of these sets was determined:
+no elements, one element, or multiple elements,
+as described above. Emptiness of at least one set
+denoted that no resolution was possible (for in-
+stance, if no red crosses were available, x?s set
+was empty), uniqueness of all sets denoted that
+an exact resolution was possible while multiple
+elements in at least some sets denoted ambiguity.
+This status was then leveraged for parse pruning,
+as per Section 3.5.
+A more complex example using the scene de-
+picted in Figure 2 and the sentence ?nimm den
+4A more sophisticated approach has recently been pro-
+posed by Beuck et al(2011); this could be used in our setup.
+5The domain model did not allow making a plausibility
+judgement based on verbal resolution.
+winkel in der dritten reihe? (take the bracket in the
+third row) is shown in Table 1. The first column
+shows the incremental word hypothesis string, the
+second the set of predicates derived from the most
+recent RMRS representation and the third the res-
+olution status (-1 for no resolution, 0 for some res-
+olution and 1 for a unique resolution).
+4.3 Baselines and Evaluation Metric
+4.3.1 Variants / Baselines
+To be able to accurately quantify and assess the
+effect of our reference-feedback strategy, we im-
+plemented different variants / baselines. These all
+differ in how, at each step, the reading is deter-
+mined that is evaluated against the gold standard,
+and are described in the following:
+In the Just Syntax (JS) variant, we simply take
+single-best derivation, as determined by syntax
+alone and evaluate this.
+The External Filtering (EF) variant adds in-
+formation from reference resolution, but keeps
+it separate from the parsing process. Here, we
+look at the 5 highest ranking derivations (as de-
+termined by syntax alone), and go through them
+beginning at the highest ranked, picking the first
+derivation where reference resolution can be per-
+formed uniquely; this reading is then put up for
+evaluation. If there is no such reading, the highest
+ranking one will be put forward for evaluation (as
+in JS).
+Syntax/Pragmatics Interaction (SPI) is the
+variant described in the previous section. Here,
+all active derivations are sent to the reference res-
+olution module, and are re-weighted as described
+above; after this has been done, the highest-
+ranking reading is evaluated.
+Finally, the Combined Interaction and Fil-
+tering (CIF) variant combines the previous two
+strategies, by using reference-feedback in com-
+puting the ranking for the derivations, and then
+519
+again using reference-information to identify the
+most promising reading within the set of 5 highest
+ranking ones.
+4.3.2 Metric
+When a reading has been identified according
+to one of these methods, a score s is computed as
+follows: s = 1, if the correct referent (according
+to the gold standard) is computed as the denota-
+tion for this reading; s = 0 if no unique referent
+can be computed, but the correct one is part of the
+set of possible referents; s = ?1 if no referent
+can be computed at all, or the correct one is not
+part of the set of those that are computed.
+As this is done incrementally for each word
+(adding the new word to the parser chart), for an
+utterance of length m we get a sequence of m
+such numbers. (In our experiments we treat the
+?end of utterance? signal as a pseudo-word, since
+knowing that an utterance has concluded allows
+the parser to close off derivations and remove
+those that are still requiring elements. Hence, we
+in fact have sequences ofm+1 numbers.) A com-
+bined score for the whole utterance is computed
+according to the following formula:
+su =
+m?
+n=1
+(sn ? n/m)
+(where sn is the score at position n). The fac-
+tor n/m causes ?later? decisions to count more
+towards the final score, reflecting the idea that
+it is more to be expected (and less harmful) to
+be wrong early on in the utterance, whereas the
+longer the utterance goes on, the more pressing
+it becomes to get a correct result (and the more
+damaging if mistakes are made).6
+Note that this score is not normalised by utter-
+ance length m; the maximally achievable score
+being (m + 1)/2. This has the additional ef-
+fect of increasing the weight of long utterances
+when averaging over the score of all utterances;
+we see this as desirable, as the analysis task be-
+comes harder the longer the utterance is.
+We use success in resolving reference to eval-
+uate the performance of our parsing and semantic
+construction component, where more tradition-
+ally, metrics like parse bracketing accuracy might
+6This metric compresses into a single number some of
+the concerns of the incremental metrics developed in (Bau-
+mann et al 2011), which can express more fine-grainedly
+the temporal development of hypotheses.
+be used. But as we are building this module for an
+interactive system, ultimately, accuracy in recov-
+ering meaning is what we are interested in, and so
+we see this not just as a proxy, but actually as a
+more valuable metric. Moreover, this metric can
+be applied at each incremental step, which is not
+clear how to do with more traditional metrics.
+4.4 Experiments
+Our parser, semantic construction and reference
+resolution modules are implemented within the
+InproTK toolkit for incremental spoken dialogue
+systems development (Schlangen et al 2010). In
+this toolkit, incremental hypotheses are modified
+as more information becomes available over time.
+Our modules support all such modifications (i. e.
+also allow to revert their states and output if word
+input is revoked).
+As explained in Section 4.1, we used offline
+recognition results in our evaluation. However,
+the results would be identical if we were to use
+the incremental speech recognition output of In-
+proTK directly.
+The system performs several times faster than
+real-time on a standard workstation computer. We
+thus consider it ready to improve practical end-to-
+end incremental systems which perform within-
+turn actions such as those outlined in (Bu? and
+Schlangen, 2010).
+The parser was run with a base-beam factor of
+0.01; this parameter may need to be adjusted if a
+larger grammar was used.
+4.5 Results
+Table 2 shows an overview of the experiment re-
+sults. The table lists, separately for the manual
+transcriptions and the ASR transcripts, first the
+number of times that the final reading did not re-
+solve at all, or to a wrong entitiy; did not uniquely
+resolve, but included the correct entity in its de-
+notiation; or did uniquely resolve to the correct
+entity (-1, 0, and 1, respectively). The next lines
+show ?strict accuracy? (proportion of ?1? among
+all results) at the end of utterance, and ?relaxed
+accuracy? (which allows ambiguity, i.e., is the set
+{0, 1}). incr.scr is the incremental score as de-
+scribed above, which includes in the evaluation
+the development of references and not just the fi-
+nal state. (And in that sense, is the most appro-
+priate metric here, as it captures the incremental
+behaviour.) This score is shown both as absolute
+520
+JS EF SPI CIF
+tr
+an
+sc
+ri
+pt
+?1 563 518 364 363
+0 197 198 267 268
+1 264 308 392 392
+str.acc. 25.7% 30.0% 38.2% 38.2%
+rel.acc. 44.9% 49.3% 64.2% 64.3%
+incr.scr ?1568 ?1248 ?536 ?504
+avg.incr.scr ?1.52 ?1.22 ?0.52 ?0.49
+re
+co
+gn
+ti
+on
+?1 362 348 254 255
+0 122 121 173 173
+1 143 158 196 195
+str.acc. 22.6% 25.0% 31.0% 30.8%
+rel.acc. 41.2% 44.1% 58.3% 58.1%
+incr.scr ?1906 ?1730 ?1105 ?1076
+avg.incr.scr ?1.86 ?1.69 ?1.01 ?1.05
+Table 2: Results of the Experiments. See text for explanation of metrics.
+number as well as averaged for each utterance.
+As these results show, the strategy of provid-
+ing the parser with feedback about the real-world
+utility of constructed phrases (in the form of refer-
+ence decisions) improves the parser, in the sense
+that it helps the parser to successfully retrieve the
+intended meaning more often compared to an ap-
+proach that only uses syntactic information (JS)
+or that uses pragmatic information only outside
+of the main programme: 38.2% strict or 64.2%
+relaxed for SPI over 25.7% / 44.9% for JS, an
+absolute improvement of 12.5% for strict or even
+more, 19.3%, for the relaxed metric; the incre-
+mental metric shows that this advantage holds not
+only at the final word, but also consistently within
+the utterance, the average incremental score for
+an utterance being ?0.49 for SPI and ?1.52
+for JS. The improvement is somewhat smaller
+against the variant that uses some reference infor-
+mation, but does not integrate this into the parsing
+process (EF), but it is still consistently present.
+Adding such n-best-list processing to the output
+of the parser+reference-combination (as variant
+CIF does) finally does not further improve the
+performance noticeably. When processing par-
+tially defective material (the output of the speech
+recogniser), the difference between the variants
+is maintained, showing a clear advantage of SPI,
+although performance of all variants is degraded
+somewhat.
+Clearly, accuracy is rather low for the base-
+line condition (JS); this is due to the large num-
+ber of non-standard constructions in our sponta-
+neous material (e.g., utterances like ?lo?schen, un-
+ten? (delete, bottom) which we did not try to cover
+with syntactic rules, and which may not even con-
+tain NPs. The SPI condition can promote deriva-
+tions resulting from robust rules (here, deletion)
+which then can refer. In general though state-of-
+the art grammar engineering may narrow the gap
+between JS and SPI ? this remains to be tested ?
+but we see as an advantage of our approach that
+it can improve over the (easy-to-engineer) set of
+core grammar rules.
+5 Conclusions
+We have described a model of semantic process-
+ing of natural, spontaneous speech that strives
+to jointly satisfy syntactic and pragmatic con-
+straints (the latter being approximated by the as-
+sumption that referring expressions are intended
+to indeed successfully refer in the given context).
+The model is robust, accepting also input of the
+kind that can be expected from automatic speech
+recognisers, and incremental, that is, can be fed
+input on a word-by-word basis, computing at each
+increment only exactly the contribution of the new
+word. Lastly, as another novel contribution, the
+model makes use of a principled formalism for se-
+mantic representation, RMRS (Copestake, 2006).
+While the results show that our approach of
+combining syntactic and pragmatic information
+can work in a real-world setting on realistic
+data?previous work in this direction has so far
+521
+only been at the proof-of-concept stage?there is
+much room for improvement. First, we are now
+exploring ways of bootstrapping a grammar and
+derivation weights from hand-corrected parses.
+Secondly, we are looking at making the variable
+assignment / model checking function probabilis-
+tic, assigning probabilities (degree of strength of
+belief) to candidate resolutions (as for example
+the model of Schlangen et al(2009) does). An-
+other next step?which will be very easy to take,
+given the modular nature of the implementation
+framework that we have used?will be to integrate
+this component into an interactive end-to-end sys-
+tem, and testing other domains in the process.
+Acknowledgements We thank the anonymous
+reviewers for their helpful comments. The work
+reported here was supported by a DFG grant in
+the Emmy Noether programme to the last author
+and a stipend from DFG-CRC (SFB) 632 to the
+first author.
+References
+Gregory Aist, James Allen, Ellen Campana, Car-
+los Gomez Gallo, Scott Stoness, Mary Swift, and
+Michael K. Tanenhaus. 2007. Incremental under-
+standing in human-computer dialogue and experi-
+mental evidence for advantages over nonincremen-
+tal methods. In Proceedings of Decalog 2007, the
+11th International Workshop on the Semantics and
+Pragmatics of Dialogue, Trento, Italy.
+Timo Baumann, Michaela Atterer, and David
+Schlangen. 2009. Assessing and improving the per-
+formance of speech recognition for incremental sys-
+tems. In Proceedings of the North American Chap-
+ter of the Association for Computational Linguis-
+tics - Human Language Technologies (NAACL HLT)
+2009 Conference, Boulder, Colorado, USA, May.
+Timo Baumann, Okko Bu?, and David Schlangen.
+2011. Evaluation and optimization of incremen-
+tal processors. Dialogue and Discourse, 2(1):113?
+141.
+Niels Beuck, Arne Ko?hn, and Wolfgang Menzel.
+2011. Decision strategies for incremental pos tag-
+ging. In Proceedings of the 18th Nordic Con-
+ference of Computational Linguistics, NODALIDA-
+2011, Riga, Latvia.
+Okko Bu? and David Schlangen. 2010. Modelling
+sub-utterance phenomena in spoken dialogue sys-
+tems. In Proceedings of the 14th International
+Workshop on the Semantics and Pragmatics of Dia-
+logue (Pozdial 2010), pages 33?41, Poznan, Poland,
+June.
+Ann Copestake. 2006. Robust minimal recursion se-
+mantics. Technical report, Cambridge Computer
+Lab. Unpublished draft.
+Ann Copestake. 2007. Semantic composition with
+(robust) minimal recursion semantics. In Proceed-
+ings of the Workshop on Deep Linguistic Process-
+ing, DeepLP ?07, pages 73?80, Stroudsburg, PA,
+USA. Association for Computational Linguistics.
+David DeVault and Matthew Stone. 2003. Domain
+inference in incremental interpretation. In Proceed-
+ings of ICOS 4: Workshop on Inference in Compu-
+tational Semantics, Nancy, France, September. IN-
+RIA Lorraine.
+David DeVault, Kenji Sagae, and David Traum. 2011.
+Incremental Interpretation and Prediction of Utter-
+ance Meaning for Interactive Dialogue. Dialogue
+and Discourse, 2(1):143?170.
+Raquel Ferna?ndez and David Schlangen. 2007. Re-
+ferring under restricted interactivity conditions. In
+Simon Keizer, Harry Bunt, and Tim Paek, editors,
+Proceedings of the 8th SIGdial Workshop on Dis-
+course and Dialogue, pages 136?139, Antwerp,
+Belgium, September.
+Ulrike Pado?, Matthew W Crocker, and Frank Keller.
+2009. A probabilistic model of semantic plausi-
+bility in sentence processing. Cognitive Science,
+33(5):794?838.
+Matthew Purver, Arash Eshghi, and Julian Hough.
+2011. Incremental semantic construction in a di-
+alogue system. In J. Bos and S. Pulman, editors,
+Proceedings of the 9th International Conference on
+Computational Semantics (IWCS), pages 365?369,
+Oxford, UK, January.
+Brian Roark. 2001. Robust Probabilistic Predictive
+Syntactic Processing: Motivations, Models, and
+Applications. Ph.D. thesis, Department of Cogni-
+tive and Linguistic Sciences, Brown University.
+David Schlangen and Gabriel Skantze. 2009. A gen-
+eral, abstract model of incremental dialogue pro-
+cessing. In EACL ?09: Proceedings of the 12th
+Conference of the European Chapter of the Associa-
+tion for Computational Linguistics, pages 710?718.
+Association for Computational Linguistics, mar.
+David Schlangen, Timo Baumann, and Michaela At-
+terer. 2009. Incremental reference resolution: The
+task, metrics for evaluation, and a bayesian filtering
+model that is sensitive to disfluencies. In Proceed-
+ings of SIGdial 2009, the 10th Annual SIGDIAL
+Meeting on Discourse and Dialogue, London, UK,
+September.
+David Schlangen, Timo Baumann, Hendrik
+Buschmeier, Okko Bu?, Stefan Kopp, Gabriel
+Skantze, and Ramin Yaghoubzadeh. 2010. Middle-
+ware for Incremental Processing in Conversational
+Agents. In Proceedings of SigDial 2010, Tokyo,
+Japan, September.
+522
+William Schuler, Stephen Wu, and Lane Schwartz.
+2009. A framework for fast incremental interpre-
+tation during speech decoding. Computational Lin-
+guistics, 35(3).
+William Schuler. 2003. Using model-theoretic se-
+mantic interpretation to guide statistical parsing and
+word recognition in a spoken language interface. In
+Proceedings of the 41st Meeting of the Association
+for Computational Linguistics (ACL 2003), Sap-
+poro, Japan. Association for Computational Lin-
+guistics.
+Gabriel Skantze and Anna Hjalmarsson. 2010. To-
+wards incremental speech generation in dialogue
+systems. In Proceedings of the SIGdial 2010 Con-
+ference, pages 1?8, Tokyo, Japan, September.
+Gabriel Skantze and David Schlangen. 2009. Incre-
+mental dialogue processing in a micro-domain. In
+Proceedings of the 12th Conference of the Euro-
+pean Chapter of the Association for Computational
+Linguistics (EACL 2009), pages 745?753, Athens,
+Greece, March.
+Mark Steedman. 2000. The Syntactic Process. MIT
+Press, Cambridge, Massachusetts.
+Scott C. Stoness, Joel Tetreault, and James Allen.
+2004. Incremental parsing with reference inter-
+action. In Proceedings of the Workshop on In-
+cremental Parsing at the ACL 2004, pages 18?25,
+Barcelona, Spain, July.
+Scott C. Stoness, James Allen, Greg Aist, and Mary
+Swift. 2005. Using real-world reference to improve
+spoken language understanding. In AAAI Workshop
+on Spoken Language Understanding, pages 38?45.
+523
+Proceedings of the 7th Linguistic Annotation Workshop & Interoperability with Discourse, pages 196?204,
+Sofia, Bulgaria, August 8-9, 2013. c?2013 Association for Computational Linguistics
+Ranking the annotators: An agreement study on argumentation structure
+Andreas Peldszus
+Applied Computational Linguistics
+University of Potsdam
+peldszus@uni-potsdam.de
+Manfred Stede
+Applied Computational Linguistics
+University of Potsdam
+stede@uni-potsdam.de
+Abstract
+We investigate methods for evaluating
+agreement among a relatively large group
+of annotators who have not received exten-
+sive training and differ in terms of ability
+and motivation. We show that it is possi-
+ble to isolate a reliable subgroup of anno-
+tators, so that aspects of the difficulty of
+the underlying task can be studied. Our
+task is to annotate the argumentative struc-
+ture of short texts.
+1 Introduction
+Scenarios for evaluating annotation experiments
+differ in terms of the difficulty of the task, the
+number of annotators, and the amount of training
+that annotators receive. For simple tasks, crowd-
+sourcing involving very many annotators has re-
+cently attracted attention.1 For more difficult
+tasks, the standard setting still is to work with
+two or a few more annotators, train them well,
+and compute agreement, usually in terms of the
+kappa measure. In this paper, we study a dif-
+ferent scenario, which may be called ?classroom
+annotation?: The group of annotators is bigger
+(in our example, 26), and there are no extensive
+training sessions: Students receive detailed writ-
+ten guidelines, there is a brief QA period, and an-
+notation starts. In such a setting, one has to expect
+some agreement problems that are due to different
+abilities and different motivation of the students.
+Our goal is to develop methods for systematically
+studying the annotation results in such groups, to
+identify more or less competent subgroups, yet at
+the same time also learn about the difficulty of var-
+ious aspects of the underlying annotation task. To
+this end, we investigate ways of ranking and clus-
+tering annotators.
+1See, for instance, Snow et al (2008) or Bhardwaj et al
+(2010) for strategies to analyse and cope with diverging per-
+formance of annotators in that scenario.
+Our task is the annotation of argumentation in
+short texts, which is somewhat similar to mark-
+ing the rhetorical structure, e.g. in terms of RST
+(Mann and Thompson, 1988; Carlson et al, 2003).
+Thus we are dealing with a relatively difficult task
+involving text interpretation. We devised an an-
+notation scheme (which is more fully described
+elsewhere), and in order to study the feasibility,
+first ran experiments with short hand-crafted texts
+that collectively cover all the relevant phenom-
+ena. This is the setting we report in this paper. A
+separate step for future work is guideline revision
+on the basis of the results, and then applying the
+scheme to authentic argumentative text (e.g., user
+generated content on various websites).
+2 A theory of argumentation structure
+Following up on Toulmin?s (1958) influential anal-
+ysis of argument, Freeman (1991; 2011) worked
+on integrating those ideas into the argument dia-
+graming techniques of the informal logic tradition.
+Freeman?s central idea is to model argumentation
+as a hypothetical dialectical exchange between a
+proponent, who presents and defends claims, and
+a challenger (the ?opponent?), who critically ques-
+tions them in a regimented fashion. Every move
+in such a basic dialectical situation corresponds
+to a structural element in the argument diagram.
+The analysis of an argumentative text is thus con-
+ceived as finding the corresponding critical ques-
+tion of the challenger that is answered by a partic-
+ular segment of the text.
+Since the focus of this paper is on the evalu-
+ation methodology, we provide here only a brief
+sketch of the scheme; for a detailed description
+with many examples, see Peldszus and Stede (to
+appear). Premises and conclusions are proposi-
+tions expressed in the text segments. We can
+graphically present an argument as an argument
+diagram, with propositions as nodes and the vari-
+ous relations as arrows linking either two nodes or
+196
+Figure 1: Example of an argumentation structure
+annotation for a short text
+a node and a link2. See figure 1 for an example.
+Notice that segments in favor of the proponent?s
+position are drawn in circles, whereas the chal-
+lenger?s perspective is given in boxes. The root
+of an argument tree is the central statement made
+in the text. In the example, it is expressed both in
+segment 1 and in segment 8; the = indicates that
+the annotator judges the contributions of the two
+segments as equivalent, which can happen for any
+node in the tree. Segments 2, 4, and 9 provide
+support to the central statement, which is the most
+simple configuration.
+(1) [We should tear the building down.]1 [It is full
+of asbestos.]2
+Support can be serial (transitive), when a support-
+ing statement in turn receives support from an-
+other one. E.g., example (1) could be continued
+with . . . [The report of the commission made that
+very clear.]3.
+If an argument involves multiple premises that
+support the conclusion only if they are taken to-
+gether, we have a linked structure in Freeman?s ter-
+minology. On its own none of the linked premises
+would be able to support the conclusion. In the
+basic dialectical situation, a linked structure is in-
+duced by the challenger?s question as to why a
+premise is relevant to the claim. The proponent
+then answers by presenting another premise expli-
+cating the connection. Building linked structure is
+thus to be conceived as completing an argument.
+As an example, consider the following continu-
+ation of example (1) . . . [All buildings with haz-
+ardous materials should be demolished.]3 . Linked
+support is shown in the diagram by connecting the
+premises before they link to the conclusion.
+Two more configurations, which turn up in Fig-
+ure 1, are the attacking relations (all with a cir-
+cled arrowhead): undercut and rebuttal. The for-
+2When an artificial node is introduced in such places, a
+standard tree representation results.
+mer (segment 5) denies the relevance of a stated
+relation, here: the support that 4 lends to 1=8. The
+opponent does not dispute the truth of 4 itself but
+challenges the idea that it can in fact lend support
+to 1=8. We draw it as an attack arrow pointing
+at the relation in question. In contrast, a rebut-
+tal directly challenges the truth of a statement. In
+the example, the annotator first decided that seg-
+ments 6 and 7 play a joint role for the argumen-
+tation (this is the step of merging two segments)
+and then marked them as the proponent?s rebuttal
+of the challenger?s statement 5.
+3 Annotation Experiment
+3.1 Guidelines
+We developed annotation guidelines based on the
+theory presented in Section 2. The guidelines
+(6 pages) contain text examples and the cor-
+responding graphs for all basic structures, and
+they present different combinations of attack and
+counter-attack. The annotation process is divided
+into three steps: First, one segment is identified as
+the central claim of the text. The annotator then
+chooses the dialectical role (proponent or oppo-
+nent) for all remaining segments. Finally, the argu-
+mentative function of each segment (is it support-
+ing or attacking) and the corresponding subtypes
+have to be determined, as well as the targeted seg-
+ment.
+3.2 Data
+Applying the scheme demands a detailed, deep un-
+derstanding of the text, which is why we choose
+to first evaluate this task on short and controlled
+instances of argumentation. For this purpose we
+built a set of 23 constructed German texts, where
+each text consists of only five discourse segments.
+While argumentative moves in authentic texts are
+often surrounded by material that is not directly
+relevant to the argumentation, such as factual
+background information, elaborations or rhetori-
+cal decoration, in the constructed texts all seg-
+ments are clearly argumentative, i.e. they either
+presents the central claim, a reason, an objection
+or a counter-attack. Merging segments and identi-
+fying restatements is thus not necessary. The texts
+cover several combinations of the basic constructs
+in different linearisations, typically one central
+claim, two (simple, combined or exemplifying)
+premises, one objection (rebutting a premise, re-
+butting the conclusion or undercutting the link be-
+197
+tween them) and a possible reaction (rebutting or
+undercutting counter-attacks, or a new reason that
+renders the objection uncountered). A (translated)
+example of a micro text is given in (2). In the
+questionaire the order of the texts has been ran-
+domized.
+(2) [Energy-saving light bulbs contain a con-
+siderable amount of toxic substances.]1 [A
+customary lamp can for instance contain
+up to five milligrams of quicksilver.]2 [For
+this reason, they should be taken off the
+market,]3 [unless they are virtually unbreak-
+able.]4 [This, however, is simply not case.]5
+3.3 Procedure
+The annotation experiment was carried out in the
+context of an undergraduate university course with
+26 students, participation was obligatory. The an-
+notators only received minimal training: A short
+introduction (5 min.) was given to set the topic.
+After studying the guidelines (?30 min.) and a
+very brief question-answering, the subjects anno-
+tated the 23 texts (?45 min.), writing their analysis
+as an argumentative graph in designated areas of
+the questionaire.
+4 Evaluation
+4.1 Preparations
+Since the annotators were asked to assign one and
+only one function to each segment, every node in
+the argumentative graph has exactly one out-going
+arc. The graph can thus be reinterpreted as a list
+of segment labels.
+Every segment is labeled on different levels:
+The ?role?-level specifies the dialectical role (pro-
+ponent or opponent). The ?typegen?-level specifies
+the general type, i.e. whether the segment presents
+the central claim (thesis) of the text, supports or
+attacks another segment. The ?type?-level addi-
+tionally specifies the kind of support (normal or
+example) and the kind of attack (rebutter or un-
+dercutter). Whether a segment?s function holds
+only in combination with that of another segment
+(combined) or not (simple) is represented on the
+?combined?-level.3 The target is finally specified
+by the segment identifier (1 . . . 5) or relation iden-
+tifier (a . . . d) on the ?target?-level.
+The labels of each separate level can be merged
+to form a complex tagset. We interpret the result
+3This is roughly equivalent to Freeman?s ?linked
+premises?.
+as a hierarchical tagset as it is presented in Fig-
+ure 2.4 The label ?PSNC(3)? for example stands
+for a proponent?s segment, giving normal support
+to segment 3 in combination with another seg-
+ment, while ?OAUS(b)? represents an opponent?s
+segment, undercutting a relation b, not combined.
+Due to space and readability constraints, we fo-
+cus the detailed discussion of the experiment?s re-
+sult on the ?role+type?-level. Still, general results
+will be reported for all levels.
+Another question that arises before evaluation,
+especially in our setting, is how to deal with miss-
+ing annotations, since measuring inter-annotator
+agreement with a ?-like coefficient requires a deci-
+sion of every annotator (or at least the same num-
+ber of annotators) on each item. One way to cope
+with this is to exclude annotators with missing an-
+notations, another to exclude items that have not
+been annotated by every subject. In our exper-
+iment only 11 of the 26 subjects annotated ev-
+ery segment. Another 10 annotated at least 90%
+of the segments, five annotated less. Excluding
+some annotators would be possible in our setting,
+but keeping only 11 of 26 is unacceptable. Ex-
+cluding items is also inconvenient given the small
+dataset. We thus chose to mark segments with
+missing annotations as such in the data, augment-
+ing the tagset with the label ??? for missing anno-
+tations. We are aware of the undesired possibility
+that two annotators ?agree? on not assigning a cat-
+egory to a segment. Still, we can decide to only
+exclude those annotators who omitted many deci-
+sions, and to measure agreement for the remaining
+ones, thereby reducing the risk of false agreement.
+4.2 IAA over all annotators
+The agreement in terms of Fleiss?s ? (Fleiss,
+1971)5 of all annotators on the different levels is
+shown in Table 1. For the complex levels we ad-
+ditionally report Krippendorff?s ? (Krippendorff,
+1980) as a weighted measure of agreement. We
+use the distance between two tags in the tag hier-
+archy to weigh the confusion (similar to Geertzen
+and Bunt (2006)), in order to capture the intuition
+that confusing, e.g., PSNC with PSNS is less se-
+vere than confusing it with OAUS.
+According to the scale of Krippendorff (1980),
+4Notice that this hierarchy is implicit in the annotation
+process, yet the annotators were neither confronted with a
+decision-tree version nor the labels of this tag hierarchy.
+5A generalisation of Scott?s pi (Scott, 1955) for more than
+two annotators, as Artstein and Poesio (2008) pointed out.
+198
+Figure 2: The hierarchy of segment labels.
+level #cats ? AO AE ? DO DE
+role 2 0.521 0.78 0.55
+typegen 3 0.579 0.72 0.33
+type 5 0.469 0.61 0.26
+comb 2 0.458 0.73 0.50
+target (9) 0.490 0.58 0.17
+role+typegen 5 0.541 0.66 0.25 0.534 0.28 0.60
+role+type 9 0.450 0.56 0.20 0.500 0.33 0.67
+role+type+comb 15 0.392 0.49 0.16 0.469 0.38 0.71
+role+type+comb+target (71) 0.384 0.44 0.08 0.425 0.45 0.79
+Table 1: Agreement for all 26 annotators on 115 items for the different levels. The number of categories
+on each level (without ???) is shown in the second column (possible target categories depend on text
+length). We report Fleiss?s ? with the associated observed (AO) and expected agreement (AE). Weighted
+scores were calculated using Krippendorff?s ?, with observed (DO) and expected disagreement (DE).
+the annotators in our experiment did neither
+achieve reliable (? ? 0.8) nor marginally reli-
+able (0.67 ? ? < 0.8) agreement. On the scale
+of Landis and Koch (1977), most results can be
+interpreted to show moderate correlation (0.4 <
+? ? 0.6), only the two most complex levels fall
+out. Considering weighted scores for those com-
+plex levels, all fall into the window of moderate
+correlation.
+While typical results in discourse structure tag-
+ging usually reach or exceed the 0.7 threshold6 ,
+we expected lower results for three reasons: first
+the minimal training of the naive annotators only
+based on the guidelines, second the varying com-
+mitment to the task of the annotators in the con-
+strained setting and finally the nature of the task,
+which requires a precise specification of the anno-
+tators interpretation of the texts.
+When it comes to investigation of the reasons
+of disagreement, the informativeness of a single
+inter-annotator agreement value is limited. We
+want to identify sources of disagreement in both
+the set of annotators as well as the categories. To
+6Agreement of professional annotators on 16 rhetorical
+relations was ?=0.64 in the beginning and 0.82 after extensive
+training (Carlson et al, 2003). Agreement on ?argumentative
+zones? is reported ?=0.71 for trained annotators with detailed
+guidelines, another study for untrained annotators with only
+minimalistic guidelines reported values varying between 0.35
+and 0.72 (depending on the text), see Teufel (2010).
+cat. ?? n AO AE
+PT +0.265 572 0.91 0.69
+PSE +0.128 112 0.97 0.93
+PSN +0.082 1075 0.79 0.54
+OAR ?0.027 430 0.86 0.75
+PAR ?0.148 173 0.92 0.89
+OSN ?0.198 153 0.93 0.90
+OAU ?0.229 172 0.92 0.89
+PAU ?0.240 138 0.93 0.91
+OSE ?0.451 2 0.99 0.99
+Table 3: Krippendorff?s category definition diag-
+nostic for the level ?role+type?, base ?=0.45.
+this end, contingency tables (confusion matrices)
+are studied, which show the number of category
+agreements and confusions for a pair of annota-
+tors. However, the high number of annotators in
+our study makes this strategy infeasible, as there
+are 325 different pairs of annotators. One solution
+to still get an overview of typical category con-
+fusions, is to build an aggregated confusion ma-
+trix, which sums up the values of category pairs
+across all 325 normal confusion matrices. As pro-
+posed in Cinkova? et al (2012), we derive a confu-
+sion probability matrix from this aggregated ma-
+trix, which is shown in Table 2. It specifies the
+conditional probability that one annotator will an-
+notate an item with categorycolumn , given that an-
+other has chosen categoryrow , so the rows sum up
+to 1. The diagonal cells display the probability of
+agreement for each category.
+199
+PT PSN PSE PAR PAU OSN OSE OAR OAU ?
+PT 0.625 0.243 0.005 0.003 0.002 0.006 0.000 0.030 0.007 0.078
+PSN 0.123 0.539 0.052 0.034 0.046 0.055 0.001 0.052 0.021 0.078
+PSE 0.024 0.462 0.422 0.007 0.008 0.000 0.000 0.015 0.001 0.061
+PAR 0.007 0.164 0.004 0.207 0.245 0.074 0.000 0.156 0.072 0.071
+PAU 0.007 0.264 0.005 0.290 0.141 0.049 0.000 0.117 0.075 0.052
+OSN 0.016 0.292 0.000 0.081 0.046 0.170 0.004 0.251 0.075 0.065
+OSE 0.000 0.260 0.000 0.000 0.000 0.260 0.000 0.240 0.140 0.100
+OAR 0.033 0.114 0.004 0.070 0.044 0.102 0.001 0.339 0.218 0.076
+OAU 0.017 0.101 0.000 0.069 0.061 0.066 0.002 0.469 0.153 0.063
+? 0.179 0.351 0.031 0.066 0.041 0.055 0.001 0.157 0.061 0.057
+Table 2: Confusion probability matrix over all 26 annotators for the level ?role+type?.
+category pair ?? AO AE
+OAR+OAU +0.048 0.61 0.22
+PAR+PAU +0.026 0.59 0.21
+OAR+OSN +0.018 0.58 0.22
+PSN+PSE +0.012 0.59 0.23
+OAR+PAR +0.007 0.58 0.22
+PSN+OSN +0.007 0.59 0.24
+PAR+OSN +0.005 0.57 0.21
+Table 4: Krippendorff?s category distinction diag-
+nostic for the level ?role+type?, base ?=0.45.
+Krippendorff (1980) proposed another way to
+investigate category confusions by systematically
+comparing the agreement on the original category
+set with the agreement on a reduced category set.
+There are two different methods to collapse cat-
+egories: The first is the category definition test,
+where all but the one category of interest are col-
+lapsed together, yielding a binary category distinc-
+tion. When measuring the agreement with this bi-
+nary distinction only confusions between the cat-
+egory of interest and the rest count, but no confu-
+sions between the collapsed categories. If agree-
+ment increases for the reduced set compared to the
+original set, that category of interest is better dis-
+tinguished than the rest of the categories. As Ta-
+ble 3 shows, the highest distinguishability is found
+for PT, PSN and PSE. Rebutters are better distin-
+guished for the opponent role than for the propo-
+nent role. Undercutters seem equally problematic
+for both roles. The extreme value for OSE is not
+surprising, given that this category was not sup-
+posed to be found in the dataset and was only used
+twice. It shows, though, that the results of this test
+have to be interpreted with caution for rare cate-
+gories, since in these cases the collapsed rest al-
+ways leads to a very high chance agreement.
+The other of Krippendorff?s diagnostics is the
+category distinction test, where two categories are
+collapsed in order to measure the impact of con-
+fusions between them on the overall agreement
+value. The higher the difference, the greater the
+confusion between the two collapsed categories.
+Table 4 shows the result for some category pairs.
+The highest gain is found between rebutting and
+undercutting attacks on the opponents side: Given
+the base ?=0.45, the +0.048 increase means a po-
+tential improvement of 10% if these confusions
+could be reduced. However, distingishing rebut-
+ters and undercutters often depends on interpreta-
+tion and we consider it unlikely to reach perfect
+agreement on that decision.
+4.3 Comparison with gold data
+We now compare the result of the annotation ex-
+periment with the gold annotation. For each an-
+notator and for each level of annotation, we cal-
+culated the F1 score, macro-averaged over the cat-
+egories of that level. Figure 3 shows the distri-
+bution of those values as boxplots. We observe
+varying degrees of difficulty on the basic levels:
+While the scores on the ?role? and ?typegen? are
+relatively dense between 0.8 and 0.9, the distribu-
+tion is much wider and also generally lower for
+?type?, ?comb? and ?target?. Especially remarkable
+is the drop of the median when comparing ?type-
+gen? with ?type?: For the simpler level, all values
+of the better half of annotators lie above 0.85, but
+for the more complex level, which also requires
+the distinction between rebutters and undercutters,
+the median drops to 0.67. The figure also shows
+the pure F1 score for identifying the central claim
+(PT). While the larger part of the annotators per-
+forms well in this task, there are still some be-
+low 0.7. This is remarkable, since identifying one
+segment as the central claim of a five-segment text
+does not appear to be a challenging task.
+4.4 Ranking and clustering the annotators
+Until now we have mainly investigated the tagset
+as a factor in measuring agreement. The
+widespread distribution of annotator scores in the
+comparison with gold data however showed that
+200
+ro
+l
+e
+t
+y
+p
+e
+g
+e
+n
+t
+y
+p
+e
+c
+o
+m
+b
+t
+a
+r
+g
+e
+t
+r
+o
+l
+e
++
+t
+y
+p
+e
+g
+e
+n
+r
+o
+l
+e
++
+t
+y
+p
+e
+r
+o
++
+t
+y
++
+c
+o
+r
+o
++
+t
+y
++
+c
+o
++
+t
+a
+c
+e
+n
+t
+r
+a
+l
+-
+c
+l
+a
+i
+m
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+Figure 3: Comparison with gold annotation: For
+each level we show a boxplot of the F1 scores
+of all annotators (each score macro-averaged over
+categories of that level). Also, we present the F1
+score for the recognition of the central claim.
+their performance differs greatly. As described in
+Section 3.3, participation in the study was obliga-
+tory for our subjects (students in class). We thus
+want to make sure that the differences in perfor-
+mance are a result of the annotator?s varying com-
+mitment to the task, rather than a result of pos-
+sible ambiguities or flaws of the guidelines. The
+inter-annotator agreement values presented in Ta-
+ble 1 are not so helpful for answering this ques-
+tion, as they only provide us with an average mea-
+sure, but not with an upper and lower bound of
+what is achievable with our annotators. Conse-
+quently, the goal of this section is to give structure
+to the set of annotators, to impose a (partial) or-
+der on it or even divide it into different groups and
+investigate their characteristic confusions.
+Central claim: During the conversion of the
+written graphs into segment label squences, it be-
+came obvious that certain annotators nearly al-
+ways chose the first segment of the text as the
+central claim, even in cases where it was fol-
+lowed by a consecutive clause with a discourse
+marker. Therefore, our first heuristic was to im-
+pose an order on the set of annotators according
+to their F1 score in identifying the central claim.
+This not only identifies those outliers but can ad-
+ditionally serve as a rough indicator of text un-
+derstanding. Although this ordering requires gold
+data, producing gold data for the central claim of a
+text is relatively simple and using them only gives
+minimal bias in the evaluation (in contrast to e.g.
+5 10 15 20 25
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+role+type+comb+target
+role+type+comb
+target
+typegen
+role
+role+type
+comb
+type
+role+typegen
+Figure 4: Agreement in ? on the different levels
+for the n-best annotators ordered by their F1 score
+in identifying the central claim.
+?role+type? F1 score as a sorting criterion). With
+this ordering we can then calculate agreement on
+different subsets of the annotators, e.g. only for
+the two best annotators, for the ten best or for all.
+Figure 4 shows ? on the different levels for all n-
+best groups of annotators: From the two best to the
+six best annotators the results are quite stable. The
+six best annotators achieve an encouraging ?=0.74
+on the ?role+type? level and likewise satisfactory
+?=0.69 for the full task, i.e. on the maximally
+complex ?role+type+comb+target? level. For in-
+creasingly larger n-best groups, the agreement de-
+creases steadily with only minor fluctuations. Al-
+though the central claim F1 score proves to be a
+useful sorting criterion here, it might not work as
+well for authentic texts, due to the possibility of
+restated, or even implicit central claims.
+Category distributions: Investigating the an-
+notator bias is also a promising way to impose
+structure onto the group of annotators. A look
+on the individual distribution of categories per an-
+notator quickly reveals that there are some devia-
+tions. Table 5 shows the individual distributions
+for the ?role+type?-level, as well as the average
+annotator distribution and that found in the gold
+data. We focus on three peculiarities here. First,
+both annotators A18 and A21 refrain from classi-
+fying segments as attacking. Although they make
+the distinction between the roles, they give only
+supporting segments. Checking the annotations
+shows that they must have mixed the concepts of
+dialectical role and argumentative function. An-
+other example is the group of A04, A20 and A23,
+who refrain from using proponent attacks. Al-
+201
+anno PT PSN PSE PAR PAU OSN OSE OAR OAU ? ?gold ??
+A01 23 40 5 13 0 6 0 24 0 4 17 15.6
+A02 22 33 7 8 11 3 0 23 1 7 17 16.9
+A03 23 40 6 4 12 5 0 16 9 0 7 11.8
+A04 21 52 6 1 0 0 0 14 11 10 25 20.5
+A05 23 42 5 15 2 5 0 20 3 0 10 14.2
+A06 24 39 6 6 9 7 0 15 9 0 7 10.9
+A07 22 41 1 12 8 5 0 13 8 5 13 9.4
+A08 23 35 6 6 14 6 1 17 7 0 9 13.3
+A09 23 43 2 6 7 7 0 15 12 0 9 10.8
+A10 23 51 3 3 4 8 0 8 15 0 21 21.2
+A11 21 41 3 2 1 1 0 22 9 15 21 16.6
+A12 23 42 6 15 5 3 0 13 4 4 13 11.7
+A13 23 40 4 16 0 7 0 17 8 0 14 13.3
+A14 19 33 6 10 4 4 0 11 8 20 26 20.2
+A15 19 37 2 6 7 3 0 18 3 20 20 16.9
+A16 20 31 4 7 10 7 0 14 5 17 22 16.9
+A17 22 53 2 4 3 0 0 20 6 5 17 15.1
+A18 23 51 5 0 0 34 1 0 1 0 39 40.4
+A19 24 41 7 13 2 5 0 20 3 0 10 14.5
+A20 21 41 4 0 1 2 0 31 5 10 22 18.2
+A21 16 40 0 1 0 20 0 0 1 37 52 44.8
+A22 22 34 7 5 10 6 0 17 9 5 12 10.3
+A23 23 52 0 1 0 0 0 32 6 1 24 27.1
+A24 23 41 6 6 9 5 0 22 3 0 4 11.8
+A25 23 38 4 5 15 0 0 7 23 0 24 27.1
+A26 23 44 5 8 4 4 0 21 3 3 9 10.2
+? 22.0 41.3 4.3 6.7 5.3 5.9 0.1 16.5 6.6 6.3
+gold 23 42 6 6 8 5 0 19 6 0
+Table 5: Distribution of categories for each annotator in absolute numbers for the ?role+type? level.
+The last two rows display gold and average annotator distribution for comparison. The two right-
+most columns specify for each annotator the total difference to gold or average distribution ?gold/? =
+1
+2
+?
+c
+?gold/?c .
+though they make the distinction between the ar-
+gumentative functions of supporting and attack-
+ing, they do not systematically attribute counter-
+attacks to the proponent. Finally, as pointed out
+before, there are several annotators with a different
+amount of missing annotations. Note, that missing
+annotations must not necessarily signal an unmo-
+tivated annotator (who skips an item if deciding on
+it is too tedious). It could very well also be a dili-
+gent but slow annotator. Still, missing annotations
+lead to lower agreement in most cases, so filtering
+out the severe cases might be a good idea. Most
+of the annotators showing deviations in category
+distribution could be identified, if annotators are
+sorted by deviation from average distribution ??,
+which is shown in the last column of Table 5. Fil-
+tering out the 7 worst annotators in terms of ??,
+the resulting ? increases from 0.45 to 0.54 on the
+?role+type?-level, which is nearly equal to the 0.53
+achieved when using the same size of annotator set
+in the central claim ordering. Although this order-
+ing suffices to detect outliers in the set of annota-
+tors without relying on gold data, it still has two
+drawbacks: It only maximizes to the average and
+will thus not garantuee best agreement scores for
+the smaller n-best sets. Furthermore a more gen-
+eral critique on total orders of annotators: There
+are various ways in which a group agrees or dis-
+A
+2
+1
+A
+2
+0
+A
+0
+4
+A
+1
+8
+A
+2
+5
+A
+1
+0
+A
+0
+9
+A
+1
+1
+A
+1
+5
+A
+1
+6
+A
+0
+7
+A
+2
+3
+A
+1
+4
+A
+2
+2
+A
+1
+7
+A
+0
+1
+A
+1
+3
+A
+2
+6
+A
+0
+6
+A
+0
+2
+A
+0
+8
+A
+2
+4
+A
+0
+3
+A
+1
+2
+A
+0
+5
+A
+1
+9
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+Figure 5: Clustering of the annotators (on the x-
+axis) for the ?role+type? level. The y-axis speci-
+fies the distance between the clusters, i.e. the ?
+reached by the annotators of both clusters.
+agrees simultaneously that might not be linearized
+this way. Luckily, a better solution is at hand.
+Agglomerative hierarchical clustering: We
+apply hierarchical clustering in order to investi-
+gate the structure of agreement in the set of an-
+notators. The clusters are initialized as singletons
+for each annotator. Then agreement is calculated
+for all possible pairs of those clusters. The pair of
+clusters with highest agreement is merged. This
+procedure is iterated until there is only one cluster
+left. In contrast to normal clustering, the linkage
+202
+criterion does not determine the distance between
+complex clusters indirectly as function of the dis-
+tance between singleton clusters, but directly mea-
+sures agreement for the unified set of annotators of
+both clusters. Figure 5 shows the clustering on the
+?role+type?-level. It not only gives an impression
+of the possible range of agreement, but also allows
+us to check for ambiguities in the guidelines: If
+there were stable alternative readings in the guide-
+lines, we would expect multiple larger clusters that
+can only be merged at a lower level of ?. As the
+Figure shows, the clustering grows steadily, maxi-
+mally incorporating clusters of two annotators, so
+we do not see the threat of ambiguity in the guide-
+lines. Furthermore, the clustering conforms with
+central claim ordering in picking out the same set
+of six reliable and good annotators (with an aver-
+age F1 of 0.76 for ?role+type? and of 0.67 for the
+full task compared to gold) and it conforms with
+both orderings in picking out similar sets of worst
+annotators.
+With this clustering we now have the possibility
+to investigate the agreement for subgroups of an-
+notators. Since the growth of the clusters is rather
+linear, we choose to track the confusion over the
+best path of growing clusters, i.e. starting from
+the best scoring {A24,A03} cluster to the maximal
+cluster. It would be interesting to see the change in
+Krippendorff?s category distinction diagnostic for
+selected confusion pairs. However, this value not
+only depends on the amount of confusion but also
+on the frequency of that categories7, which cannot
+be assume to be identical for different sets of an-
+notators. We thus investigate the confusion rate
+confc1,c2 , i.e. the ratio of confusing assigments
+pairs |c1 ? c2| in the total set of agreeing and con-
+fusing assignments pairs for these two categories:
+confc1,c2 =
+|c1 ? c2|
+|c1 ? c1|+ |c1 ? c2|+ |c2 ? c2|
+Figure 6 shows the confusion rate for selected
+category pairs over the path from the best scoring
+to the maximal cluster. The confusion between re-
+butters and undercutters is already at a high level
+for the best six best annotators, but increases when
+worse annotators enter the cluster. A constant
+and relatively low confusion rate has PSN+PAU,
+which means that distinguishing counter-attacks
+from new premises is equally ?hard? for all annota-
+tors. Distinguishing normal and example support,
+720% confusion of frequent categories have a larger im-
+pact on agreement than that of less frequent categories.
+2 3 6 7 8 9 11 12 13 14 15 16 18 19 20 21 22 23 25 26
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+0.45
+0.50
+PAR+PAU
+OAR+OAU
+PT+PSN
+PSN+PAU
+PSN+PSE
+OAU+OSN
+Figure 6: Confusion rate for selected category
+pairs in the growing clusters, with the numbers of
+annotators in the cluster on the x axis.
+as well as central claims and supporting segments
+is not a problem for the six best annotators. It be-
+comes slightly more confusing for more annota-
+tors, yet ends at a relatively low level around 0.08
+and 0.13 respectively. Confusing undercutters and
+support on the opponents side is only a problem
+of the low-agreeing annotators, the confusion rate
+is nearly 0 for the first 21 annotators on the clus-
+ter path. Finally note, that there is no confusion
+typical for the high-agreeing annotators only.
+5 Conclusions
+We presented methods to systematically study the
+agreement in a larger group of annotators. To
+this end, we evaluated an annotation study, where
+26 untrained annotators marked the argumentation
+structure of small texts. While the overall agree-
+ment showed only moderate correlation (as one
+could expect from naive annotators in a text in-
+terpretation task) we could identify a subgroup of
+annotators reaching a reliable level of agreement
+and good F1 scores in comparison with gold data
+by different ranking and clustering approaches and
+investigated which category confusions were char-
+acteristic for the different subgroups.
+Acknowledgments
+We thank the anonymous reviewers for their help-
+ful comments. The first author was supported by a
+grant from Cusanuswerk and the second author by
+Deutsche Forschungsgemeinschaft (SFB 632).
+203
+References
+Ron Artstein and Massimo Poesio. 2008. Inter-coder
+agreement for computational linguistics. Computa-
+tional Linguistics, 34(4):555?596, December.
+Vikas Bhardwaj, Rebecca J. Passonneau, Ansaf Salleb-
+Aouissi, and Nancy Ide. 2010. Anveshan: a frame-
+work for analysis of multiple annotators? labeling
+behavior. In Proceedings of the Fourth Linguistic
+Annotation Workshop, LAW IV ?10, pages 47?55,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+Lynn Carlson, Daniel Marcu, and Mary Ellen
+Okurowski. 2003. Building a discourse-tagged cor-
+pus in the framework of Rhetorical Structure The-
+ory. In Jan van Kuppevelt and Ronnie Smith, edi-
+tors, Current Directions in Discourse and Dialogue.
+Kluwer, Dordrecht.
+Silvie Cinkova?, Martin Holub, and Vincent Kr??z?. 2012.
+Managing uncertainty in semantic tagging. In Pro-
+ceedings of the 13th Conference of the European
+Chapter of the Association for Computational Lin-
+guistics, EACL ?12, pages 840?850, Stroudsburg,
+PA, USA. Association for Computational Linguis-
+tics.
+Joseph L. Fleiss. 1971. Measuring nominal scale
+agreement among many raters. Psychological Bul-
+letin, 76(5):378?382.
+James B. Freeman. 1991. Dialectics and the
+Macrostructure of Argument. Foris, Berlin.
+James B. Freeman. 2011. Argument Structure: Repre-
+sentation and Theory. Argumentation Library (18).
+Springer.
+Jeroen Geertzen and Harry Bunt. 2006. Measuring
+annotator agreement in a complex hierarchical di-
+alogue act annotation scheme. In Proceedings of
+the 7th SIGdial Workshop on Discourse and Dia-
+logue, SigDIAL ?06, pages 126?133, Stroudsburg,
+PA, USA. Association for Computational Linguis-
+tics.
+Klaus Krippendorff. 1980. Content Analysis: An In-
+troduction to its Methodology. Sage Publications,
+Beverly Hills, CA.
+J Richard Landis and Gary G. Koch. 1977. The mea-
+surement of observer agreement for categorial data.
+Biometrics, 33(1):159?174, March.
+William Mann and Sandra Thompson. 1988. Rhetori-
+cal structure theory: Towards a functional theory of
+text organization. TEXT, 8:243?281.
+Andreas Peldszus and Manfred Stede. to appear. From
+argument diagrams to automatic argument mining:
+A survey. International Journal of Cognitive Infor-
+matics and Natural Intelligence, 7(1).
+William A. Scott. 1955. Reliability of content analy-
+sis: The case of nominal scale coding. Public Opin-
+ion Quarterly, 19(3):321?325.
+Rion Snow, Brendan O?Connor, Daniel Jurafsky, and
+Andrew Y. Ng. 2008. Cheap and fast?but is it
+good? Evaluating non-expert annotations for natural
+language tasks. In Proceedings of the Conference on
+Empirical Methods in Natural Language Process-
+ing, EMNLP ?08, pages 254?263, Stroudsburg, PA,
+USA. Association for Computational Linguistics.
+Simone Teufel. 2010. The Structure of Scientific Arti-
+cles: Applications to Citation Indexing and Summa-
+rization. CSLI Studies in Computational Linguis-
+tics. CSLI Publications.
+Stephen Toulmin. 1958. The Uses of Argument. Cam-
+bridge University Press, Cambridge.
+204
+Proceedings of the First Workshop on Argumentation Mining, pages 88?97,
+Baltimore, Maryland USA, June 26, 2014. c?2014 Association for Computational Linguistics
+Towards segment-based recognition of argumentation structure
+in short texts
+Andreas Peldszus
+Applied Computational Linguistics
+University of Potsdam
+peldszus@uni-potsdam.de
+Abstract
+Despite recent advances in discourse pars-
+ing and causality detection, the automatic
+recognition of argumentation structure of
+authentic texts is still a very challeng-
+ing task. To approach this problem, we
+collected a small corpus of German mi-
+crotexts in a text generation experiment,
+resulting in texts that are authentic but
+of controlled linguistic and rhetoric com-
+plexity. We show that trained annotators
+can determine the argumentation struc-
+ture on these microtexts reliably. We ex-
+periment with different machine learning
+approaches for automatic argumentation
+structure recognition on various levels of
+granularity of the scheme. Given the com-
+plex nature of such a discourse under-
+standing tasks, the first results presented
+here are promising, but invite for further
+investigation.
+1 Introduction
+Automatic argumentation recognition has many
+possible applications, including improving docu-
+ment summarization (Teufel and Moens, 2002),
+retrieval capabilities of legal databases (Palau and
+Moens, 2011), opinion mining for commercial
+purposes, or also as a tool for assessing public
+opinion on political questions.
+However, identifying and classifying arguments
+in naturally-occurring text is a very challenging
+task for various reasons: argumentative strategies
+and styles vary across texts genres; classifying ar-
+guments might require domain knowledge; fur-
+thermore, argumentation is often not particularly
+explicit ? the argument proper is being infiltrated
+with the full range of problems of linguistic ex-
+pression that humans have at their disposal.
+Although the amount of available texts featur-
+ing argumentative behaviour is growing rapidly in
+the web, we suggest there is yet one resource miss-
+ing that could facilitate the development of auto-
+matic argumentation recognition systems: Short
+texts with explicit argumentation, little argumenta-
+tively irrelevant material, less rhetorical gimmicks
+(or even deception), in clean written language.
+For this reason, we conducted a text generation
+experiment, designed to control the linguistic and
+rhetoric complexity of written ?microtexts?. These
+texts have then been annotated with argumentation
+structures. We present first results of automatic
+classification of these arguments on various levels
+of granularity of the scheme.
+The paper is structured as follows: In the next
+section we describe related work. Section 3
+presents the annotation scheme and an agreement
+study to prove the reliability. Section 4 describes
+the text generation experiment and the resulting
+corpus. Section 5 and 6 present the results of our
+first attempts in automatically recognizing the ar-
+gumentative structure of those texts. Finally, Sec-
+tion 7 concludes with a summary and an outlook
+on future work.
+2 Related Work
+There exist a few ressources for the study of ar-
+gumentation, most importantly perhaps the AIF
+database, the successor of the Araucaria corpus
+(Reed et al., 2008), that has been used in dif-
+ferent studies. It contains several annotated En-
+glish datasets, most interestingly for us one cov-
+ering online newspaper articles. Unfortunately,
+the full source text is not part of the download-
+able database, which is why the linguistic ma-
+terial surrounding the extracted segments is not
+easy to retrieve for analysis. Instead of manu-
+ally annotating, Cabrio and Villata (2012) cre-
+ated an argumentation resource by extracting ar-
+gumentations from collaborative debate portals,
+such as debatepedia.org, where arguments are al-
+ready classified into pro and con classes by the
+88
+users. Unfortunately, those arguments are them-
+selves small texts and their internal argumenta-
+tive structure is not marked up. Finally, to the
+best of our knowledge, the only existing corpus
+of German newspaper articles, essays or editori-
+als annotated with argumentation structure is that
+used by Stede and Sauermann (2008), featuring
+ten commentaries from the Potsdam Commentary
+Corpus (Stede, 2004). Although short, these texts
+are rhetorically already quite complex and often
+have segments not relevant to the argument.1
+In terms of automatic recognition, scientific
+documents of different fields have been studied in-
+tensively in the Argumentative Zoning approach
+or in similar text zoning approaches (Teufel and
+Moens, 2002; Teufel et al., 2009; Teufel, 2010;
+Liakata et al., 2012; Guo et al., 2013). Here, sen-
+tences are classified into different functional or
+conceptual roles, grouped together with adjacent
+sentences of the same class to document zones,
+which induces a flat partitioning of the text. A va-
+riety of machine learning schemes have been ap-
+plied here.
+Another line of research approaches argumen-
+tation from the perspective of Rhetorical Struc-
+ture Theory (RST) (Mann and Thompson, 1988)
+and works with argumentation-enriched RST trees
+(Azar, 1999; Green, 2010). However, we do not
+consider RST to be the best level for representing
+argumentation, due to its linearization constraints
+(Peldszus and Stede, 2013a, sec. 3). Nevertheless,
+noteworthy advances have been made recently in
+rhetorical parsing (Hernault et al., 2010; Feng and
+Hirst, 2012). Whether hybrid RST argumenta-
+tion structures will profit similarly remains to be
+shown. A more linguistically oriented approach
+is given with the TextCoop platform (Saint-Dizier,
+2012) for analyzing text on the discourse level
+with emphasis on argumentation.
+One step further, Feng and Hirst (2011) concen-
+trate on types of arguments and use a statistical
+approach to classify already identified premises
+and conclusions into five common argumentation
+schemes (Walton et al., 2008).
+3 Annotation Scheme
+Our representation of the argumentation structure
+of a text is based on Freeman?s theory of ar-
+gumentation structure (Freeman, 1991; Freeman,
+1We intend to use this resource, when we move on to ex-
+periment with more complex texts.
+2011).2 Its central idea is to model argumen-
+tation as a hypothetical dialectical exchange be-
+tween the proponent, who presents and defends
+his claims, and the opponent, who critically ques-
+tions them in a regimented fashion. Every move in
+such a dialectical exchange corresponds to a struc-
+tural element in the argument graph. The nodes of
+this graph represent the propositions expressed in
+text segments (round nodes are proponent?s nodes,
+square ones are opponent?s nodes), the arcs be-
+tween those nodes represent different supporting
+(arrow-head links) and attacking moves (circle-
+head links). The theory distinguishes only a few
+general supporting and attacking moves. Those
+could be specified further with a more fine grained
+set, as provided for example by the theory of ar-
+gumentation schemes (Walton et al., 2008). Still,
+we focus on the coarse grained set, since this re-
+duces the complexity of the already sufficiently
+challenging task of automatic argument identifica-
+tion and classifcation. Our adaption of Freeman?s
+theory and the resulting annotation scheme is de-
+scribed in detail and with examples in (Peldszus
+and Stede, 2013a).
+3.1 Reliability of annotation
+The reliability of the annotation scheme has been
+evaluated in two experiments. We will first reca-
+pitulate the results of a previous study with naive
+annotators and then present the new results with
+expert annotators.
+Naive annotators: In (Peldszus and Stede,
+2013b), we presented an agreement study with
+26 naive and untrained annotators: undergradu-
+ate students in a ?class-room annotation? szenario,
+where task introduction, guideline reading and the
+actual annotation is all done in one obligatory
+90 min. session and the subjects are likely to
+have different experience with annotation in gen-
+eral, background knowledge and motivation. We
+constructed a set of 23 microtexts (each 5 seg-
+ments long) covering different linearisations of
+several combinations of basic argumentation con-
+structs. An example text and the corresponding
+argumentation structure graph is shown in Fig-
+ure 1. On these texts, the annotators achieved
+moderate agreement3 for certain aspects of the ar-
+2The theory aims to integrate the ideas of Toulmin (1958)
+into the argument diagraming techniques of the informal
+logic tradition (Beardsley, 1950; Thomas, 1974) in a system-
+atic and compositional way.
+3Agreement is measured in Fleiss ? (Fleiss, 1971).
+89
+gument graph (e.g. ?=.52 in distinguishing pro-
+ponent and opponent segments, or ?=.58 in des-
+tinguishing supporting and attacking segments),
+yet only a marginal agreement of ?=.38 on the
+full labelset describing all aspects of the argument
+graph. However, we could systematically identify
+subgroups performing much better than average
+using clustering techniques: e.g. a subgroup of
+6 annotators reached a relatively high IAA agree-
+ment of ?=.69 for the full labelset and also high
+agreement with gold data.
+Expert annotators: Here, we present the re-
+sults of an agreement study with three expert an-
+notators: two of them are the guideline authors,
+one is a postdoc in computational linguistics. All
+three are familiar with discourse annotation tasks
+in general and specifically with this annotation
+scheme. They annotated the same set of 23 mi-
+crotexts and achieved a high agreement of ?=.83
+on the full labelset describing all aspects of the ar-
+gument graph. The distinction between supporting
+and attacking was drawn with very high agreement
+of ?=.95, the one between proponent and oppo-
+nent segments even with perfect agreement.
+Since argumentation structures can be reliably
+annotated using this scheme, we decided to create
+a small corpus of annotated microtexts.
+4 Dataset
+The corpus used in this study consists of two parts:
+on the one hand, the 23 microtexts used in the an-
+notation experiments just described; on the other
+hand, 92 microtexts that have been collected in a
+controlled text generation experiment. We will de-
+scribe this experiment in the following subsection.
+4.1 Microtext generation experiment
+We asked 23 probands to discuss a controversial
+issue in a short text of 5 segments. A list of 17
+of these issues was given, concerning recent po-
+litical, moral, or everyday?s life questions. Each
+proband was allowed to discuss at maximum five
+of the given questions. Probands were instructed
+to first think about the pros & cons of the con-
+troversial question, about possible refutation and
+counter-refutations of one side to the other. On
+this basis, probands should decide for one side
+and write a short persuasive text (corresponding
+to the standards of the written language), arguing
+in favour of their chosen position.
+The written texts were required to have a length
+of five segments. We decided not to bother our
+probands with an exact definition of a segment,
+as this would require the writers to reliably iden-
+tify different complex syntactic constructions. In-
+stead, we simply characterized it as a clause or
+a sentence, expressing an argumentative point on
+its own. We also required all segments to be ar-
+gumentatively relevant, in the sense that they ei-
+ther formulate the main claim of the text, sup-
+port the main claim or another segment, or attack
+the main claim or another segment. This require-
+ment was put forward in order to prevent digres-
+sion and argumentatively irrelevant but common
+segment types, such as theme or mood setters, as
+well as background information. Furthermore, we
+demanded that at least one possible objection to
+the main claim be considered in the text, leaving
+open the choice of whether to counter that objec-
+tion or not. Finally, the text should be written in
+such a way that it would be understandable with-
+out having the question as a headline.
+In total, 100 microtexts have been collected.
+The five most frequently chosen issues are:
+? Should the fine for leaving dog excrements
+on sideways be increased?
+? Should shopping malls generally be allowed
+to open on Sundays?
+? Should Germany introduce the death
+penalty?
+? Should public health insurance cover treat-
+ments in complementary and alternative
+medicine?
+? Should only those viewers pay a TV licence
+fee who actually want to watch programs of-
+fered by public broadcasters?
+4.2 Cleanup and annotation
+Since we aim for a corpus of clean, yet authen-
+tic argumentation, all texts have been checked for
+spelling and grammar errors. As a next step, the
+texts were segmented into elementary units of ar-
+gumentation. Due to the (re-)segmentation, not all
+texts conform to the length restriction of five seg-
+ments, they can be one segment longer or shorter.
+Unfortunately, some probands wrote more than
+five main clauses, yielding texts with up to ten seg-
+ments. We decided to shorten these texts down
+to six segments by removing segments that ap-
+pear redundant or negligible. This removal also
+required modifications in the remaining segments
+to maintain text coherence, which we made as
+90
+[Energy-saving light bulbs contain a considerable amount
+of toxic substances.]
+1
+[A customary lamp can for instance
+contain up to five milligrams of quicksilver.]
+2
+[For this rea-
+son, they should be taken off the market,]
+3
+[unless they
+are virtually unbreakable.]
+4
+[This, however, is simply not
+case.]
+5
+(a) (b)
+node id rel. id full label target
+1 1 PSNS (n+2)
+2 2 PSES (n-1)
+3 3 PT (0)
+4 4 OAUS (r-3)
+5 5 PARS (n-1)
+(c)
+Figure 1: An example microtext: the (translated) segmented text in (a), the argumentation structure graph
+in (b), the segment-based labeling representation in (c).
+minimal as possible. Another source of problems
+were segments that do not meet our requirement
+of argumentative relevance. Some writers did not
+concentrate on discussing the thesis, but moved
+on to a different issue. Others started the text
+with an introductory presentation of background
+information, without using it in their argument.
+We removed those segments, again with minimal
+changes in the remaining segments. Some texts
+containing several of such segments remained too
+short after the removal and have been discarded
+from the dataset.
+After cleanup, 92 of the 100 written texts re-
+mained for annotation of argumentation structure.
+We found that a few texts did not meet the require-
+ment of considering at least one objection to the
+own position. In a few other texts, the objection is
+not present as a full segment, but rather implicitly
+mentioned (e.g. in a nominal phrase or participle)
+and immediatly rejected in the very same segment.
+Those segments are to be annotated as a support-
+ing segment according to the guidelines, since the
+attacking moves cannot be expressed as a relation
+between segments in this case.
+We will present some statistics of the resulting
+dataset at the end of the following subsection.
+5 Modelling
+In this section we first present, how the argu-
+mentation structure graphs can be interpreted as
+a segment-wise labelling that is suitable for au-
+tomatic classification. We then describe the set
+of extracted features and the classifiers set up for
+recognition.
+5.1 Preparations
+In the annotation process, every segment is as-
+signed one and only one function, i.e. every node
+in the argumentative graph has maximally one out-
+going arc. The graph can thus be reinterpreted as
+a list of segment labels.
+Every segment is labeled on different levels:
+The ?role?-level specifies the dialectical role (pro-
+ponent or opponent). The ?typegen?-level specifies
+the general type, i.e. whether the segment presents
+the central claim (thesis) of the text, supports or
+attacks another segment. The ?type?-level addi-
+tionally specifies the kind of support (normal or
+example) and the kind of attack (rebutter or under-
+cutter). Whether a segment?s function holds only
+in combination with that of another segment (com-
+bined) or not (simple) is represented on the ?com-
+bined?-level. The target is finally specified by a
+position relative identifier: The offset -x. . . 0. . . +x
+identifies the targeted segment, relative from the
+position of the current segment. The prefix ?n?
+states that the proposition of the node itself is the
+target, while the prefix ?r? states that the relation
+coming from the node is the target.4
+The labels of each separate level can be merged
+to form a complex tagset. We interpret the re-
+sult as a hierarchical tagset as it is presented in
+Figure 2. The label ?PSNS(n+2)? for example
+stands for a proponent?s segment, giving normal,
+non-combined support to the next but one seg-
+ment, while ?OAUS(r-1)? represents an opponent?s
+segment, undercutting the relation established by
+the immediately previous segment, not combined.
+Figure 1c illustrates the segment-wise labelling for
+the example microtext.
+The dataset with its 115 microtexts has 8183
+word tokens, 2603 word types and 579 segments
+in total. The distribution of the basic labels and
+the complex ?role+type? level is presented in Ta-
+ble 1. The label distribution on the ?role+type?
+level shows that most of the opponent?s attacks are
+rebutting attacks, directed against the central claim
+4Segments with combined function (as e.g. linked sup-
+porting arguments) are represented by equal relation ids,
+which is why segments can have differing node and relation
+ids. However, for the sake of simplicity, we will only con-
+sider example of non-combined nature in this paper.
+91
+Figure 2: The hierarchy of segment labels.
+or its premises directly (OAR>OAU). In contrast,
+the proponent?s counters of these attack are typi-
+cally untercutting attacks, directed against the at-
+tack relation (PAU>PAR). This is due to the au-
+thor?s typical strategy of first conceding some as-
+pect in conflict with the main claim and then ren-
+dering it irrelevant or not applicable without di-
+rectly challenging it. Note however, that about
+40% of the opponents objections have not been
+countered by the proponent (OA*>PA*).
+5.2 Features
+All (unsegmented) texts have been automatically
+split into sentences and been tokenized by the
+OpenNLP-tools. The mate-pipeline then pro-
+cessed the tokenized input, yielding lemmati-
+zation, POS-tags, word-morphology and depen-
+dency parses (Bohnet, 2010). The annotated gold-
+standard segmentation in the dataset was then au-
+tomatically mapped to the automatic sentence-
+splitting/tokenization, in order to be able to ex-
+tract exactly those linguistic features present in the
+gold-segments. Using this linguistic output and
+several other resources, we extracted the follow-
+ing features:
+Lemma Unigrams: We add a set of binary fea-
+tures for every lemma found in the present seg-
+ment, in the preceding and the subsequent seg-
+ment in order to represent the segment?s context
+in a small window.
+Lemma Bigrams: We extracted lemma bi-
+gramms of the present segment.
+POS Tags: We add a set of binary features for
+every POS tag found in the present, preceding and
+subsequent segment.
+Main verb morphology: We added binary fea-
+tures for tempus and mood of the segment?s main
+verb, as subjunctive mood might indicate antici-
+pated objections and tempus might help to identify
+the main claim.
+Dependency triples: The dependency parses
+were used to extract features representing depen-
+dency triples (relation, head, dependent) for each
+token of the present segment. Two features sets
+were built, one with lemma representations, the
+other with POS tag representations of head and de-
+pendent.
+Sentiment: We calculate the sentiment value of
+the current segment by summing the values of all
+lemmata marked as positive or negative in Sen-
+tiWS (Remus et al., 2010).5
+Discourse markers: For every lemma in the
+segment that is listed as potentially signalling a
+discourse relation (cause, concession, contrast,
+asymmetriccontrast) in a lexicon of German dis-
+course markers (Stede, 2002) we add a binary
+feature representing the occurance of the marker,
+and one representing the occurance of the relation.
+Again, discourse marker / relations in the preced-
+ing and subsequent segment are registered in sep-
+arate features.
+First three lemmata: In order to capture
+sentence-initial expressions that might indicate ar-
+gumentative moves, but are not strictly defined as
+discourse markers, we add binary features repre-
+senting the occurance of the first three lemmata.
+Negation marker presence: We use a list of 76
+German negation markers derived in (Warzecha,
+2013) containing both closed class negation opera-
+tors (negation particles, quantifiers and adverbials
+etc.) and open class negation operators (nouns like
+?denial? or verbs like ?refuse?) to detect negation
+in the segment.
+Segment position: The (relative) position of
+the segment in the text might be helpful to identify
+typical linearisation strategies of argumentation.
+In total a number of ca. 19.000 features has
+been extracted. The largest chunks are bigrams
+and lemma-based dependencies with ca. 6.000
+features each. Each set of lemma unigrams (for
+5We are aware that this summation is a rather trivial and
+potentially error-prone way of deriving an overall sentiment
+value from the individual values of the tokens, but postpone
+the use of more sophisticated methods to future work.
+92
+level role typegen type comb target role+type
+labels P (454) T (115) T (115) / (115) n-4 (26) PT (115)
+O (125) S (286) SN (277) S (426) n-3 (52) PSN (265)
+A (178) SE (9) C (38) n-2 (58) PSE (9)
+AR (112) n-1 (137) PAR (12)
+AU (66) 0 (115) PAU (53)
+n+1 (53) OSN (12)
+n+2 (35) OSE (0)
+r-1 (54) OAR (100)
+r-2 (7) OAU (13)
+. . .
+# of lbls 2 3 5 3 16 9
+Table 1: Label distribution on the basic levels and for illustration on the complex ?role+type? level.
+Labels on remaining complex level combine accoringly: ?role+type+comb? with in total 12 different
+labels and ?role+type+comb+target? with 48 different labels found in the dataset.
+the present, preceding, and subsequent segment)
+has around 2.000 features.
+5.3 Classifiers
+For automatic recognition we compare classifiers
+that have frequently been used in related work:
+Na?ve Bayes (NB) approaches as in (Teufel and
+Moens, 2002), Support Vector Machines (SVM)
+and Conditional Random Fields (CRF) as in (Li-
+akata et al., 2012) and maximum entropy (Max-
+Ent) approaches as in (Guo et al., 2013) or (Teufel
+and Kan, 2011). We used the Weka data mining
+software, v.3.7.10, (Hall et al., 2009) for all ap-
+proaches, except MaxEnt and CRF.
+Majority: This classifier assignes the most fre-
+quent class to each item. We use it as a lower
+bound of performance. The used implementation
+is Weka?s ZeroR.
+One Rule: A simple but effective baseline is
+the one rule classification approach. It selects and
+uses the one feature whose values can describe the
+class majority with the smallest error rate. The
+used implementation is Weka?s OneR with stan-
+dard parameters.
+Na?ve Bayes: We chose to apply a feature se-
+lected Na?ve Bayes classifier to better cope with
+the large and partially redundant feature set.6 Be-
+fore training, all features are ranked accoring to
+their information gain observed on the training set.
+Features with information gain ? 0 are excluded.
+SVM: For SVMs, we used Weka?s wrapper to
+LibLinear (Fan et al., 2008) with the Crammer and
+Singer SVM type and standard wrapper parame-
+ters.
+6With feature selection, we experienced better scores with
+the Na?ve Bayes classifier, the only exception being the most
+complex level ?role+type+comb+target?, where only very few
+features reached the information gain threshold.
+MaxEnt: The maximum entropy classifiers are
+trained and tested with the MaxEnt toolkit (Zhang,
+2004). We used at maximum 50 iterations of L-
+BFGS parameter estimation without a Gaussian
+prior.
+CRF: For the implementation of CRFs we
+chose Mallet (McCallum, 2002). We used the
+SimpleTagger interface with standard parameters.
+Nonbinary features have been binarized for the
+MaxEnt and CRF classifiers.
+6 Results
+All results presented in this section have been
+produced in 10 repetitions (with different random
+seeds) of 10-fold cross validation, i.e. for each
+score we have 100 fold-specific values of which
+we can calculate the average and the standard devi-
+ation. We report A(ccuracy), micro-averaged F(1-
+score) as a class-frequency weighted measure and
+Cohen?s ? (Cohen, 1960) as a measure focussing
+on less frequent classes. All scores are given in
+percentages.
+6.1 Comparing classifiers
+A comparison of the different classifiers is shown
+in Table 2. Due to the skewed label distribution,
+the majority classifier places the lower bounds
+already at a quite high level for the ?role? and
+?comb?-level. Also note that the agreement be-
+tween predicted and gold for the majority classi-
+fier is equivalent to chance agreement and thus ?
+is 0 on every level, even though there are F-scores
+near the .70.
+Bold values in Table 2 indicate highest aver-
+age. However note, that differences of one or two
+percent points between the non-baseline classifiers
+are not significant, due to the variance over the
+93
+level Majority OneR CRF
+A F ? A F ? A F ?
+role 78?1 69?1 0?0 83?3 79?4 33?13 86?5 84?6 49?16
+typegen 49?1 33?1 0?0 58?3 47?3 23?7 68?7 67?8 46?12
+type 48?1 31?1 0?0 56?3 45?3 22?6 62?7 58?8 38?10
+comb 74?1 62?1 0?0 81?4 77?4 44?12 84?5 81?7 55?13
+target 24?1 9?1 0?0 37?5 29?4 24?6 47?11 45?11 38?12
+role+typegen 47?1 30?1 0?0 56?3 45?3 22?6 67?7 65?8 49?11
+role+type 46?1 29?1 0?0 54?3 43?3 21?6 61?7 56?8 38?11
+role+type+comb 41?1 24?1 0?0 50?4 38?3 19?6 56?7 51?8 36?9
+role+type+comb+target 20?1 7?1 0?0 28?4 19?3 18?5 36?10 30?9 28?10
+level Na?ve Bayes MaxEnt LibLinear
+A F ? A F ? A F ?
+role 84?5 84?5 52?14 86?4 85?5 52?15 86?4 84?4 50?14
+typegen 74?5 74?5 57?8 70?6 70?6 51?10 71?5 71?5 53?9
+type 68?5 67?5 52?8 63?6 62?6 43?9 65?6 62?6 44?9
+comb 74?6 75?5 42?11 84?5 81?7 56?12 84?3 81?4 54?10
+target 38?6 38?6 29?6 47?8 44?8 37?9 48?5 44?5 38?6
+role+typegen 69?6 69?6 55?9 68?7 67?7 51?10 69?5 67?6 52?9
+role+type 61?5 61?5 45?7 63?6 61?6 45?9 64?5 60?5 45?8
+role+type+comb 53?6 51?6 36?8 58?6 54?7 41?8 61?5 56?5 44?8
+role+type+comb+target 22?4 19?4 16?4 36?6 33?6 29?6 39?5 32?4 31?5
+Table 2: Classifier performance comparison: Percent average and standard deviation in 10 repetitions of
+10-fold cross-validation of A(ccuracy), micro averages of F1-scores, and Cohen?s ?.
+folds on this rather small dataset.
+The Na?ve Bayes classifier profits from the fea-
+ture selection on levels with a small number of
+labels and gives best results for the ?type(gen)?
+and ?role+typegen? levels. On the most complex
+level with 48 possible labels, however, perfor-
+mance drops even below the OneR baseline, be-
+cause features do not reach the information gain
+threshold. The MaxEnt classifier performs well on
+the ?role? and ?comb?, as well as on the ?role+type?
+levels. It reaches the highest F-score on the most
+complex level, although the highest accuracy and
+agreement on this levels is achieved by the SVM,
+indicating that the SVM accounted better for the
+less frequent labels. The SVM generally per-
+forms well in terms of accuracy and specifically on
+the most interesting levels for future applications,
+namely in target identification and the complex
+?role+type? and ?role+type+comb+target? levels.
+For the CRF classifier, we had hoped that ap-
+proaching the dataset as a sequence labelling prob-
+lem would be of advantage. However, applied out
+of the box as done here, it did not perform as well
+as the segment-based MaxEnt or SVM classifier.
+6.2 Feature ablation on ?role+type? level
+We performed feature ablation tests with multi-
+ple classifiers on multiple levels. For the sake of
+brevity, we only present the results of the SVM
+and MaxEnt classifiers here on the ?role+type?
+level. The results are shown in Table 3. Bold val-
+ues indicate greatest impact, i.e. strongest loss in
+the upper leave-one-feature-out half of the table
+and highest gain in the lower only-one-feature half
+of the table.
+The greatest loss is produced by leaving out the
+discourse marker features. We assume that this
+impact can be attributed to the useful abstraction
+of introducing the signalled discourse relation as a
+features, since the markers are also present in other
+features (as lemma unigrams, perhaps first three
+lemma or even lemma dependencies) that produce
+minor losses.
+For the single feature runs, lemma unigrams
+produce the best results, followed by discourse
+markers and other lemma features as bigrams,
+first three lemma and lemma dependencies. Note
+that negation markers, segment position and senti-
+ment perform below or equal to the majority base-
+line. Whether at least the sentiment feature can
+prove more useful when we apply a more sophisti-
+cated calculation of a segment?s sentiment value is
+something we want to investigate in future work.
+POS-tag based features are around the OneR base-
+line in terms of F-score and ?, but less accurate.
+Interestingly, when using the LibLinear SVM,
+lemma bigrams have a larger impact on the overall
+performance than lemma based dependency triples
+in both tests, even for a language with a relatively
+free word order as German. This indicates that
+the costly parsing of the sentences might not be
+required after all. However, this difference is not
+94
+Features LibLinear MaxEnt
+A F ? A F ?
+all 64?5 60?5 45?8 63?6 61?6 45?9
+all w/o dependencies lemma 64?5 60?5 46?8 62?6 60?6 44?9
+all w/o dependencies pos 65?5 61?5 46?8 63?6 61?7 45?9
+all w/o discourse markers 62?5 59?5 43?8 61?7 58?7 42?9
+all w/o first three lemma 64?5 60?5 44?8 63?6 60?7 44?9
+all w/o lemma unigrams 63?5 60?5 45?8 62?6 60?7 44?9
+all w/o lemma bigrams 63?5 60?5 44?8 62?6 60?6 44?9
+all w/o main verb morph 64?5 60?5 45?8 62?6 60?6 43?9
+all w/o negation marker 64?5 60?6 45?8 63?6 61?7 45?9
+all w/o pos 64?5 61?5 45?8 63?6 60?7 44?8
+all w/o segment position 64?5 60?5 45?8 63?6 61?6 45?9
+all w/o sentiment 64?5 60?5 45?8 62?6 60?6 44?9
+only dependencies lemma 56?4 47?4 27?6 56?6 49?7 30?8
+only dependencies pos 42?6 41?6 18?8 41?7 40?7 16?9
+only discourse markers 56?6 53?6 34?9 53?6 52?7 30?10
+only first three lemma 54?6 52?6 33?9 50?6 48?6 26?8
+only lemma unigrams 59?5 55?5 37?8 59?6 56?7 38?8
+only lemma bigrams 59?4 53?5 34?8 55?7 51?7 30?9
+only main verb morph 49?6 39?4 16?7 52?5 41?6 20?6
+only negation marker 25?14 19?8 0?4 46?5 29?5 0?0
+only pos 45?6 45?6 24?9 46?8 45?7 23?10
+only segment position 31?12 25?10 4?7 46?5 29?6 0?0
+only sentiment 22?14 15?11 -1?3 46?5 29?6 0?0
+Table 3: Feature ablation tests on the ?role+type? level: Percent average and standard deviation in 10
+repetitions of 10-fold cross-validation of A(ccuracy), micro averages of F1-scores, and Cohen?s ?.
+as clear for the MaxEnt classifier.
+6.3 Class specific results
+Finally, we present class-specific results of the
+MaxEnt classifier for the ?role+type? level in Ta-
+ble 4. Frequent categories give good results, but
+for low-frequency classes there are just not enough
+instances in the dataset. We hope improve this by
+extending the corpus by corresponding examples.
+label Precision Recall F1-score
+PT 75?12 74?13 74?11
+PSN 65?8 79?7 71?6
+PSE 1?6 1?6 1?6
+PAR 12?29 12?27 11?24
+PAU 57?26 49?24 50?22
+OSN 1?12 1?12 1?12
+OAR 54?18 42?16 46?13
+OAU 8?27 7?23 7?23
+Table 4: MaxEnt class-wise results on the
+?role+type? level: Percent average and stan-
+dard deviation in 10 repetitions of 10-fold cross-
+validation of Precision, Recall and F1-score.
+7 Summary and outlook
+We have presented a small corpus of German
+microtexts that features authentic argumentations,
+yet has been collected in a controlled fashion to
+reduce the amount of distracting or complicated
+rhetorical phenomena, focussing instead on the ar-
+gumentative moves. The corpus has been anno-
+tated with a scheme that ?as we have shown? can
+be reliably used by trained and experienced anno-
+tators. To get a first impression of the performance
+of frequently used modelling approaches on our
+dataset, we experimented with different classifiers
+with rather out-of-the-box parameter settings on
+various levels of granularity of the scheme. Given
+the complex nature of such a discourse under-
+standing tasks, the first results presented here are
+promising, but invite for further investigation.
+We aim to generate a significantly larger corpus
+of argumentative microtexts by a crowd-sourced
+experiment. For the improvement of models, we
+consider various strategies: Integrating top down
+constraints on the argumentation structure, as done
+in (Guo et al., 2013) for the zoning of scientific
+documents, is one option. Hierarchical models
+that apply classifiers along the levels of our la-
+bel hierarchy are another option. Furthermore, we
+want to explore sequence labelling models in more
+detail. Ultimately, the goal will be to apply these
+methods to authentic news-paper commentaries.
+Acknowledgments
+Thanks to Manfred Stede and to the anonymous
+reviewers for their helpful comments. The author
+was supported by a grant from Cusanuswerk.
+95
+References
+Moshe Azar. 1999. Argumentative text as rhetorical
+structure: An application of rhetorical structure the-
+ory. Argumentation, 13:97?114.
+Monroe C. Beardsley. 1950. Practical Logic.
+Prentice-Hall, New York.
+Bernd Bohnet. 2010. Very high accuracy and fast de-
+pendency parsing is not a contradiction. In Proceed-
+ings of the 23rd International Conference on Com-
+putational Linguistics, COLING ?10, pages 89?97,
+Stroudsburg, PA, USA. Association for Computa-
+tional Linguistics.
+Elena Cabrio and Serena Villata. 2012. Natural lan-
+guage arguments: A combined approach. In Luc De
+Raedt, Christian Bessiere, Didier Dubois, Patrick
+Doherty, Paolo Frasconi, Fredrik Heintz, and Peter
+J. F. Lucas, editors, ECAI, volume 242 of Frontiers
+in Artificial Intelligence and Applications, pages
+205?210. IOS Press.
+Jacob Cohen. 1960. A Coefficient of Agreement for
+Nominal Scales. Educational and Psychological
+Measurement, 20(1):37?46.
+Rong-En Fan, Kai-Wei Chang, Cho-Jui Hsieh, Xiang-
+Rui Wang, and Chih-Jen Lin. 2008. Liblinear: A li-
+brary for large linear classification. J. Mach. Learn.
+Res., 9:1871?1874, June.
+Vanessa Wei Feng and Graeme Hirst. 2011. Classi-
+fying arguments by scheme. In Proceedings of the
+49th Annual Meeting of the Association for Com-
+putational Linguistics: Human Language Technolo-
+gies - Volume 1, HLT ?11, pages 987?996, Strouds-
+burg, PA, USA. Association for Computational Lin-
+guistics.
+Vanessa Wei Feng and Graeme Hirst. 2012. Text-level
+discourse parsing with rich linguistic features. In
+Proceedings of the 50th Annual Meeting of the Asso-
+ciation for Computational Linguistics: Long Papers
+- Volume 1, ACL ?12, pages 60?68, Stroudsburg, PA,
+USA. Association for Computational Linguistics.
+Joseph L. Fleiss. 1971. Measuring nominal scale
+agreement among many raters. Psychological Bul-
+letin, 76(5):378?382.
+James B. Freeman. 1991. Dialectics and the
+Macrostructure of Argument. Foris, Berlin.
+James B. Freeman. 2011. Argument Structure: Repre-
+sentation and Theory. Argumentation Library (18).
+Springer.
+Nancy L. Green. 2010. Representation of argumenta-
+tion in text with rhetorical structure theory. Argu-
+mentation, 24:181?196.
+Yufan Guo, Roi Reichart, and Anna Korhonen. 2013.
+Improved information structure analysis of scien-
+tific documents through discourse and lexical con-
+straints. In Proceedings of the 2013 Conference of
+the North American Chapter of the Association for
+Computational Linguistics: Human Language Tech-
+nologies, pages 928?937, Atlanta, Georgia, June.
+Association for Computational Linguistics.
+Mark Hall, Eibe Frank, Geoffrey Holmes, Bernhard
+Pfahringer, Peter Reutemann, and Ian H. Witten.
+2009. The weka data mining software: An update.
+SIGKDD Explor. Newsl., 11(1):10?18, November.
+Hugo Hernault, Hemut Prendinger, David duVerle, and
+Mitsuru Ishizuka. 2010. HILDA: A discourse
+parser using support vector machine classification.
+Dialogue and Discourse, 1(3):1?33.
+Maria Liakata, Shyamasree Saha, Simon Dob-
+nik, Colin R. Batchelor, and Dietrich Rebholz-
+Schuhmann. 2012. Automatic recognition of con-
+ceptualization zones in scientific articles and two life
+science applications. Bioinformatics, 28(7):991?
+1000.
+William Mann and Sandra Thompson. 1988. Rhetori-
+cal structure theory: Towards a functional theory of
+text organization. TEXT, 8:243?281.
+Andrew Kachites McCallum. 2002. Mal-
+let: A machine learning for language toolkit.
+http://mallet.cs.umass.edu.
+Raquel Mochales Palau and Marie-Francine Moens.
+2011. Argumentation mining. Artificial Intelligence
+and Law, 19(1):15?22.
+Andreas Peldszus and Manfred Stede. 2013a. From
+argument diagrams to automatic argument mining:
+A survey. International Journal of Cognitive Infor-
+matics and Natural Intelligence (IJCINI), 7(1):1?31.
+Andreas Peldszus and Manfred Stede. 2013b. Ranking
+the annotators: An agreement study on argumenta-
+tion structure. In Proceedings of the 7th Linguistic
+Annotation Workshop and Interoperability with Dis-
+course, pages 196?204, Sofia, Bulgaria, August. As-
+sociation for Computational Linguistics.
+Chris Reed, Raquel Mochales Palau, Glenn Rowe, and
+Marie-Francine Moens. 2008. Language resources
+for studying argument. In Nicoletta Calzolari (Con-
+ference Chair), Khalid Choukri, Bente Maegaard,
+Joseph Mariani, Jan Odijk, Stelios Piperidis, and
+Daniel Tapias, editors, Proceedings of the Sixth
+International Conference on Language Resources
+and Evaluation (LREC?08), Marrakech, Morocco,
+may. European Language Resources Association
+(ELRA).
+Robert Remus, Uwe Quasthoff, and Gerhard Heyer.
+2010. SentiWS - A Publicly Available German-
+language Resource for Sentiment Analysis. In Nico-
+letta Calzolari (Conference Chair), Khalid Choukri,
+Bente Maegaard, Joseph Mariani, Jan Odijk, Stelios
+Piperidis, Mike Rosner, and Daniel Tapias, editors,
+Proceedings of the 7th International Conference on
+Language Resources and Evaluation (LREC?10),
+pages 1168?1171, Valletta, Malta, May. European
+Language Resources Association (ELRA).
+96
+Patrick Saint-Dizier. 2012. Processing natural lan-
+guage arguments with the TextCoop platform. Jour-
+nal of Argumentation and Computation, 3(1):49?82.
+Manfred Stede and Antje Sauermann. 2008. Lin-
+earization of arguments in commentary text. In Pro-
+ceedings of the Workshop on Multidisciplinary Ap-
+proaches to Discourse. Oslo.
+Manfred Stede. 2002. DiMLex: A Lexical Ap-
+proach to Discourse Markers. In Vittorio Di Tomaso
+Alessandro Lenci, editor, Exploring the Lexicon
+- Theory and Computation. Edizioni dell?Orso,
+Alessandria, Italy.
+Manfred Stede. 2004. The Potsdam Commentary Cor-
+pus. In Proceedings of the ACL Workshop on Dis-
+course Annotation, pages 96?102, Barcelona.
+Simone Teufel and Min-Yen Kan. 2011. Robust ar-
+gumentative zoning for sensemaking in scholarly
+documents. In Raffaella Bernadi, Sally Cham-
+bers, Bj?rn Gottfried, Fr?d?rique Segond, and Ilya
+Zaihrayeu, editors, Advanced Language Technolo-
+gies for Digital Libraries, volume 6699 of Lec-
+ture Notes in Computer Science, pages 154?170.
+Springer Berlin Heidelberg.
+Simone Teufel and Marc Moens. 2002. Summarizing
+scientific articles: Experiments with relevance and
+rhetorical status. Comput. Linguist., 28(4):409?445,
+December.
+Simone Teufel, Advaith Siddharthan, and Colin Batch-
+elor. 2009. Towards discipline-independent ar-
+gumentative zoning: evidence from chemistry and
+computational linguistics. In Proceedings of the
+2009 Conference on Empirical Methods in Natu-
+ral Language Processing: Volume 3, EMNLP ?09,
+pages 1493?1502, Stroudsburg, PA, USA. Associa-
+tion for Computational Linguistics.
+Simone Teufel. 2010. The Structure of Scientific Arti-
+cles: Applications to Citation Indexing and Summa-
+rization. CSLI Studies in Computational Linguis-
+tics. CSLI Publications.
+Stephen N. Thomas. 1974. Practical Reasoning in
+Natural Language. Prentice-Hall, New York.
+Stephen Toulmin. 1958. The Uses of Argument. Cam-
+bridge University Press, Cambridge.
+Douglas Walton, Chris Reed, and Fabrizio Macagno.
+2008. Argumentation Schemes. Cambridge Univer-
+sity Press.
+Saskia Warzecha. 2013. Klassifizierung und Skopus-
+bestimmung deutscher Negationsoperatoren. Bach-
+elor thesis, Potsdam University.
+Le Zhang, 2004. Maximum Entropy Modeling Toolkit
+for Python and C++, December.
+97

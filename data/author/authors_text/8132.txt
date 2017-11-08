@@ -1,0 +1,853 @@
+Proceedings of Human Language Technology Conference and Conference on Empirical Methods in Natural Language
+Processing (HLT/EMNLP), pages 771?778, Vancouver, October 2005. c?2005 Association for Computational Linguistics
+Word-Sense Disambiguation for Machine Translation
+David Vickrey Luke Biewald Marc Teyssier Daphne Koller
+Department of Computer Science
+Stanford University
+Stanford, CA 94305-9010
+{dvickrey,lukeb,teyssier,koller}@cs.stanford.edu
+Abstract
+In word sense disambiguation, a system attempts to
+determine the sense of a word from contextual fea-
+tures. Major barriers to building a high-performing
+word sense disambiguation system include the dif-
+ficulty of labeling data for this task and of pre-
+dicting fine-grained sense distinctions. These is-
+sues stem partly from the fact that the task is be-
+ing treated in isolation from possible uses of au-
+tomatically disambiguated data. In this paper, we
+consider the related task of word translation, where
+we wish to determine the correct translation of a
+word from context. We can use parallel language
+corpora as a large supply of partially labeled data
+for this task. We present algorithms for solving the
+word translation problem and demonstrate a signif-
+icant improvement over a baseline system. We then
+show that the word-translation system can be used
+to improve performance on a simplified machine-
+translation task and can effectively and accurately
+prune the set of candidate translations for a word.
+1 Introduction
+The problem of distinguishing between multiple
+possible senses of a word is an important subtask in
+many NLP applications. However, despite its con-
+ceptual simplicity, and its obvious formulation as a
+standard classification problem, achieving high lev-
+els of performance on this task has been a remark-
+ably elusive goal.
+In its standard formulation, the disambiguation
+task is specified via an ontology defining the dif-
+ferent senses of ambiguous words. In the Sense-
+val competition, for example, WordNet (Fellbaum,
+1998) is used to define this ontology. However, on-
+tologies such as WordNet are not ideally suited to
+the task of word-sense disambiguation. In many
+cases, WordNet is overly ?specific?, defining senses
+which are very similar and hard to distinguish. For
+example, there are seven definitions of ?respect?
+as a noun (including closely related senses such as
+?an attitude of admiration or esteem? and ?a feel-
+ing of friendship and esteem?); there are even more
+when the verb definitions are included as well. Such
+closely related senses pose a challenge both for auto-
+matic disambiguation and hand labeling. Moreover,
+the use of a very fine-grained set of senses, most of
+which are quite rare in practice, makes it very diffi-
+cult to obtain sufficient amounts of training data.
+These issues are clearly reflected in the perfor-
+mance of current word-sense disambiguation sys-
+tems. When given a large amount of training data
+for a particular word with reasonably clear sense
+distinctions, existing systems perform fairly well.
+However, for the ?all-words? task, where all am-
+biguous words from a test corpus must be disam-
+biguated, it has so far proved difficult to perform sig-
+nificantly better than the baseline heuristic of choos-
+ing the most common sense for each word.1
+In this paper, we address a different formulation
+of the word-sense disambiguation task. Rather than
+considering this task on its own, we consider a task
+of disambiguating words for the purpose of some
+larger goal. Perhaps the most direct and compelling
+application of a word-sense disambiguator is to ma-
+chine translation. If we knew the correct seman-
+tic meaning of each word in the source language,
+we could more accurately determine the appropriate
+words in the target language. Importantly, for this
+application, subtle shades of meaning will often be
+irrelevant in choosing the most appropriate words in
+the target language, as closely related senses of a
+single word in one language are often encoded by a
+single word in another. In the context of this larger
+goal, we can focus only on sense distinctions that a
+human would consider when choosing the transla-
+tion of a word in the source language.
+We therefore consider the task of word-sense dis-
+ambiguation for the purpose of machine translation.
+Rather than predicting the sense of a particular word
+a, we predict the possible translations of a into the
+1See, for example, results of Senseval-3, available at
+http://www.senseval.org/senseval3
+771
+target language. We both train and evaluate the sys-
+tem on this task. This formulation of the word-sense
+disambiguation task, which we refer to as word
+translation, has multiple advantages. First, a very
+large amount of ?partially-labeled? data is available
+for this task in the form of bilingual corpora (which
+exist for a wide range of languages). Second, the
+?labeling? of these corpora (that is, translation from
+one language to another), is a task at which humans
+are quite proficient and which does not generally re-
+quire the labeler (translator) to make difficult dis-
+tinctions between fine shades of meaning.
+In the remainder of this paper, we first discuss
+how training data for this task can be acquired au-
+tomatically from bilingual corpora. We apply a
+standard learning algorithm for word-sense disam-
+biguation to the word translation task, with several
+modifications which proved useful for this task.We
+present the results of our algorithm on word trans-
+lation, showing that it significantly improves perfor-
+mance on this task. We also consider two simple
+methods for incorporating word translation into ma-
+chine translation. First, we can use the output of
+our model to help a translation model choose better
+words; since general translation is a very noisy pro-
+cess, we present results on a simplified translation
+task. Second, we show that the output of our model
+can be used to prune candidate word sets for trans-
+lation; this could be used to significantly speed up
+current translation systems.
+2 Machine Translation
+In machine translation, we wish to translate a sen-
+tence s in our source language into t in our target
+language. The standard approach to statistical ma-
+chine translation uses the source-channel model ,
+argmaxtP (t|s) = argmaxtP (t)P (s|t),
+where P (t) is the language model for the target lan-
+guage, and P (s|t) is an alignment model from the
+target language to the source language. Together
+they define a generative model for the source/target
+pair (s, t): first t is generated according to the lan-
+guage model P (t); then s is generated from t ac-
+cording to P (s|t).2
+Typically, strong independence assumptions are
+then made about the distribution P (s|t). For ex-
+ample, in the IBM Models (Brown et al, 1993),
+each word ti independently generates 0, 1, or more
+2Note that we refer to t as the target sentence, even though in
+the source-channel model, t is the source sentence which goes
+through the channel model P (s|t) to produce the observed sen-
+tence s.
+words in the source language. Thus, the words gen-
+erated by ti are independent of the words generated
+by tj for each j 6= i. This means that correla-
+tions between words in the source sentence are not
+captured by P (s|t), and so the context we will use
+in our word translation models to predict ti given
+si is not available to a system making these inde-
+pendence assumptions. In this type of system, se-
+mantic and syntactic relationships between words
+are only modeled in the target language; most or
+all of the semantic and syntactic information con-
+tained in the source sentence is ignored. The lan-
+guage model P (t) does introduce some context-
+dependencies, but the standard n-gram model used
+in machine translation is too weak to provide a rea-
+sonable solution to the strong independence assump-
+tions made by the alignment model.
+3 Task Formulation
+We define the word translation task as finding, for
+an individual word a in the source language S , the
+correct translation, either a word or phrase, in the
+target language T . Clearly, there are cases where
+a is part of a multi-word phrase that needs to be
+translated as a unit. Our approach could be extended
+by preprocessing the data in S to find phrases, and
+then executing the entire algorithm treating phrases
+as atomic units. We do not explore this extension in
+this paper, instead focusing on the word-to-phrase
+translation problem.
+As we discussed, a key advantage of the word
+translation vs. word sense disambiguation is the
+availability of large amounts of training data. This
+data is in the form of bilingual corpora, such as
+the European Parliament proceedings3 . Such doc-
+uments provide many training instances, where a
+word in one language is translated into another.
+However, the data is only partially labeled in that
+we are not given a word-to-word alignment between
+the two languages, and thus we do not know what
+every word in the source language S translates to in
+the target language T . While sentence-to-sentence
+alignment is a fairly easy task, word-to-word align-
+ment is considerably more difficult. To obtain word-
+to-word alignments, we used GIZA++4, an imple-
+mentation of the IBM Models (specifically, we used
+the output of IBM Model 4). We did not perform
+stemming on either language, so as to preserve suf-
+fix information for our word translation system and
+the machine translation language model.
+Let DS be the set of sentences in the source lan-
+3Available at http://www.isi.edu/ koehn/
+4Available at http://www.isi.edu/ och/GIZA++.html
+772
+French (frequency) Translation
+monte?e(51) going up
+le`ve(10), lever(17) standing up
+hausse(58), augmenter(37), increase(number)
+augmentation(150)
+interviens(53) to rise to speak
+naissance(21), source(10) to be created, arise
+souleve?(10) raising an issue
+Table 1: Aligned translations for ?rise? occurring at
+least 10 times in the corpus
+guage and DT the set of target language sentences.
+The alignment algorithm can be run in either di-
+rection. When run in the S ? T direction, the al-
+gorithm aligns each word in t to at most one word
+in s. Consider some source sentence s that contains
+the word a, and let Ua,s?t = b1, . . . , bk be the set
+of words that align to a in the aligned sentence t. In
+general, we can consider Ua = {Ua,s?t}s?Da to be
+the candidate set of translations for a in T , where
+Da is the set of source language sentences contain-
+ing a. However, this definition is quite noisy: a word
+bi might have been aligned with a arbitrarily; or, bi
+might be a word that itself corresponds to a multi-
+word translation in S . Thus, we also align the sen-
+tences in the T ? S direction, and require that each
+bi in the phrase aligns either with a or with nothing.
+As this process is still fairly noisy, we only consider
+a word or phrase b ? Ua to be a candidate translation
+for a if it occurs some minimum number of times in
+the data.
+For example, Table 1 shows a possible candidate
+set for the English word ?rise?, with French as the
+target language. Note that this set can contain not
+only target words corresponding to different mean-
+ings of ?rise? (the rows in the table) but also words
+which correspond to different grammatical forms in
+the target language corresponding to different parts
+of speech, verb tenses, etc. So, disambiguation in
+this case is both over senses and grammatical forms.
+The final result of our processing of the corpus is,
+for each source word a, a set of target words/phrases
+Ua; and a set of sentences Da where, in each sen-
+tence, a is aligned to some b ? Ua. For any sen-
+tence s ? Da, aligned to some target sentence t,
+let ua,s ? Ua be the word or phrase in t aligned
+with a. We can now treat this set of sentences as
+a fully-labeled corpus, which can be split into a set
+used for learning the word-translation model and a
+test set used for evaluating its performance.
+We note, however, that there is a limitation to us-
+ing accuracy on the test set for evaluating the perfor-
+mance of the algorithm. A source word a in a given
+context may have two equally good, interchangeable
+translations into the target language. Our evaluation
+metric only rewards the algorithm for selecting the
+target word/phrase that happened to be used in the
+actual translation. Thus, accuracies measured us-
+ing this metric may be artificially low. This is a
+common problem with evaluating machine transla-
+tion systems.
+Another issue is that we take as ground truth the
+alignments produced by GIZA++. This has two im-
+plications: first, our training data may be noisy since
+some alignments may be incorrect; and second, our
+test data may not be completely accurate. As men-
+tioned above, we only consider possible translations
+which occur some minimum number of times; this
+removes many of the mistakes made by GIZA++.
+Even if the test set is not 100% reliable, though, im-
+provement over baseline performance is indicative
+of the potential of a method.
+4 Word Translation Algorithms
+The word translation task and the word-sense dis-
+ambiguation task have the same form: each word a
+is associated with a set of possible labels Ua; given
+a sentence s containing word a, we must determine
+which of the possible labels in Ua to assign to a in
+the context s. The only difference in the two tasks is
+the set Ua: for word translation it is the set of pos-
+sible translations of a, while for word sense disam-
+biguation it is the set of possible senses of a in some
+ontology. Thus, we may use any word sense disam-
+biguation algorithm as a word translation algorithm
+by appropriately defining the senses (assuming that
+the WSD algorithm does not assume that a particular
+ontology is used to choose the senses).
+Our main focus in this paper is to show that ma-
+chine learning techniques are effective for the word
+translation task, and to demonstrate that we can use
+the output of our word translation system to im-
+prove performance on two machine-translation re-
+lated tasks. We will therefore restrict our atten-
+tion to a relatively simple model, logistic regres-
+sion (Minka, 2000). There are several motivations
+for using this discriminative, probabilistic model.
+First, it is known both theoretically and empirically
+(e.g., (Ng and Jordan, 2002)) that discriminative
+models achieve higher accuracies than generative
+models if enough data is available. For the tradi-
+tional word-sense disambiguation task, data must be
+hand-labeled, and is therefore often too scarce to al-
+low for discriminative training. In our setting, how-
+ever, training data is acquired automatically from
+bilingual corpora, which are widely available and
+quite large. Thus, discriminative training is a viable
+option for the word translation problem. A second
+773
+consideration is that, to effectively incorporate our
+system into a statistical machine translation system,
+we would like to produce not just a single prediction,
+but a list of confidence-rated possibilities. The op-
+timization procedure of logistic regression attempts
+to produce a distribution over possible translations
+which accurately represents the confidence of the
+model for each translation. By contrast, a classical
+Naive Bayes model often assigns very low proba-
+bilities to all but the most likely translation. Other
+word-sense disambiguation models may not produce
+confidence measures at all.
+Features. Our word translation model for a word
+a in a sentence s = w1, . . . , wk is based on features
+constructed from the word and its context within the
+sentence. Our basic logistic regression model uses
+the following features, which correspond to the fea-
+ture space for a standard Naive Bayes model:
+? the part of speech of a (generated using the
+Brill tagger)5;
+? a binary ?occurs? variable for each word which
+is 1 if that word is in a fixed context centered
+at a (cr words to the right and cl words to the
+left), and 0 otherwise.
+We also consider an extension to this model, where
+instead of the fixed context features above, we use:
+? for each direction d ? {l, r} and each possi-
+ble context size cd ? {1, ..., Cd}, an ?occurs?
+variable for each word.
+This is a true generalization of the previous con-
+text features, since it contains features for all pos-
+sible context sizes, not just one particular fixed size.
+This feature set is equivalent to having one feature
+for each word in each context position, except that
+it will have a different prior over parameters under
+standard L2 regularization. This feature set alows
+our model to distinguish between very local (often
+syntactic) features and somewhat longer range fea-
+tures whose exact position is not as important.
+Let ?a,s be the set of features for word a to be
+translated, with sentence context s (the description
+of the model does not depend on the particular fea-
+ture set selected).
+Model. The logistic regression model encodes the
+conditional distribution (P (ua,s = b | a, s) : b ?
+Ua). Such a model is parameterized by a set of vec-
+tors ?ab , one for each word a and each possible target
+b ? Ua, where each vector contains a weight ?ab,j for
+each feature ?a,sj . We can now define our conditional
+distribution:
+5Available at http://www.cs.jhu.edu/ brill/
+P?a(b | a, s) =
+1
+Za,s
+e?ab?a,s
+with partition function Za,s =
+?
+b??Ua exp(?ab??a,s).
+Training. We train the logistic regression model to
+maximize the conditional likelihood of the observed
+labels given the features in our training set. Thus,
+our goal in training the model for a is to maximize
+?
+s?Da
+P?a(ua,s | a, s).
+We maximize this objective by maximizing its log-
+arithm (the log-conditional-likelihood) using conju-
+gate gradient ascent (Shewchuk, 1994).
+One important consideration when training using
+maximum likelihood is regularization of the param-
+eters. In the case of logistic regression, the most
+common type of regularization is L2 regularization;
+we then maximize
+?
+b,j
+exp
+(
+?
+(?ab,j)2
+2?2
+)
+?
+s?Da
+P?a(ua,s | a, s).
+This penalizes the likelihood for the distance of each
+parameter ?ab,j from 0; it corresponds to a Gaussian
+prior on each parameter with variance ?2.
+5 Word Translation Results
+For our word translation experiments we used the
+European Parliament proceedings corpus, which
+contains approximately 27 million words in each of
+English and French (as well as a number of other
+languages). We tested on a set of 1859 ambigu-
+ous words ? specifically, all ambiguous words con-
+tained in the first document of the corpus. For each
+of these words, we found all instances of the word in
+the corpus and split these instances into training and
+test sets.
+We tested four different models. The first, Base-
+line, always chooses the most common translation
+for the word; the second, Baseline with Part of
+Speech, uses tagger-generated parts of speech to
+choose the most common translation for the ob-
+served word/part-of-speech pair. The third model,
+Simple Logistic, is the logistic regression model
+with the simpler feature set, a context window of a
+fixed size. We selected the window size by eval-
+uating accuracy for a variety of window sizes on
+20 of the 1859 ambiguous words using a random
+train-test split. The window size which performed
+best on average extended one word to the left and
+774
+Model Macro Micro
+Baseline 0.511 0.526
+Baseline with Part of Speech 0.519 0.532
+Simple Logistic 0.581 0.605
+Logistic 0.596 0.620
+Table 2: Average Word Translation Accuracy
+two words to the right (larger windows generally re-
+sulted in overfitting). The fourth model, Logistic, is
+the logistic regression model with overlapping con-
+text windows; the maximum window size for this
+model was four words to the left and four words to
+the right. We selected the standard deviation ?2 for
+the logistic models by trying different values on the
+same small subset of the ambiguous words. For the
+Simple Logistic model, the best value was ?2 = 1;
+for the Logistic model, it was 0.35.
+Table 2 shows results of these four models. The
+first column is macro-averaged over the 1859 words,
+that is, the accuracy for each word counts equally
+towards the average. The second column shows the
+micro-averaged accuracy, where each test example
+counts equally. We will focus on the micro-averaged
+results, since they correspond to overall accuracy.
+The less accurate of our two models, Simple Lo-
+gistic, improves around 8% over the simple baseline
+and 7% over the part-of-speech baseline on aver-
+age. Our more complex logistic model, which is able
+to handle larger context sizes without significantly
+overfitting, improves accuracy by another 1.5%.
+There was a great deal of variance from word
+to word in the performance of our models relative
+to baseline. For a few words, we achieved very
+large increases in accuracy. For instance, the noun
+?agenda? showed a 31.2% increase over both base-
+lines. Similarly, the word ?rise? (either a noun
+or a verb) had part-of-speech baseline accuracy of
+27.9%. Our model increased the accuracy to 57.0%.
+It is worth repeating that accuracies on this task
+are artificially low since in many cases a single word
+can be translated to many different words with the
+same meaning. At the same time, accuracies are ar-
+tificially inflated by the fact that we only consider
+examples where we can find an aligned word in
+the French corpus, so translations where a word is
+dropped or translated as part of a compound word
+are not counted.
+One disadvantage of the EuroParl corpus is that it
+is not ?balanced? in terms of semantic content. It is
+not clear how this affects our results.
+6 Blank-Filling Task
+One of the most difficult parts of machine translation
+is decoding ? finding the most likely translation ac-
+cording to some probability model. The difficulty
+arises from the enormous number of possible trans-
+lated sentences. Existing decoders generally use ei-
+ther highly pruned search or greedy heuristic search.
+In either case, the quality of a translation can vary
+greatly from sentence to sentence. This variation
+is much higher than the improvement in ?seman-
+tic? accuracy our model is attempting to achieve.
+Moreover, currently available decoders do not pro-
+vide a natural way to incorporate the results of a
+word translation system. For example, Carpuat and
+Wu (2005) obtain negative results for two methods
+of incorporating the output of a word-sense disam-
+biguation system into a machine translation system.
+Thus, we instead used our word translation model
+for a simplified translation problem. We prepared a
+dataset as follows: for each occurrence of an am-
+biguous words in an English sentence in the first
+document of the Europarl corpus, we tried to de-
+termine what the correct translation for that word
+was in the corresponding French sentence. If we
+found one and exactly one possible translation for
+that word in the French sentence, we replaced that
+word with a ?blank?, and linked the English word
+to that blank. The final result was a set of 655 sen-
+tences with a total of 3018 blanks.
+For example, the following English-French sen-
+tence pair contains the two ambiguous words ad-
+dress and issue and one possible translation for each,
+examiner and question:
+? Therefore, the commission should address the
+issue once and for all.
+? Par conse?quent, la commission devra enfin ex-
+aminer cette question particulie`re.
+We replace the translations of the ambiguous words
+with blanks; we would like a decoder to replace the
+blanks with the correct translations:
+? Par conse?quent, la commission devra enfin [ad-
+dress] cette [issue] particulie`re.
+An advantage of this task is that, for a given distri-
+bution P (t|s), we can easily write a decoder which
+exhaustively searches the entire solution space for
+the best answer (provided that there are not too many
+blanks and that P (t|s) is sufficiently ?local? with re-
+spect to t). Thus, we can be sure that it is the prob-
+ability model, and not the decoder, which is deter-
+mining the quality of the output. Also, we have re-
+moved most or all syntactic variability from the task,
+775
+Model ?lm ?ga ?da ?wt Acc
+Language Model only 1 0 0 0 0.749
+Source-Channel 1 1 0 0 0.821
+LM + GA + DA 1 0.6? 0.6? 0 0.833
+LM + GA + DA + WT 1 0.6? 0? 1.2? 0.846
+Table 3: Blank-filling results. Weights marked with
+* have been optimized.
+allowing us to better gauge whether we are choosing
+semantically correct translations.
+Let (ai, bi) be the pairs of words corresponding to
+the blanks in sentence t. Then the alignment model
+decomposes as a product of terms over these pairs,
+e.g. P (s|t) ? ?(ai,bi) P (ai|bi). Analogously, we
+extend the word translation model as Pwt(t|s) ?
+?
+(ai,bi) Pwt(bi|s, ai).
+The source-channel model can be used directly
+to solve the blank filling task; the language model
+makes use of the French words surrounding each
+blank, while the alignment model guesses the ap-
+propriate translation based on the aligned English
+word. As we have mentioned, this model does not
+take full advantage of the context in the English sen-
+tence. Thus, we hope that incorporating the word
+translation model into the decoder will improve per-
+formance on this task.
+Conversely, simply using the word translation
+model alone for the blank-filling task would not take
+advantage of the available French context. There
+are four probability distributions we might consider
+using: the language model Plm(t); the ?genera-
+tive? alignment model Pga(s|t), which we calcu-
+late using the training samples from the previous
+section; the analogous ?discriminative? alignment
+model Pda(t|s), which corresponds to the Base-
+line system we compared to on the word translation
+task; and our overlapping context logistic model,
+Pwt(t|s), which also goes in the ?discriminative? di-
+rection, but uses the context features in the source
+language for determining the distribution over each
+word?s possible translations.
+We combine these models by simply taking a log-
+linear combination:
+log P (t|s) ? ?lm logPlm(t) + ?ga log Pga(s|t)
++ ?da logPda(t|s) + ?wt logPwt(t|s).
+The case of ?lm = ?ga = 1 and ?da = ?wt = 0 re-
+duces to the source-channel model; other settings in-
+corporate discriminative models to varying degrees.
+We evaluated this combined translation model on
+the blank-filling task for various settings of the mix-
+ture coefficients ?. For our language model we used
+0 0.5 1 1.5
+0
+0.2
+0.4
+0.6
+0.8
+1
+1.2
+1.4
+1.6
+1.8
+2
+Generative Coefficient
+W
+or
+d 
+Tr
+an
+sla
+tio
+n 
+Co
+ef
+fic
+ie
+nt
+0.77
+0.79
+0.81
+0.83
+0.83
+0.84
+0.84
+0.845
+0.8
+45
+Figure 1: Accuracy on blank-filling task with ?lm = 1 and
+?disc = 0 as a function of ?gen and ?wt.
+the CMU-Cambridge toolkit.6 The word translation
+model for each ambiguous word was trained on all
+documents except the first.
+Table 3 shows results for several sets of weights.
+A * denotes entries which we optimized (see be-
+low); other entries were fixed. For example, the third
+model was obtained by fixing the coefficient of the
+language model to 1 and the word-translation to 0,
+and optimizing the weights for the generative and
+discriminative alignment models.
+The language model alone is able to achieve rea-
+sonable results; adding the alignment models im-
+proves performance further. By adding the word-
+translation model, we are able to improve perfor-
+mance by approximately 2.5% over the source-
+channel model, a relative error reduction of 14%,
+and 1.3% over the optimized model using the
+language model and generative and discriminative
+alignment models, a relative error reduction of 7.8%.
+We chose optimal coefficients for the combined
+probability models by exhaustively trying all possi-
+ble settings of the weights, at a resolution of 0.1,
+evaluating accuracy for each one on the test set. Fig-
+ure 1 shows the performance on the blank-filling
+task as a function of the weights of the generative
+alignment model and the word-translation model
+(the optimum value of the discriminative alignment
+model P (t|s) is always 0 when we include the
+word-translation model). As we can see, the per-
+formance of this model is robust with respect to
+the exact value of the coefficients. The ?obvious?
+setting of 1.0 for the generative model and 1.0 for
+the word translation model performs nearly as well
+6Available at http://mi.eng.cam.ac.uk/ prc14/toolkit.html.
+776
+as the optimized setting. In the optimal region,
+the word-translation model receives twice as much
+weight as the generative alignment model, indicat-
+ing that word-translation model is more informative
+than the generative alignment model. Incorporating
+the discriminative alignment model into the source-
+channel model also improves performance, but not
+nearly as much as using the word-translation model.
+An alternate way to optimize weights over trans-
+lation features is described in Och and Ney (2002).
+They consider a number of translation features, in-
+cluding the language model and generative and dis-
+criminative alignment models.
+7 Search Space Pruning
+As we have mentioned, one of the main difficulties
+in translation is that there are an enormous number
+of possible translations to consider. Decoding al-
+gorithms must therefore use some kind of search-
+space pruning in order to be efficient. A key part
+of pruning the search space is deciding on the set
+of words to consider in possible translations (Ger-
+mann et al, 2001). One standard method is to con-
+sider only target words which have high probabil-
+ity according to the discriminative alignment model.
+But we have already shown that the word translation
+model achieves much better performance on word
+translation than this baseline model; thus, we would
+expect the word translation model to improve accu-
+racy when used to pick sets of candidate translations.
+Given a probability distribution over possible
+translations of a word, P (b|a, s), there are several
+ways to choose a reduced set of possible transla-
+tions. Two commonly used methods are to only
+consider the top n scoring words from this distribu-
+tion (best-n); and to only consider words b such that
+P (b|a, s) is above some fixed threshold (cut-off ).
+We use the same data set as for the blank-filling
+task. We evaluate the accuracy of a pruning strategy
+by evaluating whether the correct translation is in
+the candidate set selected by the pruning strategy.
+To compare results for different pruning strategies,
+we plot performance as a function of average size
+of the candidate translation set. Figure 2 shows the
+accuracy vs. average candidate set size for the word-
+translation model, discriminative alignment model,
+and generative alignment model.
+The generative alignment model has the worst
+performance of the three. This is not surprising as it
+does not take into account the prior probability of the
+target word P (b). More interestingly, we see that the
+word-translation model outperforms the discrimina-
+tive translation model by a significant amount. For
+0 2 4 6 8 10 12
+0.5
+0.55
+0.6
+0.65
+0.7
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+Average number of possible translations
+Ac
+cu
+ra
+cy
+Figure 2: Accuracy of best-n strategy (dotted lines) and cut-
+off strategy (solid lines). o = generative alignment, + = discrim-
+inative alignment, * = word translation.
+instance, to achieve 95% recall (that is, for 95% of
+the ambiguous words, we retain the correct transla-
+tion), we only need candidate sets of average size 4.2
+for the cut-off strategy using the word-translation
+model, whereas for the same strategy on the discrim-
+inative alignment model we require an average set
+size of 6.7 words.
+As the size of the solution space grows exponen-
+tially with the size of the candidate sets, the word-
+translation model could potentially greatly reduce
+the search space while maintaining good accuracy.
+It would be interesting to use similar techniques to
+learn null fertility (i.e., when a word a has no trans-
+lation in the target sentence t).
+8 Related Work
+Berger et al (1996) apply maximum entropy meth-
+ods (equivalent to logistic regression) to, among
+other tasks, the word-translation task. However, no
+quantitative results are presented. In this paper we
+demonstrate that the method can improve perfor-
+mance on a large data set and show how it might
+be used to improve machine translation.
+Diab and Resnik (2002) suggest using large bilin-
+gual corpora to improve performance on word sense
+disambiguation. The main idea is that knowing a
+French word may help determine the meaning of the
+corresponding English word. They apply this intu-
+ition to the Senseval word disambiguation task by
+running off-the-shelf translators to produce transla-
+tions which they then use for disambiguation.
+Ng et al (2003) address word sense disambigua-
+tion by manually annotating WordNet senses with
+their translation in the target language (Chinese),
+and then automatically extracting labeled examples
+for word sense disambiguation by applying the IBM
+777
+Models to a bilingual corpus. They achieve compa-
+rable results to training on hand-labeled examples.
+Koehn and Knight (2003) focus on the task of
+noun-phrase translation. They improve performance
+on the noun-phrase translation task, and show that
+they can use this to improve full translations. A key
+difference is that, in predicting noun-phrase trans-
+lations, they do not consider the context of nouns.
+They present results which indicate that humans can
+accurately translate noun phrases without looking
+at the surrounding context. However, as we have
+demonstrated in this paper, context can be very use-
+ful for a (sub-human-level) machine translator.
+A similar argument applies to phrase-based trans-
+lation methods (e.g., Koehn et al (2003)). While
+phrase-based systems do take into account context
+within phrases, they are not able to use context
+across phrase boundaries. This is especially impor-
+tant when ambiguous words do not occur as part of
+a phrase ? verbs in particular often appear alone.
+9 Conclusions
+In this paper, we focus on the word-translation prob-
+lem. By viewing word-sense disambiguation in the
+context of a larger task, we were able to obtain large
+amounts of training data and directly evaluate the
+usefulness of our system for a real-world task. Our
+results improve over a baseline which is difficult to
+outperform in the word sense disambiguation task.
+The word translation model could be improved in
+a variety of ways, drawing upon the large body of
+work on word-sense disambiguation. In particular,
+there are many types of context features which could
+be used to improve word translation performance,
+but which are not available to standard machine-
+translation systems. Also, the model could be ex-
+tended to handle phrases.
+To evaluate word translation in the context of a
+machine translation task, we introduce the novel
+blank-filling task, which decouples the impact of
+word translation from a variety of other factors, such
+as syntactic correctness. For this task, increased
+word-translation accuracy leads to improved ma-
+chine translation. We also show that the word trans-
+lation model is effective at choosing sets of candi-
+date translations, suggesting that a word translation
+component would be immediately useful to current
+machine translations systems.
+There are several ways in which the results of
+word translation could be integrated into a full trans-
+lation system. Most naturally, the word translation
+model can be used directly to modify the score of
+different translations. Alternatively, a decoder can
+produce several candidate translations, which can be
+reranked using the word translation model. Unfortu-
+nately, we were unable to try these approaches, due
+to the lack of an appropriate publicly available de-
+coder. Carpuat and Wu (2005) recently observed
+that simpler integration approaches, such as forcing
+the machine translation system to use the word trans-
+lation model?s first choice, do not improve transla-
+tion results. Together, these results suggest that one
+should incorporate the results of word translation in
+a ?soft? way, allowing the word translation, align-
+ment, and language models to work together to pro-
+duce coherent translations. Given an appropriate de-
+coder, trying such a unified approach is straightfor-
+ward, and would provide insight about the value of
+word translation.
+References
+A. Berger, S. Della Pietra, and V. Della Pietra. 1996. A
+maximum entropy approach to natural language pro-
+cessing. Computational Linguistics, 22(1).
+P. F. Brown, S. A. Della Pietra, V. J. Della Pietra, and
+R. L. Mercer. 1993. The mathematics of statisti-
+cal machine translation. Computational Linguistics,
+19(2).
+M. Carpuat and D. Wu. 2005. Word sense disambigua-
+tion vs. statistical machine translation. Proc. ACL.
+M. Diab and P. Resnik. 2002. An unsupervised method
+for word sense tagging using parallel corpora. Proc.
+ACL.
+C. Fellbaum, editor. 1998. WordNet: An Electronic Lex-
+ical Database. MIT Press.
+U. Germann, M. Jahr, K. Knight, D. Marcu, and K. Ya-
+mada. 2001. Fast decoding and optimal decoding for
+machine translation. Proc. ACL.
+P. Koehn and K. Knight. 2003. Feature-rich statistical
+translation of noun phrases. Proc. ACL.
+P. Koehn, F. Och, and D. Marcu. 2003. Statistical phrase-
+based translation. HLT/NAACL.
+T. Minka. 2000. Algorithms for
+maximum-likelihood logistic regression.
+http://lib.stat.cmu.edu/ minka/papers/logreg.html.
+A. Ng and M. Jordan. 2002. On discriminative vs. gen-
+erative classifiers: A comparison of logistic regression
+and naive bayes. Proc. NIPS.
+H. T. Ng, B. Wang, and Y. S. Chan. 2003. Exploiting
+parallel texts for word sense disambiguation: An em-
+pirical study. Proc. ACL.
+F. Och and H. Ney. 2002. Discriminative training
+and maximum entropy models for statistical machine
+translation. Proc. ACL.
+J. Shewchuk. 1994. An introduction to the conjugate gra-
+dient method without the agonizing pain. http://www-
+2.cs.cmu.edu/ jrs/jrspapers.html.
+778

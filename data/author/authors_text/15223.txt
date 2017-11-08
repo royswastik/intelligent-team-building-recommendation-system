@@ -1,0 +1,2980 @@
+Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 601?612,
+Seattle, Washington, USA, 18-21 October 2013. c?2013 Association for Computational Linguistics
+A Constrained Latent Variable Model for Coreference Resolution
+Kai-Wei Chang Rajhans Samdani Dan Roth
+University of Illinois at Urbana-Champaign
+{kchang10|rsamdan2|danr}@illinois.edu
+Abstract
+Coreference resolution is a well known clus-
+tering task in Natural Language Processing. In
+this paper, we describe the Latent Left Linking
+model (L3M), a novel, principled, and linguis-
+tically motivated latent structured prediction
+approach to coreference resolution. We show
+that L3M admits efficient inference and can be
+augmented with knowledge-based constraints;
+we also present a fast stochastic gradient based
+learning. Experiments on ACE and Ontonotes
+data show that L3M and its constrained ver-
+sion, CL3M, are more accurate than several
+state-of-the-art approaches as well as some
+structured prediction models proposed in the
+literature.
+1 Introduction
+Coreference resolution is a challenging task, that in-
+volves identification and clustering of noun phrases
+mentions that refer to the same real-world entity.
+Most machine learning approaches to coreference
+resolution learn a scoring function to estimate the
+compatibility between two mentions or two sets of
+previously clustered mentions. Then, a decoding al-
+gorithm is designed to aggregate these scores and
+find an optimal clustering assignment.
+The most popular of these frameworks is the pair-
+wise mention model (Soon et al, 2001; Ng and
+Cardie, 2002; Bengtson and Roth, 2008), which
+learns a compatibility score of mention-pairs and
+uses these pairwise scores to obtain a global cluster-
+ing. Recently, efforts have been made (Haghighi and
+Klein, 2010; Rahman and Ng, 2011b; Rahman and
+Ng, 2011c) to consider models that capture higher
+order interactions, in particular, between mentions
+and previously identified entities (that is, between
+mentions and clusters). While such models are po-
+tentially more expressive, they are largely based on
+heuristics to achieve computational tractability.
+This paper focuses on a novel and principled ma-
+chine learning framework that pushes the state-of-
+the-art while operating at a mention-pair granularity.
+We present two models ? the Latent Left-Linking
+Model (L3M), and a version of that is augmented
+with domain knowledge-based constraints, the Con-
+strained Latent Left-Linking Model (CL3M). L3M
+admits efficient inference, linking each mention to a
+previously occurring mention to its left, much like
+the existing best-left-link inference models (Ng and
+Cardie, 2002; Bengtson and Roth, 2008). How-
+ever, unlike previous best-link techniques, learning
+in our case is performed jointly with decoding ? we
+present a novel latent structural SVM approach, op-
+timized using a fast stochastic gradient-based tech-
+nique. Furthermore, we present a probabilistic gen-
+eralization of L3M that is more expressive in that
+it is capable of considering mention-entity interac-
+tions using scores at the mention-pair granularity.
+We augment this model with a temperature-like pa-
+rameter (Samdani et al, 2012) to provide additional
+flexibility.
+CL3M augments L3M with knowledge-based
+constraints following (Roth and Yih, 2004; Denis
+and Baldridge, 2007). This capability is very de-
+sirable as shown by the success of the rule-based de-
+terministic approach of Raghunathan et al (2010)
+in the CoNLL shared task 2011 (Pradhan et al,
+2011). In L3M, domain-specific constraints are in-
+corporated into learning and inference in a straight-
+forward way. CL3M scores a mention?s contribution
+to its cluster by combining the corresponding score
+601
+of the underlying L3M model with that from a set of
+constraints.
+Most importantly, in our experiments on bench-
+mark coreference datasets, we show that CL3M,
+with just five constraints, compares favorably with
+other, more complicated, state-of-the-art algorithms
+on a variety of evaluation metrics. Over-
+all, the main contribution of this paper is a
+principled machine learning model operating at
+mention-pair granularity, using easy to implement
+constraint-augmented inference and learning, that
+yields competitive results on coreference resolution
+on Ontonotes-5.0 (Pradhan et al, 2012) and ACE
+2004 (NIST, 2004).
+2 Related Work
+The idea of Latent Left-linking Model (L3M) is in-
+spired by a popular inference approach to corefer-
+ence which we call the Best-Left-Link approach (Ng
+and Cardie, 2002; Bengtson and Roth, 2008). In the
+best-left-link strategy, each mention i is connected
+to the best antecedent mention j with j < i (i.e. a
+mention occurring to the left of i, assuming a left-
+to-right reading order), thereby creating a left-link.
+The ?best? antecedent mention is the one with the
+highest pairwise score, wij ; furthermore, if wij is
+below some threshold, say 0, then i is not connected
+to any antecedent mention. The final clustering is
+a transitive closure of these ?best? links. The intu-
+ition behind best-left-link strategy is based on how
+humans read and decipher coreference links ? they
+mostly rely on information to the left of the men-
+tion when deciding whether to add it to a previously
+constructed cluster or not. This strategy has been
+successful and commonly used in coreference res-
+olution (Ng and Cardie, 2002; Bengtson and Roth,
+2008; Stoyanov et al, 2009). However, most works
+have developed ad-hoc approaches to implement this
+idea. For instance, Bengtson and Roth (2008) train
+a model w on binary training data generated by tak-
+ing for each mention, the closest antecedent corefer-
+ent mention as a positive example, and all the other
+mentions as negative examples. Similar approaches
+to training and, additionally, decoupling the training
+stage from the clustering stage were used by other
+systems. In this paper, we formalize the learning
+problem of the best-left-link model as a structured
+prediction problem and analyze our system with de-
+tailed experiments. Furthermore, we generalize this
+approach by considering multiple pairwise left-links
+instead of just the best link, efficiently capturing the
+notion of a mention-to-cluster link.
+Many techniques in the coreference literature
+break away from the mention pair-based, best-left-
+link paradigm. Denis and Baldridge (2008) and Ng
+(2005) learn a local ranker to rank the mention
+pairs based on their compatibility. While these ap-
+proaches achieve decent empirical performance, it
+is unclear why these are the right ways to train the
+model. Some techniques consider a more expres-
+sive model by using features defined over mention-
+cluster or cluster-cluster (Rahman and Ng, 2011c;
+Stoyanov and Eisner, 2012; Haghighi and Klein,
+2010). For these models, the inference and learn-
+ing algorithms are usually complicated. Very re-
+cently, Durrett et al (2013) propose a probabilis-
+tic model which enforces structural agreement con-
+straints between specified properties of mention
+cluster when using a mention-pair model. This ap-
+proach is very related to the probabilistic extension
+of our method as both models attempt to leverage
+entity-level information from mention-pair features.
+However, our approach is simpler because it directly
+considers the probabilities of multiple links. Fur-
+thermore, while their model performs only slightly
+better than the Stanford rule-based system (Lee et
+al., 2011), we significantly outperform this system.
+Most importantly, our model obtains state-of-the-art
+performance on OntoNotes-5.0 while still operating
+at the mention-pair granularity. We believe that this
+is due to our novel and principled structured predic-
+tion framework which results in accurate (and effi-
+cient) training.
+Several structured prediction techniques have
+been applied to coreference resolution in the ma-
+chine learning literature. For example, McCallum
+and Wellner (2003) and Finley and Joachims (2005)
+model coreference as a correlational clustering prob-
+lem (Bansal et al, 2002) on a complete graph over
+the mentions with edge weights given by the pair-
+wise classifier. However, correlational clustering is
+known to be NP Hard (Bansal et al, 2002); nonethe-
+less, an ILP solver or an approximate inference algo-
+rithm can be used to solve this problem. Another ap-
+proach proposed by Yu and Joachims (2009) formu-
+602
+lates coreference with latent spanning trees. How-
+ever, their approach has no directionality between
+mentions, whereas our latent structure captures the
+natural left-to-right ordering of mentions. In our
+experiments (Sec. 5), we show that our technique
+vastly outperforms both the spanning tree and the
+correlational clustering techniques. We also com-
+pare with (Fernandes et al, 2012) and the pub-
+licly available Stanford coreference system (Raghu-
+nathan et al, 2010; Lee et al, 2011), a state-of-the-
+art rule-based system.
+Finally, some research (Ratinov and Roth, 2012;
+Bansal and Klein, 2012; Rahman and Ng, 2011a)
+has tried to integrate world knowledge from web-
+based statistics or knowledge bases into a corefer-
+ence system. World knowledge is potentially use-
+ful for resolving coreference and can be injected
+into our system in a straightforward way via the
+constraints framework. We will show an example
+of incorporating our system with name-entity and
+WordNet-based similarity metric (Q. Do, 2009) in
+Sec. 5. Including massive amount of information
+from knowledge resources is not the focus of this
+paper and may distort the comparison with other
+relevant models but our results indicate that this is
+doable in our model, and may provide significant
+improvements.
+3 Latent Left-Linking Model with
+Constraints
+In this section, we describe our Constrained Latent
+Left-Linking Model (CL3M). CL3M is inspired by
+a few ideas from the literature: (a) the popular Best-
+Left-Link inference approach to coreference (Ng and
+Cardie, 2002; Bengtson and Roth, 2008), and (b) the
+injection of domain knowledge-based constraints for
+structured prediction (Roth and Yih, 2004; Clarke
+and Lapata, 2006; Chang et al, 2012b; Ganchev et
+al., 2010; Koo et al, 2010; Pascal and Baldridge,
+2009).
+We first introduce the notion of a pairwise
+mention-scorer, then introduce our Left-Linking
+Model (L3M), and finally describe how to inject con-
+straints into our model.
+Let d be a document with md mentions. Mentions
+are denoted solely using their indices, ranging from
+1 to md. A coreference clustering C for document
+d is a collection of disjoint sets partitioning the set
+{1, . . . , md}. We represent C as a binary function
+with C(i, j) = 1 if mentions i and j are coreferent,
+otherwise C(i, j) = 0. Let s(C;w, d) be the score
+of a given clustering C for a given document and a
+given pairwise weight vector w. Then, during infer-
+ence, a clustering C is predicted by maximizing the
+scoring function s(C;w, d), over all valid (i.e. sat-
+isfying symmetry and transitivity) clustering binary
+functions C : {1, . . . , md}?{1, . . . , md} ? {0, 1}.
+3.1 Mention Pair Scorer
+We model the task of coreference resolution using a
+pairwise scorer which indicates the compatibility of
+a pair of mentions. The inference routine then pre-
+dicts the final clustering ? a structured prediction
+problem ? using these pairwise scores.
+Specifically, for any two mentions i and j (w.l.o.g.
+j < i), we produce a pairwise compatibility score
+wji using extracted features ?(j, i) as
+wji = w ? ?(j, i) , (1)
+where w is a weight parameter that is learned.
+3.2 Latent Left-Linking Model
+Our inference algorithm is inspired by the best-left-
+link approach. In particular, the score s(C; d,w) is
+defined so that each mention links to the antecedent
+mention (to its left) with the highest score (as long
+as the score is above some threshold, say, 0). Specif-
+ically:
+s(C; d,w) =
+md
+?
+i=1
+max
+0?j<i,C(i,j)=1
+w ? ?(j, i) . (2)
+In order to simplify the notation, we introduce a
+dummy mention with index 0, which is to the left
+(i.e. appears before) of all other mentions and has
+w0i = 0 for all actual mentions i > 0. For a given
+clustering C, if a mention i is not co-clustered with
+any previous actual mention j, 0 < j < i, then we
+assume that i links to 0 and C(i, 0) = 1. In other
+words, C(i, 0) = 1 iff i is the first actual item of a
+cluster in C. However, such an item i is not consid-
+ered to be co-clustered with 0 and for any valid clus-
+tering, item 0 is always in a singleton dummy clus-
+ter, which is eventually discarded. The important
+property of the score s is that it is exactly maximized
+603
+by the best-left-link inference, as it maximizes indi-
+vidual left link scores and the creation of one left-
+link does not affect the creation of other left-links.
+3.3 Learning
+We use a max-margin approach to learn w. We are
+given a training set D of documents where for each
+document d ? D, Cd refers to the annotated ground
+truth clustering. Then we learn w by minimizing
+L(w) =
+?
+2
+?w?2 + 1|D|
+?
+d?D
+1
+md
+(
+max
+C
+(
+s(C; d,w)
++ ?(C, Cd)
+)
+? s(Cd; d,w)
+)
+,
+where ?(C, Cd) is a loss function used in corefer-
+ence. In order to achieve tractable loss-augmented
+minimization ? something not possible with stan-
+dard loss functions used in coreference (e.g.
+B3 (Bagga and Baldwin, 1998)) ? we use a de-
+composable loss function that just counts the num-
+ber of mention pairs on which C and Cd disagree:
+?(C, Cd) =
+?md
+i,j=0,j<i IC(i,j)=Cd(i,j), where I is
+a binary indicator function. This loss function
+is equivalent to the numerator of the Rand index
+loss (Rand, 1971). With this form of loss function
+and using the scoring function in Eq. (2), we can
+write L(w) as
+?
+2
+?w?2 + 1|D|
+?
+d?D
+1
+md
+md
+?
+i=1
+(
+max
+0?j<i
+(
+w ? ?(j, i)
++ ?(Cd, i, j)
+)
+? max
+0?j<i,C(i,j)=1
+(w ? ?(j, i))
+)
+,
+(3)
+where ?(Cd, i, j) = 1 ? Cd(i, j) is the loss-based
+margin that is 1 if i and j are not coreferent in Cd,
+and is 0 otherwise. In the above objective function,
+the left-links remain latent while we get to observe
+the clustering. This objective function is related to
+latent structural SVMs (Yu and Joachims, 2009).
+However Yu and Joachims (2009) use a spanning
+tree based latent structure which does not have the
+left-to-right directionality we exploit. We can mini-
+mize the above function using Concave Convex Pro-
+cedure (Yuille and Rangarajan, 2003), which is guar-
+anteed to reach the local minima. However, such a
+procedure is costly as it requires doing inference on
+all the documents to compute a single gradient up-
+date. Consequently, we choose a faster stochastic
+sub-gradient descent (SGD) approach. Since L(w)
+in Eq. (3) decomposes not only over training doc-
+uments, but also over individual mentions in each
+document, we can perform SGD on a per-mention
+basis. The stochastic sub-gradient w.r.t. mention i
+in document d is given by
+?L(w)id ? ?(j?, i) ? ?(j??, i) + ?w, where (4)
+j? = arg max
+0?j<i
+(w ? ?(j, i) + 1 ? Cd(i, j))
+j?? = arg max
+0?j<i,C(i,j)=1
+w ? ?(j, i)
+While SGD has no theoretically convergence guar-
+antee, it works excellently in our experiments.
+Specifically, we observe that SGD achieves similar
+training performance to CCCP with a speed-up of
+around 10,000.
+3.4 Incorporating Constraints
+Next, we show how to incorporate domain
+knowledge-based constraints into L3M and gener-
+alize it to CL3M. In CL3M, we obtain a cluster-
+ing by maximizing a constraint-augmented scoring
+function f given by
+s(C; d,w) +
+nc
+?
+p=1
+?p?p(d, C),
+where the second term on the R.H.S. is the
+score contributed by domain specific constraints
+?1, . . . , ?nc with their respective scores ?1, . . . , ?nc .
+In particular, ?p(d, C) measures the extent to which
+a given clustering C satisfies the pth constraint. Note
+that this framework is general and can be applied to
+inject mention-to-cluster or cluster-to-cluster level
+constraints too. However, for simplicity, we con-
+sider here only constraints between mention pairs.
+This allows us derive fast greedy algorithm to solve
+the inference problem. The details of our constraints
+are presented in Sec. 5.
+All of our constraints can be categorized into two
+groups: ?must-link? and ?cannot-link?.?Must-link?
+constraints encourage a pair of mentions to connect,
+while ?cannot-link? constraints discourage mention
+pairs from being linked. Consequently, the coeffi-
+cients ?p associated with ?must-link? constraints are
+positive while ?p for ?cannot-link? constraints are
+negative. In the following, we briefly discuss how to
+604
+solve the inference problem with these two types of
+constraints.
+We slightly abuse notations and use ?p(j, i) to in-
+dicate the pth constraint on a pair of mentions (i, j).
+?p(j, i) is a binary function that is 1 iff two mentions
+i and j satisfy the conditions specified in constraint
+p. Chang et al (2011) shows that best-left-link in-
+ference can be formulated as an ILP problem. When
+we add constraints, the ILP becomes:
+arg max
+B,C?{0,1}
+?
+i,j:j<i
+wjiBji +
+?
+i,j
+?p?p(j, i)Cij
+s.t Ckj ? Cij + Cki ? 1, ?i, j, k,
+?i?1
+j=0
+Bji = 1, ?i
+Bji < Cji, Cji = Cji,?i, j,
+(5)
+where Cij ? C(i, j) is a binary variable indicating
+whether i and j are in the same cluster or not and
+Bji is an auxiliary variable indicating the best-left-
+link for mention i. The first set of inequality con-
+straints in (5) enforces the transitive closure of the
+clustering. The constraints Bji < Cji,?i, j enforce
+the consistency between these two sets of variables.
+One can use an off-the-shelf solver to solve Eq.
+(5). However, when the absolute values of the con-
+straint scores (|?p|) are high (the hard constraint
+case), then the following greedy algorithm approxi-
+mately solves the inference efficiently. We scan the
+document from left-to-right (or in any other arbitrary
+order). When processing mention i, we find
+j? = arg max
+j<i
+wji +
+?
+k:C?(k,j)=1
+?
+p
+?p?p(k, i),
+(6)
+where C? is the current clustering obtained from the
+previous inference steps. Then, we add a link be-
+tween mention i and j?. The rest of the infer-
+ence process is the same as in the original best-left-
+link inference. Specifically, this inference procedure
+combines the classifier score for mention pair i, j,
+with the constraints score of all mentions currently
+co-clustered with j. We discuss this further in Sec-
+tion 5.
+4 Probabilistic Latent Left-Linking Model
+In this section, we extend and generalize our left-
+linking model approach to a probabilistic model,
+Probabilistic Latent Left-Linking Model (PL3M),
+that allows us to naturally consider mention-to-
+entity (or mention-to-cluster) links. While in L3M,
+we assumed that each mention links determinis-
+tically to the max-scoring mention on its left, in
+PL3M, we assume that mention i links to mention
+j, j ? i, with probability given by
+Pr[j ? i; d,w] = e
+1
+? (w??(i,j))
+Zi(w, ?)
+. (7)
+Here Zi(w, ?) =
+?
+0?k<i e
+1
+? (w??(i,k)) is a normal-
+izing constant and ? ? (0, 1] is a constant tem-
+perature parameter that is tuned on a development
+set (Samdani et al, 2012). We assume that the event
+that mention i links to a mention j is independent of
+the event that mention i? links to j? for i 6= i?.
+Inference with PL3M: Given the probability of a
+link as in Eq. (7), the probability that mention i joins
+an existing cluster c, Pr[c ? i; d,w], is simply the
+sum of the probabilities of i linking to the mentions
+inside c:
+Pr[c ? i; d,w] =
+?
+j?c,0?j<i
+Pr[j ? i; d,w]
+=
+?
+j?c,0?j<i
+e
+1
+? (w??(i,j))
+Zi(d,w, ?)
+. (8)
+Based on Eq. (8) and making use of the indepen-
+dence assumption of left-links, we follow a simple
+greedy clustering (or inference) algorithm: sequen-
+tially add each mention i to a previously formed
+cluster c?, where c? = arg maxc Pr[c ? i; d,w].
+If the arg max cluster is the singleton cluster with
+the dummy mention 0 (i.e. the score of all other
+clusters is below the threshold of 0), then i starts a
+new cluster and is not included in the dummy clus-
+ter. Note that we link a mention to a cluster tak-
+ing into account all the mentions inside that cluster,
+mimicking the notion of a mention-to-cluster link.
+This provides more expressiveness than the Best-
+Left-Link inference, where a mention connects to
+a cluster solely based on a single pairwise link to
+some antecedent mention (the best-link mention) in
+that cluster.
+The case of ? = 0: As ? approaches zero, it is
+easy to show that the probability P [j ? i; d, w]
+605
+in Eq. (7) approaches a Kronecker delta function
+that puts probability 1 on the max-scoring mention
+j = arg max0?k<i w??(i, j) (assuming no ties), and
+0 everywhere else (Pletscher et al, 2010; Samdani et
+al., 2012). Consequently, as ? ? 0, Pr[c ? i; d,w]
+in Eq. 8 approaches a Kronecker delta function cen-
+tered on the cluster containing the max-scoring men-
+tion, thus reducing to the best-link case of L3M.
+Thus, PL3M, when tuning the value of ?, is a strictly
+more general model than L3M.
+Learning with PL3M We use a likelihood-based
+approach to learning with PL3M, and first compute
+the probability Pr[C; d,w] of generating a cluster-
+ing C, given w. We then learn w by minimizing
+the regularized negative log-likelihood of the data,
+augmenting the partition function with a loss-based
+margin (Gimpel and Smith, 2010). We omit the de-
+tails of likelihood computation due to lack of space.
+With PL3M, we again follow a stochastic gradi-
+ent descent technique instead of CCCP for the same
+reasons mentioned in Sec. 3.3. The stochastic gra-
+dient (subgradient when ? = 0) w.r.t. mention i in
+document d is given by
+?LL(w)id ?
+?
+0?j<i
+pj?(i, j) ?
+?
+0?j<i
+p?j?(i, j) + ?w,
+where pj and p?j , j = 0, . . . , i ? 1, are non-negative
+weights that sum to one and are given by
+pj =
+e
+1
+? (w??(i,j)+?(Cd,i,j))
+?
+0?k<i e
+1
+? (w??(i,k)+?(Cd,i,k))
+and
+p?j =
+Cd(i, j)Zi(d,w, ?)
+Zi(Cd; d,w, ?)
+Pr[j ? i; d,w] .
+Interestingly, the above update rule generalizes the
+one for L3M, as we are incorporating a weighted
+sum of all previous mentions in the update rule.
+With ? ? 0, the SGD in Eq. (4) converges to the
+SGD update in L3M (Eq. (4)). Finally, in the pres-
+ence of constraints, we can fold them inside the pair-
+wise link probabilities as in Eq. (6).
+5 Experiments and Results
+In this section, we present our experiments on the
+two commonly used benchmarks for coreference
+? Ontonotes-5.0 (Pradhan et al, 2012) and ACE
+2004 (NIST, 2004). Table 1 exhibits our bottom line
+results: CL3M achieves the best result reported on
+Ontonotes-5.0 development set and essentially ties
+with (Fernandes et al, 2012) on the test set. As
+shown in Table 3, CL3M is also the best algorithm
+on ACE and when evaluated on the gold mentions
+of Ontonotes. We show that CL3M performs partic-
+ularly well on clusters containing named entity men-
+tions, which are more important for many informa-
+tion extraction applications. In the rest of this sec-
+tion, after describing our experimental setting, we
+provide careful analysis of our algorithms and com-
+pare them to competitive coreference approaches in
+the literature.
+5.1 Experimental Setup
+Datasets: ACE 2004 contains 443 documents ?
+we used a standard split of these documents into
+268 training, 68 development, and 106 testing doc-
+uments used by Culotta et al (2007) and Bengt-
+son and Roth (2008). OntoNotes-5.0 dataset, re-
+leased for the CoNLL 2012 Shared Task (Pradhan et
+al., 2012), is by far the largest annotated corpus on
+coreference. It contains 3,145 annotated documents
+drawn from a wide variety of sources ? newswire,
+bible, broadcast transcripts, magazine articles, and
+web blogs. We report results on both development
+set and test set. To test on the development set, we
+further split the training data into training and devel-
+opment sets.
+Classifier details: For each of the pairwise ap-
+proaches, we assume the pairwise score is given by
+w??(?, ?)+t where ? are the features, w is the weight
+vector learned by the approach, and t is a threshold
+which we set to 0 during learning (as in Eq. (1)), but
+use a tuned value (tuned on a development set) dur-
+ing testing. For learning with L3M, we do stochastic
+gradient descent with 5 passes over the data. Empir-
+ically, we observe that this is enough to generate a
+stable model. For PL3M (Sec. 4), we tune the value
+of ? using the development set picking the best ?
+from {0.0, 0.2, . . . , 1.0}. Recall that when ? = 0,
+PL3M is the same as L3M. We refer to L3M and
+PL3M with incorporating constraints during infer-
+ence as CL3M and CPL3M (Sec. 3.4), respectively.
+Metrics: We compare the systems using three
+popular metrics for coreference ? MUC (Vilain et
+al., 1995), BCUB (Bagga and Baldwin, 1998), and
+606
+Entity-based CEAF (CEAFe) (Luo, 2005). Follow-
+ing, the CoNLL shared tasks (Pradhan et al, 2012),
+we use the average F1 scores of these three metrics
+as the main metric of comparison.
+Features: We build our system on the publicly
+available Illinois-Coref system1 primarily because it
+contains a rich set of features presented in Bengtson
+and Roth (2008) and Chang et al (2012a) (the latter
+adds features for pronominal anaphora resolution).
+We also compare with the Best-Left-Link approach
+described by Bengtson and Roth (2008).
+Constraints: We consider the following con-
+straints in CL3M and CPL3M.
+? SameSpan: two mentions must be linked to
+each other if they share the same surface text
+span and the number of words in the text span
+is larger than a threshold (set as 5 in our imple-
+mentation).
+? SameDetNom: two mentions must be linked
+to each other if both mentions start with a de-
+terminer and the [0,1] wordnet-based similarity
+score between the mention head words is above
+a threshold (set to 0.8).
+? SameProperName: two mentions must be
+linked if they are both proper names and the
+similarity score measured by a named entity-
+based similarity metric, Illinois NESim2, are
+higher than a threshold (set to 0.8). For a per-
+son entity we add additional rules to extract the
+first name, last name and professional title as
+properties.
+? ModifierMismatch: the constraint prevents two
+mentions to be linked if the head modifiers
+conflict. For example, the constraint prevents
+?northern Taiwan? from linking to ?southern
+Taiwan?. We gather a list of mutual exclusive
+modifiers from the training data.
+? PropertyMismatch: the constraint prevents two
+mentions to be linked if their properties con-
+flict. For example, it prevents male pronouns
+to link to female pronouns and ?Mr. Clinton?
+to link to ?Mrs. Clinton? by checking the gen-
+der property. The properties we consider are
+gender, number, professional title and the na-
+1The system is available at http://cogcomp.cs.
+illinois.edu/page/software_view/Coref/
+2http://cogcomp.cs.illinois.edu/page/
+software_view/NESim
+MUC BCUB CEAFe AVG
+Dev Set
+Stanford 64.30 70.46 46.35 60.37
+(Chang et al, 2012a) 65.75 70.25 45.30 60.43
+(Martschat et al, 2012) 66.76 71.91 47.52 62.06
+(Bjo?rkelund and Farkas, ) 67.12 71.18 46.84 61.71
+(Chen and Ng, 2012) 66.4 71.8 48.8 62.3
+(Fernandes et al, 2012) 69.46 71.93 48.66 63.35
+L3M 67.88 71.88 47.16 62.30
+CL3M 69.20 72.89 48.67 63.59
+Test Set
+Stanford 63.83 68.52 45.36 59.23
+(Chang et al, 2012a) 66.38 69.34 44.81 60.18
+(Martschat et al, 2012) 66.97 70.36 46.60 61.31
+(Bjo?rkelund and Farkas, ) 67.58 70.26 45.87 61.24
+(Chen and Ng, 2012) 63.7 69.0 46.4 59.7
+(Fernandes et al, 2012) 70.51 71.24 48.37 63.37
+L3M 68.31 70.81 46.73 61.95
+CL3M 69.64 71.93 48.32 63.30
+Table 1: Performance on OntoNotes-5.0 with predicted
+mentions. We report the F1 scores (%) on various coref-
+erence metrics (MUC, BCUB, CEAF). The column AVG
+shows the average scores of the three. We observe that
+PL3M and CPL3M (see Sec. 4) yields the same perfor-
+mance as L3M and CL3M, respectively as the tuned ? for
+all the datasets turned out to be 0.
+tionality.
+While the ?must-link? constraints described in the
+paper can be treated as features, due to their high
+precision, treating them as hard constraints (set ? to
+a high value) is a safe and direct way to inject hu-
+man knowledge into the learning model. Moreover,
+our framework allows a constraint to use informa-
+tion from previous decisions (such as ?cannot-link?
+constraints). Treating such constraints as features
+will complicate the learning model.
+5.2 Performance of the End-to-End System
+We compare our system with the top systems re-
+ported in the CoNLL shared task 2012 as well as
+with the Stanford?s publicly released rule-based sys-
+tem (Lee et al, 2013; Lee et al, 2011), which won
+the CoNLL 2011 Shared Task (Pradhan et al, 2011).
+Note that all the systems use the same annotations
+(e.g., gender prediction, part-of-speech tags, name
+entity tags) provided by the shared task organizers.
+607
+However, each system implements its own mention
+detector and pipelines the identified mentions into
+the coreference clustering component. Moreover,
+different systems use a different set of features. In
+order to partially control for errors on mention de-
+tection and better evaluate the clustering component
+in our coreference system, we will also present re-
+sults on correct (gold) mentions in the next section.
+Table 1 shows the end-to-end results. On the
+development set, only the best performing system
+of Fernandes et al (2012) is better than L3M, but this
+difference disappears when we use our system with
+constraints, CL3M. Although our system is much
+simple, it achieves the best B3 score on the test set
+and is competitive with the best system participated
+in the CoNLL shared task 2012.
+Performance on named entities: The corefer-
+ence annotation in Ontonotes 5.0 includes various
+types of mentions. However, not all mention types
+are equally interesting. In particular, clusters which
+contain at least one proper name or a named entity
+mention are more important for information extrac-
+tion tasks like Wikification (Mihalcea and Csomai,
+2007; Ratinov et al, 2011), cross-document coref-
+erence resolution (Bagga and Baldwin, 1998), and
+entity linking and knowledge based population (Ji
+and Grishman, 2011).
+Inspired by this, we compare our system to the
+best systems in the CoNLL shared task of 2011
+(Stanford (Lee et al, 2011)) and 2012 (Fernan-
+des (Fernandes et al, 2012)) on the following spe-
+cific tasks on Ontonotes-5.0.
+? ENT-C: Evaluate the system on clusters that
+contain at least one proper name mention. We
+generate the gold annotation and system out-
+puts by using the gold and predicted name en-
+tity tag annotations provided by the CoNLL
+shard task 2012. That is, if a cluster does not
+include any name entity mention, then it will
+be removed from the final clustering.
+? PER-C: As in the construction of ENT-C, but
+here we only consider clusters which contain at
+least one ?Person (PER)? entity.
+? ORG-C: As in the construction of Entity-C, but
+here we only consider clusters which contain at
+least one ?Organization (ORG)? entity.
+Typically, the clusters that get ignored in the above
+definitions contain only first and second person
+Task Stanford Fernandes L3M CL3M
+ENT-C 44.06 47.05 46.63 48.02
+PER-C 34.04 36.43 37.01 37.57
+ORG-C 25.02 26.23 26.22 27.01
+Table 2: Performance on named entities for OntoNotes-
+5.0 data. We compare our system to Fernandes (Fernan-
+des et al, 2012) and Stanford (Lee et al, 2013) systems.
+pronouns (which often happens in transcribed dis-
+course.) Also note that all the systems are trained
+with the same name entity tags, provided by the
+shared task organizers, and we use the same name
+entity tags to construct the specific clustering. Also,
+in order to further ensure fairness, we do not tune
+our system to favor the evaluation of these specific
+types of clusters. We chose to do so because we only
+have access to the system output of Fernandes et al
+(2012).
+Table 2 shows the results. The performance of
+all systems degrades when considering only clusters
+that contain name entities, indicating that ENT-C is
+actually a harder task than the original coreference
+resolution problem. In particular, resolving ORG
+coreferent clusters is hard, because names of organi-
+zations are sometimes confused with person names,
+and they can be referred to using a range of pronouns
+(including ?we? and ?it?). Overall, CL3M outper-
+forms all the competing systems on the clusters that
+contain at least one specific type of entity by a mar-
+gin larger than that for the overall coreference.
+5.3 Analysis on Gold Mentions
+To better understand the contribution of our joint
+learning and clustering model, we present experi-
+ments assuming that gold mentions are given. The
+definitions of gold mentions in ACE and Ontonotes
+are different because Ontonotes-5.0 excludes single-
+ton clusters in the annotation. In addition, Ontonotes
+includes longer mentions; for example, it includes
+NP and appositives in the same mention. We com-
+pare with the publicly available Stanford (Lee et al,
+2011) and IllinoisCoref (Chang et al, 2012a) sys-
+tems; the system of Fernandes et al (2012) is not
+publicly available. In addition, we also compare
+with the following two structured prediction base-
+lines that use the same set of features as L3M and
+PL3M.
+608
+MUC BCUB CEAFe AVG
+ACE 2004 Gold Ment.
+All-Link-Red. 77.45 81.10 77.57 78.71
+Spanning 73.31 79.25 74.66 75.74
+IllinoisCoref 76.02 81.04 77.6 78.22
+Stanford 75.04 80.45 76.75 77.41
+(Stoyanov and Eisner, 2012) 80.1 81.8 - -
+L3M 77.57 81.77 78.15 79.16
+PL3M 78.18 82.09 79.21 79.83
+CL3M 78.17 81.64 78.45 79.42
+CPL3M 78.29 82.20 79.26 79.91
+Ontonotes 5.0 Gold Ment.
+All-Link-Red. 83.72 75.59 64.00 74.44
+Spanning 83.64 74.83 61.07 73.18
+IllinoisCoref 80.84 74.29 65.96 73.70
+Stanford 82.26 76.82 61.69 73.59
+L3M 83.44 78.12 64.56 75.37
+PL3M 83.97 78.25 65.69 75.97
+CL3M 84.10 78.30 68.74 77.05
+CPL3M 84.80 78.74 68.75 77.43
+Table 3: Performance on ACE 2004 and OntoNotes-5.0.
+All-Link-Red. is based on correlational clustering; Span-
+ning is based on latent spanning forest based clustering
+(see Sec. 2). Our proposed approach is L3M (Sec. 3) and
+PL3M (sec. 4). CL3M and CPL3M are the version with
+incorporating constraints.
+1. All-Link-Red: a reduced and faster alterna-
+tive to the correlational clustering based ap-
+proach (Finley and Joachims, 2005). We im-
+plemented this algorithm as an ILP and droped
+one of the three transitivity constraints for each
+triplet of mention variables. Following Pascal
+and Baldridge (2009) and Chang et al (2011)
+we observe that this slightly improves the ac-
+curacy over a pure correlation clustering ap-
+proach, in addition to speeding up inference.
+2. Spanning: the latent spanning forest based ap-
+proach presented by Yu and Joachims (2009).
+We use the publicly available implementation
+provided by the authors3 for the ACE data;
+since their CCCP implementation is slow, we
+implemented our own stochastic gradient de-
+scent version to scale it to the much larger
+Ontonotes data.
+3Available at http://www.cs.cornell.edu/ cnyu/latentssvm/
+Table 3 lists the results. Although L3M is simple
+and use only the features defined on pairwise men-
+tions, it compares favorably with all recently pub-
+lished results. Moreover, the probabilistic general-
+ization of L3M, PL3M, achieves even better perfor-
+mance. For example, L3M with ? = 0.2 improves
+L3M with ? = 0 by 0.7 points in ACE 2004. In par-
+ticular, This shows that considering more than a one
+left-links is helpful. This is in contrast with the pre-
+dicted mentions where ? = 0 performed best. We
+suspect that this is because noisy mentions can hurt
+the performance of PL3M that takes into account
+not just the best scoring links, but also weaker links
+which are likely to be less reliable (more false pos-
+itives). Also, as opposed to what is reported by Yu
+and Joachims (2009), the correlation clustering ap-
+proach performs better than the spanning forest ap-
+proach. We think that this is because we compare
+the systems on different metrics than they did and
+also because we use exact ILP inference for corre-
+lational clustering whereas Yu and Joachims (2009)
+used approximate greedy inference.
+Both L3M and PL3M can be benefit from using
+constraints. However, The constraints improve only
+marginally on the ACE 2004 data because ACE uses
+shorter phrases as mentions. Consequently, con-
+straints designed for leveraging information from
+long mention spans are less effective. Overall, the
+experiments show that L3M and PL3M perform well
+on modeling coreference clustering.
+5.4 Ablation Study of Constrains
+Finally, we study the value of individual constraints
+by adding one constraint at a time to the corefer-
+ence system starting with the simple L3M model.
+The system with all the constraints added is the
+CL3M model introduced in Table 1. We then re-
+move individual constraints from CL3M to assess
+its contribution. Table 4 shows the results on the
+Ontonotes dataset with predicted mentions. Overall,
+it is shown that each one of the constraints has a con-
+tribution, and that using all the constraints improves
+the performance of the system by 1.29% in the AVG
+F1 score. In particular, most of this improvement
+(1.19%) is due to the must-link constraints (the first
+four constraints in the table). The must-link con-
+straints are more useful for L3M as L3M achieves
+higher precision than recall (e.g., the precision and
+609
+MUC BCUB CEAFe AVG
+L3M 67.88 71.88 47.16 62.30
++SameSpan 68.27 72.27 47.73 62.75
++SameDetNom 68.79 72.57 48.30 63.22
++SameProperName 69.11 72.81 48.56 63.49
++ModifierMismatch 69.11 72.81 48.58 63.50
++PropertyMismatch 69.20 72.89 48.67 63.59(i.e. CL3M)
+-SameSpan 68.91 72.66 48.36 63.31
+-SameDetNom 68.62 72.51 48.06 63.06
+-SameProperName 68.97 72.69 48.50 63.39
+-ModifierMismatch 69.12 72.80 48.63 63.52
+-PropertyMismatch 69.11 72.81 48.58 63.50
+Table 4: Ablation study on constraints. We first show
+cumulative performance on OntoNotes-5.0 data with pre-
+dicted mentions as constraints are added one at a time into
+the coreference system. Then we demonstrate the value
+of individual constraints by leaving out one constraint at
+each time.
+recall of L3M are 78.38% and 67.96%, respectively
+in B3). As a result, the must-link constraints, which
+aim at improving the recall, do better when optimiz-
+ing F1.
+6 Conclusions
+We presented a principled yet simple framework for
+coreference resolution. Furthermore, we showed
+that our model can be augmented in a straightfor-
+ward way with knowledge based constraints, to im-
+prove performance. We also presented a probabilis-
+tic generalization of this model that can take into
+account entity-mention links by considering mul-
+tiple possible coreference links. We proposed a
+fast stochastic gradient-based learning technique for
+our model. Our model, while operating at men-
+tion pair granularity, obtains state-of-the-art results
+on OntoNotes-5.0, and performs especially well on
+mention clusters containing named entities. We pro-
+vided a detailed analysis of our experimental results.
+Acknowledgments Supported by the Intelligence Advanced
+Research Projects Activity (IARPA) via Department of Interior National
+Business Center contract number D11PC20155. The U.S. Government
+is authorized to reproduce and distribute reprints for Governmental pur-
+poses notwithstanding any copyright annotation thereon. Disclaimer:
+The views and conclusions contained herein are those of the authors and
+should not be interpreted as necessarily representing the official policies
+or endorsements, either expressed or implied, of IARPA, DoI/NBC, or
+the U.S. Government.
+References
+A. Bagga and B. Baldwin. 1998. Algorithms for scoring
+coreference chains. In In The First International Con-
+ference on Language Resources and Evaluation Work-
+shop on Linguistics Coreference.
+M. Bansal and D. Klein. 2012. Coreference semantics
+from web features. In Proceedings of ACL, Jeju Island,
+South Korea, July.
+N. Bansal, A. Blum, and S. Chawla. 2002. Correlation
+clustering. In Proceedings of the 43rd Symposium on
+Foundations of Computer Science.
+E. Bengtson and D. Roth. 2008. Understanding the value
+of features for coreference resolution. In EMNLP, 10.
+A. Bjo?rkelund and R. Farkas.
+K.-W. Chang, R. Samdani, A. Rozovskaya, N. Rizzolo,
+M. Sammons, and D. Roth. 2011. Inference protocols
+for coreference resolution. In CoNLL Shared Task.
+K.-W. Chang, R. Samdani, A. Rozovskaya, M. Sammons,
+and D. Roth. 2012a. Illinois-coref: The UI system
+in the CoNLL-2012 Shared Task. In CoNLL Shared
+Task.
+M. Chang, L. Ratinov, and D. Roth. 2012b. Structured
+learning with constrained conditional models. Ma-
+chine Learning, 88(3):399?431, 6.
+C. Chen and V. Ng. 2012. Combining the best of two
+worlds: A hybrid approach to multilingual corefer-
+ence resolution. In Joint Conference on EMNLP and
+CoNLL - Shared Task.
+J. Clarke and M. Lapata. 2006. Constraint-based
+sentence compression: An integer programming ap-
+proach. In Proceedings of the Annual Meeting of
+the Association for Computational Linguistics (ACL),
+pages 144?151, Sydney, Australia, July. ACL.
+A. Culotta, M. Wick, R. Hall, and A. McCallum. 2007.
+First-order probabilistic models for coreference reso-
+lution. In HLT/NAACL.
+P. Denis and J. Baldridge. 2007. Joint determination of
+anaphoricity and coreference resolution using integer
+programming. In Proceedings of the Annual Meeting
+of the North American Association of Computational
+Linguistics (NAACL).
+P. Denis and J. Baldridge. 2008. Specialized models and
+ranking for coreference resolution. In EMNLP, pages
+660?669.
+G. Durrett, D. Hall, and D. Klein. 2013. Decentral-
+ized entity-level modeling for coreference resolution.
+In Proceedings of ACL, August.
+610
+E. R. Fernandes, C. N. dos Santos, and R. L. Milidiu?.
+2012. Latent structure perceptron with feature induc-
+tion for unrestricted coreference resolution. In Joint
+Conference on EMNLP and CoNLL - Shared Task.
+T. Finley and T. Joachims. 2005. Supervised cluster-
+ing with support vector machines. In Proceedings
+of the International Conference on Machine Learning
+(ICML).
+K. Ganchev, J. Grac?a, J. Gillenwater, and B. Taskar.
+2010. Posterior regularization for structured latent
+variable models. Journal of Machine Learning Re-
+search.
+K. Gimpel and N. A. Smith. 2010. Softmax-margin
+CRFs: Training log-linear models with cost functions.
+In NAACL.
+A. Haghighi and D. Klein. 2010. Coreference resolution
+in a modular, entity-centered model. In NAACL.
+H. Ji and R. Grishman. 2011. Knowledge base popula-
+tion: successful approaches and challenges. In Pro-
+ceedings of the 49th Annual Meeting of the Associa-
+tion for Computational Linguistics: Human Language
+Technologies - Volume 1.
+T. Koo, A. M. Rush, M. Collins, T. Jaakkola, and D. Son-
+tag. 2010. Dual decomposition for parsing with non-
+projective head automata. In EMNLP.
+H. Lee, Y. Peirsman, A. Chang, N. Chambers, M. Sur-
+deanu, and D. Jurafsky. 2011. Stanford?s multi-
+pass sieve coreference resolution system at the conll-
+2011 shared task. In Proceedings of the CoNLL-2011
+Shared Task.
+H. Lee, A. Chang, Y. Peirsman, N. Chambers, M. Sur-
+deanu, and D. Jurafsky. 2013. Deterministic coref-
+erence resolution based on entity-centric, precision-
+ranked rules. Computational Linguistics, 39(4).
+X. Luo. 2005. On coreference resolution performance
+metrics. In EMNLP.
+S. Martschat, J. Cai, S. Broscheit, ?E. Mu?jdricza-Maydt,
+and M. Strube. 2012. A multigraph model for corefer-
+ence resolution. In Joint Conference on EMNLP and
+CoNLL - Shared Task, July.
+A. McCallum and B. Wellner. 2003. Toward condi-
+tional models of identity uncertainty with application
+to proper noun coreference. In The Conference on
+Advances in Neural Information Processing Systems
+(NIPS).
+R. Mihalcea and A. Csomai. 2007. Wikify!: linking doc-
+uments to encyclopedic knowledge. In CIKM.
+V. Ng and C. Cardie. 2002. Improving machine learning
+approaches to coreference resolution. In ACL.
+Vincent Ng. 2005. Supervised ranking for pronoun res-
+olution: Some recent improvements. In AAAI, pages
+1081?1086.
+NIST. 2004. The ACE evaluation plan.
+D. Pascal and J. Baldridge. 2009. Global joint models for
+coreference resolution and named entity classification.
+In Procesamiento del Lenguaje Natural.
+P. Pletscher, C. S. Ong, and J. M. Buhmann. 2010. En-
+tropy and margin maximization for structured output
+learning. In ECML PKDD.
+S. Pradhan, L. Ramshaw, M. Marcus, M. Palmer,
+R. Weischedel, and N. Xue. 2011. Conll-2011 shared
+task: Modeling unrestricted coreference in ontonotes.
+In CoNLL.
+S. Pradhan, A. Moschitti, N. Xue, O. Uryupina, and
+Y. Zhang. 2012. CoNLL-2012 shared task: Modeling
+multilingual unrestricted coreference in OntoNotes. In
+CoNLL 2012.
+M. Sammons Y. Tu V. Vydiswaran Q. Do, D. Roth. 2009.
+Robust, light-weight approaches to compute lexical
+similarity. Technical report.
+K. Raghunathan, H. Lee, S. Rangarajan, N. Chambers,
+M. Surdeanu, D. Jurafsky, and C. Manning. 2010.
+A multi-pass sieve for coreference resolution. In
+EMNLP.
+A. Rahman and V. Ng. 2011a. Coreference resolution
+with world knowledge. In ACL, pages 814?824.
+A. Rahman and V. Ng. 2011b. Ensemble-based corefer-
+ence resolution. In IJCAI.
+A. Rahman and V. Ng. 2011c. Narrowing the modeling
+gap: a cluster-ranking approach to coreference resolu-
+tion. JAIR.
+W.M. Rand. 1971. Objective criteria for the evaluation
+of clustering methods. Journal of the American Statis-
+tical Association, 66(336):846?850.
+L. Ratinov and D. Roth. 2012. Learning-based multi-
+sieve co-reference resolution with knowledge. In
+EMNLP.
+L. Ratinov, D. Roth, D. Downey, and M. Anderson.
+2011. Local and global algorithms for disambiguation
+to wikipedia. In Proc. of the Annual Meeting of the
+Association for Computational Linguistics (ACL).
+Dan Roth and Wen Tau Yih. 2004. A linear program-
+ming formulation for global inference in natural lan-
+guage tasks. In Proceedings of CoNLL-04, pages 1?8.
+R. Samdani, M. Chang, and D. Roth. 2012. Unified ex-
+pectation maximization. In NAACL.
+W. M. Soon, H. T. Ng, and D. C. Y. Lim. 2001. A ma-
+chine learning approach to coreference resolution of
+noun phrases. Comput. Linguist.
+V. Stoyanov and J. Eisner. 2012. Easy-first coreference
+resolution. In COLING, pages 2519?2534.
+V. Stoyanov, N. Gilbert, C. Cardie, and E. Riloff. 2009.
+Conundrums in noun phrase coreference resolution:
+making sense of the state-of-the-art. In ACL.
+M. Vilain, J. Burger, J. Aberdeen, D. Connolly, and
+L. Hirschman. 1995. A model-theoretic coreference
+611
+scoring scheme. In Proceedings of the 6th conference
+on Message understanding.
+C. Yu and T. Joachims. 2009. Learning structural svms
+with latent variables. In Proceedings of the Interna-
+tional Conference on Machine Learning (ICML).
+A. L. Yuille and A. Rangarajan. 2003. The concave-
+convex procedure. Neural Computation, 15(4).
+612
+2012 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 688?698,
+Montre?al, Canada, June 3-8, 2012. c?2012 Association for Computational Linguistics
+Unified Expectation Maximization
+Rajhans Samdani
+University of Illinois
+rsamdan2@illinois.edu
+Ming-Wei Chang
+Microsoft Research
+minchang@microsoft.com
+Dan Roth
+University of Illinois
+danr@illinois.edu
+Abstract
+We present a general framework containing a
+graded spectrum of Expectation Maximization
+(EM) algorithms called Unified Expectation
+Maximization (UEM.) UEM is parameterized
+by a single parameter and covers existing al-
+gorithms like standard EM and hard EM, con-
+strained versions of EM such as Constraint-
+Driven Learning (Chang et al, 2007) and Pos-
+terior Regularization (Ganchev et al, 2010),
+along with a range of new EM algorithms.
+For the constrained inference step in UEM we
+present an efficient dual projected gradient as-
+cent algorithm which generalizes several dual
+decomposition and Lagrange relaxation algo-
+rithms popularized recently in the NLP litera-
+ture (Ganchev et al, 2008; Koo et al, 2010;
+Rush and Collins, 2011). UEM is as efficient
+and easy to implement as standard EM. Fur-
+thermore, experiments on POS tagging, infor-
+mation extraction, and word-alignment show
+that often the best performing algorithm in the
+UEM family is a new algorithm that wasn?t
+available earlier, exhibiting the benefits of the
+UEM framework.
+1 Introduction
+Expectation Maximization (EM) (Dempster et al,
+1977) is inarguably the most widely used algo-
+rithm for unsupervised and semi-supervised learn-
+ing. Many successful applications of unsupervised
+and semi-supervised learning in NLP use EM in-
+cluding text classification (McCallum et al, 1998;
+Nigam et al, 2000), machine translation (Brown et
+al., 1993), and parsing (Klein and Manning, 2004).
+Recently, EM algorithms which incorporate con-
+straints on structured output spaces have been pro-
+posed (Chang et al, 2007; Ganchev et al, 2010).
+Several variations of EM (e.g. hard EM) exist in
+the literature and choosing a suitable variation is of-
+ten very task-specific. Some works have shown that
+for certain tasks, hard EM is more suitable than reg-
+ular EM (Spitkovsky et al, 2010). The same issue
+continues in the presence of constraints where Poste-
+rior Regularization (PR) (Ganchev et al, 2010) cor-
+responds to EM while Constraint-Driven Learning
+(CoDL)1 (Chang et al, 2007) corresponds to hard
+EM. The problem of choosing between EM and hard
+EM (or between PR and CoDL) remains elusive,
+along with the possibility of simple and better alter-
+natives, to practitioners. Unfortunately, little study
+has been done to understand the relationships be-
+tween these variations in the NLP community.
+In this paper, we approach various EM-based
+techniques from a novel perspective. We believe that
+?EM or Hard-EM?? and ?PR or CoDL?? are not the
+right questions to ask. Instead, we present a unified
+framework for EM, Unified EM (UEM), that covers
+many EM variations including the constrained cases
+along with a continuum of new ones. UEM allows us
+to compare and investigate the properties of EM in a
+systematic way and helps find better alternatives.
+The contributions of this paper are as follows:
+1. We propose a general framework called Uni-
+fied Expectation Maximization (UEM) that
+presents a continuous spectrum of EM algo-
+rithms parameterized by a simple temperature-
+like tuning parameter. The framework covers
+both constrained and unconstrained EM algo-
+rithms. UEM thus connects EM, hard EM, PR,
+and CoDL so that the relation between differ-
+ent algorithms can be better understood. It also
+enables us to find new EM algorithms.
+2. To solve UEM (with constraints), we propose
+1To be more precise, (Chang et al, 2007) mentioned using
+hard constraints as well as soft constraints in EM. In this paper,
+we refer to CoDL only as the EM framework with hard con-
+straints.
+688
+a dual projected subgradient ascent algorithm
+that generalizes several dual decomposition
+and Lagrange relaxation algorithms (Bertsekas,
+1999) introduced recently in NLP (Ganchev et
+al., 2008; Rush and Collins, 2011).
+3. We provide a way to implement a family of
+EM algorithms and choose the appropriate one,
+given the data and problem setting, rather than
+a single EM variation. We conduct experi-
+ments on unsupervised POS tagging, unsuper-
+vised word-alignment, and semi-supervised in-
+formation extraction and show that choosing
+the right UEM variation outperforms existing
+EM algorithms by a significant margin.
+2 Preliminaries
+Let x denote an input or observed features and h be
+a discrete output variable to be predicted from a fi-
+nite set of possible outputs H(x). Let P?(x,h) be
+a probability distribution over (x,h) parameterized
+by ?. Let P?(h|x) refer to the conditional probabil-
+ity of h given x. For instance, in part-of-speech tag-
+ging, x is a sentence, h the corresponding POS tags,
+and ? could be an HMM model; in word-alignment,
+x can be an English-French sentence pair, h the
+word alignment between the sentences, and ? the
+probabilistic alignment model. Let ?(h = h?) be
+the Kronecker-Delta distribution centered at h?, i.e.,
+it puts a probability of 1 at h? and 0 elsewhere.
+In the rest of this section, we review EM and
+constraints-based learning with EM.
+2.1 EM Algorithm
+To obtain the parameter ? in an unsupervised way,
+one maximizes log-likelihood of the observed data:
+L(?) = logP?(x) = log
+?
+h?H(x)
+P?(x,h) . (1)
+EM (Dempster et al, 1977) is the most common
+technique for learning ?, which maximizes a tight
+lower bound onL(?). While there are a few different
+styles of expressing EM, following the style of (Neal
+and Hinton, 1998), we define
+F (?, q) = L(?)?KL(q, P?(h|x)), (2)
+where q is a posterior distribution over H(x) and
+KL(p1, p2) is the KL divergence between two dis-
+tributions p1 and p2. Given this formulation, EM can
+be shown to maximize F via block coordinate ascent
+alternating over q (E-step) and ? (M-step) (Neal and
+Hinton, 1998). In particular, the E-step for EM can
+be written as
+q = arg min
+q??Q
+KL(q?, P?(h|x)) , (3)
+where Q is the space of all distributions. While EM
+produces a distribution in the E-step, hard EM is
+thought of as producing a single output given by
+h? = arg max
+h?H(x)
+P?(h|x) . (4)
+However, one can also think of hard EM as pro-
+ducing a distribution given by q = ?(h = h?). In
+this paper, we pursue this distributional view of both
+EM and hard EM and show its benefits.
+EM for Discriminative Models EM-like algo-
+rithms can also be used in discriminative set-
+tings (Bellare et al, 2009; Ganchev et al, 2010)
+specifically for semi-supervised learning (SSL.)
+Given some labeled and unlabeled data, such algo-
+rithms maximize a modified F (?, q) function:
+F (?, q) = Lc(?)? c1???
+2 ? c2KL(q, P?(h|x)) , (5)
+where, q, as before, is a probability distribution over
+H(x), Lc(?) is the conditional log-likelihood of the
+labels given the features for the labeled data, and c1
+and c2 are constants specified by the user; the KL
+divergence is measured only over the unlabeled data.
+The EM algorithm in this case has the same E-step
+as unsupervised EM, but the M-step is different. The
+M-step is similar to supervised learning as it finds ?
+by maximizing a regularized conditional likelihood
+of the data w.r.t. the labels ? true labels are used for
+labeled data and ?soft? pseudo labels based on q are
+used for unlabeled data.
+2.2 Constraints in EM
+It has become a common practice in the NLP com-
+munity to use constraints on output variables to
+guide inference. Few of many examples include
+type constraints between relations and entities (Roth
+and Yih, 2004), sentential and modifier constraints
+during sentence compression (Clarke and Lapata,
+2006), and agreement constraints between word-
+alignment directions (Ganchev et al, 2008) or var-
+ious parsing models (Koo et al, 2010). In the con-
+689
+text of EM, constraints can be imposed on the pos-
+terior probabilities, q, to guide the learning proce-
+dure (Chang et al, 2007; Ganchev et al, 2010).
+In this paper, we focus on linear constraints over
+h (potentially non-linear over x.) This is a very gen-
+eral formulation as it is known that all Boolean con-
+straints can be transformed into sets of linear con-
+straints over binary variables (Roth and Yih, 2007).
+Assume that we have m linear constraints on out-
+puts where the kth constraint can be written as
+uk
+Th ? bk .
+Defining a matrix U as UT =
+[
+u1T . . . umT
+]
+and a vector b as bT = [b1, . . . , bm], we write down
+the set of all feasible2 structures as
+{h | h ? H(x),Uh ? b} .
+Constraint-Driven Learning (CoDL) (Chang et
+al., 2007) augments the E-step of hard EM (4) by
+imposing these constraints on the outputs.
+Constraints on structures can be relaxed to expec-
+tation constraints by requiring the distribution q to
+satisfy them only in expectation. Define expecta-
+tion w.r.t. a distribution q over H(x) as Eq[Uh] =?
+h?H(x) q(h)Uh. In the expectation constraints
+setting, q is required to satisfy:
+Eq[Uh] ? b .
+The space of distributions Q can be modified as:
+Q = {q | q(h) ? 0, Eq[Uh] ? b,
+?
+h?H(x)
+q(h) = 1}.
+Augmenting these constraints into the E-step of
+EM (3), gives the Posterior Regularization (PR)
+framework (Ganchev et al, 2010). In this paper, we
+adopt the expectation constraint setting. Later, we
+show that UEM naturally includes and generalizes
+both PR and CoDL.
+3 Unified Expectation Maximization
+We now present the Unified Expectation Maximiza-
+tion (UEM) framework which captures a continuum
+of (constrained and unconstrained) EM algorithms
+2Note that this set is a finite set of discrete variables not to
+be confused with a polytope. Polytopes are also specified as
+{z|Az ? d} but are over real variables whereas h is discrete.
+Algorithm 1 The UEM algorithm for both the genera-
+tive (G) and discriminative (D) cases.
+Initialize ?0
+for t = 0, . . . , T do
+UEM E-step:
+qt+1 ? arg minq?QKL(q, P?t(h|x); ?)
+UEM M-step:
+G: ?t+1 = arg max? Eqt+1 [logP?(x,h)]
+D: ?t+1 = arg max? Eqt+1 [logP?(h|x)]? c1???
+2
+end for
+including EM and hard EM by modulating the en-
+tropy of the posterior. A key observation underlying
+the development of UEM is that hard EM (or CoDL)
+finds a distribution with zero entropy while EM (or
+PR) finds a distribution with the same entropy as P?
+(or close to it). Specifically, we modify the objective
+of the E-step of EM (3) as
+q = arg min
+q??Q
+KL(q?, P?(h|x); ?) , (6)
+where KL(q, p; ?) is a modified KL divergence:
+KL(q, p; ?) =
+?
+h?H(x)
+?q(h) log q(h)?q(h) log p(h). (7)
+In other words, UEM projects P?(h|x) on the
+space of feasible distributions Q w.r.t. a metric3
+KL(?, ?; ?) to obtain the posterior q. By simply vary-
+ing ?, UEM changes the metric of projection and ob-
+tains different variations of EM including EM (PR,
+in the presence of constraints) and hard EM (CoDL.)
+The M-step for UEM is exactly the same as EM (or
+discriminative EM.)
+The UEM Algorithm: Alg. 1 shows the UEM al-
+gorithm for both the generative (G) and the discrimi-
+native (D) case. We refer to the UEM algorithm with
+parameter ? as UEM? .
+3.1 Relationship between UEM and Other EM
+Algorithms
+The relation between unconstrained versions of EM
+has been mentioned before (Ueda and Nakano,
+1998; Smith and Eisner, 2004). We show that the
+relationship takes novel aspects in the presence of
+constraints. In order to better understand different
+UEM variations, we write the UEM E-step (6) ex-
+plicitly as an optimization problem:
+3The term ?metric? is used very loosely. KL(?, ?; ?) does
+not satisfy the mathematical properties of a metric.
+690
+Framework ? = ?? ? = 0 ? ? (0, 1) ? = 1 ? =?? 1
+Constrained Hard EM Hard EM (NEW) UEM? Standard EM Deterministic
+Annealing EM
+Unconstrained CoDL (Chang et
+al., 2007)
+(NEW) EM
+with Lin. Prog.
+(NEW) constrained
+UEM?
+PR (Ganchev et al,
+2010)
+Table 1: Summary of different UEM algorithms. The entries marked with ?(NEW)? have not been proposed before.
+Eq. (8) is the objective function for all the EM frameworks listed in this table. Note that, in the absence of constraints,
+? ? (??, 0] corresponds to hard EM (Sec. 3.1.1.) Please see Sec. 3.1 for a detailed explanation.
+min
+q
+?
+h?H(x)
+?q(h) log q(h)? q(h) logP?(h|x)(8)
+s.t. Eq[Uh] ? b,
+q(h) ? 0,?h ? H(x),
+?
+h?H(x) q(h) = 1 .
+We discuss below, both the constrained and the
+unconstrained cases. Tab. 1 summarizes different
+EM algorithms in the UEM family.
+3.1.1 UEM Without Constraints
+The E-step in this case, computes a q obeying
+only the simplex constraints:
+?
+h?H(x) q(h) = 1.
+For ? = 1, UEM minimizes KL(q, P?(h|x); 1)
+which is the same as minimizing KL(q, P?(h|x))
+as in the standard EM (3). For ? = 0, UEM
+is solving arg minq?Q
+?
+h?H(x)?q(h) logP?(h|x)
+which is a linear programming (LP) problem. Due to
+the unimodularity of the simplex constraints (Schri-
+jver, 1986), this LP outputs an integral q =
+?
+(
+h = arg maxh?H(x) P?(h|x)
+)
+which is the same
+as hard EM (4). It has already been noted in the liter-
+ature (Kearns et al, 1997; Smith and Eisner, 2004;
+Hofmann, 2001) that this formulation (correspond-
+ing to our ? = 0) is the same as hard EM. In fact,
+for ? ? 0, UEM stays the same as hard EM be-
+cause of negative penalty on the entropy. The range
+? ? (0, 1) has not been discussed in the literature,
+to the best of our knowledge. In Sec. 5, we show
+the impact of using UEM?for ? ? {0, 1}. Lastly,
+the range of ? from? to 1 has been used in deter-
+ministic annealing for EM (Rose, 1998; Ueda and
+Nakano, 1998; Hofmann, 2001). However, the focus
+of deterministic annealing is solely to solve the stan-
+dard EM while avoiding local maxima problems.
+3.1.2 UEM With Constraints
+UEM and Posterior Regularization (? = 1) For
+? = 1, UEM solves arg minq?QKL (q, P?(h|x))
+which is the same as Posterior Regulariza-
+tion (Ganchev et al, 2010).
+UEM and CoDL (? = ??) When ? ? ??
+then due to an infinite penalty on the entropy of the
+posterior, the entropy must become zero. Thus, now
+the E-step, as expressed by Eq. (8), can be written as
+q = ?(h = h?) where h? is obtained as
+arg max
+h?H(x)
+logP?(h|x) (9)
+s.t. Uh ? b ,
+which is the same as CoDL. This combinatorial
+maximization can be solved using the Viterbi algo-
+rithm in some cases or, in general, using Integer Lin-
+ear Programming (ILP.)
+3.2 UEM with ? ? [0, 1]
+Tab. 1 lists different EM variations and their associ-
+ated values ?. This paper focuses on values of ? be-
+tween 0 and 1 for the following reasons. First, the E-
+step (8) is non-convex for ? < 0 and hence compu-
+tationally expensive; e.g., hard EM (i.e. ? = ??)
+requires ILP inference. For ? ? 0, (8) is a convex
+optimization problem which can be solved exactly
+and efficiently. Second, for ? = 0, the E-step solves
+max
+q
+?
+h?H(x) q(h) logP?(h|x) (10)
+s.t. Eq[Uh] ? b,
+q(h) ? 0, ?h ? H(x),
+?
+h?H(x) q(h) = 1 ,
+which is an LP-relaxation of hard EM (Eq. (4)
+and (9)). LP relaxations often provide a decent
+proxy to ILP (Roth and Yih, 2004; Martins et al,
+2009). Third, ? ? [0, 1] covers standard EM/PR.
+3.2.1 Discussion: Role of ?
+The modified KL divergence can be related to
+standard KL divergence as KL(q, P?(h|x); ?) =
+691
+KL(q, P?(y|x)) + (1? ?)H(q) ? UEM (6) mini-
+mizes the former during the E-step, while Standard
+EM (3) minimizes the latter. The additional term
+(1 ? ?)H(q) is essentially an entropic prior on the
+posterior distribution q which can be used to regu-
+larize the entropy as desired.
+For ? < 1, the regularization term penalizes the
+entropy of the posterior thus reducing the probability
+mass on the tail of the distribution. This is signifi-
+cant, for instance, in unsupervised structured predic-
+tion where the tail can carry a substantial amount of
+probability mass as the output space is massive. This
+notion aligns with the observation of (Spitkovsky
+et al, 2010) who criticize EM for frittering away
+too much probability mass on unimportant outputs
+while showing that hard EM does much better in
+PCFG parsing. In particular, they empirically show
+that when initialized with a ?good? set of parame-
+ters obtained by supervised learning, EM drifts away
+(thus losing accuracy) much farther than hard-EM.
+4 Solving Constrained E-step with
+Lagrangian Dual
+In this section, we discuss how to solve the E-
+step (8) for UEM. It is a non-convex problem for
+? < 0; however, for ? = ?? (CoDL) one can use
+ILP solvers. We focus here on solving the E-step for
+? ? 0 for which it is a convex optimization problem,
+and use a Lagrange relaxation algorithm (Bertsekas,
+1999). Our contributions are two fold:
+? We describe an algorithm for UEM with con-
+straints that is as easy to implement as PR or
+CoDL. Existing code for constrained EM (PR
+or CoDL) can be easily extended to run UEM.
+? We solve the E-step (8) using a Lagrangian
+dual-based algorithm which performs projected
+subgradient-ascent on dual variables. Our al-
+gorithm covers Lagrange relaxation and dual
+decomposition techniques (Bertsekas, 1999)
+which were recently popularized in NLP (Rush
+and Collins, 2011; Rush et al, 2010; Koo et al,
+2010). Not only do we extend the algorithmic
+framework to a continuum of algorithms, we
+also allow, unlike the aforementioned works,
+general inequality constraints over the output
+variables. Furthermore, we establish new and
+interesting connections between existing con-
+strained inference techniques.
+4.1 Projected Subgradient Ascent with
+Lagrangian Dual
+We provide below a high-level view of our algo-
+rithm, omitting the technical derivations due to lack
+of space. To solve the E-step (8), we introduce dual
+variables ? ? one for each expectation constraint in
+Q. The subgradient O? of the dual of Eq. (8) w.r.t.
+? is given by
+O? ? Eq[Uh]? b . (11)
+For ? > 0, the primal variable q can be written in
+terms of ? as
+q(h) ? P?t(h|x)
+1
+? e?
+?TUh
+? . (12)
+For ? = 0, the q above is not well defined and so
+we take the limit ? ? 0 in (12) and since lp norm
+approaches the max-norm as p??, this yields
+q(h) = ?(h = arg max
+h??H(x)
+P?(h
+?|x)e??
+TUh?). (13)
+We combine both the ideas by setting q(h) =
+G(h, P?t(?|x), ?TU, ?) where
+G(h, P,v, ?) =
+?
+?
+??
+?
+??
+P (h)
+1
+? e
+? vh?
+?
+h? P (h
+?)
+1
+? e
+? vh
+?
+?
+? > 0 ,
+?(h= argmax
+h??H(x)
+P (h?)e?vh
+?
+) ? = 0 .
+(14)
+Alg. 2 shows the overall optimization scheme.
+The dual variables for inequality constraints are re-
+stricted to be positive and hence after a gradient up-
+date, negative dual variables are projected to 0.
+Note that for ? = 0, our algorithm is a Lagrange
+relaxation algorithm for approximately solving the
+E-step for CoDL (which uses exact arg max infer-
+ence). Lagrange relaxation has been recently shown
+to provide exact and optimal results in a large num-
+ber of cases (Rush and Collins, 2011). This shows
+that our range of algorithms is very broad ? it in-
+cludes PR and a good approximation to CoDL.
+Overall, the required optimization (8) can be
+solved efficiently if the expected value computation
+in the dual gradient (Eq. (11)) w.r.t. the posterior q
+in the primal (Eq (14)) can be performed efficiently.
+In cases where we can enumerate the possible out-
+puts h efficiently, e.g. multi-class classification, we
+692
+Algorithm 2 Solving E-step of UEM? for ? ? 0.
+1: Initialize and normalize q; initialize ? = 0.
+2: for t = 0, . . . , R or until convergence do
+3: ?? max (?+ ?t (Eq[Uh]? b) , 0)
+4: q(h) = G(h, P?t(?|x), ?TU, ?)
+5: end for
+can compute the posterior probability q explicitly
+using the dual variables. In cases where the out-
+put space is structured and exponential in size, e.g.
+word alignment, we can optimize (8) efficiently if
+the constraints and the model P?(h|x) decompose
+in the same way. To elucidate, we give a more con-
+crete example in the next section.
+4.2 Projected Subgradient based Dual
+Decomposition Algorithm
+Solving the inference (8) using Lagrangian dual can
+often help us decompose the problem into compo-
+nents and handle complex constraints in the dual
+space as we show in this section. Suppose our
+task is to predict two output variables h1 and h2
+coupled via linear constraints. Specifically, they
+obey Ueh1 = Ueh2 (agreement constraints) and
+Uih1 ? Uih2 (inequality constraints)4 for given
+matrices Ue and Ui. Let their respective probabilis-
+tic models be P 1?1 and P
+2
+?2 . The E-step (8) can be
+written as
+arg min
+q1,q2
+A(q1, q2; ?) (15)
+s.t. Eq1 [Ueh
+1] = Eq2 [Ueh
+2]
+Eq1 [Uih
+1] ? Eq2 [Uih
+2] ,
+where A(q1, q2; ?) = KL(q1(h1), P 1?1(h
+1|x); ?) +
+KL(q2(h2), P 2?2(h
+2|x); ?).
+The application of Alg. 2 results in a dual decom-
+position scheme which is described in Alg. 3.
+Note that in the absence of inequality constraints
+and for ? = 0, our algorithm reduces to a simpler
+dual decomposition algorithm with agreement con-
+straints described in (Rush et al, 2010; Koo et al,
+2010). For ? = 1 with agreement constraints, our
+algorithm specializes to an earlier proposed tech-
+nique by (Ganchev et al, 2008). Thus our algo-
+rithm puts these dual decomposition techniques with
+4The analysis remains the same for a more general formu-
+lation with a constant offset vector on the R.H.S. and different
+matrices for h1 and h2.
+Algorithm 3 Projected Subgradient-based Lagrange
+Relaxation Algorithm that optimizes Eq. (15)
+1: Input: Two distributions P 1?1 and P
+2
+?2 .
+2: Output: Output distributions q1 and q2 in (15)
+3: Define ?T =
+[
+?e
+T ?i
+T
+]
+and UT =
+[
+Ue
+T Ui
+T
+]
+4: ?? 0
+5: for t = 0, . . . , R or until convergence do
+6: q1(h1)? G(h1, P 1?1(?|x), ?
+TU, ?)
+7: q2(h2)? G(h2, P 2?2(?|x),??
+TU, ?)
+8: ?e ? ?e + ?t(?Eq1 [Ueh
+1] + Eq2 [Ueh
+2])
+9: ?i ? ?i + ?t(?Eq1 [Uih
+1] + Eq2 [Uih
+2])
+10: ?i ? max(?i, 0) {Projection step}
+11: end for
+12: return (q1, q2)
+agreement constraints on the same spectrum. More-
+over, dual-decomposition is just a special case of
+Lagrangian dual-based techniques. Hence Alg. 2
+is more broadly applicable (see Sec. 5). Lines 6-9
+show that the required computation is decomposed
+over each sub-component.
+Thus if computing the posterior and expected val-
+ues of linear functions over each subcomponent is
+easy, then the algorithm works efficiently. Con-
+sider the case when constraints decompose linearly
+over h and each component is modeled as an HMM
+with ?S as the initial state distribution, ?E as em-
+mision probabilities, and ?T as transition probabil-
+ities. An instance of this is word alignment over
+language pair (S, T ) modeled using an HMM aug-
+mented with agreement constraints which constrain
+alignment probabilities in one direction (P?1 : from
+S to T ) to agree with the alignment probabilities in
+the other direction (P?2 : from T to S.) The agree-
+ment constraints are linear over the alignments, h.
+Now, the HMM probability is given by
+P?(h|x) = ?S(h0)
+?
+i ?E(xi|hi)?T (hi+1|hi)
+where vi denotes the ith component of a vector v.
+For ? > 0, the resulting q (14) can be expressed
+using a vector ? =+/-?TU (see lines 6-7) as
+q(h) ?
+(
+?S(h0)
+?
+i
+?E(xi|hi)?T (hi+1|hi)
+) 1
+?
+e
+?
+i ?ihi
+?
+?
+?
+i
+?S(h0)
+1
+?
+(
+?E(xi|hi)e?ihi
+) 1
+? ?T (hi+1|hi)
+1
+? .
+The dual variables-based term can be folded into
+the emission probabilities, ?E . Now, the resulting q
+can be expressed as an HMM by raising ?S , ?E , and
+693
+?T to the power 1/? and normalizing. For ? = 0, q
+can be computed as the most probable output. The
+required computations in lines 6-9 can be performed
+using the forward-backward algorithm or the Viterbi
+algorithm. Note that we can efficiently compute ev-
+ery step because the linear constraints decompose
+nicely along the probability model.
+5 Experiments
+Our experiments are designed to explore tuning ?
+in the UEM framework as a way to obtain gains
+over EM and hard EM in the constrained and uncon-
+strained cases. We conduct experiments on POS-
+tagging, word-alignment, and information extrac-
+tion; we inject constraints in the latter two. In all the
+cases we use our unified inference step to implement
+general UEM and the special cases of existing EM
+algorithms. Since both of our constrained problems
+involve large scale constrained inference during the
+E-step, we use UEM0 (with a Lagrange relaxation
+based E-step) as a proxy for ILP-based CoDL .
+As we vary ? over [0, 1], we circumvent much of
+the debate over EM vs hard EM (Spitkovsky et al,
+2010) by exploring the space of EM algorithms in a
+?continuous? way. Furthermore, we also study the
+relation between quality of model initialization and
+the value of ? in the case of POS tagging. This is
+inspired by a general ?research wisdom? that hard
+EM is a better choice than EM with a good initial-
+ization point whereas the opposite is true with an
+?uninformed? initialization.
+Unsupervised POS Tagging We conduct exper-
+iments on unsupervised POS learning experiment
+with the tagging dictionary assumption. We use a
+standard subset of Penn Treebank containing 24,115
+tokens (Ravi and Knight, 2009) with the tagging dic-
+tionary derived from the entire Penn Treebank. We
+run UEM with a first order (bigram) HMM model5.
+We consider initialization points of varying quality
+and observe the performance for ? ? [0, 1].
+Different initialization points are constructed as
+follows. The ?posterior uniform? initialization is
+created by spreading the probability uniformly over
+all possible tags for each token. Our EM model on
+5(Ravi and Knight, 2009) showed that a first order HMM
+model performs much better than a second order HMM model
+on unsupervised POS tagging
+-0.15-0.1-0.05 0 0.05 1
+.0
+0.9
+0.8
+0.7
+0.6
+0.5
+0.4
+0.3
+0.2
+0.1
+0.0
+Relative performance to EM (Gamma=1)
+Gamm
+a
+unifor
+m pos
+terior 
+initiali
+zer
+5 labe
+led ex
+ample
+s initia
+lizer
+10 lab
+eled e
+xampl
+es init
+ializer
+20 lab
+eled e
+xampl
+es init
+ializer
+40 lab
+eled e
+xampl
+es init
+ializer
+80 lab
+eled e
+xampl
+es init
+ializer
+Figure 1: POS Experiments showing the relation between
+initial model parameters and ?. We report the relative per-
+formance compared to EM (see Eq. (16)). The posterior
+uniform initialization does not use any labeled examples.
+As the no. of labeled examples used to create the initial
+HMM model increases, the quality of the initial model
+improves. The results show that the value of the best ? is
+sensitive to the initialization point and EM (? = 1) and
+hard EM (? = 0) are often not the best choice.
+this dataset obtains 84.9% accuracy on all tokens
+and 72.3% accuracy on ambiguous tokens, which
+is competitive with results reported in (Ravi and
+Knight, 2009). To construct better initialization
+points, we train a supervised HMM tagger on hold-
+out labeled data. The quality of the initialization
+points is varied by varying the size of the labeled
+data over {5, 10, 20, 40, 80}. Those initialization
+points are then fed into different UEM algorithms.
+Results For a particular ?, we report the perfor-
+mance of UEM? w.r.t. EM (? = 1.0) as given by
+rel(?) =
+Acc(UEM?)?Acc(UEM?=1.0)
+Acc(UEM?=1.0)
+(16)
+where Acc represents the accuracy as evaluated on
+the ambiguous words of the given data. Note that
+rel(?) ? 0, implies performance better or worse
+than EM. The results are summarized in Figure 1.
+Note that when we use the ?posterior uniform?
+initialization, EM wins by a significant margin. Sur-
+prisingly, with the initialization point constructed
+with merely 5 or 10 examples, EM is not the best
+algorithm anymore. The best result for most cases is
+obtained at ? somewhere between 0 (hard EM) and 1
+(EM). Furthermore, the results not only indicate that
+a measure of ?hardness? of EM i.e. the best value
+694
+of ?, is closely related to the quality of the ini-
+tialization point but also elicit a more fine-grained
+relationship between initialization and UEM.
+This experiment agrees with (Merialdo, 1994),
+which shows that EM performs poorly in the semi-
+supervised setting. In (Spitkovsky et al, 2010), the
+authors show that hard EM (Viterbi EM) works bet-
+ter than standard EM. We extend these results by
+showing that this issue can be overcome with the
+UEM framework by picking appropriate ? based on
+the amount of available labeled data.
+Semi-Supervised Entity-Relation Extraction
+We conduct semi-supervised learning (SSL) ex-
+periments on entity and relation type prediction
+assuming that we are given mention boundaries.
+We borrow the data and the setting from (Roth and
+Yih, 2004). The dataset has 1437 sentences; four
+entity types: PER, ORG, LOC, OTHERS and;
+five relation types LIVE IN, KILL, ORG BASED IN,
+WORKS FOR, LOCATED IN. We consider relations
+between all within-sentence pairs of entities. We
+add a relation type NONE indicating no relation
+exists between a given pair of entities.
+We train two log linear models for entity type and
+relation type prediction, respectively via discrimina-
+tive UEM. We work in a discriminative setting in
+order to use several informative features which we
+borrow from (Roth and Small, 2009). Using these
+features, we obtain 56% average F1 for relations and
+88% average F1 for entities in a fully supervised set-
+ting with an 80-20 split which is competitive with
+the reported results on this data (Roth and Yih, 2004;
+Roth and Small, 2009). For our SSL experiments,
+we use 20% of data for testing, a small amount, ?%,
+as labeled training data (we vary ?), and the remain-
+ing as unlabeled training data. We initialize with a
+classifier trained on the given labeled data.
+We use the following constraints on the posterior.
+1) Type constraints: For two entities e1 and e2, the
+relation type ?(e1, e2) between them dictates a par-
+ticular entity type (or in general, a set of entity types)
+for both e1 and e2. These type constraints can be
+expressed as simple logical rules which can be con-
+verted into linear constraints. E.g. if the pair (e1, e2)
+has relation type LOCATED IN then e2 must have en-
+tity type LOC. This yields a logical rule which is
+converted into a linear constraint as
+0.3	 ?0.32	 ?
+0.34	 ?0.36	 ?
+0.38	 ?0.4	 ?
+0.42	 ?0.44	 ?
+0.46	 ?0.48	 ?
+5	 ? 10	 ? 20	 ?
+Avg.	 ?F1
+	 ?for	 ?rel
+a?ons	 ?
+%	 ?of	 ?labeled	 ?data	 ?
+Sup.	 ?Bas.	 ? PR	 ?
+CoDL	 ? UEM	 ?
+Figure 2: Average F1 for relation prediction for varying
+sizes of labeled data comparing the supervised baseline,
+PR, CoDL, and UEM. UEM is statistically significantly
+better than supervised baseline and PR in all the cases.
+(?(e1, e2) == LOCATED IN) ? (e2 == LOC)
+? q (LOCATED IN; e1, e2) ? q (LOC; e2) .
+Refer to (Roth and Yih, 2004) for more statistics on
+this data and a list of all the type constraints used.
+2) Expected count constraints: Since most entity
+pairs are not covered by the given relation types, the
+presence of a large number of NONE relations can
+overwhelm SSL. To guide learning in the right direc-
+tion, we use corpus-wide expected count constraints
+for each non-NONE relation type. These constraints
+are very similar to the label regularization technique
+mentioned in (Mann and McCallum, 2010). Let Dr
+be the set of entity pairs as candidate relations in the
+entire corpus. For each non-NONE relation type ?,
+we impose the constraints
+L? ?
+?
+(e1,e2)?Dr
+q(?; e1, e2) ? U? ,
+where L? and U? are lower and upper bound on the
+expected number of ? relations in the entire corpus.
+Assuming that the labeled and the unlabeled data are
+drawn from the same distribution, we obtain these
+bounds using the fractional counts of ? over the la-
+beled data and then perturbing it by +/- 20%.
+Results We use Alg. 2 for solving the constrained
+E-step. We report results averaged over 10 random
+splits of the data and measure statistical significance
+using paired t-test with p = 0.05. The results for
+relation prediction are shown in Fig. 2. For each
+trial, we split the labeled data into half to tune the
+value of ?. For ? = 5%, 10%, and 20%, the average
+695
+value of gamma is 0.52, 0.6, and 0.57, respectively;
+the median values are 0.5, 0.6, and 0.5, respectively.
+For relation extraction, UEM is always statistically
+significantly better than the baseline and PR. The
+difference between UEM and CoDL is small which
+is not very surprising because hard EM approaches
+like CoDL are known to work very well for discrim-
+inative SSL. We omit the graph for entity predic-
+tion because EM-based approaches do not outper-
+form the supervised baseline there. However, no-
+tably, for entities, for ? = 10%, UEM outperforms
+CoDL and PR and for 20%, the supervised baseline
+outperforms PR statistically significantly.
+Word Alignment Statistical word alignment is a
+well known structured output application of unsu-
+pervised learning and is a key step towards ma-
+chine translation from a source language S to a tar-
+get language T . We experiment with two language-
+pairs: English-French and English-Spanish. We
+use Hansards corpus for French-English trans-
+lation (Och and Ney, 2000) and Europarl cor-
+pus (Koehn, 2002) for Spanish-English translation
+with EPPS (Lambert et al, 2005) annotation.
+We use an HMM-based model for word-
+alignment (Vogel et al, 1996) and add agreement
+constraints (Liang et al, 2008; Ganchev et al, 2008)
+to constrain alignment probabilities in one direction
+(P?1 : from S to T ) to agree with the alignment prob-
+abilities in the other direction (P?2 : from T to S.)
+We use a small development set of size 50 to tune
+the model. Note that the amount of labeled data we
+use is much smaller than the supervised approaches
+reported in (Taskar et al, 2005; Moore et al, 2006)
+and unsupervised approaches mentioned in (Liang et
+al., 2008; Ganchev et al, 2008) and hence our results
+are not directly comparable. For the E-step, we use
+Alg. 3 with R=5 and pick ? from {0.0, 0.1, . . . , 1.0},
+tuning it over the development set.
+During testing, instead of running HMM mod-
+els for each direction separately, we obtain posterior
+probabilities by performing agreement constraints-
+based inference as in Alg. 3. This results in a
+posterior probability distribution over all possible
+alignments. To obtain final alignments, follow-
+ing (Ganchev et al, 2008) we use minimum Bayes
+risk decoding: we align all word pairs with poste-
+rior marginal alignment probability above a certain
+Size EM PR CoDL UEM EM PR CoDL UEM
+En-Fr Fr-En
+10k 23.54 10.63 14.76 9.10 19.63 10.71 14.68 9.21
+50k 18.02 8.30 10.08 7.34 16.17 8.40 10.09 7.40
+100k 16.31 8.16 9.17 7.05 15.03 8.09 8.93 6.87
+En-Es Es-En
+10k 33.92 22.24 28.19 20.80 31.94 22.00 28.13 20.83
+50k 25.31 19.84 22.99 18.93 24.46 20.08 23.01 18.95
+100k 24.48 19.49 21.62 18.75 23.78 19.70 21.60 18.64
+Table 2: AER (Alignment Error Rate) comparisons
+for French-English (above) and Spanish-English (below)
+alignment for various data sizes. For French-English set-
+ting, tuned ? for all data-sizes is either 0.5 or 0.6. For
+Spanish-English, tuned ? for all data-sizes is 0.7.
+threshold, tuned over the development set.
+Results We compare UEM with EM, PR, and
+CoDL on the basis of Alignment Error Rate (AER)
+for different sizes of unlabeled data (See Tab. 2.)
+See (Och and Ney, 2003) for the definition of AER.
+UEM consistently outperforms EM, PR, and CoDL
+with a wide margin.
+6 Conclusion
+We proposed a continuum of EM algorithms
+parameterized by a single parameter. Our frame-
+work naturally incorporates constraints on output
+variables and generalizes existing constrained and
+unconstrained EM algorithms like standard and
+hard EM, PR, and CoDL. We provided an efficient
+Lagrange relaxation algorithm for inference with
+constraints in the E-step and empirically showed
+how important it is to choose the right EM version.
+Our technique is amenable to be combined with
+many existing variations of EM (Berg-Kirkpatrick
+et al, 2010). We leave this as future work.
+Acknowledgments: We thank Joa?o Grac?a for provid-
+ing the code and data for alignment with agreement. This
+research is sponsored by the Army Research Laboratory
+(ARL) under agreement W911NF-09-2-0053, Defense
+Advanced Research Projects Agency (DARPA) Machine
+Reading Program under Air Force Research Laboratory
+(AFRL) prime contract no. FA8750-09-C-018, and an
+ONR Award on Guiding Learning and Decision Making
+in the Presence of Multiple Forms of Information. Any
+opinions, findings, conclusions or recommendations are
+those of the authors and do not necessarily reflect the
+views of the funding agencies.
+696
+References
+K. Bellare, G. Druck, and A. McCallum. 2009. Alter-
+nating projections for learning with expectation con-
+straints. In UAI.
+T. Berg-Kirkpatrick, A. Bouchard-Co?te?, J. DeNero, and
+D. Klein. 2010. Painless unsupervised learning with
+features. In ACL, HLT ?10.
+D. P. Bertsekas. 1999. Nonlinear Programming. Athena
+Scientific, 2nd edition.
+P. Brown, S. D. Pietra, V. D. Pietra, and R. Mercer. 1993.
+The mathematics of statistical machine translation: pa-
+rameter estimation. Computational Linguistics.
+M. Chang, L. Ratinov, and D. Roth. 2007. Guiding semi-
+supervision with constraint-driven learning. In ACL.
+J. Clarke and M. Lapata. 2006. Constraint-based
+sentence compression: An integer programming ap-
+proach. In ACL.
+A. P. Dempster, N. M. Laird, and D. B. Rubin. 1977.
+Maximum likelihood from incomplete data via the EM
+algorithm. Journal of the Royal Statistical Society.
+K. Ganchev, J. Graca, and B. Taskar. 2008. Better align-
+ments = better translations. In ACL.
+K. Ganchev, J. Grac?a, J. Gillenwater, and B. Taskar.
+2010. Posterior regularization for structured latent
+variable models. Journal of Machine Learning Re-
+search.
+T. Hofmann. 2001. Unsupervised learning by probabilis-
+tic latent semantic analysis. MlJ.
+M. Kearns, Y. Mansour, and A. Y. Ng. 1997. An
+information-theoretic analysis of hard and soft assign-
+ment methods for clustering. In ICML.
+D. Klein and C. D. Manning. 2004. Corpus-based induc-
+tion of syntactic structure: models of dependency and
+constituency. In ACL.
+P. Koehn. 2002. Europarl: A multilingual corpus for
+evaluation of machine translation.
+T. Koo, A. M. Rush, M. Collins, T. Jaakkola, and D. Son-
+tag. 2010. Dual decomposition for parsing with non-
+projective head automata. In EMNLP.
+P. Lambert, A. De Gispert, R. Banchs, and J. Marino.
+2005. Guidelines for word alignment evaluation and
+manual alignment. Language Resources and Evalua-
+tion.
+P. Liang, D. Klein, and M. I. Jordan. 2008. Agreement-
+based learning. In NIPS.
+G. S. Mann and A. McCallum. 2010. Generalized
+expectation criteria for semi-supervised learning with
+weakly labeled data. JMLR, 11.
+A. Martins, N. A. Smith, and E. Xing. 2009. Concise
+integer linear programming formulations for depen-
+dency parsing. In ACL.
+A. K. McCallum, R. Rosenfeld, T. M. Mitchell, and A. Y.
+Ng. 1998. Improving text classification by shrinkage
+in a hierarchy of classes. In ICML.
+B. Merialdo. 1994. Tagging text with a probabilistic
+model. Computational Linguistics.
+R. C. Moore, W. Yih, and A. Bode. 2006. Improved
+discriminative bilingual word alignment. In ACL.
+R. M. Neal and G. E. Hinton. 1998. A new view of
+the EM algorithm that justifies incremental, sparse and
+other variants. In M. I. Jordan, editor, Learning in
+Graphical Models.
+K. Nigam, A. K. Mccallum, S. Thrun, and T. Mitchell.
+2000. Text classification from labeled and unlabeled
+documents using EM. Machine Learning.
+F. J. Och and H. Ney. 2000. Improved statistical align-
+ment models. In ACL.
+F. J. Och and H. Ney. 2003. A systematic comparison of
+various statistical alignment models. CL, 29.
+S. Ravi and K. Knight. 2009. Minimized models for
+unsupervised part-of-speech tagging. ACL, 1(August).
+K. Rose. 1998. Deterministic annealing for clustering,
+compression, classification, regression, and related op-
+timization problems. In IEEE, pages 2210?2239.
+D. Roth and K. Small. 2009. Interactive feature space
+construction using semantic information. In Proc.
+of the Annual Conference on Computational Natural
+Language Learning (CoNLL).
+D. Roth and W. Yih. 2004. A linear programming formu-
+lation for global inference in natural language tasks. In
+H. T. Ng and E. Riloff, editors, CoNLL.
+D. Roth and W. Yih. 2007. Global inference for entity
+and relation identification via a linear programming
+formulation. In L. Getoor and B. Taskar, editors, In-
+troduction to Statistical Relational Learning.
+A. M. Rush and M. Collins. 2011. Exact decoding of
+syntactic translation models through lagrangian relax-
+ation. In ACL.
+A. M. Rush, D. Sontag, M. Collins, and T. Jaakkola.
+2010. On dual decomposition and linear program-
+ming relaxations for natural language processing. In
+EMNLP.
+A. Schrijver. 1986. Theory of linear and integer pro-
+gramming. John Wiley & Sons, Inc.
+N. A. Smith and J. Eisner. 2004. Annealing techniques
+for unsupervised statistical language learning. In ACL.
+V. I. Spitkovsky, H. Alshawi, D. Jurafsky, and C. D. Man-
+ning. 2010. Viterbi training improves unsupervised
+dependency parsing. In CoNLL.
+B. Taskar, S. Lacoste-Julien, and D. Klein. 2005. A dis-
+criminative matching approach to word alignment. In
+HLT-EMNLP.
+N. Ueda and R. Nakano. 1998. Deterministic annealing
+em algorithm. Neural Network.
+697
+S. Vogel, H. Ney, and C. Tillmann. 1996. Hmm-based
+word alignment in statistical translation. In COLING.
+698
+Proceedings of the 15th Conference on Computational Natural Language Learning: Shared Task, pages 40?44,
+Portland, Oregon, 23-24 June 2011. c?2011 Association for Computational Linguistics
+Inference Protocols for Coreference Resolution
+Kai-Wei Chang Rajhans Samdani
+Alla Rozovskaya Nick Rizzolo
+Mark Sammons Dan Roth
+University of Illinois at Urbana-Champaign
+{kchang10|rsamdan2|rozovska|rizzolo|mssammon|danr}@illinois.edu
+Abstract
+This paper presents Illinois-Coref, a system
+for coreference resolution that participated
+in the CoNLL-2011 shared task. We in-
+vestigate two inference methods, Best-Link
+and All-Link, along with their corresponding,
+pairwise and structured, learning protocols.
+Within these, we provide a flexible architec-
+ture for incorporating linguistically-motivated
+constraints, several of which we developed
+and integrated. We compare and evaluate the
+inference approaches and the contribution of
+constraints, analyze the mistakes of the sys-
+tem, and discuss the challenges of resolving
+coreference for the OntoNotes-4.0 data set.
+1 Introduction
+The coreference resolution task is challenging, re-
+quiring a human or automated reader to identify
+denotative phrases (?mentions?) and link them to
+an underlying set of referents. Human readers use
+syntactic and semantic cues to identify and dis-
+ambiguate the referring phrases; a successful auto-
+mated system must replicate this behavior by linking
+mentions that refer to the same underlying entity.
+This paper describes Illinois-Coref, a corefer-
+ence resolution system built on Learning Based
+Java (Rizzolo and Roth, 2010), that participated
+in the ?closed? track of the CoNLL-2011 shared
+task (Pradhan et al, 2011). Building on elements
+of the coreference system described in Bengtson
+and Roth (2008), we design an end-to-end system
+(Sec. 2) that identifies candidate mentions and then
+applies one of two inference protocols, Best-Link
+and All-Link (Sec. 2.3), to disambiguate and clus-
+ter them. These protocols were designed to easily
+incorporate domain knowledge in the form of con-
+straints. In Sec. 2.4, we describe the constraints that
+we develop and incorporate into the system. The
+different strategies for mention detection and infer-
+ence, and the integration of constraints are evaluated
+in Sections 3 and 4.
+2 Architecture
+Illinois-Coref follows the architecture used in
+Bengtson and Roth (2008). First, candidate men-
+tions are detected (Sec. 2.1). Next, a pairwise
+classifier is applied to each pair of mentions, gen-
+erating a score that indicates their compatibility
+(Sec. 2.2). Next, at inference stage, a coreference
+decoder (Sec. 2.3) aggregates these scores into men-
+tion clusters. The original system uses the Best-Link
+approach; we also experiment with All-Link decod-
+ing. This flexible decoder architecture allows lin-
+guistic or knowledge-based constraints to be easily
+added to the system: constraints may force mentions
+to be coreferent or non-coreferent and can be option-
+ally used in either of the inference protocols. We
+designed and implemented several such constraints
+(Sec. 2.4). Finally, since mentions that are in single-
+ton clusters are not annotated in the OntoNotes-4.0
+data set, we remove those as a post-processing step.
+2.1 Mention Detection
+Given a document, a mention detector generates a
+set of mention candidates that are used by the subse-
+quent components of the system. A robust mention
+detector is crucial, as detection errors will propagate
+to the coreference stage. As we show in Sec. 3, the
+system that uses gold mentions outperforms the sys-
+tem that uses predicted mentions by a large margin,
+from 15% to 18% absolute difference.
+40
+For the ACE 2004 coreference task, a good per-
+formance in mention detection is typically achieved
+by training a classifier e.g., (Bengtson and Roth,
+2008). However, this model is not appropriate for
+the OntoNotes-4.0 data set, in which (in contrast to
+the ACE 2004 corpus) singleton mentions are not
+annotated: a specific noun phrase (NP) may corre-
+spond to a mention in one document but will not
+be a mention in another document. Therefore, we
+designed a high recall (? 90%) and low precision
+(? 35%) rule-based mention detection system that
+includes all phrases recognized as Named Entities
+(NE?s) and all phrases tagged as NPs in the syntac-
+tic parse of the text. As a post-processing step, we
+remove all predicted mentions that remain in single-
+ton clusters after the inference stage.
+The best mention detection result on the DEV set1
+is 64.93% in F1 score (after coreference resolution)
+and is achieved by our best inference protocol, Best-
+Link with constraints.
+2.2 Pairwise Mention Scoring
+The basic input to our inference algorithm is a pair-
+wise mention score, which indicates the compatibil-
+ity score of a pair of mentions. For any two mentions
+u and v, the compatibility score wuv is produced
+by a pairwise scoring component that uses extracted
+features ?(u, v) and linguistic constraints c:
+wuv = w ? ?(u, v) + c(u, v) + t, (1)
+where w is a weight vector learned from training
+data, c(u, v) is a compatibility score given by the
+constraints, and t is a threshold parameter (to be
+tuned). We use the same features as Bengtson and
+Roth (2008), with the knowledge extracted from the
+OntoNotes-4.0 annotation. The exact use of the
+scores and the procedure for learning weights w are
+specific to the inference algorithm and are described
+next.
+2.3 Inference
+In this section, we present our inference techniques
+for coreference resolution. These clustering tech-
+niques take as input a set of pairwise mention scores
+over a document and aggregate them into globally
+1In the shared task, the data set is split into three sets:
+TRAIN, DEV, and TEST.
+consistent cliques representing entities. We investi-
+gate the traditional Best-Link approach and a more
+intuitively appealing All-Link algorithm.
+2.3.1 Best-Link
+Best-Link is a popular approach to coreference
+resolution. For each mention, it considers the best
+mention on its left to connect to (best according
+the pairwise score wuv) and creates a link between
+them if the pairwise score is above some thresh-
+old. Although its strategy is simple, Bengtson and
+Roth (2008) show that with a careful design, it can
+achieve highly competitive performance.
+Inference: We give an integer linear programming
+(ILP) formulation of Best-Link inference in order to
+present both of our inference algorithms within the
+same framework. Given a pairwise scorer w, we
+can compute the compatibility scores ? wuv from
+Eq. (1) ? for all mention pairs u and v. Let yuv be
+a binary variable, such that yuv = 1 only if u and v
+are in the same cluster. For a document d, Best-Link
+solves the following ILP formulation:
+argmaxy
+?
+u,v
+wuvyuv
+s.t
+?
+u<v
+yuv ? 1 ?v,
+yuw ? {0, 1}.
+(2)
+Eq. (2) generates a set of connected components and
+all the mentions in each connected component con-
+stitute an entity.
+Learning: We follow the strategy in (Bengtson
+and Roth, 2008, Section 2.2) to learn the pairwise
+scoring function w. The scoring function is trained
+on:
+? Positive examples: for each mention u, we con-
+struct a positive example (u, v), where v is the
+closest preceding mention in u?s equivalence
+class.
+? Negative examples: all mention pairs (u, v),
+where v is a preceding mention of u and u, v
+are not in the same class.
+As a result of the singleton mentions not being anno-
+tated, there is an inconsistency in the sample distri-
+butions in the training and inference phases. There-
+fore, we apply the mention detector to the training
+set, and train the classifier using the union set of gold
+and predicted mentions.
+41
+2.3.2 All-Link
+The All-Link inference approach scores a cluster-
+ing of mentions by including all possible pairwise
+links in the score. It is also known as correlational
+clustering (Bansal et al, 2002) and has been applied
+to coreference resolution in the form of supervised
+clustering (Mccallum and Wellner, 2003; Finley and
+Joachims, 2005).
+Inference: Similar to Best-Link, for a document d,
+All-Link inference finds a clustering All-Link(d;w)
+by solving the following ILP problem:
+argmaxy
+?
+u,v
+wuvyuv
+s.t yuw ? yuv + yvw ? 1 ?u,w, v,
+yuw ? {0, 1}.
+(3)
+The inequality constraints in Eq. (3) enforce the
+transitive closure of the clustering. The solution of
+Eq. (3) is a set of cliques, and the mentions in the
+same cliques corefer.
+Learning: We present a structured perceptron al-
+gorithm, which is similar to supervised clustering
+algorithm (Finley and Joachims, 2005) to learn w.
+Note that as an approximation, it is certainly pos-
+sible to use the weight parameter learned by using,
+say, averaged perceptron over positive and negative
+links. The pseudocode is presented in Algorithm 1.
+Algorithm 1 Structured Perceptron like learning al-
+gorithm for All-Link inference
+Given: Annotated documents D and initial
+weight winit
+Initialize w ? winit
+for Document d in D do
+Clustering y ? All-Link(d;w)
+for all pairs of mentions u and v do
+I1(u, v) = [u, v coreferent in D]
+I2(u, v) = [y(u) = y(v)]
+w ? w +
+(
+I1(u, v)? I2(u, v)
+)
+?(u, v)
+end for
+end for
+return w
+For the All-Link clustering, we drop one of the
+three transitivity constraints for each triple of men-
+tion variables. Similar to Pascal and Baldridge
+(2009), we observe that this improves accuracy ?
+the reader is referred to Pascal and Baldridge (2009)
+for more details.
+2.4 Constraints
+The constraints in our inference algorithm are based
+on the analysis of mistakes on the DEV set2. Since
+the majority of errors are mistakes in recall, where
+the system fails to link mentions that refer to the
+same entity, we define three high precision con-
+straints that improve recall on NPs with definite de-
+terminers and mentions whose heads are NE?s.
+The patterns used by constraints to match mention
+pairs have some overlap with those used by the pair-
+wise mention scorer, but their formulation as con-
+straints allow us to focus on a subset of mentions
+to which a certain pattern applies with high preci-
+sion. For example, the constraints use a rule-based
+string similarity measure that accounts for the in-
+ferred semantic type of the mentions compared. Ex-
+amples of mention pairs that are correctly linked by
+the constraints are: Governor Bush? Bush; a cru-
+cial swing state , Florida? Florida; Sony itself ?
+Sony; Farmers? Los Angeles - based Farmers.
+3 Experiments and Results
+In this section, we present the performance of the
+system on the OntoNotes-4.0 data set. A previous
+experiment using an earlier version of this data can
+be found in (Pradhan et al, 2007). Table 1 shows the
+performance for the two inference protocols, with
+and without constraints. Best-Link outperforms All-
+Link for both predicted and gold mentions. Adding
+constraints improves the performance slightly for
+Best-Link on predicted mentions. In the other con-
+figurations, the constraints either do not affect the
+performance or slightly degrade it.
+Table 2 shows the results obtained on TEST, using
+the best system configurations found on DEV. We
+report results on predicted mentions with predicted
+boundaries, predicted mentions with gold bound-
+aries, and when using gold mentions3.
+2We provide a more detailed analysis of the errors in Sec. 4.
+3Note that the gold boundaries results are different from the
+gold mention results. Specifying gold mentions requires coref-
+erence resolution to exclude singleton mentions. Gold bound-
+aries are provided by the task organizers and also include sin-
+gleton mentions.
+42
+Method
+Pred. Mentions w/Pred. Boundaries Gold Mentions
+MD MUC BCUB CEAF AVG MUC BCUB CEAF AVG
+Best-Link 64.70 55.67 69.21 43.78 56.22 80.58 75.68 64.69 73.65
+Best-Link W/ Const. 64.69 55.8 69.29 43.96 56.35 80.56 75.02 64.24 73.27
+All-Link 63.30 54.56 68.50 42.15 55.07 77.72 73.65 59.17 70.18
+All-Link W/ Const. 63.39 54.56 68.46 42.20 55.07 77.94 73.43 59.47 70.28
+Table 1: The performance of the two inference protocols on both gold and predicted mentions. The systems are
+trained on the TRAIN set and evaluated on the DEV set. We report the F1 scores (%) on mention detection (MD)
+and coreference metrics (MUC, BCUB, CEAF). The column AVG shows the averaged scores of the three coreference
+metrics.
+Task MD MUC BCUB CEAF AVG
+Pred. Mentions w/ Pred. Boundaries 64.88 57.15 67.14 41.94 55.96
+Pred. Mentions w/ Gold Boundaries 67.92 59.79 68.65 41.42 56.62
+Gold Mentions - 82.55 73.70 65.24 73.83
+Table 2: The results of our submitted system on the TEST set. The system uses Best-Link decoding with constraints
+on predicted mentions and Best-Link decoding without constraints on gold mentions. The systems are trained on a
+collection of TRAIN and DEV sets.
+4 Discussion
+Most of the mistakes made by the system are due to
+not linking co-referring mentions. The constraints
+improve slightly the recall on a subset of mentions,
+and here we show other common errors for the sys-
+tem. For instance, the system fails to link the two
+mentions, the Emory University hospital in Atlanta
+and the hospital behind me, since each of the men-
+tions has a modifier that is not part of the other men-
+tion. Another common error is related to pronoun
+resolution, especially when a pronoun has several
+antecedents in the immediate context, appropriate in
+gender, number, and animacy, as in ? E. Robert Wal-
+lach was sentenced by a U.S. judge in New York to
+six years in prison and fined $ 250,000 for his rack-
+eteering conviction in the Wedtech scandal .?: both
+E. Robert Wallach and a U.S. judge are appropri-
+ate antecedents for the pronoun his. Pronoun errors
+are especially important to address since 35% of the
+mentions are pronouns.
+The system also incorrectly links some mentions,
+such as: ?The suspect said it took months to repack-
+age...? (?it? cannot refer to a human); ?They see
+them.? (subject and object in the same sentence are
+linked); and ?Many freeway accidents occur simply
+because people stay inside the car and sort out...?
+(the NP the car should not be linked to any other
+mention, since it does not refer to a specific entity).
+5 Conclusions
+We have investigated a coreference resolution sys-
+tem that uses a rich set of features and two popular
+types of clustering algorithm.
+While the All-Link clustering seems to be capable
+of taking more information into account for making
+clustering decisions, as it requires each mention in
+a cluster to be compatible with all other mentions in
+that cluster, the Best-Link approach still outperforms
+it. This raises a natural algorithmic question regard-
+ing the inherent nature of clustering style most suit-
+able for coreference and regarding possible ways of
+infusing more knowledge into different coreference
+clustering styles. Our approach accommodates in-
+fusion of knowledge via constraints, and we have
+demonstrated its utility in an end-to-end coreference
+system.
+Acknowledgments This research is supported by the Defense
+Advanced Research Projects Agency (DARPA) Machine Reading Pro-
+gram under Air Force Research Laboratory (AFRL) prime contract no.
+FA8750-09-C-0181 and the Army Research Laboratory (ARL) under
+agreement W911NF-09-2-0053. Any opinions, findings, and conclu-
+sion or recommendations expressed in this material are those of the au-
+thor(s) and do not necessarily reflect the view of the DARPA, AFRL,
+ARL or the US government.
+43
+References
+N. Bansal, A. Blum, and S. Chawla. 2002. Correlation
+clustering. In Proceedings of the 43rd Symposium on
+Foundations of Computer Science.
+E. Bengtson and D. Roth. 2008. Understanding the value
+of features for coreference resolution. In EMNLP, 10.
+T. Finley and T. Joachims. 2005. Supervised cluster-
+ing with support vector machines. In Proceedings
+of the International Conference on Machine Learning
+(ICML).
+A. Mccallum and B. Wellner. 2003. Toward condi-
+tional models of identity uncertainty with application
+to proper noun coreference. In The Conference on
+Advances in Neural Information Processing Systems
+(NIPS).
+D. Pascal and J. Baldridge. 2009. Global joint models for
+coreference resolution and named entity classification.
+In Procesamiento del Lenguaje Natural.
+S. Pradhan, L. Ramshaw, R. Weischedel, J. MacBride,
+and L. Micciulla. 2007. Unrestricted Coreference:
+Identifying Entities and Events in OntoNotes. In in
+Proceedings of the IEEE International Conference on
+Semantic Computing (ICSC), September 17-19.
+S. Pradhan, L. Ramshaw, M. Marcus, M. Palmer,
+R. Weischedel, and N. Xue. 2011. Conll-2011 shared
+task: Modeling unrestricted coreference in ontonotes.
+In Proceedings of the Annual Conference on Compu-
+tational Natural Language Learning (CoNLL).
+N. Rizzolo and D. Roth. 2010. Learning Based Java
+for Rapid Development of NLP Systems. In Proceed-
+ings of the International Conference on Language Re-
+sources and Evaluation (LREC), Valletta, Malta, 5.
+44
+Proceedings of the Joint Conference on EMNLP and CoNLL: Shared Task, pages 113?117,
+Jeju Island, Korea, July 13, 2012. c?2012 Association for Computational Linguistics
+Illinois-Coref: The UI System in the CoNLL-2012 Shared Task
+Kai-Wei Chang Rajhans Samdani Alla Rozovskaya Mark Sammons Dan Roth
+University of Illinois at Urbana-Champaign
+{kchang10|rsamdan2|rozovska|mssammon|danr}@illinois.edu
+Abstract
+The CoNLL-2012 shared task is an extension
+of the last year?s coreference task. We partici-
+pated in the closed track of the shared tasks in
+both years. In this paper, we present the im-
+provements of Illinois-Coref system from last
+year. We focus on improving mention detec-
+tion and pronoun coreference resolution, and
+present a new learning protocol. These new
+strategies boost the performance of the system
+by 5% MUC F1, 0.8% BCUB F1, and 1.7%
+CEAF F1 on the OntoNotes-5.0 development
+set.
+1 Introduction
+Coreference resolution has been a popular topic of
+study in recent years. In the task, a system requires
+to identify denotative phrases (?mentions?) and to
+cluster the mentions into equivalence classes, so that
+the mentions in the same class refer to the same en-
+tity in the real world.
+Coreference resolution is a central task in the
+Natural Language Processing research. Both the
+CoNLL-2011 (Pradhan et al, 2011) and CoNLL-
+2012 (Pradhan et al, 2012) shared tasks focus on
+resolving coreference on the OntoNotes corpus. We
+also participated in the CoNLL-2011 shared task.
+Our system (Chang et al, 2011) ranked first in two
+out of four scoring metrics (BCUB and BLANC),
+and ranked third in the average score. This year,
+we further improve the system in several respects.
+In Sec. 2, we describe the Illinois-Coref system
+for the CoNLL-2011 shared task, which we take as
+the baseline. Then, we discuss the improvements
+on mention detection (Sec. 3.1), pronoun resolu-
+tion (Sec. 3.2), and learning algorithm (Sec. 3.3).
+Section 4 shows experimental results and Section 5
+offers a brief discussion.
+2 Baseline System
+We use the Illinois-Coref system from CoNLL-2011
+as the basis for our current system and refer to it as
+the baseline. We give a brief outline here, but fo-
+cus on the innovations that we developed; a detailed
+description of the last year?s system can be found in
+(Chang et al, 2011).
+The Illinois-Coref system uses a machine learn-
+ing approach to coreference, with an inference pro-
+cedure that supports straightforward inclusion of do-
+main knowledge via constraints.
+The system first uses heuristics based on Named
+Entity recognition, syntactic parsing, and shallow
+parsing to identify candidate mentions. A pair-
+wise scorer w generates compatibility scores wuv
+for pairs of candidate mentions u and v using ex-
+tracted features ?(u, v) and linguistic constraints c.
+wuv = w ? ?(u, v) + c(u, v) + t, (1)
+where t is a threshold parameter (to be tuned). An
+inference procedure then determines the optimal set
+of links to retain, incorporating constraints that may
+override the classifier prediction for a given mention
+pair. A post-processing step removes mentions in
+singleton clusters.
+Last year, we found that a Best-Link decoding
+strategy outperformed an All-Link strategy. The
+Best-Link approach scans candidate mentions in a
+document from left to right. At each mention, if cer-
+tain conditions are satisfied, the pairwise scores of
+all previous mentions are considered, together with
+any constraints that apply. If one or more viable
+113
+links is available, the highest-scoring link is selected
+and added to the set of coreference links. After the
+scan is complete, the transitive closure of edges is
+taken to generate the coreference clusters, each clus-
+ter corresponding to a single predicted entity in the
+document.
+The formulation of this best-link solution is as fol-
+lows. For two mentions u and v, u < v indicates
+that the mention u precedes v in the document. Let
+yuv be a binary variable, such that yuv = 1 only if
+u and v are in the same cluster. For a document d,
+Best-Link solves the following formulation:
+argmaxy
+?
+u,v:u<v
+wuvyuv
+s.t
+?
+u<v
+yuv ? 1 ?v,
+yuw ? {0, 1}.
+(2)
+Eq. (2) generates a set of connected components
+and the set of mentions in each connected compo-
+nent constitute an entity. Note that we solve the
+above Best-Link inference using an efficient algo-
+rithm (Bengtson and Roth, 2008) which runs in time
+quadratic in the number of mentions.
+3 Improvements over the Baseline System
+Below, we describe improvements introduced to the
+baseline Illinois-Coref system.
+3.1 Mention Detection
+Mention detection is a crucial component of an end-
+to-end coreference system, as mention detection er-
+rors will propagate to the final coreference chain.
+Illinois-Coref implements a high recall and low
+precision rule-based system that includes all noun
+phrases, pronouns and named entities as candidate
+mentions. The error analysis shows that there are
+two main types of errors.
+Non-referential Noun Phrases. Non-referential
+noun phrases are candidate noun phrases, identified
+through a syntactic parser, that are unlikely to re-
+fer to any entity in the real world (e.g., ?the same
+time?). Note that because singleton mentions are not
+annotated in the OntoNotes corpus, such phrases are
+not considered as mentions. Non-referential noun
+phrases are a problem, since during the coreference
+stage they may be incorrectly linked to a valid men-
+tion, thereby decreasing the precision of the system.
+To deal with this problem, we use the training data
+to count the number of times that a candidate noun
+phrase happens to be a gold mention. Then, we re-
+move candidate mentions that frequently appear in
+the training data but never appear as gold mentions.
+Relaxing this approach, we also take the predicted
+head word and the words before and after the men-
+tion into account. This helps remove noun phrases
+headed by a preposition (e.g., the noun ?fact? in the
+phrase ?in fact?). This strategy will slightly degrade
+the recall of mention detection, so we tune a thresh-
+old learned on the training data for the mention re-
+moval.
+Incorrect Mention Boundary. A lot of errors in
+mention detection happen when predicting mention
+boundaries. There are two main reasons for bound-
+ary errors: parser mistakes and annotation incon-
+sistencies. A mistake made by the parser may be
+due to a wrong attachment or adding extra words
+to a mention. For example, if the parser attaches
+the relative clause inside of the noun phrase ?Pres-
+ident Bush, who traveled to China yesterday? to a
+different noun, the algorithm will predict ?President
+Bush? as a mention instead of ?President Bush, who
+traveled to China yesterday?; thus it will make an er-
+ror, since the gold mention also includes the relative
+clause. In this case, we prefer to keep the candi-
+date with a larger span. On the other hand, we may
+predict ?President Bush at Dayton? instead of ?Pres-
+ident Bush?, if the parser incorrectly attaches the
+prepositional phrase. Another example is when ex-
+tra words are added, as in ?Today President Bush?.
+A correct detection of mention boundaries is cru-
+cial to the end-to-end coreference system. The re-
+sults in (Chang et al, 2011, Section 3) show that the
+baseline system can be improved from 55.96 avg F1
+to 56.62 in avg F1 by using gold mention boundaries
+generated from a gold annotation of the parsing tree
+and the name entity tagging. However, fixing men-
+tion boundaries in an end-to-end system is difficult
+and requires additional knowledge. In the current
+implementation, we focus on a subset of mentions
+to further improve the mention detection stage of the
+baseline system. Specifically, we fix mentions start-
+ing with a stop word and mentions ending with a
+punctuation mark. We also use training data to learn
+patterns of inappropriate mention boundaries. The
+mention candidates that match the patterns are re-
+114
+moved. This strategy is similar to the method used
+to remove non-referential noun phrases.
+As for annotation inconsistency, we find that in a
+few documents, a punctuation mark or an apostrophe
+used to mark the possessive form are inconsistently
+added to the end of a mention. The problem results
+in an incorrect matching between the gold and pre-
+dicted mentions and downgrades the performance of
+the learned model. Moreover, the incorrect mention
+boundary problem also affects the training phase be-
+cause our system is trained on a union set of the pre-
+dicted and gold mentions. To fix this problem, in
+the training phase, we perform a relaxed matching
+between predicted mentions and gold mentions and
+ignore the punctuation marks and mentions that start
+with one of the following: adverb, verb, determiner,
+and cardinal number. For example, we successfully
+match the predicted mention ?now the army? to the
+gold mention ?the army? and match the predicted
+mention ?Sony ?s? to the gold mention ?Sony.? Note
+that we cannot fix the inconsistency problem in the
+test data.
+3.2 Pronoun Resolution
+The baseline system uses an identical model for
+coreference resolution on both pronouns and non-
+pronominal mentions. However, in the litera-
+ture (Bengtson and Roth, 2008; Rahman and Ng,
+2011; Denis and Baldridge, 2007) the features
+for coreference resolution on pronouns and non-
+pronouns are usually different. For example, lexi-
+cal features play an important role in non-pronoun
+coreference resolution, but are less important for
+pronoun anaphora resolution. On the other hand,
+gender features are not as important in non-pronoun
+coreference resolution.
+We consider training two separate classifiers with
+different sets of features for pronoun and non-
+pronoun coreference resolution. Then, in the decod-
+ing stage, pronoun and non-pronominal mentions
+use different classifiers to find the best antecedent
+mention to link to. We use the same features for
+non-pronoun coreference resolution, as the baseline
+system. For the pronoun anaphora classifier, we use
+a set of features described in (Denis and Baldridge,
+2007), with some additional features. The aug-
+mented feature set includes features to identify if a
+pronoun or an antecedent is a speaker in the sen-
+Algorithm 1 Online Latent Structured Learning for
+Coreference Resolution
+Loop until convergence:
+For each document Dt and each v ? Dt
+1. Let u? = max
+u?y(v)
+wT?(u, v), and
+2. u? = max
+u?{u<v}?{?}
+wT?(u, v) + ?(u, v, y(v))
+3. Let w? w + ?wT (?(u?, v)? ?(u?, v)).
+tence. It also includes features to reflect the docu-
+ment type. In Section 4, we will demonstrate the im-
+provement of using separate classifiers for pronoun
+and non-pronoun coreference resolution.
+3.3 Learning Protocol for Best-Link Inference
+The baseline system applies the strategy in (Bengt-
+son and Roth, 2008, Section 2.2) to learn the pair-
+wise scoring functionw using the Averaged Percep-
+tron algorithm. The algorithm is trained on mention
+pairs generated on a per-mention basis. The exam-
+ples are generated for a mention v as
+? Positive examples: (u, v) is used as a positive
+example where u < v is the closest mention to
+v in v?s cluster
+? Negative examples: for all w with u < w < v,
+(w, v) forms a negative example.
+Although this approach is simple, it suffers from
+a severe label imbalance problem. Moreover, it does
+not relate well to the best-link inference, as the deci-
+sion of picking the closest preceding mention seems
+rather ad-hoc. For example, consider three men-
+tions belonging to the same cluster: {m1: ?Presi-
+dent Bush?, m2: ?he?, m3:?George Bush?}. The
+baseline system always chooses the pair (m2,m3)
+as a positive example because m2 is the closet men-
+tion of m3. However, it is more proper to learn the
+model on the positive pair (m1,m3), as it provides
+more information. Since the best links are not given
+but are latent in our learning problem, we use an on-
+line latent structured learning algorithm (Connor et
+al., 2011) to address this problem.
+We consider a structured problem that takes men-
+tion v and its preceding mentions {u | u < v} as
+inputs. The output variables y(v) is the set of an-
+tecedent mentions that co-refer with v. We define
+a latent structure h(v) to be the bestlink decision
+of v. It takes the value ? if v is the first mention
+115
+Method
+Without Separating Pronouns With Separating Pronouns
+MD MUC BCUB CEAF AVG MD MUC BCUB CEAF AVG
+Binary Classifier (baseline) 70.53 61.63 69.26 43.03 57.97 73.24 64.57 69.78 44.95 59.76
+Latent-Structured Learning 73.02 64.98 70.00 44.48 59.82 73.95 65.75 70.25 45.30 60.43
+Table 1: The performance of different learning strategies for best-link decoding algorithm. We show the results
+with/without using separate pronoun anaphora resolver. The systems are trained on the TRAIN set and evaluated on
+the CoNLL-2012 DEV set. We report the F1 scores (%) on mention detection (MD) and coreference metrics (MUC,
+BCUB, CEAF). The column AVG shows the averaged scores of the three coreference metrics.
+System MD MUC BCUB CEAF AVG
+Baseline 64.58 55.49 69.15 43.72 56.12
+New Sys. 70.03 60.65 69.95 45.39 58.66
+Table 2: The improvement of Illinois-Coref. We report
+the F1 scores (%) on the DEV set from CoNLL-2011
+shared task. Note that the CoNLL-2011 data set does not
+include corpora of bible and of telephone conversation.
+in the equivalence class, otherwise it takes values
+from {u | u < v}. We define a loss function
+?(h(v), v, y(v)) as
+?(h(v), v, y(v)) =
+{
+0 h(v) ? y(v),
+1 h(v) /? y(v).
+We further define the feature vector ?(?, v) to be a
+zero vector and ? to be the learning rate in Percep-
+tron algorithm. Then, the weight vectorw in (1) can
+be learned from Algorithm 1. At each step, Alg. 1
+picks a mention v and finds the Best-Link decision
+u? that is consistent with the gold cluster. Then, it
+solves a loss-augmented inference problem to find
+the best link decision u? with current model (u? = ?
+if the classifier decides that v does not have coref-
+erent antecedent mention). Finally, the model w is
+updated by the difference between the feature vec-
+tors ?(u?, v) and ?(u?, v).
+Alg. 1 makes learning more coherent with infer-
+ence. Furthermore, it naturally solves the data im-
+balance problem. Lastly, this algorithm is fast and
+converges very quickly.
+4 Experiments and Results
+In this section, we demonstrate the performance of
+Illinois-Coref on the OntoNotes-5.0 data set. A pre-
+vious experiment using an earlier version of this data
+can be found in (Pradhan et al, 2007). We first show
+the improvement of the mention detection system.
+Then, we compare different learning protocols for
+coreference resolution. Finally, we show the overall
+performance improvement of Illinois-Coref system.
+First, we analyze the performance of mention de-
+tection before the coreference stage. Note that sin-
+gleton mentions are included since it is not possible
+to identify singleton mentions before running coref-
+erence. They are removed in the post-processing
+stage. The mention detection performance of the
+end-to-end system will be discussed later in this sec-
+tion. With the strategy described in Section 3.1, we
+improve the F1 score for mention detection from
+55.92% to 57.89%. Moreover, we improve the de-
+tection performance on short named entity mentions
+(name entity with less than 5 words) from 61.36 to
+64.00 in F1 scores. Such mentions are more impor-
+tant because they are easier to resolve in the corefer-
+ence layer.
+Regarding the learning algorithm, Table 1 shows
+the performance of the two learning protocols
+with/without separating pronoun anaphora resolver.
+The results show that both strategies of using a pro-
+noun classifier and training a latent structured model
+with a online algorithm improve the system perfor-
+mance. Combining the two strategies, the avg F1
+score is improved by 2.45%.
+Finally, we compare the final system with the
+baseline system. We evaluate both systems on the
+CoNLL-11 DEV data set, as the baseline system
+is tuned on it. The results show that Illinois-Coref
+achieves better scores on all the metrics. The men-
+tion detection performance after coreference resolu-
+tion is also significantly improved.
+116
+Task MD MUC BCUB CEAF AVG
+English (Pred. Mentions) 74.32 66.38 69.34 44.81 60.18
+English (Gold Mention Boundaries) 75.72 67.80 69.75 45.12 60.89
+English (Gold Mentions) 100.00 85.74 77.46 68.46 77.22
+Chinese (Pred Mentions) 47.58 37.93 63.23 35.97 45.71
+Table 3: The results of our submitted system on the TEST set. The systems are trained on a collection of TRAIN and
+DEV sets.
+4.1 Chinese Coreference Resolution
+We apply the same system to Chinese coreference
+resolution. However, because the pronoun proper-
+ties in Chinese are different from those in English,
+we do not train separate classifiers for pronoun and
+non-pronoun coreference resolution. Our Chinese
+coreference resolution on Dev set achieves 37.88%
+MUC, 63.37% BCUB, and 35.78% CEAF in F1
+score. The performance for Chinese coreference is
+not as good as the performance of the coreference
+system for English. One reason for that is that we
+use the same feature set for both Chinese and En-
+glish systems, and the feature set is developed for
+the English corpus. Studying the value of strong fea-
+tures for Chinese coreference resolution system is a
+potential topic for future research.
+4.2 Test Results
+Table 3 shows the results obtained on TEST, using
+the best system configurations found on DEV. We
+report results on both English and Chinese coref-
+erence resolution on predicted mentions with pre-
+dicted boundaries. For English coreference resolu-
+tion, we also report the results when using gold men-
+tions and when using gold mention boundaries1.
+5 Conclusion
+We described strategies for improving mention de-
+tection and proposed an online latent structure al-
+gorithm for coreference resolution. We also pro-
+posed using separate classifiers for making Best-
+Link decisions on pronoun and non-pronoun men-
+tions. These strategies significantly improve the
+Illinois-Coref system.
+1Note that, in Ontonotes annotation, specifying gold men-
+tions requires coreference resolution to exclude singleton men-
+tions. Gold mention boundaries are provided by the task orga-
+nizers and include singleton mentions.
+Acknowledgments This research is supported by the
+Defense Advanced Research Projects Agency (DARPA)
+Machine Reading Program under Air Force Research
+Laboratory (AFRL) prime contract no. FA8750-09-C-
+0181 and the Army Research Laboratory (ARL) under
+agreement W911NF-09-2-0053. Any opinions, findings,
+and conclusion or recommendations expressed in this ma-
+terial are those of the author(s) and do not necessarily
+reflect the view of the DARPA, AFRL, ARL or the US
+government.
+References
+E. Bengtson and D. Roth. 2008. Understanding the value
+of features for coreference resolution. In EMNLP.
+K. Chang, R. Samdani, A. Rozovskaya, N. Rizzolo,
+M. Sammons, and D. Roth. 2011. Inference proto-
+cols for coreference resolution. In CoNLL.
+M. Connor, C. Fisher, and D. Roth. 2011. Online latent
+structure training for language acquisition. In IJCAI.
+P. Denis and J. Baldridge. 2007. A ranking approach to
+pronoun resolution. In IJCAI.
+S. Pradhan, L. Ramshaw, R. Weischedel, J. MacBride,
+and L. Micciulla. 2007. Unrestricted Coreference:
+Identifying Entities and Events in OntoNotes. In
+ICSC.
+S. Pradhan, L. Ramshaw, M. Marcus, M. Palmer,
+R. Weischedel, and N. Xue. 2011. CoNLL-2011
+shared task: Modeling unrestricted coreference in
+OntoNotes. In CoNLL.
+S. Pradhan, A. Moschitti, N. Xue, O. Uryupina, and
+Y. Zhang. 2012. CoNLL-2012 shared task: Modeling
+multilingual unrestricted coreference in OntoNotes. In
+CoNLL.
+A. Rahman and V. Ng. 2011. Narrowing the modeling
+gap: a cluster-ranking approach to coreference resolu-
+tion. Journal of AI Research, 40(1):469?521.
+117

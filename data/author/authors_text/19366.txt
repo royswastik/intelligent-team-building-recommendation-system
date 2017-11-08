@@ -1,0 +1,3663 @@
+Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Short Papers), pages 797?802,
+Baltimore, Maryland, USA, June 23-25 2014.
+c?2014 Association for Computational Linguistics
+Transforming trees into hedges and parsing with ?hedgebank? grammars
+Mahsa Yarmohammadi
+?
+, Aaron Dunlop
+?
+and Brian Roark
+?
+?
+Oregon Health & Science University, Portland, Oregon
+?
+Google, Inc., New York
+yarmoham@ohsu.edu, {aaron.dunlop,roarkbr}@gmail.com
+Abstract
+Finite-state chunking and tagging meth-
+ods are very fast for annotating non-
+hierarchical syntactic information, and are
+often applied in applications that do not
+require full syntactic analyses. Scenar-
+ios such as incremental machine transla-
+tion may benefit from some degree of hier-
+archical syntactic analysis without requir-
+ing fully connected parses. We introduce
+hedge parsing as an approach to recover-
+ing constituents of length up to some max-
+imum span L. This approach improves ef-
+ficiency by bounding constituent size, and
+allows for efficient segmentation strategies
+prior to parsing. Unlike shallow parsing
+methods, hedge parsing yields internal hi-
+erarchical structure of phrases within its
+span bound. We present the approach and
+some initial experiments on different infer-
+ence strategies.
+1 Introduction
+Parsing full hierarchical syntactic structures is
+costly, and some NLP applications that could ben-
+efit from parses instead substitute shallow prox-
+ies such as NP chunks. Models to derive such
+non-hierarchical annotations are finite-state, so in-
+ference is very fast. Still, these partial annota-
+tions omit all but the most basic syntactic segmen-
+tation, ignoring the abundant local structure that
+could be of utility even in the absence of fully con-
+nected structures. For example, in incremental (si-
+multaneous) machine translation (Yarmohammadi
+et al, 2013), sub-sentential segments are trans-
+lated independently and sequentially, hence the
+fully-connected syntactic structure is not generally
+available. Even so, locally-connected source lan-
+guage parse structures can inform both segmen-
+tation and translation of each segment in such a
+translation scenario.
+One way to provide local hierarchical syntactic
+structures without fully connected trees is to fo-
+cus on providing full hierarchical annotations for
+structures within a local window, ignoring global
+constituents outside that window. We follow the
+XML community in naming structures of this type
+hedges (not to be confused with the rhetorical de-
+vice of the same name), due to the fact that they are
+like smaller versions of trees which occur in se-
+quences. Such structures may be of utility to var-
+ious structured inference tasks, as well as within
+a full parsing pipeline, to quickly constrain subse-
+quent inference, much as finite-state models such
+as supertagging (Bangalore and Joshi, 1999) or
+chart cell constraints (Roark and Hollingshead,
+2008; Roark et al, 2012) are used.
+In this paper, we consider the problem of hedge
+parsing, i.e., discovering every constituent of
+length up to some span L. Similar constraints
+have been used in dependency parsing (Eisner
+and Smith, 2005; Dreyer et al, 2006), where the
+use of hard constraints on the distance between
+heads and dependents is known as vine parsing.
+It is also reminiscent of so-called Semi-Markov
+models (Sarawagi and Cohen, 2004), which allow
+finite-state models to reason about segments rather
+than just tags by imposing segment length limits.
+In the XML community, trees and hedges are used
+for models of XML document instances and for
+the contents of elements (Br?uggemann-Klein and
+Wood, 2004). As far as we know, this paper is
+the first to consider this sort of partial parsing ap-
+proach for natural language.
+We pursue this topic via tree transformation,
+whereby non-root non-terminals labeling con-
+stituents of span > L in the tree are recursively
+elided and their children promoted to attach to
+their parent. In such a way, hedges are sequen-
+tially connected to the top-most non-terminal in
+the tree, as demonstrated in Figure 1. After apply-
+ing such a transform to a treebank, we can induce
+grammars and modify parsing to search as needed
+to recover just these constituents.
+In this paper, we propose several methods to
+797
+a)
+33
+,1 13
+116
+LQYHVWRUV
+IRU
+$'-3
+--
+WUHDFKHURXV
+9%
+UHPDLQ
+93
+0'
+ZLOO
+93
+'7 -- 11
+WKH KLJK\LHOG PDUNHW
+13
+,1
+RI
+33
+--
+PXFK
+13
+13
+116
+$QDO\VWV
+13
+9%3
+DUH
+--
+FRQFHUQHG
+,1
+WKDW
+
+
+6
+93
+6
+$'-3
+6%$5
+b)
+33
+,1 13
+116
+LQYHVWRUV
+IRU
+$'-3
+--
+WUHDFKHURXV
+9%
+UHPDLQ
+93
+0'
+ZLOO
+93
+'7 -- 11
+WKH KLJK\LHOG PDUNHW
+13
+,1
+RI
+33
+--
+PXFK
+13
+13
+116
+$QDO\VWV
+13 9%3
+DUH
+--
+FRQFHUQHG
+,1
+WKDW
+
+
+6
+Figure 1: a) Full parse tree, b) Hedge parse tree with maximum constituent span of 7 (L = 7).
+parse hedge constituents and examine their accu-
+racy/efficiency tradeoffs. This is compared with
+a baseline of parsing with a typically induced
+context-free grammar and transforming the result
+via the hedge transform, which provides a ceiling
+on accuracy and a floor on efficiency. We inves-
+tigate pre-segmenting the sentences with a finite-
+state model prior to hedge parsing, and achieve
+large speedups relative to hedge parsing the whole
+string, though at a loss in accuracy due to cas-
+cading segmentation errors. In all cases, we find
+it crucial that our ?hedgebank? grammars be re-
+trained to match the conditions during inference.
+2 Methods
+In this section, we present the details of our ap-
+proach. First, we present the simple tree transform
+from a full treebank parse tree to a (root attached)
+sequence of hedges. Next, we discuss modifica-
+tions to inference and the resulting computational
+complexity gains. Finally, we discuss segmenting
+to further reduce computational complexity.
+2.1 Hedge Tree Transform
+The hedge tree transform converts the original
+parse tree into a hedge parse tree. In the resulting
+hedge parse tree, every child of the top-most node
+spans at most L words. To transform an original
+tree to a hedge tree, we remove every non-terminal
+with span larger than L and attach its children to its
+parent. We label span length on each node by re-
+cursively summing the span lengths of each node?s
+children, with terminal items by definition having
+span 1. A second top-down pass evaluates each
+node before evaluating its children, and removes
+nodes spanning > L words. For example, the span
+of the non-root S, SBAR, ADJP, and VP nodes in
+Figure 1(a) have spans between 10 and 13, hence
+are removed in the tree in Figure 1(b).
+If we apply this transform to an entire tree-
+bank, we can use the transformed trees to induce
+a PCFG for parsing. Figure 2 plots the percentage
+of constituents from the original WSJ Penn tree-
+bank (sections 2-21) retained in the transformed
+version, as we vary the maximum span length pa-
+rameter L. Over half of constituents have span 3 or
+less (which includes frequent base noun phrases);
+L = 7 covers approximately three quarters of the
+original constituents, and L = 15 over 90%. Most
+experiments in this paper will focus on L = 7,
+which is short enough to provide a large speedup
+yet still cover a large fraction of constituents.
+2.2 Hedge Parsing
+As stated earlier, our brute-force baseline ap-
+proach is to parse the sentence using a full context-
+free grammar (CFG) and then hedge-transform the
+result. This method should yield a ceiling on
+798
+P
+c
+t
+.
+o
+f
+c
+o
+n
+s
+t
+i
+t
+u
+e
+n
+t
+s
+r
+e
+t
+a
+i
+n
+e
+d
+0 5 10 15 20
+50
+60
+70
+80
+90
+100
+Maximum ?span ?size ?(L)
+P
+e
+r
+c
+e
+n
+t
+a
+g
+e
+ ?
+o
+f
+ ?
+c
+o
+n
+s
+t
+i
+t
+u
+e
+n
+t
+s
+ ?
+r
+e
+t
+a
+i
+n
+e
+d
+c
+e
+s
+s
+t
+o
+c
+o
+m
+p
+a
+r
+e
+d
+w
+i
+t
+h
+g
+r
+a
+m
+m
+a
+r
+s
+t
+r
+a
+i
+n
+e
+d
+o
+n
+t
+r
+a
+n
+s
+-
+f
+o
+r
+m
+e
+d
+t
+r
+e
+e
+s
+;
+b
+u
+t
+i
+t
+w
+i
+l
+l
+b
+e
+s
+l
+o
+w
+e
+r
+t
+o
+p
+a
+r
+s
+e
+.
+W
+e
+a
+i
+m
+t
+o
+d
+r
+a
+m
+a
+t
+i
+c
+a
+l
+l
+y
+i
+m
+p
+r
+o
+v
+e
+e
+f
+fi
+c
+i
+e
+n
+c
+y
+u
+p
+o
+n
+t
+h
+i
+s
+b
+a
+s
+e
+l
+i
+n
+e
+w
+h
+i
+l
+e
+l
+o
+s
+i
+n
+g
+a
+s
+l
+i
+t
+t
+l
+e
+a
+c
+c
+u
+r
+a
+c
+y
+a
+s
+p
+o
+s
+s
+i
+b
+l
+e
+.
+S
+i
+n
+c
+e
+w
+e
+l
+i
+m
+i
+t
+t
+h
+e
+s
+p
+a
+n
+o
+f
+n
+o
+n
+-
+t
+e
+r
+m
+i
+n
+a
+l
+l
+a
+-
+b
+e
+l
+s
+,
+w
+e
+c
+a
+n
+c
+o
+n
+s
+t
+r
+a
+i
+n
+t
+h
+e
+s
+e
+a
+r
+c
+h
+p
+e
+r
+f
+o
+r
+m
+e
+d
+b
+y
+t
+h
+e
+p
+a
+r
+s
+e
+r
+,
+g
+r
+e
+a
+t
+l
+y
+r
+e
+d
+u
+c
+e
+t
+h
+e
+C
+Y
+K
+p
+r
+o
+c
+e
+s
+s
+i
+n
+g
+t
+i
+m
+e
+.
+I
+n
+e
+s
+s
+e
+n
+c
+e
+,
+w
+e
+p
+e
+r
+f
+o
+r
+m
+n
+o
+w
+o
+r
+k
+i
+n
+c
+h
+a
+r
+t
+c
+e
+l
+l
+s
+s
+p
+a
+n
+-
+n
+i
+n
+g
+m
+o
+r
+e
+t
+h
+a
+n
+L
+w
+o
+r
+d
+s
+,
+e
+x
+c
+e
+p
+t
+f
+o
+r
+t
+h
+e
+c
+e
+l
+l
+s
+a
+l
+o
+n
+g
+t
+h
+e
+p
+e
+r
+i
+p
+h
+e
+r
+y
+o
+f
+t
+h
+e
+c
+h
+a
+r
+t
+,
+w
+h
+i
+c
+h
+a
+r
+e
+j
+u
+s
+t
+u
+s
+e
+d
+t
+o
+c
+o
+n
+n
+e
+c
+t
+t
+h
+e
+h
+e
+d
+g
+e
+s
+t
+o
+t
+h
+e
+r
+o
+o
+t
+.
+C
+o
+n
+s
+i
+d
+e
+r
+t
+h
+e
+fl
+a
+t
+t
+r
+e
+e
+i
+n
+F
+i
+g
+u
+r
+e
+1
+.
+F
+o
+r
+u
+s
+e
+b
+y
+a
+C
+Y
+K
+p
+a
+r
+s
+i
+n
+g
+a
+l
+-
+g
+o
+r
+i
+t
+h
+m
+,
+t
+r
+e
+e
+s
+a
+r
+e
+b
+i
+n
+a
+r
+i
+z
+e
+d
+p
+r
+i
+o
+r
+t
+o
+g
+r
+a
+m
+m
+a
+r
+i
+n
+-
+d
+u
+c
+t
+i
+o
+n
+,
+r
+e
+s
+u
+l
+t
+i
+n
+g
+i
+n
+s
+p
+e
+c
+i
+a
+l
+n
+o
+n
+-
+t
+e
+r
+m
+i
+n
+a
+l
+s
+c
+r
+e
+a
+t
+e
+d
+b
+y
+b
+i
+n
+a
+r
+i
+z
+a
+t
+i
+o
+n
+.
+O
+t
+h
+e
+r
+t
+h
+a
+n
+t
+h
+e
+s
+y
+m
+b
+o
+l
+a
+t
+t
+h
+e
+r
+o
+o
+t
+o
+f
+t
+h
+e
+t
+r
+e
+e
+,
+t
+h
+e
+o
+n
+l
+y
+c
+o
+n
+s
+t
+i
+t
+u
+e
+n
+t
+s
+w
+i
+t
+h
+s
+p
+a
+n
+l
+e
+n
+g
+t
+h
+g
+r
+e
+a
+t
+e
+r
+t
+h
+a
+n
+L
+i
+n
+t
+h
+e
+b
+i
+n
+a
+r
+i
+z
+e
+d
+t
+r
+e
+e
+w
+i
+l
+l
+b
+e
+l
+a
+b
+e
+l
+e
+d
+w
+i
+t
+h
+t
+h
+e
+s
+e
+s
+p
+e
+c
+i
+a
+l
+b
+i
+n
+a
+r
+i
+z
+a
+t
+i
+o
+n
+n
+o
+n
+-
+t
+e
+r
+m
+i
+n
+a
+l
+s
+.
+F
+u
+r
+-
+t
+h
+e
+r
+,
+i
+f
+t
+h
+e
+b
+i
+n
+a
+r
+i
+z
+a
+t
+i
+o
+n
+s
+y
+s
+t
+e
+m
+a
+t
+i
+c
+a
+l
+l
+y
+g
+r
+o
+u
+p
+s
+t
+h
+e
+l
+e
+f
+t
+m
+o
+s
+t
+o
+r
+t
+h
+e
+r
+i
+g
+h
+t
+m
+o
+s
+t
+c
+h
+i
+l
+d
+r
+e
+n
+u
+n
+d
+e
+r
+t
+h
+e
+s
+e
+n
+e
+w
+n
+o
+n
+-
+t
+e
+r
+m
+i
+n
+a
+l
+s
+(
+t
+h
+e
+m
+o
+s
+t
+c
+o
+m
+m
+o
+n
+s
+t
+r
+a
+t
+e
+g
+y
+)
+,
+t
+h
+e
+n
+c
+o
+n
+s
+t
+i
+t
+u
+e
+n
+t
+s
+w
+i
+t
+h
+s
+p
+a
+n
+g
+r
+e
+a
+t
+e
+r
+t
+h
+a
+n
+L
+w
+i
+l
+l
+e
+i
+t
+h
+e
+r
+b
+e
+g
+i
+n
+a
+t
+t
+h
+e
+fi
+r
+s
+t
+w
+o
+r
+d
+(
+l
+e
+f
+t
+m
+o
+s
+t
+g
+r
+o
+u
+p
+i
+n
+g
+)
+o
+r
+e
+n
+d
+a
+t
+t
+h
+e
+l
+a
+s
+t
+w
+o
+r
+d
+(
+r
+i
+g
+h
+t
+m
+o
+s
+t
+g
+r
+o
+u
+p
+i
+n
+g
+)
+,
+f
+u
+r
+t
+h
+e
+r
+c
+o
+n
+-
+s
+t
+r
+a
+i
+n
+i
+n
+g
+t
+h
+e
+n
+u
+m
+b
+e
+r
+o
+f
+c
+e
+l
+l
+s
+i
+n
+t
+h
+e
+c
+h
+a
+r
+t
+r
+e
+q
+u
+i
+r
+i
+n
+g
+w
+o
+r
+k
+.
+C
+o
+m
+p
+l
+e
+x
+i
+t
+y
+o
+f
+p
+a
+r
+s
+i
+n
+g
+w
+i
+t
+h
+a
+f
+u
+l
+l
+C
+Y
+K
+p
+a
+r
+s
+e
+r
+i
+s
+O
+(
+n
+3
+|
+G
+|
+)
+w
+h
+e
+r
+e
+n
+i
+s
+t
+h
+e
+l
+e
+n
+g
+t
+h
+o
+f
+i
+n
+p
+u
+t
+a
+n
+d
+|
+G
+|
+i
+s
+t
+h
+e
+g
+r
+a
+m
+m
+a
+r
+s
+i
+z
+e
+c
+o
+n
+s
+t
+a
+n
+t
+.
+I
+n
+c
+o
+n
+t
+r
+a
+s
+t
+,
+c
+o
+m
+p
+l
+e
+x
+-
+i
+t
+y
+o
+f
+p
+a
+r
+s
+i
+n
+g
+w
+i
+t
+h
+a
+h
+e
+d
+g
+e
+c
+o
+n
+s
+t
+r
+a
+i
+n
+e
+d
+C
+Y
+K
+i
+s
+r
+e
+-
+d
+u
+c
+e
+d
+t
+o
+O
+(
+(
+n
+L
+2
++
+n
+2
+)
+|
+G
+|
+)
+.
+T
+o
+s
+e
+e
+t
+h
+a
+t
+t
+h
+i
+s
+i
+s
+t
+h
+e
+c
+a
+s
+e
+,
+c
+o
+n
+s
+i
+d
+e
+r
+t
+h
+a
+t
+t
+h
+e
+r
+e
+a
+r
+e
+O
+(
+n
+L
+)
+c
+e
+l
+l
+s
+o
+f
+s
+p
+a
+n
+L
+o
+r
+l
+e
+s
+s
+,
+a
+n
+d
+e
+a
+c
+h
+h
+a
+s
+a
+m
+a
+x
+i
+m
+u
+m
+o
+f
+L
+m
+i
+d
+p
+o
+i
+n
+t
+s
+,
+w
+h
+i
+c
+h
+a
+c
+c
+o
+u
+n
+t
+s
+f
+o
+r
+t
+h
+e
+fi
+r
+s
+t
+t
+e
+r
+m
+.
+B
+e
+y
+o
+n
+d
+t
+h
+e
+s
+e
+,
+t
+h
+e
+r
+e
+a
+r
+e
+O
+(
+n
+)
+r
+e
+m
+a
+i
+n
+i
+n
+g
+a
+c
+t
+i
+v
+e
+c
+e
+l
+l
+s
+w
+i
+t
+h
+O
+(
+n
+)
+p
+o
+s
+s
+i
+b
+l
+e
+m
+i
+d
+p
+o
+i
+n
+t
+s
+,
+w
+h
+i
+c
+h
+a
+c
+c
+o
+u
+n
+t
+s
+f
+o
+r
+t
+h
+e
+s
+e
+c
+o
+n
+d
+t
+e
+r
+m
+.
+N
+o
+t
+e
+,
+h
+o
+w
+e
+v
+e
+r
+,
+t
+h
+a
+t
+t
+h
+e
+w
+o
+r
+k
+i
+n
+t
+h
+e
+s
+e
+l
+a
+t
+t
+e
+r
+c
+e
+l
+l
+s
+m
+a
+y
+b
+e
+l
+e
+s
+s
+,
+s
+i
+n
+c
+e
+t
+h
+e
+s
+e
+t
+o
+f
+p
+o
+s
+s
+i
+b
+l
+e
+n
+o
+n
+-
+t
+e
+r
+m
+i
+n
+a
+l
+s
+i
+s
+r
+e
+d
+u
+c
+e
+d
+.
+I
+t
+i
+s
+p
+o
+s
+s
+i
+b
+l
+e
+t
+o
+p
+a
+r
+s
+e
+w
+i
+t
+h
+a
+s
+t
+a
+n
+d
+a
+r
+d
+l
+y
+i
+n
+d
+u
+c
+e
+d
+P
+C
+F
+G
+u
+s
+i
+n
+g
+t
+h
+i
+s
+s
+o
+r
+t
+o
+f
+h
+e
+d
+g
+e
+c
+o
+n
+s
+t
+r
+a
+i
+n
+e
+d
+p
+a
+r
+s
+-
+i
+n
+g
+t
+h
+a
+t
+o
+n
+l
+y
+c
+o
+n
+s
+i
+d
+e
+r
+s
+a
+s
+u
+b
+s
+e
+t
+o
+f
+t
+h
+e
+c
+h
+a
+r
+t
+c
+e
+l
+l
+s
+,
+a
+n
+d
+s
+p
+e
+e
+d
+u
+p
+s
+a
+r
+e
+a
+c
+h
+i
+e
+v
+e
+d
+,
+h
+o
+w
+e
+v
+e
+r
+t
+h
+i
+s
+i
+s
+c
+l
+e
+a
+r
+l
+y
+n
+o
+n
+-
+o
+p
+t
+i
+m
+a
+l
+,
+s
+i
+n
+c
+e
+t
+h
+e
+m
+o
+d
+e
+l
+i
+s
+i
+l
+l
+-
+s
+u
+i
+t
+e
+d
+t
+o
+c
+o
+m
+-
+b
+i
+n
+i
+n
+g
+h
+e
+d
+g
+e
+s
+i
+n
+t
+o
+fl
+a
+t
+s
+t
+r
+u
+c
+t
+u
+r
+e
+s
+a
+t
+t
+h
+e
+r
+o
+o
+t
+o
+f
+t
+h
+e
+t
+r
+e
+e
+.
+T
+h
+i
+s
+r
+e
+s
+u
+l
+t
+s
+i
+n
+d
+e
+g
+r
+a
+d
+a
+t
+i
+o
+n
+o
+f
+p
+a
+r
+s
+i
+n
+g
+p
+e
+r
+-
+f
+o
+r
+m
+a
+n
+c
+e
+b
+y
+t
+e
+n
+s
+o
+f
+p
+o
+i
+n
+t
+s
+o
+f
+F
+-
+m
+e
+a
+s
+u
+r
+e
+v
+e
+r
+s
+u
+s
+s
+t
+a
+n
+d
+a
+r
+d
+p
+a
+r
+s
+i
+n
+g
+.
+I
+n
+s
+t
+e
+a
+d
+,
+i
+n
+a
+l
+l
+s
+c
+e
+n
+a
+r
+i
+o
+s
+w
+h
+e
+r
+e
+a
+t
+h
+e
+c
+h
+a
+r
+t
+i
+s
+c
+o
+n
+s
+t
+r
+a
+i
+n
+e
+d
+t
+o
+s
+e
+a
+r
+c
+h
+f
+o
+r
+h
+e
+d
+g
+e
+s
+,
+w
+e
+l
+e
+a
+r
+n
+a
+g
+r
+a
+m
+m
+a
+r
+f
+r
+o
+m
+a
+h
+e
+d
+g
+e
+t
+r
+a
+n
+s
+f
+o
+r
+m
+e
+d
+t
+r
+e
+e
+-
+b
+a
+n
+k
+,
+m
+a
+t
+c
+h
+e
+d
+t
+o
+t
+h
+e
+m
+a
+x
+i
+m
+u
+m
+l
+e
+n
+g
+t
+h
+a
+l
+l
+o
+w
+e
+d
+b
+y
+t
+h
+e
+p
+a
+r
+s
+e
+r
+,
+w
+h
+i
+c
+h
+w
+e
+c
+a
+l
+l
+a
+h
+e
+d
+g
+e
+b
+a
+n
+k
+g
+r
+a
+m
+m
+a
+r
+.
+A
+h
+e
+d
+g
+e
+b
+a
+n
+k
+g
+r
+a
+m
+m
+a
+r
+i
+s
+a
+f
+u
+l
+l
+y
+f
+u
+n
+c
+t
+i
+o
+n
+a
+l
+P
+C
+F
+G
+a
+n
+d
+i
+t
+c
+a
+n
+b
+e
+u
+s
+e
+d
+w
+i
+t
+h
+a
+n
+y
+s
+t
+a
+n
+d
+a
+r
+d
+p
+a
+r
+s
+i
+n
+g
+a
+l
+-
+g
+o
+r
+i
+t
+h
+m
+,
+i
+.
+e
+.
+,
+t
+h
+e
+s
+e
+a
+r
+e
+n
+o
+t
+g
+e
+n
+e
+r
+a
+l
+l
+y
+fi
+n
+i
+t
+e
+-
+s
+t
+a
+t
+e
+e
+q
+u
+i
+v
+a
+l
+e
+n
+t
+m
+o
+d
+e
+l
+s
+.
+H
+o
+w
+e
+v
+e
+r
+,
+u
+s
+i
+n
+g
+t
+h
+e
+B
+e
+r
+k
+e
+-
+l
+e
+y
+g
+r
+a
+m
+m
+a
+r
+l
+e
+a
+r
+n
+e
+r
+(
+s
+e
+e
+S
+e
+c
+t
+i
+o
+n
+3
+)
+,
+w
+e
+fi
+n
+d
+t
+h
+a
+t
+h
+e
+d
+g
+e
+b
+a
+n
+k
+g
+r
+a
+m
+m
+a
+r
+s
+a
+r
+e
+t
+y
+p
+i
+c
+a
+l
+l
+y
+s
+m
+a
+l
+l
+e
+r
+t
+h
+a
+n
+t
+r
+e
+e
+b
+a
+n
+k
+g
+r
+a
+m
+m
+a
+r
+s
+,
+a
+l
+s
+o
+c
+o
+n
+t
+r
+i
+b
+u
+t
+i
+n
+g
+t
+o
+p
+a
+r
+s
+i
+n
+g
+s
+p
+e
+e
+d
+u
+p
+v
+i
+a
+t
+h
+e
+g
+r
+a
+m
+m
+a
+r
+c
+o
+n
+s
+t
+a
+n
+t
+.
+A
+u
+n
+i
+q
+u
+e
+p
+r
+o
+p
+e
+r
+t
+y
+o
+f
+h
+e
+d
+g
+e
+c
+o
+n
+s
+t
+i
+t
+u
+e
+n
+t
+s
+c
+o
+m
+-
+p
+a
+r
+e
+d
+t
+o
+c
+o
+n
+s
+t
+i
+t
+u
+e
+n
+t
+s
+i
+n
+t
+h
+e
+o
+r
+i
+g
+i
+n
+a
+l
+p
+a
+r
+s
+e
+t
+r
+e
+e
+s
+i
+s
+t
+h
+a
+t
+t
+h
+e
+y
+a
+r
+e
+s
+e
+q
+u
+e
+n
+t
+i
+a
+l
+l
+y
+c
+o
+n
+n
+e
+c
+t
+e
+d
+t
+o
+t
+h
+e
+T
+O
+P
+n
+o
+d
+e
+.
+T
+h
+i
+s
+p
+r
+o
+p
+e
+r
+t
+y
+e
+n
+a
+b
+l
+e
+s
+u
+s
+t
+o
+c
+h
+u
+n
+k
+t
+h
+e
+s
+e
+n
+t
+e
+n
+c
+e
+i
+n
+t
+o
+s
+e
+g
+m
+e
+n
+t
+s
+t
+h
+a
+t
+c
+o
+r
+r
+e
+s
+p
+o
+n
+d
+t
+o
+c
+o
+m
+-
+p
+l
+e
+t
+e
+h
+e
+d
+g
+e
+s
+,
+a
+n
+d
+p
+a
+r
+s
+e
+t
+h
+e
+s
+e
+g
+m
+e
+n
+t
+s
+i
+n
+d
+e
+p
+e
+n
+-
+d
+e
+n
+t
+l
+y
+(
+a
+n
+d
+s
+i
+m
+u
+l
+t
+a
+n
+e
+o
+u
+s
+l
+y
+)
+i
+n
+s
+t
+e
+a
+d
+o
+f
+p
+a
+r
+s
+i
+n
+g
+t
+h
+e
+e
+n
+t
+i
+r
+e
+s
+e
+n
+t
+e
+n
+c
+e
+.
+I
+n
+s
+e
+c
+t
+i
+o
+n
+2
+.
+3
+,
+w
+e
+p
+r
+e
+s
+e
+n
+t
+o
+u
+r
+a
+p
+-
+p
+r
+o
+a
+c
+h
+t
+o
+h
+e
+d
+g
+e
+s
+e
+g
+m
+e
+n
+t
+a
+t
+i
+o
+n
+.
+N
+o
+t
+e
+t
+h
+a
+t
+p
+a
+r
+s
+i
+n
+g
+s
+e
+g
+m
+e
+n
+t
+s
+w
+i
+t
+h
+a
+g
+r
+a
+m
+m
+a
+r
+t
+r
+a
+i
+n
+e
+d
+o
+n
+w
+h
+o
+l
+e
+s
+t
+r
+i
+n
+g
+s
+Maximum span size (L)
+Figure 2: Percentage of constituents retained at various
+span length parameters
+hedge-parsing accuracy, as it has access to rich
+contextual information (as compared to grammars
+trained on transformed trees). Naturally, inference
+will be slow; we aim to improve efficiency upon
+this baseline while minimizing accuracy loss.
+Since we limit the span of non-terminal la-
+bels, we can constrain the search performed by the
+parser, greatly reduce the CYK processing time. In
+essence, we perform no work in chart cells span-
+ning more than L words, except for the cells along
+the periphery of the chart, which are just used to
+connect the hedges to the root. Consider the flat
+tree in Figure 1(b). For use by a CYK parsing al-
+gorithm, trees are binarized prior to grammar in-
+duction, resulting in special non-terminals created
+by binarization. Other than the symbol at the root
+of the tree, the only constituents with span length
+greater than L in the binarized tree will be labeled
+with these special binarization non-terminals. Fur-
+ther, if the binarization systematically groups the
+leftmost or the rightmost children under these new
+non-terminals (the most common strategy), then
+constituents with span greater than L will either
+begin at the first word (leftmost grouping) or end
+at the last word (rightmost), further constraining
+the number of cells in the chart requiring work.
+Complexity of parsing with a full CYK parser is
+O(n
+3
+|G|) where n is the length of input and |G| is
+the grammar size constant. In contrast, complex-
+ity of parsing with a hedge constrained CYK is re-
+duced to O((nL
+2
++n
+2
+)|G|). To see that this is the
+case, consider that there are O(nL) cells of span L
+or less, and each has a maximum of L midpoints,
+which accounts for the first term. Beyond these,
+there are O(n) remaining active cells with O(n)
+possible midpoints, which accounts for the second
+term. Note also that these latter cells (spanning
+> L words) may be less expensive, as the set of
+possible non-terminals is reduced to only those in-
+troduced by binarization.
+It is possible to parse with a standardly induced
+PCFG using this sort of hedge constrained pars-
+ing that only considers a subset of the chart cells,
+and speedu s are achiev d, however this is clearly
+non-optimal, since the mod l is ill-suited to com-
+bining hedges into flat structures at the root of the
+tree. Space constraints preclude inclusion of tri-
+als with this method, b t the net result is a se-
+vere degradation in accuracy (tens of points of F-
+measure) versus standar parsing. Thus, we train
+a grammar in a matched condition, which we call
+it a hedgebank grammar. A hedgebank gram-
+mar is a fully functional PCFG which is learned
+from a hedge transformed treebank. A hedgebank
+grammar can be used with any standard parsing
+algorithm, i.e., these are not generally finite-state
+equivalent models. However, using the Berke-
+ley grammar learner (see ?3), we find that hedge-
+bank grammars are typically smaller than tree-
+bank grammars, reducing the grammar constant
+and contributing to faster inference.
+A unique property of hedge constituents com-
+pared to constituents in the original parse trees
+is that they are sequentially connected to the top-
+most node. This property enables us to chunk the
+sentence into segments that correspond to com-
+plete hedges, and parse the segments indepen-
+dently (and simultaneously) instead of parsing the
+entire sentence. In section 2.3, we present our ap-
+proach to hedge segmentation.
+In all scenarios where the chart is constrained
+to search for hedges, we learn a hedgebank gram-
+mar, which is matched to the maximum length al-
+lowed by the parser. In the pre-segmentation sce-
+nario, we first decompose the hedge transformed
+treebank into its hedge segments and then learn a
+hedgebank grammar from the new corpus.
+2.3 Hedge Segmentation
+In this section we present our segmentation model
+which takes the input sentence and chunks it into
+appropriate segments for hedge parsing. We treat
+this as a binary classification task which decides
+if a word can begin a new hedge. We use hedge
+segmentation as a finite-state pre-processing step
+for hedge context-free parsing.
+Our task is to learn which words can begin
+(B) a hedge constituent. Given a set of labeled
+pairs (S,H) where S is a sentence of n words
+w
+1
+. . . w
+n
+and H is its hedge parse tree, word w
+b
+belongs to B if there is a hedge constituent span-
+ning w
+b
+. . . w
+e
+for some e ? b and w
+b
+belongs to
+?
+B
+otherwise. To predict the hedge boundaries more
+accurately, we grouped consecutive unary or POS-
+799
+tag hedges together under a new non-terminal la-
+beled G. Unlabeled segmentation tags for the
+words in the example sentence in Figure 1(b) are:
+?Analysts/B are/
+?
+B concerned/
+?
+B that/
+?
+B much/B
+of/
+?
+B the/
+?
+B high-yield/
+?
+B market/
+?
+B will/B
+remain/
+?
+B treacherous/
+?
+B for/
+?
+B investors/
+?
+B ./B?
+In addition to the simple unlabeled segmentation
+with B and
+?
+B tags, we try a labeled segmenta-
+tion with B
+C
+and
+?
+B
+C
+tags where C is hedge con-
+stituent type. We restrict the types to the most im-
+portant types ? following the 11 chunk types an-
+notated in the CoNLL-2000 chunking task (Sang
+and Buchholz, 2000) ? by replacing all other types
+with a new type OUT. Thus, ?Analysts? is labeled
+B
+G
+; ?much?, B
+NP
+; ?will?, B
+VP
+and so on.
+To automatically predict the class of each word
+position, we train a multi-class classifier from la-
+beled training data using a discriminative linear
+model, learning the model parameters with the av-
+eraged perceptron algorithm (Collins, 2002). We
+follow Roark et al (2012) in the features they used
+to label words as beginning or ending constituents.
+The segmenter extracts features from word and
+POS-tag input sequences and hedge-boundary tag
+output sequences. The feature set includes tri-
+grams of surrounding words, trigrams of surround-
+ing POS tags, and hedge-boundary tags of the pre-
+vious words. An additional orthographical fea-
+ture set is used to tag rare
+1
+and unknown words.
+This feature set includes prefixes and suffixes of
+the words (up to 4 characters), and presence of
+a hyphen, digit, or an upper-case character. Re-
+ported results are for a Markov order-2 segmenter,
+which includes features with the output classes of
+the previous two words.
+3 Experimental Results
+We ran all experiments on the WSJ Penn Tree-
+bank corpus (Marcus et al, 1999) using section
+2-21 for training, section 24 for development, and
+section 23 for testing. We performed exhaustive
+CYK parsing using the BUBS parser
+2
+(Bodenstab
+et al, 2011) with Berkeley SM6 latent-variable
+grammars (Petrov and Klein, 2007) learned by the
+Berkeley grammar trainer with default settings.
+We compute accuracy from the 1-best Viterbi
+tree extracted from the chart using the standard
+EVALB script. Accuracy results are reported as
+precision, recall and F1-score, the harmonic mean
+between the two. In all trials, we evaluate accuracy
+with respect to the hedge transformed reference
+1
+Rare words occur less than 5 times in the training data.
+2
+https://code.google.com/p/bubs-parser
+Hedge Parsing Acc/Eff
+Parser P R F1 w/s
+Full w/full CYK 88.8 89.2 89.0 2.4
+Hedgebank 87.6 84.4 86.0 25.7
+Table 1: Hedge parsing results on section 24 for L = 7.
+treebank, i.e., we are not penalizing the parser for
+not discovering constituents longer than the max-
+imum length. Segmentation accuracy is reported
+as an F1-score of unlabeled segment bracketing.
+We ran timing tests on an Intel 2.66GHz proces-
+sor with 3MB of cache and 2GB of memory. Note
+that segmentation time is negligible compared to
+the parsing time, hence is omitted in reported time.
+Efficiency results are reported as number of words
+parsed per second (w/s).
+Table 1 presents hedge parsing accuracy on
+the development set for the full parsing baseline,
+where the output of regular PCFG parsing is trans-
+formed to hedges and evaluated, versus parsing
+with a hedgebank grammar, with no segmenta-
+tion of the strings. We find an order of magnitude
+speedup of parsing, but at the cost of 3 percent F-
+measure absolute. Note that most of that loss is
+in recall, indicating that hedges predicted in that
+condition are nearly as reliable as in full parsing.
+Table 2 shows the results on the development
+set when segmenting prior to hedge parsing. The
+first row shows the result with no segmentation,
+the same as the last row in Table 1 for ease of ref-
+erence. The next row shows behavior with per-
+fect segmentation. The final two rows show per-
+formance with automatic segmentation, using a
+model that includes either unlabeled or labeled
+segmentation tags, as described in the last section.
+Segmentation accuracy is better for the model with
+labels, although overall that accuracy is rather low.
+We achieve nearly another order of magnitude
+speedup over hedge parsing without segmentation,
+but again at the cost of nearly 5 percent F1.
+Table 3 presents results of our best configura-
+tions on the eval set, section 23. The results show
+the same patterns as on the development set. Fi-
+nally, Figure 3 shows the speed of inference, la-
+Table 2: Hedge segmentation and parsing results on section
+24 for L = 7.
+Segmen- Seg Hedge Parsing Acc/Eff
+tation F1 P R F1 w/s
+None n/a 87.6 84.4 86.0 25.7
+Oracle 100 91.3 88.9 90.1 188.6
+Unlabeled 80.6 77.2 75.3 76.2 159.1
+Labeled 83.8 83.1 79.5 81.3 195.8
+800
+Segmentation Grammar
+Segmentation Acc Hedge Parsing Acc/Eff
+P R F1 P R F1 w/s
+None Full w/full CYK n/a 90.3 90.3 90.3 2.7
+None Hedgebank n/a 88.3 85.3 86.8 26.2
+Labeled Hedgebank 84.0 86.6 85.3 85.1 81.1 83.0 203.0
+Table 3: Hedge segmentation and parsing results on test data, section 23, for L = 7.
+W
+o
+r
+d
+s
+p
+e
+r
+s
+e
+c
+o
+n
+d
+Full ?Parsing
+Hedge ?No ?Seg
+Hedge ?With ?Seg
+0 5 10 15 20
+0
+200
+400
+600
+800
+Maximum ?span ?size ?(L)
+W
+o
+r
+d
+s
+ ?
+p
+a
+r
+s
+e
+d
+ ?
+p
+e
+r
+ ?
+s
+e
+c
+o
+n
+d
+W
+o
+r
+d
+s
+p
+e
+r
+s
+e
+c
+o
+n
+d
+Full ?Parsing
+Hedge ?No ?Seg
+Hedge ?With ?Seg
+0 5 10 15 20
+0
+200
+400
+600
+800
+Maximum ?span ?size ?(L)
+W
+o
+r
+d
+s
+ ?
+p
+a
+r
+s
+e
+d
+ ?
+p
+e
+r
+ ?
+s
+e
+c
+o
+n
+d
+H
+e
+d
+g
+e
+P
+r
+e
+c
+i
+s
+i
+o
+n
+0 5 10 15 20
+75
+80
+85
+90
+95
+Maximum ?span ?size ?(L)
+H
+e
+d
+g
+e
+ ?
+P
+r
+e
+c
+i
+s
+i
+o
+n
+H
+e
+d
+g
+e
+R
+e
+c
+a
+l
+l
+0 5 10 15 20
+75
+80
+85
+90
+95
+Maximum ?span ?size ?(L)
+H
+e
+d
+g
+e
+ ?
+R
+e
+c
+a
+l
+l
+Figure 4: Hedge parsing a) efficiency, and b) accuracy on test data, section 23, for L = 3  20.
+Maximum span size (L) axi um span size (L)
+a) b)
+Figure 3: Hedge parsing a) efficiency, and b) accuracy on test data, section 23, for L = 3?20.
+beled precision and labeled recall of annotating
+hedge constituents on the test set as a function
+of the maximum span parameter L, versus the
+baseline parser. Keep in mind that the number
+of reference constituents increases as L increases,
+hence both precision and recall can decrease as
+the parameter grows. Segmentation achieves large
+speedups for smaller L values, but the accuracy
+degradation is consistent, pointing to the need for
+improved segmentation.
+4 Conclusion and Future Work
+We proposed a novel partial parsing approach for
+applications that require a fast syntactic analysis
+of the input beyond shallow bracketing. The span-
+limit parameter allows tuning the annotation of in-
+ternal structure as appropriate for the application
+domain, trading off annotation complexity against
+inference time. These properties make hedge pars-
+ing potentially very useful for incremental text or
+speech processing, such as streaming text analysis
+or simultaneous translation.
+One interesting characteristic of these anno-
+tations is that they allow for string segmenta-
+tion prior to inference, provided that the segment
+boundaries do not cross any hedge boundaries. We
+found that baseline segmentation models did pro-
+vide a significant speedup in parsing, but that cas-
+cading errors remain a problem.
+There are many directions of future work to
+pursue here. First, the current results are all for
+exhaustive CYK parsing, and we plan to per-
+form a detailed investigation of the performance
+of hedgebank parsing with prioritization and prun-
+ing methods of the sort available in BUBS (Bo-
+denstab et al, 2011). Further, this sort of annota-
+tion seems well suited to incremental parsing with
+beam search, which has been shown to achieve
+high accuracies even for fully connected parsing
+(Zhang and Clark, 2011). Improvements to the
+transform (e.g., grouping items not in hedges un-
+der non-terminals) and to the segmentation model
+(e.g., increasing precision at the expense of recall)
+could improve accuracy without greatly reducing
+efficiency. Finally, we intend to perform an ex-
+trinsic evaluation of this parsing in an on-line task
+such as simultaneous translation.
+Acknowledgments
+This work was supported in part by NSF grant
+#IIS-0964102. Any opinions, findings, conclu-
+sions or recommendations expressed in this pub-
+lication are those of the authors and do not neces-
+sarily reflect the views of the NSF.
+801
+References
+Srinivas Bangalore and Aravind K. Joshi. 1999. Su-
+pertagging: An approach to almost parsing. Com-
+putational Linguistics, 25(2):237?265.
+Nathan Bodenstab, Aaron Dunlop, Keith Hall, and
+Brian Roark. 2011. Beam-width prediction for ef-
+ficient context-free parsing. In Proceedings of the
+49th Annual Meeting ACL: HLT, pages 440?449.
+Anne Br?uggemann-Klein and Derick Wood. 2004.
+Balanced context-free grammars, hedge grammars
+and pushdown caterpillar automata. In Extreme
+Markup Languages.
+Michael Collins. 2002. Discriminative training meth-
+ods for hidden Markov models: theory and experi-
+ments with perceptron algorithms. In Proceedings
+of the conference on Empirical Methods in Natural
+Language Processing (EMNLP), pages 1?8.
+Markus Dreyer, David A. Smith, and Noah A. Smith.
+2006. Vine parsing and minimum risk reranking
+for speed and precision. In Proceedings of the
+Tenth Conference on Computational Natural Lan-
+guage Learning (CoNLL), pages 201?205.
+Jason Eisner and Noah A. Smith. 2005. Parsing with
+soft and hard constraints on dependency length. In
+Proceedings of the Ninth International Workshop on
+Parsing Technology (IWPT), pages 30?41.
+Mitchell P. Marcus, Beatrice Santorini, Mary Ann
+Marcinkiewicz, and Ann Taylor. 1999. Treebank-
+3. Linguistic Data Consortium, Philadelphia.
+Slav Petrov and Dan Klein. 2007. Learning and infer-
+ence for hierarchically split PCFGs. In Proceedings
+of the 22nd national conference on Artificial intelli-
+gence, pages 1663?1666.
+Brian Roark and Kristy Hollingshead. 2008. Classi-
+fying chart cells for quadratic complexity context-
+free inference. In Proceedings of the 22nd Inter-
+national Conference on Computational Linguistics,
+pages 745?751.
+Brian Roark, Kristy Hollingshead, and Nathan Boden-
+stab. 2012. Finite-state chart constraints for reduced
+complexity context-free parsing pipelines. Compu-
+tational Linguistics, 38(4):719?753.
+Erik F. Tjong Kim Sang and Sabine Buchholz.
+2000. Introduction to the CoNLL-2000 shared task:
+Chunking. In Proceedings of Conference on Com-
+putational Natural Language Learning (CoNLL),
+pages 127?132.
+Sunita Sarawagi and William W. Cohen. 2004. Semi-
+Markov conditional random fields for information
+extraction. In Advances in Neural Information Pro-
+cessing Systems (NIPS), pages 1185?1192.
+Mahsa Yarmohammadi, Vivek K. Rangarajan Sridhar,
+Srinivas Bangalore, and Baskaran Sankaran. 2013.
+Incremental segmentation and decoding strategies
+for simultaneous translation. In Proceedings of the
+6th International Joint Conference on Natural Lan-
+guage Processing (IJCNLP), pages 1032?1036.
+Yue Zhang and Stephen Clark. 2011. Syntactic pro-
+cessing using the generalized perceptron and beam
+search. Computational Linguistics, 37(1):105?151.
+802

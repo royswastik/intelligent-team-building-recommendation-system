@@ -1,0 +1,4437 @@
+Proceedings of the Second Workshop on Statistical Machine Translation, pages 88?95,
+Prague, June 2007. c?2007 Association for Computational Linguistics
+Efficient Handling of N -gram Language Models
+for Statistical Machine Translation
+Marcello Federico
+Fondazione Bruno Kessler - IRST
+I-38050 Trento, Italy
+federico@itc.it
+Mauro Cettolo
+Fondazione Bruno Kessler - IRST
+I-38050 Trento, Italy
+cettolo@itc.it
+Abstract
+Statistical machine translation, as well as
+other areas of human language processing,
+have recently pushed toward the use of large
+scale n-gram language models. This paper
+presents efficient algorithmic and architec-
+tural solutions which have been tested within
+the Moses decoder, an open source toolkit
+for statistical machine translation. Exper-
+iments are reported with a high perform-
+ing baseline, trained on the Chinese-English
+NIST 2006 Evaluation task and running on
+a standard Linux 64-bit PC architecture.
+Comparative tests show that our representa-
+tion halves the memory required by SRI LM
+Toolkit, at the cost of 44% slower translation
+speed. However, as it can take advantage
+of memory mapping on disk, the proposed
+implementation seems to scale-up much bet-
+ter to very large language models: decoding
+with a 289-million 5-gram language model
+runs in 2.1Gb of RAM.
+1 Introduction
+In recent years, we have seen an increasing interest
+toward the application of n-gram Language Mod-
+els (LMs) in several areas of computational lin-
+guistics (Lapata and Keller, 2006), such as ma-
+chine translation, word sense disambiguation, text
+tagging, named entity recognition, etc. The origi-
+nal framework of n-gram LMs was principally au-
+tomatic speech recognition, under which most of
+the standard LM estimation techniques (Chen and
+Goodman, 1999) were developed. Nowadays, the
+availability of larger and larger text corpora is stress-
+ing the need for efficient data structures and algo-
+rithms to estimate, store and access LMs. Unfortu-
+nately, the rate of progress in computer technology
+seems for the moment below the space requirements
+of such huge LMs, at least by considering standard
+lab equipment.
+Statistical machine translation (SMT) is today
+one of the research areas that, together with speech
+recognition, is pushing mostly toward the use of
+huge n-gram LMs. In the 2006 NIST Machine
+Translation Workshop (NIST, 2006), best perform-
+ing systems employed 5-grams LMs estimated on at
+least 1.3 billion-word texts. In particular, Google
+Inc. presented SMT results with LMs trained on
+8 trillion-word texts, and announced the availabil-
+ity of n-gram statistics extracted from one trillion
+of words. The n-gram Google collection is now
+publicly available through LDC, but their effective
+use requires either to significantly expand computer
+memory, in order to use existing tools (Stolcke,
+2002), or to develop new ones.
+This work presents novel algorithms and data
+structures suitable to estimate, store, and access
+very large LMs. The software has been integrated
+into a popular open source SMT decoder called
+Moses.1 Experimental results are reported on the
+Chinese-English NIST task, starting from a quite
+well-performing baseline, that exploits a large 5-
+gram LM.
+This paper is organized as follows. Section 2
+presents techniques for the estimation and represen-
+1http://www.statmt.org/moses/
+88
+tation in memory of n-gram LMs that try to optimize
+space requirements. Section 3 describes methods
+implemented in order to efficiently access the LM
+at run time, namely by the Moses SMT decoder.
+Section 4 presents a list of experiments addressing
+specific questions on the presented implementation.
+2 Language Model Estimation
+LM estimation starts with the collection of n-grams
+and their frequency counters. Then, smoothing pa-
+rameters are estimated (Chen and Goodman, 1999)
+for each n-gram level; infrequent n-grams are possi-
+bly pruned and, finally, a LM file is created contain-
+ing n-grams with probabilities and back-off weights.
+2.1 N -gram Collection
+Clearly, a first bottleneck of the process might occur
+if all n-grams have to be loaded in memory. This
+problem is overcome by splitting the collection of n-
+grams statistics into independent steps and by mak-
+ing use of an efficient data-structure to collect and
+store n-grams. Hence, first the dictionary of the cor-
+pus is extracted and split into K word lists, balanced
+with respect to the frequency of the words. Then,
+for each list, only n-grams whose first word belongs
+to the list are extracted from the corpus. The value
+of K is determined empirically and should be suffi-
+ciently large to permit to fit the partial n-grams into
+memory. The collection of each subset of n-grams
+exploits a dynamic prefix-tree data structure shown
+in Figure 1. It features a table with all collected 1-
+grams, each of which points to its 2-gram succes-
+sors, namely the 2-grams sharing the same 1-gram
+prefix. All 2-gram entries point to all their 3-gram
+successors, and so on. Successor lists are stored
+in memory blocks allocated on demand through a
+memory pool. Blocks might contain different num-
+ber of entries and use 1 to 6 bytes to encode fre-
+quencies. In this way, a minimal encoding is used
+in order to represent the highest frequency entry of
+each block. This strategy permits to cope well with
+the high sparseness of n-grams and with the pres-
+ence of relatively few highly-frequent n-grams, that
+require counters encoded with 6 bytes.
+The proposed data structure differs from other im-
+plementations mainly in the use of dynamic alloca-
+tion of memory required to store frequencies of n-
+3  
+w | fr | succ | ptr | flags
+6 3  8  1  
+3  
+w | fr
+1 
+1-gr   
+2-gr   
+3-gr   
+Figure 1: Dynamic data structure for storing n-
+grams. Blocks of successors are allocated on de-
+mand and might vary in the number of entries
+(depth) and bytes used to store counters (width).
+Size in bytes is shown to encode words (w), frequen-
+cies (fr), and number of (succ), pointer to (ptr) and
+table type of (flags) successors.
+grams. In the structure proposed by (Wessel et al,
+1997) counters of n-grams occurring more than once
+are stored into 4-byte integers, while singleton n-
+grams are stored in a special table with no counters.
+This solution permits to save memory at the cost of
+computational overhead during the collection of n-
+grams. Moreover, for historical reasons, this work
+ignores the issue with huge counts. In the SRILM
+toolkit (Stolcke, 2002), n-gram counts are accessed
+through a special class type. Counts are all repre-
+sented as 4-byte integers by applying the following
+trick: counts below a given threshold are represented
+as unsigned integers, while those above the thresh-
+old, which are typically very sparse, correspond in-
+deed to indexes of a table storing their actual value.
+To our opinion, this solution is ingenious but less
+general than ours, which does not make any assump-
+tion about the number of different high order counts.
+2.2 LM Smoothing
+For the estimation of the LM, a standard interpo-
+lation scheme (Chen and Goodman, 1999) is ap-
+plied in combination with a well-established and
+simple smoothing technique, namely the Witten-
+Bell linear discounting method (Witten and Bell,
+1991). Smoothing of probabilities up from 2-grams
+is performed separately on each subset of n-grams.
+89
+For example, smoothing statistics for a 5-gram
+(v, w, x, y, z) are computed by means of statistics
+that are local to the subset of n-grams starting with
+v. Namely, they are the counters N(v, w, x, y, z),
+N(v, w, x, y), and the number D(v, w, x, y) of dif-
+ferent words observed in context (v, w, x, y).
+Finally, K LM files are created, by just read-
+ing through the n-gram files, which are indeed not
+loaded in memory. During this phase pruning of in-
+frequent n-grams is also permitted. Finally, all LM
+files are joined, global 1-gram probabilities are com-
+puted and added, and a single large LM file, in the
+standard ARPA format (Stolcke, 2002), is generated.
+We are well aware that the implemented smooth-
+ing method is below the state-of-the-art. However,
+from one side, experience tells that the gap in per-
+formance between simple and sophisticated smooth-
+ing techniques shrinks when very large corpora are
+used; from the other, the chosen smoothing method
+is very suited to the kind of decomposition we are
+applying to the n-gram statistics. In the future, we
+will nevertheless address the impact of more sophis-
+ticated LM smoothing on translation performance.
+2.3 LM Compilation
+The final textual LM can be compiled into a binary
+format to be efficiently loaded and accessed at run-
+time. Our implementation follows the one adopted
+by the CMU-Cambridge LM Toolkit (Clarkson and
+Rosenfeld, 1997) and well analyzed in (Whittaker
+and Raj, 2001). Briefly, n-grams are stored in
+a data structure which privileges memory saving
+rather than access time. In particular, single com-
+ponents of each n-gram are searched, via binary
+search, into blocks of successors stored contigu-
+ously (Figure 2). Further improvements in mem-
+ory savings are obtained by quantizing both back-off
+weights and probabilities.
+2.4 LM Quantization
+Quantization provides an effective way of reducing
+the number of bits needed to store floating point
+variables. (Federico and Bertoldi, 2006) showed that
+best results were achieved with the so-called binning
+method. This method partitions data points into uni-
+formly populated intervals or bins. Bins are filled in
+in a greedy manner, starting from the lowest value.
+The center of each bin corresponds to the mean value
+1-gr 2-gr 3-gr
+3  
+w   | bo | pr | idx
+1 1  4  
+w  | pr
+3  1  
+Figure 2: Static data structure for LMs. Number of
+bytes are shown used to encode single words (w),
+quantized back-off weights (bo) and probabilities
+(pr), and start index of successors (idx).
+of all its points. Quantization is applied separately
+at each n-gram level and distinctly to probabilities
+or back-off weights. The chosen level of quantiza-
+tion is 8 bits (1 byte), that experimentally showed to
+introduce negligible loss in translation performance.
+The quantization algorithm can be applied to any
+LM represented with the ARPA format. Quantized
+LMs can also be converted into a binary format that
+can be efficiently uploaded at decoding time.
+3 Language Model Access
+One motivation of this work is the assumption that
+efficiency, both in time and space, can be gained by
+exploiting peculiarities of the way the LM is used
+by the hosting program, i.e. the SMT decoder. An
+analysis of the interaction between the decoder and
+the LM was carried out, that revealed some impor-
+tant properties. The main result is shown in Figure 3,
+which plots all calls to a 3-gram LM by Moses dur-
+ing the translation from German to English of the
+following text, taken from the Europarl task:
+ich bin kein christdemokrat und
+glaube daher nicht an wunder .
+doch ich mo?chte dem europa?ischen
+parlament , so wie es gegenwu?rtig
+beschaffen ist , fu?r seinen
+grossen beitrag zu diesen arbeiten
+danken.
+Translation of the above text requires about 1.7 mil-
+lion calls of LM probabilities, that however involve
+only 120,000 different 3-grams. The plot shows typ-
+ical locality phenomena, that is the decoder tends to
+90
+Figure 3: LM calls during translation of a German
+text: each point corresponds to a specific 3-gram.
+access the LM n-grams in nonuniform, highly local-
+ized patterns. Locality is mainly temporal, namely
+the first call of an n-gram is easily followed by
+other calls of the same n-gram. This property sug-
+gests that gains in access speed can be achieved by
+exploiting a cache memory in which to store al-
+ready called n-grams. Moreover, the relatively small
+amount of involved n-grams makes viable the access
+of the LM from disk on demand. Both techniques
+are briefly described.
+3.1 Caching of probabilities
+In order to speed-up access time of LM probabilities
+different cache memories have been implemented
+through the use of hash tables. Cache memories are
+used to store all final n-gram probabilities requested
+by the decoder, LM states used to recombine theo-
+ries, as well as all partial n-gram statistics computed
+by accessing the LM structure. In this way, the need
+of performing binary searches, at every level of the
+LM tables, is reduced at a minimum.
+All cache memories are reset before decoding
+each single input set.
+3.2 Memory Mapping
+Since a limited collection of all n-grams is needed
+to decode an input sentence, the LM is loaded on
+demand from disk. The data structure shown in Fig-
+ure 2 permits indeed to efficiently exploit the so-
+called memory mapped file access.2 Memory map-
+ping basically permits to include a file in the address
+2POSIX-compliant operating systems and Windows support
+some form of memory-mapped file access.
+Memory
+1-gr 2-gr 3-gr
+Disk file
+Figure 4: Memory mapping of the LM on disk.
+Only the memory pages (grey blocks) of the LM that
+are accessed while decoding the input sentence are
+loaded in memory.
+space of a process, whose access is managed as vir-
+tual memory (see Figure 4).
+During decoding of a sentence, only those n-
+grams, or better memory pages, of the LM that are
+actually accessed are loaded into memory, which re-
+sults in a significant reduction of the resident mem-
+ory space required by the process. Once the decod-
+ing of the input sentence is completed, all loaded
+pages are released, so that resident memory is avail-
+able for the n-gram probabilities of the following
+sentence. A remarkable feature is that memory-
+mapping also permits to share the same address
+space among multiple processes, so that the same
+LM can be accessed by several decoding processes
+(running on the same machine).
+4 Experiments
+In order to assess the quality of our implementa-
+tion, henceforth named IRSTLM, we have designed
+a suite of experiments with a twofold goal: from
+one side the comparison of IRSTLM against a pop-
+ular LM library, namely the SRILM toolkit (Stol-
+cke, 2002); from the other, to measure the actual
+impact of the implementation solution discussed in
+previous sections. Experiments were performed on a
+common statistical MT platform, namely Moses, in
+which both the IRSTLM and SRILM toolkits have
+been integrated.
+The following subsection lists the questions
+91
+set type |W|
+source target
+large parallel 83.1M 87.6M
+giga monolingual - 1.76G
+NIST 02 dev 23.7K 26.4K
+NIST 03 test 25.6K 28.5K
+NIST 04 test 51.0K 58.9K
+NIST 05 test 31.2K 34.6K
+NIST 06 nw test 18.5K 22.8K
+NIST 06 ng test 9.4K 11.1K
+NIST 06 bn test 12.0K 13.3K
+Table 1: Statistics of training, dev. and test sets.
+Evaluation sets of NIST campaigns include 4 ref-
+erences: in table, average lenghts are provided.
+which our experiments aim to answer.
+Assessing Questions
+1. Is LM estimation feasible for large amounts of
+data?
+2. How does IRSTLM compare with SRILM
+w.r.t.:
+(a) decoding speed?
+(b) memory requirements?
+(c) translation performance?
+3. How does LM quantization impact in terms of
+(a) memory consumption?
+(b) decoding speed?
+(c) translation performance?
+(d) tuning of decoding parameters?
+4. What is the impact of caching on decoding
+speed?
+5. What are the advantages of memory mapping?
+Task and Experimental Setup
+The task chosen for our experiments is the transla-
+tion of news from Chinese to English, as proposed
+by the NIST MT Evaluation Workshop of 2006.3
+A translation system was trained according to the
+large-data condition. In particular, all the allowed
+bilingual corpora have been used for estimating the
+phrase-table. The target side of these texts was also
+employed for the estimation of three 5-gram LMs,
+henceforth named large. In particular, two LMs
+3www.nist.gov/speech/tests/mt/
+were estimated with the SRILM toolkit by prun-
+ing singletons events and by employing the Witten-
+Bell and the absolute discounting (Kneser and Ney,
+1995) smoothing methods; the shorthand for these
+two LMs will be ?lrg-sri-wb? and ?lrg-sri-kn?, re-
+spectively. Another large LM was estimated with the
+IRSTLM toolkit, by employing the only smoothing
+method available in the package (Witten-Bell) and
+by pruning singletons n-grams; its shorthand will be
+?lrg?. An additional, much larger, 5-gram LM was
+instead trained with the IRSTLM toolkit on the so-
+called English Gigaword corpus, one of the allowed
+monolingual resources for this task.
+Automatic translation was performed by means of
+Moses which, among other things, permits the con-
+temporary use of more LMs, feature we exploited in
+our experiments as specified later.
+Optimal interpolation weights for the log-linear
+model were estimated by running a minimum error
+training algorithm, available in the Moses toolkit,
+on the evaluation set of the NIST 2002 campaign.
+Tests were performed on the evaluation sets of the
+successive campaigns (2003 to 2006). Concern-
+ing the NIST 2006 evaluation set, results are given
+separately for three different types of texts, namely
+newswire (nw) and newsgroup (ng) texts, and broad-
+cast news transcripts (bn).
+Table 1 gives figures about training, development
+and test corpora, while Table 2 provides main statis-
+tics of the estimated LMs.
+LM millions of
+1-gr 2-gr 3-gr 4-gr 5-gr
+lrg-sri-kn 0.3 5.2 5.9 7.1 6.8
+lrg-sri-wb 0.3 5.2 6.4 7.8 6.8
+lrg 0.3 5.3 6.6 8.4 8.0
+giga 4.5 64.4 127.5 228.8 288.6
+Table 2: Statistics of LMs.
+MT performance are provided in terms of case-
+insensitive BLEU and NIST scores, as computed
+with the NIST scoring tool. For time reasons,
+the decoder run with monotone search; prelimi-
+nary experiments showed that this choice does not
+affect comparison of LMs. Reported decoding
+speed is the elapsed real time measured with the
+Linux/UNIX time command divided by the num-
+ber of source words to be translated. dual Intel/Xeon
+92
+CPU 3.20GHz with 8Gb RAM. Experiments run on
+dual Intel/Xeon CPUs 3.20GHz/8Gb RAM.
+4.1 LM estimation
+First of all, let us answer the question (number 1)
+on the feasibility of the procedure for the estima-
+tion of huge LMs. Given the amount of training data
+employed, it is worth to provide some details about
+the estimation process of the ?giga? LM. According
+to the steps listed in Section 2.1, the whole dictio-
+nary was split into K = 14 frequency balanced lists.
+Then, 5-grams beginning with words from each list
+were extracted and stored. Table 3 shows some fig-
+ures about these dictionaries and 5-gram collections.
+Note that the dictionary size increases with the list
+index: this means only that more frequent words
+were used first. This stage run in few hours with
+1-2Gb parallel processes.
+list dictionary number of 5-grams:
+index size observed distinct non-singletons
+0 4 217M 44.9M 16.2M
+1 11 164M 65.4M 20.7M
+2 8 208M 85.1M 27.0M
+3 44 191M 83.0M 26.0M
+4 64 143M 56.6M 17.8M
+5 137 142M 62.3M 19.1M
+6 190 142M 64.0M 19.5M
+7 548 142M 66.0M 20.1M
+8 783 142M 63.3M 19.2M
+9 1.3K 141M 67.4M 20.2M
+10 2.5K 141M 69.7M 20.5M
+11 6.1K 141M 71.8M 20.8M
+12 25.4K 141M 74.5M 20.9M
+13 4.51M 141M 77.4M 20.6M
+total 4.55M 2.2G 951M 289M
+Table 3: Estimation of the ?giga? LM: dictionary
+and 5-gram statistics (K = 14).
+The actual estimation of the LM was performed
+with the scheme presented in Section 2.2. For each
+collection of non-singletons 5-grams, a sub-LM was
+built by computing smoothed n-gram (n = 1 ? ? ? 5)
+probabilities and interpolation parameters. Again,
+by exploiting parallel processing, this phase took
+only few hours on standard HW resources. Finally,
+sub-LMs were joined in a single LM, which can be
+stored in two formats: (i) the standard textual ARPA
+LM format quantization file size
+lrg-sri-kn textual n 893Mb
+lrg-sri-wb textual n 952Mb
+lrg textual n 1088Mb
+y 789Mb
+binary n 368Mb
+y 220Mb
+giga textual n 28.0Gb
+y 21.0Gb
+binary n 8.5Gb
+y 5.1Gb
+Table 4: Figures of LM files.
+format, and (ii) the binary format of Section 2.3. In
+addition, LM probabilities can be quantized accord-
+ing to the procedure of Section 2.4.
+The estimation of the ?lrg-sri? LMs, performed
+by means of the SRILM toolkit, took about 15 min-
+utes requiring 5Gb of memory. The ?lrg? LM was
+estimated as the ?giga? LM in about half an hour
+demanding only few hundreds of Mb of memory.
+Table 4 lists the size of files storing various ver-
+sions of the ?large? and ?giga? LMs which differ in
+format and/or type.
+4.2 LM run-time usage
+Tables 5 and 6 shows BLEU and NIST scores, re-
+spectively, measured on test sets for each specific
+LM configuration. The first two rows of the two ta-
+bles regards runs of Moses with the SRILM, that
+uses ?lrg-sri? LMs. The other rows refer to runs of
+Moses with IRSTLM, either using LM ?lrg? only,
+or both LMs, ?lrg? and ?giga?. LM quantization is
+marked by a ?q?.
+Finally, in Table 7 figures about the decoding pro-
+cesses are recorded. For each LM configuration, the
+process size, both virtual and resident, is provided
+together with the average time required for translat-
+ing a source word with/without the activation of the
+caching mechanism described in Section 3.1. It is
+to worth noticing that the ?giga? LM (both original
+and quantized) is loaded through the memory map-
+ping service presented in Section 3.2.
+Table 7 includes most of the answers to question
+number 2:
+2.a Under the same conditions, Moses running
+with SRILM permits almost double faster
+93
+LM NIST test set
+03 04 05 06 06 06
+nw ng bn
+lrg-sri-kn 28.74 30.52 26.99 29.28 23.47 27.27
+lrg-sri-wb 28.05 29.86 26.52 28.37 23.13 26.37
+lrg 28.49 29.84 26.97 28.69 23.28 26.70
+q-lrg 28.05 29.66 26.48 28.58 22.64 26.05
+lrg+giga 30.77 31.93 29.09 29.74 24.39 28.50
+q-lrg+q-giga 30.42 31.47 28.62 29.76 24.28 28.23
+Table 5: BLEU scores on NIST evaluation sets for
+different LM configurations.
+LM NIST test set
+03 04 05 06 06 06
+nw ng bn
+lrg-sri-kn 8.73 9.29 8.47 8.98 7.81 8.52
+lrg-sri-wb 8.52 9.14 8.27 8.96 7.90 8.34
+lrg 8.73 9.21 8.45 8.95 7.82 8.47
+q-lrg 8.60 9.11 8.32 8.88 7.73 8.31
+lrg+giga 9.08 9.49 8.80 8.92 7.86 8.66
+q-lrg+q-giga 8.93 9.38 8.65 9.05 7.99 8.60
+Table 6: NIST scores on NIST evaluation sets for
+different LM configurations.
+translation than IRSTLM (13.33 vs. 6.80
+words/s). Anyway, IRSTLM can be sped-up to
+7.52 words/s by applying caching.
+2.b IRSTLM requires about half memory than
+SRILM for storing an equivalent LM during
+decoding. If the LM is quantized, the gain is
+even larger. Concerning file sizes (Table 4), the
+size of IRSTLM binary files is about 30% of
+the corresponding textual versions. Quantiza-
+tion further reduces the size to 20% of the orig-
+inal textual format.
+2.c Performance of IRSTLM and SRILM on the
+large LMs smoothed with the same method are
+comparable, as expected (see entries ?lrg-sri-
+wb? and ?lrg? of Tables 5 and 6). The small
+differences are due to different probability val-
+ues assigned by the two libraries to out-of-
+vocabulary words.
+Concerning quantization, gains in terms of memory
+space (question 3.a) have already been highlighted
+(see answer 2.b). For the remaining points:
+3.b comparing ?lrg? vs. ?q-lrg? rows and
+LM process size caching dec. speed
+virtual resident (src w/s)
+lrg-sri-kn/wb 1.2Gb 1.2Gb - 13.33
+lrg 750Mb 690Mb n 6.80
+y 7.42
+q-lrg 600Mb 540Mb n 6.99
+y 7.52
+lrg+giga 9.9Gb 2.1Gb n 3.52
+y 4.28
+q-lrg+q-giga 6.8Gb 2.1Gb n 3.64
+y 4.35
+Table 7: Process size and decoding speed with/wo
+caching for different LM configurations.
+?lrg+giga? vs. ?q-lrg+q-giga? rows of Ta-
+ble 7, it results that quantization allows only a
+marginal decoding time reduction (1-3%)
+3.c comparing the same rows of Tables 5 and 6, it
+can be claimed that quantization doesn?t affect
+translation performance in a significant way
+3.d no specific training of decoder weights is re-
+quired since the original LM and its quan-
+tized version are equivalent. For example,
+by translating the NIST 05 test set with the
+weights estimated on the ?lrg+giga? configu-
+ration, the following BLEU/NIST scores are
+got: 28.99/8.79 with the ?q-lrg+q-giga? LMs,
+29.09/8.80 with the ?lrg+giga? LMs (the latter
+scores are also given in Tables 5 and 6). Em-
+ploying weights estimated on ?q-lrg+q-giga?
+scores are: 28.58/8.66 with ?lrg+giga? LMs,
+28.62/8.65 with ?q-lrg+q-giga? LMs (again
+also in Tables 5 and 6). Also on other test sets
+differences are negligible.
+Table 7 answers the question number 4 on
+caching, by reporting the decoding speed-up due to
+this mechanism: a gain of 8-9% is observed on ?lrg?
+and ?q-lrg? configurations, of 20-21% in case also
+?giga/q-giga? LMs are employed.
+The answer to the last question is that thanks to
+the memory mapping mechanism it is possible run
+Moses with huge LMs, which is expected to im-
+prove performance. Tables 5 and 6 provide quan-
+titative support to the statement. In fact, a gain of
+1-2 absolute BLEU was measured on different test
+sets when ?giga? LM was employed in addition to
+94
+NIST test set
+03 04 05 06 06 06
+nw ng bn
+BLEU
+ci 33.62 35.04 31.92 32.74 26.18 32.43
+cs 31.44 32.99 29.95 30.49 24.35 31.10
+NIST
+ci 9.27 9.75 9.00 9.24 8.00 8.97
+cs 8.88 9.40 8.64 8.82 7.69 8.77
+Table 8: Case insensitive (ci) and sensitive (cs)
+scores of the best performing system.
+?lrg? LM. The SRILM-based decoder would require
+a process of about 30Gb to load the ?giga? LM; on
+the contrary, the virtual size of the IRSTLM-based
+decoder is 6.8Gb, while the actual resident memory
+is only 2.1Gb.
+4.3 Best Performing System
+Experimental results discussed so far are not the best
+we are able to get. In fact, the adopted setup fixed
+the monotone search and the use of no reordering
+model. Then, in order to allow a fair comparison
+of the IRSTLM-based Moses system with the ones
+participating to the NIST MT evaluation campaigns,
+we have (i) set the maximum reordering distance to
+6 and (ii) estimated a lexicalized reordering model
+on the large parallel data by means of the training
+option ?orientation-bidirectional-fe?.
+Table 8 shows BLEU/NIST scores measured on
+test sets by employing the IRSTLM-based Moses
+with this setting and employing ?q-lrg+q-giga?
+LMs. It ranks at the top 5 systems (out of 24) with
+respect to the results of the NIST 06 evaluation cam-
+paign.
+5 Conclusions
+We have presented a method for efficiently estimat-
+ing and handling large scale n-gram LMs for the
+sake of statistical machine translation. LM estima-
+tion is performed by splitting the task with respect
+to the initial word of the n-grams, and by merging
+the resulting sub-LMs. Estimated LMs can be quan-
+tized and compiled in a compact data structure. Dur-
+ing the search, LM probabilities are cached and only
+the portion of effectively used LM n-grams is loaded
+in memory from disk. This method permits indeed
+to exploit locality phenomena shown by the search
+algorithm when accessing LM probabilities. Results
+show an halving of memory requirements, at the cost
+of 44% slower decoding speed. In addition, loading
+the LM on demand permits to keep the size of mem-
+ory allocated to the decoder nicely under control.
+Future work will investigate the way for includ-
+ing more sophisticated LM smoothing methods in
+our scheme and will compare IRSTLM and SRILM
+toolkits on increasing size training corpora.
+6 Acknowledgments
+This work has been funded by the European Union
+under the integrated project TC-STAR - Technol-
+ogy and Corpora for Speech-to-Speech Translation
+- (IST-2002-FP6-506738, http://www.tc-star.org).
+References
+S.F. Chen and J. Goodman. 1999. An empirical study of
+smoothing techniques for language modeling. Computer
+Speech and Language, 4(13):359?393.
+P. Clarkson and R. Rosenfeld. 1997. Statistical language mod-
+eling using the CMU?cambridge toolkit. In Proc. of Eu-
+rospeech, pages 2707?2710, Rhodes, Greece.
+M. Federico and N. Bertoldi. 2006. How many bits are needed
+to store probabilities for phrase-based translation? In Proc.
+of the Workshop on Statistical Machine Translation, pages
+94?101, New York City, June. Association for Computa-
+tional Linguistics.
+R. Kneser and H. Ney. 1995. Improved backing-off for m-gram
+language modeling. In Proc. of ICASSP, volume 1, pages
+181?184, Detroit, MI.
+M. Lapata and F. Keller. 2006. Web-based models for natu-
+ral language processing. ACM Transactions on Speech and
+Language Processing, 1(2):1?31.
+NIST. 2006. Proc. of the NIST MT Workshop. Washington,
+DC. NIST.
+A. Stolcke. 2002. SRILM - an extensible language modeling
+toolkit. In Proc. of ICSLP, Denver, Colorado.
+F. Wessel, S. Ortmanns, and H. Ney. 1997. Implementation
+of word based statistical language models. In Proc. SQEL
+Workshop on Multi-Lingual Information Retrieval Dialogs,
+pages 55?59, Pilsen, Czech Republic.
+E. W. D. Whittaker and B. Raj. 2001. Quantization-based Lan-
+guage Model Compression. In Proc. of Eurospeech, pages
+33?36, Aalborg.
+I. H. Witten and T. C. Bell. 1991. The zero-frequency problem:
+Estimating the probabilities of novel events in adaptive text
+compression. IEEE Trans. Inform. Theory, IT-37(4):1085?
+1094.
+95
+A Web-based Demonstrator of a Multi-lingual Phrase-based
+Translation System
+Roldano Cattoni, Nicola Bertoldi, Mauro Cettolo, Boxing Chen and Marcello Federico
+ITC-irst - Centro per la Ricerca Scientifica e Tecnologica
+38050 Povo - Trento, Italy
+{surname}@itc.it
+Abstract
+This paper describes a multi-lingual
+phrase-based Statistical Machine Transla-
+tion system accessible by means of a Web
+page. The user can issue translation re-
+quests from Arabic, Chinese or Spanish
+into English. The same phrase-based sta-
+tistical technology is employed to realize
+the three supported language-pairs. New
+language-pairs can be easily added to the
+demonstrator. The Web-based interface al-
+lows the use of the translation system to
+any computer connected to the Internet.
+1 Introduction
+At this time, Statistical Machine Translation
+(SMT) has empirically proven to be the most
+competitive approach in international competi-
+tions like the NIST Evaluation Campaigns1 and
+the International Workshops on Spoken Language
+Translation (IWSLT-20042 and IWSLT-20053).
+In this paper we describe our multi-lingual
+phrase-based Statistical Machine Translation sys-
+tem which can be accessed by means of a Web
+page. Section 2 presents the general log-linear
+framework to SMT and gives an overview of
+our phrase-based SMT system. In section 3
+the software architecture of the demo is out-
+lined. Section 4 focuses on the currently supported
+language-pairs: Arabic-to-English, Chinese-to-
+English and Spanish-to-English. In section 5 the
+Web-based interface of the demo is described.
+1http://www.nist.gov/speech/tests/mt/
+2http://www.slt.atr.jp/IWSLT2004/
+3http://www.is.cs.cmu.edu/iwslt2005/
+2 SMT System Description
+2.1 Log-Linear Model
+Given a string f in the source language, the goal of
+the statistical machine translation is to select the
+string e in the target language which maximizes
+the posterior distribution Pr(e | f). By introduc-
+ing the hidden word alignment variable a, the fol-
+lowing approximate optimization criterion can be
+applied for that purpose:
+e? = arg max
+e
+Pr(e | f)
+= arg max
+e
+?
+a
+Pr(e,a | f)
+? arg max
+e,a
+Pr(e,a | f)
+Exploiting the maximum entropy (Berger et
+al., 1996) framework, the conditional distribu-
+tion Pr(e,a | f) can be determined through
+suitable real valued functions (called features)
+hr(e, f ,a), r = 1 . . . R, and takes the parametric
+form:
+p?(e,a | f) ? exp{
+R
+?
+r=1
+?rhr(e, f ,a)}
+The ITC-irst system (Chen et al, 2005) is
+based on a log-linear model which extends the
+original IBM Model 4 (Brown et al, 1993)
+to phrases (Koehn et al, 2003; Federico and
+Bertoldi, 2005). In particular, target strings e are
+built from sequences of phrases e?1 . . . e?l. For each
+target phrase e? the corresponding source phrase
+within the source string is identified through three
+random quantities: the fertility ?, which estab-
+lishes its length; the permutation pii, which sets
+its first position; the tablet f? , which tells its word
+string. Notice that target phrases might have fer-
+tility equal to zero, hence they do not translate any
+91
+source word. Moreover, uncovered source posi-
+tions are associated to a special target word (null)
+according to specific fertility and permutation ran-
+dom variables.
+The resulting log-linear model applies eight fea-
+ture functions whose parameters are either esti-
+mated from data (e.g. target language models,
+phrase-based lexicon models) or empirically fixed
+(e.g. permutation models). While feature func-
+tions exploit statistics extracted from monolingual
+or word-aligned texts from the training data, the
+scaling factors ? of the log-linear model are esti-
+mated on the development data by applying a min-
+imum error training procedure (Och, 2004).
+2.2 Decoding Strategy
+The translation of an input string is performed by
+the SMT system in two steps. In the first pass a
+beam search algorithm (decoder) computes a word
+graph of translation hypotheses. Hence, either
+the best translation hypothesis is directly extracted
+from the word graph and output, or an N-best list
+of translations is computed (Tran et al, 1996). The
+N-best translations are then re-ranked by applying
+additional features and the top ranking translation
+is finally output.
+The decoder exploits dynamic programming,
+that is the optimal solution is computed by expand-
+ing and recombining previously computed partial
+theories. A theory is described by its state which is
+the only information needed for its expansion. Ex-
+panded theories sharing the same state are recom-
+bined, that is only the best scoring one is stored
+for further expansions. In order to output a word
+graph of translations, backpointers to all expanded
+theories are mantained, too.
+To cope with the large number of generated the-
+ories some approximations are introduced during
+the search: less promising theories are pruned off
+(beam search) and a new source position is se-
+lected by limiting the number of vacant positions
+on the left-hand and the distance from the left most
+vacant position (re-ordering constraints).
+2.3 Phrase extraction and model training
+Training of the phrase-based translation model
+requires a parallel corpus provided with word-
+alignments in both directions, i.e. from source
+to target positions, and viceversa. This pre-
+processing step can be accomplished by applying
+the GIZA++ toolkit (Och and Ney, 2003) that pro-
+vides Viterbi alignments based on IBM Model-4.
+Starting from the parallel training corpus, pro-
+vided with direct and inverted alignments, the so-
+called union alignment (Och and Ney, 2003) is
+computed.
+Phrase-pairs are extracted from each sentence pair
+which correspond to sub-intervals of the source
+and target positions, J and I , such that the union
+alignment links all positions of J into I and all
+positions of I into J . In general, phrases are ex-
+tracted with maximum length in the source and tar-
+get defined by the parameters Jmax and Imax. All
+such phrase-pairs are efficiently computed by an
+algorithm with complexity O(lImaxJ2max) (Cet-
+tolo et al, 2005).
+Given all phrase-pairs extracted from the train-
+ing corpus, lexicon probabilities and fertility prob-
+abilities are estimated.
+Target language models (LMs) used by the de-
+coder and rescoring modules are, respectively,
+estimated from 3-gram and 4-gram statistics
+by applying the modified Kneser-Ney smoothing
+method (Goodman and Chen, 1998). LMs are es-
+timated with an in-house software toolkit which
+also provides a compact binary representation of
+the LM which is used by the decoder.
+3 Demo Architecture
+Figure 1 shows the two-layer architecture of the
+demo. At the bottom lie the programs that provide
+the actual translation services: for each language-
+pair a wrapper coordinates the activity of a special-
+ized pre-processing tool and a MT decoder. The
+translation programs run on a grid-based cluster
+of high-end PCs to optimize the processing speed.
+All the wrappers communicate with the MT front-
+end whose main task is to forward translation re-
+quests to the appropriate language-pair wrapper
+and to report an error in case of wrong requests
+(e.g. unsupported language-pair). It is worth
+noticing here that a new language-pair can be eas-
+ily added to the system with a minimal interven-
+tion on the code of the MT front-end.
+At the top of the architecture are the programs
+that provide the interface with the user. This layer
+is separated from the translation layer (hosted by
+internal machines only) by means of a firewall.
+The user interface is implemented as a Web page
+in which a translation request (a source sentence
+and a language-pair) is input by means of an
+HTML form. The cgi script invocated by the form
+manages the interaction with the MT front-end.
+92
+Web Page
+(form)
+script
+CGI
+lang 1
+wrapper
+prepro?
+cessing
+MT
+decoder
+prepro?
+cessing
+MT
+decoder
+wrapper
+lang 2
+prepro?
+cessing
+MT
+decoder
+wrapper
+lang N
+...
+MT
+front?end
+firewall
+external host
+internal hosts
+fast machines
+Figure 1: Architecture of the demo. For each
+language-pair a set of programs (in particular the
+MT decoder) provides the translation service. The
+request issued by the user on the Web page is
+sent by the cgi script to the MT front-end. The
+translation is then performed on the appropriate
+language-pair service and the output sent back to
+the Web browser.
+When a user issues a translation request after
+filling the form fields, the cgi script sends the re-
+quest to the MT front-end and waits for its reply.
+The input sentence is then forwarded to the wrap-
+per of the appropriate language-pair. After a pre-
+processing step, the actual translation is performed
+by the specific MT decoder. The output in the tar-
+get language is then sent back to the user?s Web
+browser through the chain in the reverse order.
+From a technical point of view, the inter-process
+communication is realized by means of standard
+TCP-IP sockets. As far as the encoding of texts is
+concerned, all the languages are encoded in UTF-
+8: this allows to manage the processing phase in
+an uniform way and to render graphically different
+character sets.
+4 The supported language-pairs
+Although there is no theoretical limit to the num-
+ber of supported language-pairs, the current ver-
+sion of the demo provides translations to English
+from three source languages: Arabic, Chinese and
+Spanish. For demonstration purpose, three differ-
+ent application domains are covered too.
+Arabic-to-English (Tourism)
+The Arabic-to-English system has been trained
+with the data provided by the International Work-
+shop on Spoken Language Translation 2005 The
+context is that of the Basic Traveling Expres-
+sion Corpus (BTEC) task (Takezawa et al, 2002).
+BTEC is a multilingual speech corpus which con-
+tains sentences coming from phrase books for
+tourists. Training set includes 20k sentences con-
+taining 159K Arabic and 182K English running
+words; vocabulary size is 18K for Arabic, 7K for
+English.
+Chinese-to-English (Newswire)
+The Chinese-to-English system has been trained
+with the data provided by the NIST MT Evaluation
+Campaign 2005 , large-data condition. In this case
+parallel data are mainly news-wires provided by
+news agencies. Training set includes 71M Chinese
+and 77M English running words; vocabulary size
+is 157K for Chinese, 214K for English.
+Spanish-to-English (European Parliament)
+The Spanish-to-English system has been trained
+with the data provided by the Evaluation Cam-
+paign 2005 of the European integrated project TC-
+STAR4. The context is that of the speeches of
+the European Parliament Plenary sessions (EPPS)
+from April 1996 to October 2004. Training set for
+the Final Text Edition transcriptions includes 31M
+Spanish and 30M English running words; vocabu-
+lary size is 140K for Spanish, 94K for English.
+5 The Web-based Interface
+Figure 2 shows a snapshot of the Web-based in-
+terface of the demo ? the URL has been removed
+to make this submission anonymous. In the upper
+part of the page the user provides the two informa-
+tion required for the translation: the source sen-
+tence can be input in a 80x5 textarea html struc-
+ture, while the language-pair can be selected by
+means of a set a radio-buttons. The user can reset
+the input area or send the translation request by
+means of standard reset and submit buttons. Some
+examples of bilingual sentences are provided in
+the lower part of the page.
+4http://www.tc-star.org
+93
+Figure 2: A snapshot of the Web-based interface.
+The user provides the sentence to be translated
+in the desired language-pair. Some examples of
+bilingual sentences are also available to the user.
+The output of a translation request is simple: the
+requested source sentence, the translation in the
+target language and the selected language-pair are
+presented to the user. Figure 3 shows an example
+of an Arabic sentence translated into English.
+We plan to extend the interface with the pos-
+sibility for the user to ask additional information
+about the translation ? e.g. the number of explored
+theories or the score of the first-best translation.
+6 Acknowledgements
+This work has been funded by the European Union
+under the integrated project TC-STAR - Technol-
+ogy and Corpora for Speech to Speech Translation
+- (IST-2002-FP6-506738, http://www.tc-star.org).
+References
+A.L. Berger, S.A. Della Pietra, and V.J. Della Pietra.
+1996. A Maximum Entropy Approach to Natural
+Language Processing. Computational Linguistics,
+22(1):39?71.
+P. F. Brown, S. A. Della Pietra, V. J. Della Pietra, and
+R. L. Mercer. 1993. The Mathematics of Statistical
+Machine Translation: Parameter Estimation. Com-
+putational Linguistics, 19(2):263?313.
+Figure 3: Example of an Arabic sentence trans-
+lated into English.
+Mauro Cettolo, Marcello Federico, Nicola Bertoldi,
+Roldano Cattoni, and Boxing Chen. 2005. A look
+inside the itc-irst smt system. In Proceedings of the
+10th Machine Translation Summit, pages 451?457,
+Phuket, Thailand, September.
+B. Chen, R. Cattoni, N. Bertoldi, M. Cettolo, and
+M. Federico. 2005. The ITC-irst SMT System for
+IWSLT-2005. In Proceedings of the IWSLT 2005,
+Pittsburgh, USA.
+M. Federico and N. Bertoldi. 2005. A Word-to-Phrase
+Statistical Translation Model. ACM Transactions on
+Speech and Language Processing. to appear.
+J. Goodman and S. Chen. 1998. An empirical study of
+smoothing techniques for language modeling. Tech-
+nical Report TR-10-98, Harvard University, August.
+P. Koehn, F. J. Och, and D. Marcu. 2003. Statistical
+phrase-based translation. In Proceedings of HLT-
+NAACl 2003, pages 127?133, Edmonton, Canada.
+F. J. Och and H. Ney. 2003. A systematic comparison
+of various statistical alignment models. Computa-
+tional Linguistics, 29(1):19?51.
+F.J. Och. 2004. Minimum Error Rate Training in
+Statistical Machine Translation. In Proceedings of
+ACL, Sapporo, Japan.
+T. Takezawa, E. Sumita, F. Sugaya, H. Yamamoto, and
+S. Yamamoto. 2002. Toward a Broad-Coverage
+Bilingual Corpus for Speech Translation of Travel
+Conversations in the Real World. In Proceedings of
+3rd LREC, pages 147?152, Las Palmas, Spain.
+B. H. Tran, F. Seide, and V. Steinbiss. 1996. A Word
+Graph based N-Best Search in Continuous Speech
+Recognition. In Proceedings of ICLSP, Philadel-
+phia, PA, USA.
+94
+Maximum Entropy Tagging with Binary and Real-Valued Features
+Vanessa Sandrini Marcello Federico Mauro Cettolo
+ITC-irst - Centro per la Ricerca Scientifica e Tecnologica
+38050 Povo (Trento) - ITALY
+{surname}@itc.it
+Abstract
+Recent literature on text-tagging reported
+successful results by applying Maximum
+Entropy (ME) models. In general, ME
+taggers rely on carefully selected binary
+features, which try to capture discrimi-
+nant information from the training data.
+This paper introduces a standard setting
+of binary features, inspired by the litera-
+ture on named-entity recognition and text
+chunking, and derives corresponding real-
+valued features based on smoothed log-
+probabilities. The resulting ME models
+have orders of magnitude fewer parame-
+ters. Effective use of training data to esti-
+mate features and parameters is achieved
+by integrating a leaving-one-out method
+into the standard ME training algorithm.
+Experimental results on two tagging tasks
+show statistically significant performance
+gains after augmenting standard binary-
+feature models with real-valued features.
+1 Introduction
+The Maximum Entropy (ME) statistical frame-
+work (Darroch and Ratcliff, 1972; Berger et al,
+1996) has been successfully deployed in several
+NLP tasks. In recent evaluation campaigns, e.g.
+DARPA IE and CoNLL 2000-2003, ME models
+reached state-of-the-art performance on a range of
+text-tagging tasks.
+With few exceptions, best ME taggers rely on
+carefully designed sets of features. Features cor-
+respond to binary functions, which model events,
+observed in the (annotated) training data and sup-
+posed to be meaningful or discriminative for the
+task at hand. Hence, ME models result in a log-
+linear combination of a large set of features, whose
+weights can be estimated by the well known Gen-
+eralized Iterative Scaling (GIS) algorithm by Dar-
+roch and Ratcliff (1972).
+Despite ME theory and its related training algo-
+rithm (Darroch and Ratcliff, 1972) do not set re-
+strictions on the range of feature functions1 , pop-
+ular NLP text books (Manning and Schutze, 1999)
+and research papers (Berger et al, 1996) seem
+to limit them to binary features. In fact, only
+recently, log-probability features have been de-
+ployed in ME models for statistical machine trans-
+lation (Och and Ney, 2002).
+This paper focuses on ME models for two text-
+tagging tasks: Named Entity Recognition (NER)
+and Text Chuncking (TC). By taking inspiration
+from the literature (Bender et al, 2003; Borth-
+wick, 1999; Koeling, 2000), a set of standard bi-
+nary features is introduced. Hence, for each fea-
+ture type, a corresponding real-valued feature is
+developed in terms of smoothed probability distri-
+butions estimated on the training data. A direct
+comparison of ME models based on binary, real-
+valued, and mixed features is presented. Besides,
+performance on the tagging tasks, complexity and
+training time by each model are reported. ME es-
+timation with real-valued features is accomplished
+by combining GIS with the leave-one-out method
+(Manning and Schutze, 1999).
+Experiments were conducted on two publicly
+available benchmarks for which performance lev-
+els of many systems are published on theWeb. Re-
+sults show that better ME models for NER and TC
+can be developed by integrating binary and real-
+valued features.
+1Darroch and Ratcliff (1972) show how any set of real-
+valued feature functions can be properly handled.
+1
+2 ME Models for Text Tagging
+Given a sequence of words wT1 = w1, . . . , wT and
+a set of tags C, the goal of text-tagging is to find
+a sequence of tags cT1 = c1, . . . , cT which maxi-
+mizes the posterior probability, i.e.:
+c?T1 = argmaxcT1
+p(cT1 | wT1 ). (1)
+By assuming a discriminative model, Eq. (1) can
+be rewritten as follows:
+c?T1 = argmaxcT1
+T
+?
+t=1
+p(ct | ct?11 , wT1 ), (2)
+where p(ct|ct?11 , wT1 ) is the target conditional
+probability of tag ct given the context (ct?11 , wT1 ),
+i.e. the entire sequence of words and the full se-
+quence of previous tags. Typically, independence
+assumptions are introduced in order to reduce the
+context size. While this introduces some approxi-
+mations in the probability distribution, it consid-
+erably reduces data sparseness in the sampling
+space. For this reason, the context is limited here
+to the two previous tags (ct?1t?2) and to four words
+around the current word (wt+2t?2). Moreover, limit-
+ing the context to the two previous tags permits to
+apply dynamic programming (Bender et al, 2003)
+to efficiently solve the maximization (2).
+Let y = ct denote the class to be guessed (y ? Y)
+at time t and x = ct?1t?2, wt+2t?2 its context (x ? X ).
+The generic ME model results:
+p?(y | x) =
+exp(
+?n
+i=1 ?ifi(x, y))
+?
+y? exp(
+?n
+i=1 ?ifi(x, y?))
+. (3)
+The n feature functions fi(x, y) represent any kind
+of information about the event (x, y) which can be
+useful for the classification task. Typically, binary
+features are employed which model the verifica-
+tion of simple events within the target class and
+the context.
+InMikheev (1998), binary features for text tagging
+are classified into two broad classes: atomic and
+complex. Atomic features tell information about
+the current tag and one single item (word or tag) of
+the context. Complex features result as a combina-
+tion of two or more atomic features. In this way, if
+the grouped events are not independent, complex
+features should capture higher correlations or de-
+pendencies, possibly useful to discriminate.
+In the following, a standard set of binary fea-
+tures is presented, which is generally employed
+for text-tagging tasks. The reader familiar with the
+topic can directly check this set in Table 1.
+3 Standard Binary Features
+Binary features are indicator functions of specified
+events of the sample space X ? Y . Hence, they
+take value 1 if the event occurs or 0 otherwise. For
+the sake of notation, the feature name denotes the
+type of event, while the index specifies its param-
+eters. For example:
+Orthperson,Cap,?1(x, y)
+corresponds to an Orthographic feature which is
+active if and only if the class at time t is person
+and the word at time t?1 in the context starts with
+capitalized letter.
+3.1 Atomic Features
+Lexical features These features model co-
+occurrences of classes and single words of the con-
+text. Lexical features are defined on a window
+of ?2 positions around the current word. Lexical
+features are denoted by the name Lex and indexed
+with the triple c, w, d which fixes the current class,
+i.e. ct = c, the identity and offset of the word in
+the context, i.e. wt+d = w. Formally, the feature
+is computed by:
+Lex c,w,d(x, y) =? ?(ct = c) ? ?(wt+d = w).
+For example, the lexical feature for word
+Verona, at position t with tag loc (location) is:
+Lexloc,Verona,0(x, y) = ?(ct = loc) ?
+??(wt = Verona).
+Lexical features might introduce data sparseness
+in the model, given that in real texts an impor-
+tant fraction of words occur only once. In other
+words, many words in the test set will have no
+corresponding features-parameter pairs estimated
+on the training data. To cope with this problem,
+all words observed only once in the training data
+were mapped into the special symbol oov.
+Syntactic features They model co-occurrences
+of the current class with part-of-speech or chunk
+tags of a specific position in the context. Syntactic
+features are denoted by the name Syn and indexed
+with a 4-tuple (c, Pos, p, d) or (c, Chnk, p, d),
+2
+Name Index Definition
+Lex c, w, d ?(ct = c) ? ?(wt+d = w), d ? Z
+Syn c, T, p, d ?(ct = c) ? ?(T(wt+d) = p) , T ? {Pos, Chnk}, d ? Z
+Orth c, F, d ?(ct = c) ? F(wt+d) , F ? {IsCap, IsCAP}, d ? Z
+Dict c, L, d ?(ct = c) ? InList(L,wt+d), d ? Z
+Tran c, c?, d ?(ct = c) ? ?(ct?d = c?) d ? N+
+Lex+ c, s, k, ws+k?1s
+?s+k?1
+d=s Lexc,wd,d(x, y), k ? N+, s ? Z
+Syn+ c, T, s, k, ps+k?1s
+?s+k?1
+d=s Sync,T,pd,d(x, y), k ? N+, s ? Z
+Orth+ c, F, k, b+k?k ?(ct = c) ?
+?k
+d=?k ?(Orthc,F,d(x, y) = bd) , bd ? {0, 1}, k ? N+
+Dict+ c, L, k, b+k?k ?(ct = c) ?
+?k
+d=?k ?(Dictc,L,d(x, y) = bd) , bd ? {0, 1}, k ? N+
+Tran+ c, k, ck1
+?k
+d=1? Tranc,cd,d(x, y) k ? N+
+Table 1: Standard set of binary features for text tagging.
+which fixes the class ct, the considered syntactic
+information, and the tag and offset within the con-
+text. Formally, these features are computed by:
+Sync,Pos,p,d(x, y)=??(ct = c) ? ?(Pos(wt+d) = p)
+Sync,Chnk,p,d(x, y)=??(ct = c)??(Chnk(wt+d) = p).
+Orthographic features These features model
+co-occurrences of the current class with surface
+characteristics of words of the context, e.g. check
+if a specific word in the context starts with cap-
+italized letter (IsCap) or is fully capitalized
+(IsCAP). In this framework, only capitalization
+information is considered. Analogously to syntac-
+tic features, orthographic features are defined as
+follows:
+Orthc,IsCap,d(x, y)=??(ct = c) ? IsCap(wt+d)
+Orthc,IsCAP,d(x, y)=??(ct = c) ? IsCAP(wt+d).
+Dictionary features These features check if
+specific positions in the context contain words oc-
+curring in some prepared list. This type of feature
+results relevant for tasks such as NER, in which
+gazetteers of proper names can be used to improve
+coverage of the training data. Atomic dictionary
+features are defined as follows:
+Dictc,L,d(x, y)=??(ct = c) ? InList(L,wt+d)
+where L is a specific pre-compiled list, and
+InList is a function which returns 1 if the spec-
+ified word matches one of the multi-word entries
+of list L, and 0 otherwise.
+Transition features Transition features model
+Markov dependencies between the current tag and
+a previous tag. They are defined as follows:
+Tranc,c?,d(x, y)=??(ct = c) ? ?(ct?d = c?).
+3.2 Complex Features
+More complex events are defined by combining
+two or more atomic features in one of two ways.
+Product features take the intersection of the cor-
+responding atomic events. V ector features con-
+sider all possible outcomes of the component fea-
+tures.
+For instance, the product of 3 atomic Lexical
+features, with class c, offsets ?2,?1, 0, and words
+v?2, v?1, v0, is:
+Lex+c,?2,3,v?2,v?1,v0(x, y)=?
+0
+?
+d=?2
+Lexc,vd,d(x, y).
+Vector features obtained from three Dictionary
+features with the same class c, list L, and offsets,
+respectively, -1,0,+1, are indexed over all possible
+binary outcomes b?1, b0, b1 of the single atomic
+features, i.e.:
+Dict+c,L,1,b?1,b0,b+1(x, y)=??(ct = c)?
+1
+?
+d=?1
+?(Dictc,L,d(x, y) = bd).
+Complex features used in the experiments are de-
+scribed in Table 1.
+The use of complex features significantly in-
+creases the model complexity. Assuming that
+there are 10, 000 words occurring more than once
+in the training corpus, the above lexical feature po-
+tentially adds O(|C|1012) parameters!
+As complex binary features might result pro-
+hibitive from a computational point of view, real-
+valued features should be considered as an alter-
+native.
+3
+Feature Index Probability Distribution
+Lex d p(ct | wt+d)
+Syn T, d p(ct | T(wt+d))
+Orth F, d p(ct | F(wt+d))
+Dict List, d p(ct | IsIn(List, wt+d))
+Tran d p(ct | ct?d)
+Lex+ s, k p(ct | wt+s, .., wt+s+k?1
+Syn+ T, s, k p(ct | T(wt+s, . . . , wt+s+k?1))
+Orth+ k, F p(ct | F(wt?k), . . . , F(wt+k))
+Dict+ k,L p(ct | InList(L, wt?k), . . . , InList(L, wt+k))
+Tran+ k p(ct | ct?k, . . . , ct+k))
+Table 2: Corresponding standard set of real-values features.
+4 Real-valued Features
+A binary feature can be seen as a probability mea-
+sure with support set made of a single event. Ac-
+cording to this point of view, we might easily ex-
+tend binary features to probability measures de-
+fined over larger event spaces. In fact, it results
+convenient to introduce features which are log-
+arithms of conditional probabilities. It can be
+shown that in this way linear constraints of the
+MEmodel can be interpreted in terms of Kullback-
+Leibler distances between the target model and the
+conditional distributions (Klakow, 1998).
+Let p1(y|x), p2(y|x), . . . , pn(y|x) be n different
+conditional probability distributions estimated on
+the training corpus. In our framework, each con-
+ditional probability pi is associated to a feature fi
+which is defined over a subspace [X ]i ? Y of the
+sample space X ? Y . Hence, pi(y|x) should be
+read as a shorthand of p(y | [x]i).
+The corresponding real-valued feature is:
+fi(x, y) = log pi(y | x). (4)
+In this way, the ME in Eq. (3) can be rewritten as:
+p?(y|x) =
+?n
+i pi(y|x)?i
+?
+y?
+?
+i pi(y
+? |x)?i . (5)
+According to the formalism adopted in Eq. (4),
+real-valued features assume the following form:
+fi(ct, ct?1t?2, wt+2t?2) = log pi(ct | ct?1t?2, wt+2t?2). (6)
+For each so far presented type of binary feature,
+a corresponding real-valued type can be easily de-
+fined. The complete list is shown in Table 2. In
+general, the context subspace was defined on the
+basis of the offset parameters of each binary fea-
+ture. For instance, all lexical features selecting
+two words at distances -1 and 0 from the current
+position t are modeled by the conditional distri-
+bution p(ct | wt?1, wt). While distributions of
+lexical, syntactic and transition features are con-
+ditioned on words or tags, dictionary and ortho-
+graphic features are conditioned on binary vari-
+ables.
+An additional real-valued feature that was em-
+ployed is the so called prior feature, i.e. the prob-
+ability of a tag to occur:
+Prior(x, y) = log p(ct)
+A major effect of using real-valued features is
+the drastic reduction of model parameters. For
+example, each complex lexical features discussed
+before introduce just one parameter. Hence, the
+small number of parameters eliminates the need
+of smoothing the ME estimates.
+Real-valued features present some drawbacks.
+Their level of granularity, or discrimination, might
+result much lower than their binary variants. For
+many features, it might result difficult to compute
+reliable probability values due to data sparseness.
+For the last issue, smoothing techniques devel-
+oped for statistical language models can be applied
+(Manning and Schutze, 1999).
+5 Mixed Feature Models
+This work, beyond investigating the use of real-
+valued features, addresses the behavior of models
+combining binary and real-valued features. The
+reason is twofold: on one hand, real-valued fea-
+tures allow to capture complex information with
+fewer parameters; on the other hand, binary fea-
+tures permit to keep a good level of granularity
+over salient characteristics. Hence, finding a com-
+promise between binary and real-valued features
+4
+might help to develop ME models which better
+trade-off complexity vs. granularity of informa-
+tion.
+6 Parameter Estimation
+From the duality of ME and maximum likeli-
+hood (Berger et al, 1996), optimal parameters
+?? for model (3) can be found by maximizing
+the log-likelihood function over a training sample
+{(xt, yt) : t = 1, . . . ,N}, i.e.:
+?? = argmax
+?
+N
+?
+t=1
+log p?(yt|xt). (7)
+Now, whereas binary features take only two values
+and do not need any estimation phase, conditional
+probability features have to be estimated on some
+data sample. The question arises about how to ef-
+ficiently use the available training data in order to
+estimate the parameters and the feature distribu-
+tions of the model, by avoiding over-fitting.
+Two alternative techniques, borrowed from sta-
+tistical language modeling, have been consid-
+ered: the Held-out and the Leave-one-out methods
+(Manning and Schutze, 1999).
+Held-out method. The training sample S is split
+into two parts used, respectively, to estimate the
+feature distributions and the ME parameters.
+Leave-one-out. ME parameters and feature dis-
+tributions are estimated over the same sample S.
+The idea is that for each addend in eq. (7), the cor-
+responding sample point (xt, yt) is removed from
+the training data used to estimate the feature distri-
+butions of the model. In this way, it can be shown
+that occurrences of novel observations are simu-
+lated during the estimation of the ME parameters
+(Federico and Bertoldi, 2004).
+In our experiments, language modeling smooth-
+ing techniques (Manning and Schutze, 1999) were
+applied to estimate feature distributions pi(y|x).
+In particular, smoothing was based on the dis-
+counting method in Ney et al (1994) combined to
+interpolation with distributions using less context.
+Given the small number of smoothing parameters
+involved, leave-one-out probabilities were approx-
+imated by just modifying count statistics on the
+fly (Federico and Bertoldi, 2004). The rationale is
+that smoothing parameters do not change signifi-
+cantly after removing just one sample point.
+For parameter estimation, the GIS algorithm
+by Darroch and Ratcliff (1972) was applied. It
+is known that the GIS algorithm requires feature
+functions fi(x, y) to be non-negative. Hence, fea-
+tures were re-scaled as follows:
+fi(x, y) = log pi(y|x) + log
+1 + 
+min pi
+, (8)
+where  is a small positive constant and the de-
+nominator is a constant term defined by:
+min pi = min
+(x,y)?S
+pi(y|x). (9)
+The factor (1 + ) was introduced to ensure that
+real-valued features are always positive. This con-
+dition is important to let features reflect the same
+behavior of the conditional distributions, which
+assign a positive probability to each event.
+It is easy to verify that this scaling operation
+does not affect the original model but only impacts
+on the GIS calculations. Finally, a slack feature
+was introduced by the algorithm to satisfy the con-
+straint that all features sum up to a constant value
+(Darroch and Ratcliff, 1972).
+7 Experiments
+This section presents results of MEmodels applied
+to two text-tagging tasks, Named Entity Recogni-
+tion (NER) and Text Chunking (TC).
+After a short introduction to the experimen-
+tal framework, the detailed feature setting is pre-
+sented. Then, experimental results are presented
+for the following contrastive conditions: binary
+versus real-valued features, training via held-out
+versus leave-one-out, atomic versus complex fea-
+tures.
+7.1 Experimental Set-up
+Named Entity Recognition English NER ex-
+periments were carried out on the CoNLL-2003
+shared task2. This benchmark is based on texts
+from the Reuters Corpus which were manually
+annotated with parts-of-speech, chunk tags, and
+named entity categories. Four types of categories
+are defined: person, organization, location and
+miscellaneous, to include e.g. nations, artifacts,
+etc. A filler class is used for the remaining words.
+After including tags denoting the start of multi-
+word entities, a total of 9 tags results. Data are
+partitioned into training (200K words), develop-
+ment (50K words), and test (46K words) samples.
+2Data and results in http://cnts.uia.ac.be/conll2003/ner.
+5
+Text Chunking English TC experiments were
+conducted on the CoNLL-2000 shared task3.
+Texts originate from the Wall Street Journal and
+are annotated with part-of-speech tags and chunks.
+The chunk set consists of 11 syntactic classes. The
+set of tags which also includes start-markers con-
+sists of 23 classes. Data is split into training (210K
+words) and test (47K words) samples.
+Evaluation Tagging performance of both tasks
+is expressed in terms of F-score, namely the har-
+monic mean of precision and recall. Differences in
+performance have been statistically assessed with
+respect to precision and recall, separately, by ap-
+plying a standard test on proportions, with signif-
+icance levels ? = 0.05 and ? = 0.1. Henceforth,
+claimed differences in precision or recall will have
+their corresponding significance level shown in
+parenthesis.
+7.2 Settings and Baseline Models
+Feature selection and setting for ME models is an
+art. In these experiments we tried to use the same
+set of features with minor modifications across
+both tasks. In particular, used features and their
+settings are shown in Table 3.
+Training of models with GIS and estimation
+of feature distributions used in-house developed
+toolkits. Performance of binary feature models
+was improved by smoothing features with Gaus-
+sian priors (Chen and Rosenfeld, 1999) with mean
+zero and standard deviation ? = 4. In general,
+tuning of models was carried out on a development
+set.
+Most of the comparative experiments were per-
+formed on the NER task. Three baseline models
+using atomic features Lex, Syn, and Tran were
+investigated first: model BaseBin, with all binary
+features; model BaseReal, with all real-valued fea-
+tures plus the prior feature; model BaseMix, with
+real-valued Lex and binary Tran and Syn. Mod-
+els BaseReal and BaseMix were trained with the
+held-out method. In particular, feature distribu-
+tions were estimated on the training data while ME
+parameters on the development set.
+7.3 Binary vs. Real-valued Features
+The first experiment compares performance of the
+baseline models on the NER task. Experimental
+results are summarized in Table 4. Models Base-
+Bin, BaseReal, and BaseMix achieved F-scores of
+3Data and results in http://cnts.uia.ac.be/conll2000/chunking.
+Model ID Num P% R% F-score
+BaseBin 580K 78.82 75.62 77.22
+BaseReal 10 79.74 74.15 76.84
+BaseMix 753 78.90 75.85 77.34
+Table 4: Performance of baseline models on the
+NER task. Number of parameters, precision, re-
+call, and F-score are reported for each model.
+Model Methods P% R% F-score
+BaseMix Held-Out 78.90 75.85 77.34
+BaseMix L-O-O 80.64 76.40 78.46
+Table 5: Performance of mixed feature models
+with two different training methods.
+77.22, 76.84, and 77.34. Statistically meaning-
+ful differences were in terms of recall, between
+BaseBin and BaseReal (? = 0.1), and between
+BaseMix and BaseReal (? = 0.05).
+Despite models BaseMix and BaseBin perform
+comparably, the former has many fewer parame-
+ters, i.e. 753 against 580,000. In fact, BaseMix re-
+quires storing and estimating feature distributions,
+which is however performed at a marginal compu-
+tational cost and off-line with respect to GIS train-
+ing.
+7.4 Training with Mixed Features
+An experiment was conducted with the BaseMix
+model to compare the held-out and leave-one-out
+training methods. Results in terms of F-score are
+reported in Table 5. By applying the leave-one-
+out method F-score grows from 77.34 to 78.46,
+with a meaningful improvement in recall (? =
+0.05). With respect to models BaseBin and Base-
+Real, leave-one-out estimation significantly im-
+proved precision (? = 0.05).
+In terms of training time, ME models with real-
+valued features took significantly more GIS iter-
+ations to converge. Figures of cost per iteration
+and number of iterations are reported in Table 6.
+(Computation times are measured on a single CPU
+Pentium-4 2.8GHz.) Memory size of the training
+process is instead proportional to the number n of
+parameters.
+7.5 Complex Features
+A final set of experiments aims at comparing the
+baseline MEmodels augmented with complex fea-
+tures, again either binary only (model FinBin),
+6
+Feature Index NE Task Chunking Task
+Lex c, w, d N(w) > 1,?2 ? d ? +2 ?2 ? d ? +2
+Syn c, T, p, d T ? {Pos, Chnk}, d = 0 T = Pos,?2 ? d ? +2
+Tran c, c?, d d = ?2,?1 d = ?2,?1
+Lex+ c, s, k, ws+k?1s s = ?1, 0, k = 1 s = ?1, 0 k = 1
+Syn+ c, T, s, k, ps+k?1s not used s = ?1, 0 k = 1
+Orth+ c, k, F, b+k?k F = {Cap, CAP}, k = 2 F = Cap, k = 1
+Dict+ c, k, L, b+k?k k = 3L = {LOC, PER, ORG, MISC} not used
+Tran+ c, k, ck1 k = 2 k = 2
+Table 3: Setting used for binary and real-valued features in the reported experiments.
+Model Single Iteration Iterations Total
+BaseBin 54 sec 750 ? 11 h
+BaseReal 9.6 sec 35,000 ? 93 h
+BaseMix 42 sec 4,000 ? 46 h
+Table 6: Computational cost of parameter estima-
+tion by different baseline models.
+real-valued only (FinReal), or mixed (FinMix).
+Results are provided both for NER and TC.
+This time, compared models use different fea-
+ture settings. In fact, while previous experiments
+aimed at comparing the same features, in either
+real or binary form, these experiments explore al-
+ternatives to a full-fledged binary model. In par-
+ticular, real-valued features are employed whose
+binary versions would introduce a prohibitively
+large number of parameters. Parameter estima-
+tion of models including real-valued features al-
+ways applies the leave-one-out method.
+For the NER task, model FinBin adds Orth+
+and Dict+; FinReal adds Lex+, Orth+ and
+Dict+; and, FinMix adds real-valued Lex+ and
+binary-valued Orth+ and Dict+.
+In the TC task, feature configurations are as fol-
+lows: FinBin uses Lex, Syn, Tran, and Orth+;
+FinReal uses Lex, Syn, Tran, Prior, Orth+,
+Lex+, Syn+, Tran+; and, finally, FinMix uses
+binary Syn, Tran, Orth+ and real-valued Lex,
+Lex+, Syn+.
+Performance of the models on the two tasks are
+reported in Table 7 and Table 8, respectively.
+In the NER task, all final models outperform the
+baseline model. Improvements in precision and
+recall are all significant (? = 0.05). Model Fin-
+Mix improves precision with respect to model Fin-
+Bin (? = 0.05) and requires two order of magni-
+tude fewer parameters.
+Model Num P% R% F-score
+FinBin 673K 81.92 80.36 81.13
+FinReal 19 83.58 74.03 78.07
+FinMix 3K 84.34 80.38 82.31
+Table 7: Results with complex features on the
+NER task.
+Model Num P% R% F-score
+FinBin 2M 91.04 91.48 91.26
+FinReal 19 88.73 90.58 89.65
+FinMix 6K 91.93 92.24 92.08
+Table 8: Results with complex features on the TC
+task.
+In the TC task, the same trend is observed.
+Again, best performance is achieved by the model
+combining binary and real-valued features. In par-
+ticular, all observable differences in terms of pre-
+cision and recall are significant (? = 0.05).
+8 Discussion
+In summary, this paper addressed improvements to
+ME models for text tagging applications. In par-
+ticular, we showed how standard binary features
+from the literature can be mapped into correspond-
+ing log-probability distributions. ME training with
+the so-obtained real-valued features can be accom-
+plished by combining the GIS algorithm with the
+leave-one-out or held-out methods.
+With respect to the best performing systems at
+the CoNLL shared tasks, our models exploit a rel-
+atively smaller set of features and perform signifi-
+cantly worse. Nevertheless, performance achieved
+by our system are comparable with those reported
+by other ME-based systems taking part in the eval-
+uations.
+Extensive experiments on named-entity recog-
+7
+nition and text chunking have provided support to
+the following claims:
+? The introduction of real-valued features dras-
+tically reduces the number of parameters of
+the ME model with a small loss in perfor-
+mance.
+? The leave-one-out method is significantly
+more effective than the held-out method for
+training ME models including real-valued
+features.
+? The combination of binary and real-valued
+features can lead to better MEmodels. In par-
+ticular, state-of-the-art ME models with bi-
+nary features are significantly improved by
+adding complex real-valued features which
+model long-span lexical dependencies.
+Finally, the GIS training algorithm does not
+seem to be the optimal choice for ME models in-
+cluding real-valued features. Future work will in-
+vestigate variants of and alternatives to the GIS
+algorithm. Preliminary experiments on the Base-
+Real model showed that training with the Simplex
+algorithm (Press et al, 1988) converges to simi-
+lar parameter settings 50 times faster than the GIS
+algorithm.
+9 Acknowledgments
+This work was partially financed by the Euro-
+pean Commission under the project FAME (IST-
+2000-29323), and by the Autonomous Province of
+Trento under the the FU-PAT project WebFaq.
+References
+O. Bender, F. J. Och, and H. Ney. 2003. Maximum
+entropy models for named entity recognition. In
+Walter Daelemans and Miles Osborne, editors, Pro-
+ceedings of CoNLL-2003, pages 148?151. Edmon-
+ton, Canada.
+A. L. Berger, S. A. Della Pietra, and V. J. Della Pietra.
+1996. A Maximum Entropy Approach to Natural
+Language Processing. Computational Linguistics,
+22(1):39?72.
+A. Borthwick. 1999. A Maximum Entropy approach
+to Named Entity Recognition. Ph.D. thesis, Com-
+puter Science Department - New York University,
+New York, USA.
+S. Chen and R. Rosenfeld. 1999. A Gaussian prior
+for smoothing maximum entropy models. Techni-
+cal Report CMUCS-99-108, Carnegie Mellon Uni-
+versity.
+J.N. Darroch and D. Ratcliff. 1972. Generalized Itera-
+tive Scaling for Log-Liner models. Annals of Math-
+ematical Statistics, 43:1470?1480.
+M. Federico and N. Bertoldi. 2004. Broadcast news
+lm adaptation over time. Computer Speech and Lan-
+guage, 18(4):417?435, October.
+D. Klakow. 1998. Log-linear interpolation of language
+models. In Proceedings of the International Confer-
+ence of Spoken Language P rocessing (ICSLP), Sid-
+ney, Australia.
+R. Koeling. 2000. Chunking with maximum entropy
+models. In Proceedings of CoNLL-2000, pages
+139?141, Lisbon, Portugal.
+C. D. Manning and H. Schutze. 1999. Foundations
+of Statistical Natural Language Processing. MIT
+Press.
+A. Mikheev. 1998. Feature lattices for maximum en-
+tropy modelling. In COLING-ACL, pages 848?854.
+H. Ney, U. Essen, and R. Kneser. 1994. On structur-
+ing probabilistic dependences in stochastic language
+modeling. Computer Speech and Language, 8(1):1?
+38.
+F.J. Och and H. Ney. 2002. Discriminative training and
+maximum entropy models for statistical machin e
+translation. In ACL02: Proceedings of the 40th An-
+nual Meeting of the Association for Computational
+Linguistics, pages 295?302, PA, Philadelphia.
+W. H. Press, B. P. Flannery, S. A. Teukolsky, and W. T.
+Vetterling. 1988. Numerical Recipes in C. Cam-
+bridge University Press, New York, NY.
+8
+Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: System Demonstrations,
+pages 129?132, Dublin, Ireland, August 23-29 2014.
+THE MATECAT TOOL
+M. Federico and N. Bertoldi and M. Cettolo and M. Negri and M. Turchi
+Fondazione Bruno Kessler, Trento (Italy)
+M. Trombetti and A. Cattelan and A. Farina and
+D. Lupinetti and A. Martines and A. Massidda
+Translated Srl, Roma (Italy)
+H. Schwenk and L. Barrault and F. Blain
+Universit?e du Maine, Le Mans (France)
+P. Koehn and C. Buck and U. Germann
+The University of Edinburgh (United Kingdom)
+www.matecat.com
+Abstract
+We present a new web-based CAT tool providing translators with a professional work environ-
+ment, integrating translation memories, terminology bases, concordancers, and machine transla-
+tion. The tool is completely developed as open source software and has been already successfully
+deployed for business, research and education. The MateCat Tool represents today probably the
+best available open source platform for investigating, integrating, and evaluating under realistic
+conditions the impact of new machine translation technology on human post-editing.
+1 Introduction
+The objective of MateCat
+1
+is to improve the integration of machine translation (MT) and human transla-
+tion within the so-called computer aided translation (CAT) framework. CAT tools represent nowadays the
+dominant technology in the translation industry. They provide translators with text editors that can man-
+age several document formats and suitably arrange their content into text segments ready to be translated.
+Most importantly, CAT tools provide access to translation memories (TMs), terminology databases, con-
+cordance tools and, more recently, to machine translation (MT) engines. A TM is basically a repository
+of translated segments. During translation, the CAT tool queries the TM to search for exact or fuzzy
+matches of the current source segment. These matches are proposed to the user as translation sugges-
+tions. Once a segment is translated, its source and target texts are added to the TM for future queries. The
+integration of suggestions from an MT engine as a complement to TM matches is motivated by recent
+studies (Federico et al., 2012; Green et al., 2013; L?aubli et al., 2013), which have shown that post-editing
+MT suggestions can substantially improve the productivity of professional translators. MateCat lever-
+ages the growing interest and expectations in statistical MT by advancing the state-of-the-art along three
+directions:
+? Self-tuning MT, i.e. methods to train statistical MT for specific domains or translation projects;
+? User adaptive MT, i.e. methods to quickly adapt statistical MT from user corrections and feedback;
+? Informative MT, i.e. supply more information to enhance users? productivity and work experience.
+Research along these three directions has converged into a new generation CAT software, which is
+both an enterprise level translation workbench (currently used by several hundreds of professional trans-
+lators) as well as an advanced research platform for integrating new MT functions, running post-editing
+This work is licensed under a Creative Commons Attribution 4.0 International License. Page numbers and proceedings
+footer are added by the organizers. License details: http:// creativecommons.org/licenses/by/4.0/.
+1
+MateCat, acronym of Machine Translation Enhanced Computer Assisted Translation, is a 3-year research project (11/2011-
+10/2014) funded by the European Commission under FP7 (grant agreement no 287688). The project consortium is led by FBK
+(Trento, Italy) and includes the University of Edinburgh (United Kingdom), Universit?e du Maine (Le Mans, France), and
+Translated Srl (Rome, Italy).
+129
+Figure 1: The MateCat Tool editing page.
+experiments and measuring user productivity. The MateCat Tool, which is distributed under the LGPL
+open source license, combines features of the most advanced systems (either commercial, like the pop-
+ular SDL Trados Workbench,
+2
+or free like OmegaT
+3
+) with new functionalities. These include: i) an
+advanced API for the Moses Toolkit,
+4
+customizable to languages and domains, ii) ease of use through a
+clean and intuitive web interface that enables the collaboration of multiple users on the same project, iii)
+concordancers, terminology databases and support for customizable quality estimation components and
+iv) advanced logging functionalities.
+2 The MateCat Tool in a Nutshell
+Overview. The MateCat Tool runs as a web-server accessible through Chrome, Firefox and Safari. The
+CAT web-server connects with other services via open APIs: the TM server MyMemory
+5
+, the commer-
+cial Google Translate (GT) MT server, and a list of Moses-based servers specified in a configuration file.
+While MyMemory?s and GT?s servers are always running and available, customized Moses servers have
+to be first installed and set-up. Communication with the Moses servers extends the GT API in order to
+support self-tuning, user-adaptive and informative MT functions. The natively supported document for-
+mat of MateCat Tool is XLIFF,
+6
+although its configuration file makes it possible to specify external file
+converters. The tool supports Unicode (UTF-8) encoding, including non latin alphabets and right-to-left
+languages, and handles texts embedding mark-up tags.
+How it works. The tool is intended both for individual translators or managers of translation projects
+involving one or more translators. A translation project starts by uploading one or more documents and
+specifying the desired translation direction. Then the user can optionally select a MT engine from an
+available list and/or a new or existing private TM in MyMemory, by specifying its private key. Notice
+that the public MyMemory TM and the GT MT services are assumed by default. The following step is
+the volume analysis of the document, which reports statistics about the words to be actually translated
+based on the coverage provided by the TM. At this stage, long documents can be also split into smaller
+portions to be for instance assigned to different translators or translated at different times. The following
+step starts the actual translation process by opening the editing window. All source segments of the
+2
+http://www.translationzone.com/
+3
+http://www.omegat.org/
+4
+http://www.statmt.org/moses/
+5
+http://mymemory.translated.net
+6
+http://docs.oasis-open.org/xliff/v1.2/os/xliff-core.html
+130
+document and their corresponding target segments are arranged side-by-side on the screen. By selecting
+one segment, an editing pane opens (Figure 1) including an editable field that is initialized with the best
+available suggestion or with the last post-edit. Translation hints are shown right below together with
+their origin (MT or TM). Their ranking is based on the TM match score or the MT confidence score. MT
+hints with no confidence score are assigned a default score. Tag consistency is automatically checked
+during translation and warnings are possibly shown in the editing window. An interesting feature of the
+MateCat Tool is that each translation project is uniquely identified by its URL page which also includes
+the currently edited segment. This permits for instance more users to simultaneously access and work on
+the same project. Moreover, to support simultaneous team work on the same project, translators can mark
+the status (draft, translated, approved, rejected) of each segment with a corresponding color (see Figure
+1, right blue bar). The user interface is enriched with search and replace functions, a progress report at
+the bottom of the page, and several shortcut commands for the skilled users. Finally, the tool embeds a
+concordance tool to search for terms in the TM, and a glossary where each user can upload, query and
+update her terminology base. Users with a Google account can access a project management page which
+permits then to manage all their projects, including storage, deletion, and access to the editing page.
+MT support. The tool supports Moses-based servers able to provide an enhanced CAT-MT commu-
+nication. In particular, the GT API is augmented with feedback information provided to the MT engine
+every time a segment is post-edited as well as enriched MT output, including confidence scores, word
+lattices, etc. The developed MT server supports multi-threading to serve multiple translators, properly
+handles text segments including tags, and instantly adapts from the post-edits performed by each user
+(Bertoldi et al., 2013).
+Edit Log. During post-editing the tool collects timing information for each segment, which is updated
+every time the segment is opened and closed. Moreover, for each segment, information is collected about
+the generated suggestions and the one that has actually been post-edited. This information is accessible at
+any time through a link in the Editing Page, named Editing Log. The Editing Log page (Figure 2) shows
+a summary of the overall editing performed so far on the project, such as the average translation speed
+and post-editing effort and the percentage of top suggestions coming from MT or the TM. Moreover,
+for each segment, sorted from the slowest to the fastest in terms of translation speed, detailed statistics
+about the performed edit operations are reported. This information, with even more details, can be also
+downloaded as a CSV file to perform a more detailed post-editing analysis. While the information shown
+in the Edit Log page is very useful to monitor progress of a translation project in real time, the CSV file
+is a fundamental source of information for detailed productivity analyses once the project is ended.
+3 Applications.
+The MateCat Tool has been exploited by the MateCat project to investigate new MT functions (Bertoldi
+et al., 2013; Cettolo et al., 2013; Turchi et al., 2013; Turchi et al., 2014) and to evaluate them in a real
+professional setting, in which translators have at disposal all the sources of information they are used
+to work with. Moreover, taking advantage of its flexibility and ease of use, the tool has been recently
+exploited for data collection and education purposes (a course on CAT technology for students in trans-
+lation studies). An initial version of the tool has also been leveraged by the Casmacat project
+7
+to create
+a workbench (Alabau et al., 2013), particularly suitable for investigating advanced interaction modalities
+such as interactive MT, eye tracking, and handwritten input. Currently the tool is employed by Trans-
+lated for their internal translation projects and is being tested by several international companies, both
+language service providers and IT companies. This has made possible to collect continuous feedback
+from hundreds of translators, which besides helping us to improve the robustness of the tool is also
+influencing the way new MT functions will be integrated to supply the best help to the final user.
+7
+http://www.casmacat.eu
+131
+Figure 2: The MateCat Tool edit log page.
+References
+Vicent Alabau, Ragnar Bonk, Christian Buck, Michael Carl, Francisco Casacuberta, Mercedes Garca-Mart??nez,
+Jes?us Gonz?alez, Philipp Koehn, Luis Leiva, Bartolom?e Mesa-Lao, Daniel Oriz, Herv?e Saint-Amand, Germ?an
+Sanchis, and Chara Tsiukala. 2013. Advanced computer aided translation with a web-based workbench. In
+Proceedings of Workshop on Post-editing Technology and Practice, pages 55?62.
+Nicola Bertoldi, Mauro Cettolo, and Marcello Federico. 2013. Cache-based Online Adaptation for Machine
+Translation Enhanced Computer Assisted Translation. In Proceedings of the MT Summit XIV, pages 35?42,
+Nice, France, September.
+Mauro Cettolo, Christophe Servan, Nicola Bertoldi, Marcello Federico, Lo??c Barrault, and Holger Schwenk. 2013.
+Issues in Incremental Adaptation of Statistical MT from Human Post-edits. In Proceedings of the MT Summit
+XIV Workshop on Post-editing Technology and Practice (WPTP-2), pages 111?118, Nice, France, September.
+Marcello Federico, Alessandro Cattelan, and Marco Trombetti. 2012. Measuring user productivity in machine
+translation enhanced computer assisted translation. In Proceedings of the Tenth Conference of the Association
+for Machine Translation in the Americas (AMTA).
+Spence Green, Jeffrey Heer, and Christopher D Manning. 2013. The efficacy of human post-editing for language
+translation. In Proceedings of the SIGCHI Conference on Human Factors in Computing Systems, pages 439?
+448. ACM.
+Samuel L?aubli, Mark Fishel, Gary Massey, Maureen Ehrensberger-Dow, and Martin Volk. 2013. Assessing Post-
+Editing Efficiency in a Realistic Translation Environment. In Michel Simard Sharon O?Brien and Lucia Specia
+(eds.), editors, Proceedings of MT Summit XIVWorkshop on Post-editing Technology and Practice, pages 83?91,
+Nice, France.
+Marco Turchi, Matteo Negri, and Marcello Federico. 2013. Coping with the subjectivity of human judgements
+in MT quality estimation. In Proceedings of the Eighth Workshop on Statistical Machine Translation, pages
+240?251, Sofia, Bulgaria, August. Association for Computational Linguistics.
+Marco Turchi, Antonios Anastasopoulos, Jos?e G.C. de Souza, and Matteo Negri. 2014. Adaptive Quality Estima-
+tion for Machine Translation. In Proceedings of the 52nd Annual Meeting of the Association for Computational
+Linguistics (ACL ?14). Association for Computational Linguistics.
+132
+Human Language Technologies: The 2010 Annual Conference of the North American Chapter of the ACL, pages 412?419,
+Los Angeles, California, June 2010. c?2010 Association for Computational Linguistics
+Statistical Machine Translation of Texts with Misspelled Words
+Nicola Bertoldi Mauro Cettolo Marcello Federico
+FBK - Fondazione Bruno Kessler
+via Sommarive 18 - 38123 Povo, Trento, Italy
+{bertoldi,cettolo,federico}@fbk.eu
+Abstract
+This paper investigates the impact of mis-
+spelled words in statistical machine transla-
+tion and proposes an extension of the transla-
+tion engine for handling misspellings. The en-
+hanced system decodes a word-based confu-
+sion network representing spelling variations
+of the input text.
+We present extensive experimental results on
+two translation tasks of increasing complex-
+ity which show how misspellings of different
+types do affect performance of a statistical ma-
+chine translation decoder and to what extent
+our enhanced system is able to recover from
+such errors.
+1 Introduction
+With the widespread adoption of the Internet, of
+modern communication, multimedia and mobile de-
+vice technologies, the amount of multilingual in-
+formation distributed and available to anyone, any-
+where, has exploded. So called social media have
+rapidly reshaped information exchange among Inter-
+net users, providing new means of communication
+(blogs, tweets, etc.), collaboration (e.g. wikis), and
+sharing of multimedia content, and entertainment.
+In particular, social media have today become also
+an important market for advertisement as well as a
+global forum for consumer opinions (Kushal et al,
+2003).
+The growing spread of user-generated content is
+scaling-up the potential demand for on-line machine
+translation (MT) but also setting new challenges to
+the field of natural language processing (NLP) in
+general. The language written and spoken in the
+social media presents an impressive variety of con-
+tent and styles (Schler et al, 2006), and writing con-
+ventions that rapidly evolve over time. Moreover,
+much of the content is expressed in informal style,
+that more or less violates the standard grammar, con-
+tains many abbreviations and acronyms, and finally
+many misspelled words. From the point of view of
+MT, language of social media is hence very different
+from the one represented in the text corpora nowa-
+days available to train statistical MT systems.
+Facing all these challenges, we pragmatically
+scaled down our ambition and decided to investigate
+a basic, somehow preliminary, well defined prob-
+lem: the impact of misspelled words in statistical
+MT. Unintentional typing errors are indeed remark-
+ably frequent in online chats, blogs, wikis, reviews,
+and hence constitute a major source of noise (Subra-
+maniam et al, 2009).
+In this paper we aim at studying performance
+degradation of statistical MT under different levels
+and kinds of noise, and at analyzing to what extent
+statistical MT is able to recover from errors by en-
+riching its input with spelling variations.
+After a brief overview of NLP literature related
+to noisy texts, in Section 3 we consider different
+types of misspellings and derive simple but realistic
+models that are able to reproduce them. Such mod-
+els are then used to generate errors in texts passed
+to a phrase-based statistical MT system. Next, in
+Section 4 we introduce an extension of a statistical
+MT system able to handle misspellings by exploiting
+confusion network decoding (Bertoldi et al, 2008).
+Experiments are reported in Section 5 that in-
+412
+vestigate the trade-off between complexity of the
+extended MT decoder versus translation accuracy.
+Moreover, as the proposed model for handling mis-
+spellings embeds specific assumptions on how er-
+rors are generated, we also measure the robustness
+of the enhanced MT decoder with respect to differ-
+ent noise sources. Experiments are reported on two
+tasks of different complexity, the translation of Eu-
+roparl texts and weather bulletins, involving English
+and Italian languages.
+2 Previous Work
+Most contributions addressing NLP of noisy user-
+generated content are from the text mining commu-
+nity. A survey about the different types of noise that
+might affect text mining is in (Subramaniam et al,
+2009), while an analysis of how noise phenomena,
+commonly occurring in blogs, affect an opinion min-
+ing application is in (Dey and Haque, 2009).
+Concerning spelling correction literature, many
+works apply the noisy channel model which con-
+sists of two components: a source model (prior
+of word probabilities) and a channel (error) model,
+that accounts for spelling transformations on let-
+ter sequences. Several approaches have been
+proposed under this framework, that mainly dif-
+fer in the employed error model; see for exam-
+ple: (Church and Gale, 1991), (Brill and Moore,
+2000) and (Toutanova and Moore, 2002).
+Comprehensive surveys on methods to model and
+recover spelling errors can be found in (Kukich,
+1992) and (Pedler, 2007); in particular, the latter
+work is specifically centered on methods for cor-
+recting so-called real-word errors (cf. Section 3).
+The detection of errors and the suggestion of cor-
+rections typically rely on the availability of text cor-
+pora or human-made lexical resources. Search for
+correct alternatives can be based on word similarity
+measures, such as the edit distance (Mitton, 1995),
+anagram hashing (Reynaert, 2006), and semantic
+distance based on WordNet (Hirst and Budanitsky,
+2005). More sophisticated approaches have been
+proposed by (Fossati and Di Eugenio, 2008), that
+mixes surface and Part-Of-Speech Information, and
+(Schaback and Li, 2007), which combines similarity
+measures at the character, phonetic, word, syntax,
+and semantic levels into one global feature-based
+framework.
+a) *W *w had just come in from Australia [Australia]
+b) good service we *staid one week. [Tahiti]
+c) The room was *exellent but the hallway was *filty .
+[NJ]
+d) is a good place to stay, if you are looking for a hotel
+*arround LAX airport. [Tahiti]
+e) The staff was *freindly ... I was *conerned about
+the noise [CT]
+Table 1: Examples of misspellings found in on-line re-
+views of an hotel close to Los Angeles Int?l Airport. Cor-
+responding corrections are: a) We, , b) stayed, c) excel-
+lent, filthy, d) around, e) friendly, concerned.
+Concerning the literature of statistical MT, inter-
+est in noisy data has been so far considering is-
+sues different from misspelled words. For instance,
+(Davis et al, 1995) and (Vogel, 2003) address train-
+ing methods coping with noisy parallel data, in the
+sense that translations do not perfectly match. Work
+on speech translation (Casacuberta et al, 2008) fo-
+cused instead on efficient methods to couple speech
+recognition and MT in order to avoid error propaga-
+tion. Very recently, (Carrera et al, 2009) conducted
+a qualitative study on the impact of noisy social me-
+dia content on statistical and rule-based MT. Unfor-
+tunately, this work does not report any quantitative
+result, it is only based on a small selection of exam-
+ples that are manually evaluated, and finally it does
+not address the problem of integrating error correc-
+tion with MT.
+3 Types of Misspellings
+In general, a misspelled word is a sequence of let-
+ters that corresponds to no correctly spelled word of
+the same language (non-word error), or to a correct
+spelling of another word (real-word error). In the
+examples shown in Table 1, all marked errors are
+non-word errors, but the one in sentence b), which
+indeed is likely a misspelling of the word stayed.
+Causes of a misspelling may be an unintentional
+typing error (e.g. *freindly for friendly), or lack of
+knowledge about the proper spelling. Typing errors
+can originate from six different typing operations
+(Kukich, 1992): substitution, insertion, deletion,
+transposition, run-on, and split.1 Lack of knowledge
+could be the cause of the misspelled *exellent in sen-
+tence c).
+1 Run-on and split are the special cases of deleting and in-
+serting blank spaces, respectively.
+413
+1. your - you?re
+2. then - than
+3. its - it?s
+4. to - too - two
+5. were - where - we?re
+6. there - their - they?re
+7. a - an - and
+8. off - of
+9. here - hear
+10. lose - loose
+Table 2: List of frequent real-word errors found in blogs.
+Source: http://www.theprobabilist.com.
+An interesting combination of cause and effect is
+when lack of linguistic competence results in con-
+fusing the spelling of a word with the spelling of
+another word that sounds similarly (Hirst and Bu-
+danitsky, 2005). This could be likely the case of the
+Polynesian tourist that authored sentence b).
+A short list of words frequently confused in blogs
+is reported in Table 2 while a longer list can be found
+in the Wikipedia.2 Real-word errors typically fool
+spell checkers because their identification requires
+analyzing the context in which they occur.
+In this paper, we automatically corrupt clean text
+with three types of noise described below. This pro-
+cedure permits us to analyze the MT performance
+against different sources and levels of noise and to
+systematically evaluate our error-recovering strat-
+egy.
+Non-word Noise We randomly replace words in
+the text according to a list of 4,100 frequently non-
+word errors provided in the Wikipedia. A qualitative
+analysis of these errors reveals that all of them origi-
+nate by one or two keyboard typing errors of the kind
+described beforehand. Practically, non-word noise is
+introduced by defining a desired level of corruption
+of the source text.
+Real-word Noise Similarly to the previous case,
+real-word errors are automatically introduced by
+another list of frequently misused words in the
+Wikipedia. This list contains about 300 pairs of con-
+fusable words to which we also added the 10 fre-
+quent real-word errors occurring in blogs reported
+in Table 2.
+2See Wikipedia?s ?list of frequently misused English
+words?.
+Random Noise Finally, we may corrupt the origi-
+nal text by randomly replacing, inserting, and delet-
+ing characters in it up to a desired percentage.
+4 Error-recovering Statistical MT
+An enhancement of a statistical MT system is pro-
+posed with the goal of improving robustness to mis-
+spellings in the input. Rrror recovery is realized
+by performing a sequence of actions before the ac-
+tual translation, which create reliable spelling alter-
+natives of the input and store them into a compact
+word-based Confusion Network (CN).
+Starting from the possibly noisy input text,
+spelling variations are generated by assuming that
+each character is a potential typing error, indepen-
+dent from other characters.
+The variants are represented as a character-based
+CN that models possible substitutions, insertion,
+deletions of each character, with an empirically de-
+termined weight assigned to each alternative. The
+network is then searched by a non-monotonic search
+process that scores possible character sequences
+through a character n-gram language model, and
+outputs a set of multiple spelling variants that is fi-
+nally converted into a word-based CN. The result-
+ing word-based network is finally passed to the MT
+engine. In the following, more details are provided
+on the augmented MT system with the help of Fig-
+ure 1, which shows how the system acts on the cor-
+rupted example ?all off ame?, supposed to be ?hall
+of fame?.
+Step 1 The input text (a) is split into a sequence
+of characters (b) including punctuation marks and
+blank spaces ( ), which are here considered as stan-
+dard characters. Moreover, single characters inter-
+leaved with the conventional empty character .
+Step 2 A CN (c) is built by adding all alternative
+characters of the keyboard to each input character,
+including the space character and the empty char-
+acter. When the string character is , the only ad-
+mitted alternative is . Possible alternative spellings
+of the original string correspond to paths in the CN.
+Notice that each CN column beginning with a stan-
+dard character permits to manage insertion, substi-
+tution and split errors, while each column beginning
+with the empty character permits to handle deletion
+and run-on errors.
+414
+...
+d
+e
+?
+a
+c
+b
+j
+?
+e
+g
+...
+d
+c
+?
+b
+...
+a
+e
+y
+m
+?
+...
+rb
+c
+d
+?
+e
+a
+...
+...
+s
+z
+?
+w
+a
+f
+...
+...
+b
+?
+a
+e
+?
+_
+e
+d
+a
+...
+c
+?
+b
+f
+d
+...
+c
+?
+b
+?
+d
+c
+b
+...
+a
+e
+?
+...
+r
+c
+f
+d
+c
+a
+...
+?
+e
+b
+dk
+p
+i
+?
+o
+...
+e
+c
+d
+...
+a
+b
+?
+_
+?
+a
+c
+...
+b
+?
+e
+d
+k
+p
+l
+...
+?
+o
+?
+...
+b
+e
+d
+a
+c
+?
+o
+p
+...
+l
+k
+...
+i
+h ...
+z
+...
+s
+a
+w
+?
+d
+e
+b
+?
+c
+a
+...
+a
+g
+c
+?
+b
+........
+ah emaf
+_
+fo
+_
+ll
+la em
+_
+fo
+_
+l
+a lh emaf
+_
+ol
+uh em
+_
+ffo
+_
+ll
+ela maf
+_
+fo
+_
+l
+ema_ffo_lla
+arca della gloria
+...
+hull
+...
+...
+?
+hallo
+ofhall me
+fameoffall
+(a)
+(b) ?
+e
+?
+m?
+a
+?
+_
+?f?
+f
+?
+o
+?
+_
+?
+l
+?
+la
+??
+(c)
+(d)
+(e)
+(f)
+p(w|a) ? 0.91
+1
+2
+3
+5
+4
+Figure 1: The whole process to translate the mistaken
+input ?all off ame [hall of fame]? into ?arca della gloria?.
+A probability distribution of confusable
+keystrokes is generated based on the distance
+between the keys on a standard QWERTY key-
+board. This distribution is intended to model how a
+spelling error is actually produced. Hence, character
+alternatives in the CN are associated to a probability
+given by:
+p (x|y) ? ?
+1
+k ? d(x, y) + 1
+(1)
+where d(x, y) is the physical distance between the
+key of x and the key of y on the keyboard layout;
+for example, the character a has a distance of 3 from
+the character c on the considered keyboard layout.
+The free parameter k tunes the discriminative power
+of the model between correct and wrong typing. In
+this paper, k was empirically set to 0.1. The  and
+characters are assigned a default distance of 9 and
+999 from any other character, respectively.
+For the sake of clarity, the probability p(w|a) of
+just one entry is reported in Figure 1.
+Step 3 The generation of spelling variations (d) is
+operated by means of the same decoder employed
+for translation (see below), but in a much simplified
+configuration which does not exploit any translation
+model. It is designed to search the input character-
+based CN for the n-best character sequences which
+better ?correct? the mistaken input. In Figure 1 the
+best sequence is marked by bold boxes (c), and the
+empty character  is removed for the sake of clarity
+(d). This process relies only on the character-based
+6-gram language model trained on monolingual data
+in the source language. It is worth noticing that the
+generated spelling alternatives may in principle still
+contain non-words, just because they are selected by
+a character-based language model, which does not
+explicitly embed the notion of word.
+Transposition errors are modeled both (i) indi-
+rectly through consecutive substitutions with appro-
+priate characters and (ii) directly by permitting some
+re-orderings of adjacent characters. Moreover, pre-
+liminary experiments revealed that the explicit han-
+dling of deletion and run-on errors by interleaving
+input characters with the empty character  (Step 1)
+is crucial to achieve good performance. Although
+the size of the character-based CN doubles, its de-
+coding time increases only by a small factor.
+Step 4 The n-best character sequences (d) are
+transformed into a word-based CN (e) (Mangu et
+al., 2000). First, each character-based sequence is
+transformed into a unifilar word-based lattice, whose
+edges correspond to words and timestamps to the
+character positions. Then, the unifilar lattices are put
+in parallel to create one lattice with all spelling vari-
+ations of the input text (a). Finally, a word-based CN
+is generated by means of the lattice-tool available in
+the SRILM Toolkit (Stolcke, 2002).
+Step 5 Translation of the CN (e) is performed
+with the Moses decoder (Koehn et al, 2007), that
+has been successfully applied mainly to text trans-
+lation, but also to process multiple input hypothe-
+ses (Bertoldi et al, 2008), representing, for exam-
+ple, speech transcriptions, word segmentations, texts
+with possible punctuation marks, etc. In general,
+415
+set #sent. English Italian
+#wrd dict. #wrd dict.
+EP train 1.2M 36M 106K 35M 146K
+test 2K 60K 6.5K 60K 8.3K
+WF train 42K 996K 2641 994K 2843
+test 328 8789 606 8704 697
+Table 3: Statistics of train/test data of the Europarl (EP)
+and the Weather Forecast (WF) tasks.
+Moses looks for the best translation exploring the
+search space defined by a set of feature functions
+(models), which are log-linearly interpolated with
+weights estimated during a tuning stage.
+The rationale of storing the spelling alternatives
+into a word-based CN instead of n-best list is two-
+fold: (i) the CN contains a significantly larger num-
+ber of variations, and (ii) the translation system is
+much more efficient to translate CNs instead of n-
+best lists.
+5 Experiments
+Extensive experiments have been conducted on the
+Europarl shared task, from English to Italian, as
+specified by the Workshop on Statistical Machine
+Translation of the ACL 2008.3 Additional experi-
+ments were conducted on a smaller task, namely the
+translation of weather forecast bulletins between the
+same language pair. Statistics on texts employed in
+experiments are reported in Table 3.
+For both tasks, we created evaluation data by ar-
+tificially corrupting input text with the noise sources
+described in Section 3. The module for generating
+spelling variations (Step 3) was trained on additional
+4M and 16M running words in English and Italian,
+respectively.
+We empirically investigated the following issues:
+(a) performance of the standard MT engine versus
+nature and level of the input noise; (b) performance
+of the error-recovering MT engine versus number of
+provided spelling variations; (c) portability of the
+approach to another task and translation direction;
+(d) computational requirements of the approach.
+5.1 Impact of Noise
+The first set of experiments involved the translation
+of corrupted versions of the Europarl test set. Fig-
+3http://www.statmt.org/wmt08/
+ 10
+ 15
+ 20
+ 25
+20105210.50
+ 10
+ 15
+ 20
+ 25
+B
+L
+E
+U
+Noise Level (%)
+baselinerandom, no-recoverynon-word, no-recoveryreal-word, no-recovery
+Figure 2: Translation performance as function of the
+noise level (in log-scale) for different types of noise.
+ure 2 plots three curves of BLEU(%) scores, corre-
+sponding to different noise sources and noise ratios,
+given in terms of percentage of word error rate. It
+also shows the BLEU score on the original clean
+text. Notice that this baseline performance (25.16)
+represents the state-of-the-art4 for this task.
+The major outcome of these experiments is that
+the different types of errors seem to affect MT per-
+formance in a very similar manner. Quantitatively,
+performance degradation begins even for low noise
+levels ? about 0.5 absolute BLEU loss at 1% of
+noise level ? and reaches 50% when text corruption
+reaches the level of 30%. The similar impact of non-
+word and random errors is somehow expected. The
+plain reason is that both types of errors very likely5
+generate Out-Of-Vocabulary (OOV) words.
+We find instead less predictable that the impact of
+real-word errors is indistinguishable from that of the
+other two noise sources. Notice also that most of the
+real-word errors produce indeed words known to the
+MT system. Hence, the question regards the behav-
+ior of the MT system when the sentence includes on
+OOV word or an out-of-context known word. Em-
+pirically it seems that in both cases the decoder pro-
+duces translations with the same amount of errors.
+In some sense, the good news is that real-word er-
+rors do not induce more translation errors than OOV
+words do.
+4http://matrix.statmt.org/matrix
+5Modulo noise in the parallel data and the chance that a ran-
+dom error generates a true word.
+416
+ 15
+ 20
+ 25
+5020105210.50
+ 15
+ 20
+ 25
+B
+L
+E
+U
+Noise Level (%)
+baselineno-recoverysinglemultiple, 200  20
+ 25
+105210.50
+ 20
+ 25
+B
+L
+E
+U
+Noise Level (%)
+baselineno-recoverysinglemultiple, 200
+Figure 3: Performance of error-recovering method with random (left) and real-word (right) noise.
+5.2 Impact of Multiple Corrections
+Experiments presented here address evaluation of
+our enhanced MT system. In addition to nature and
+level of noise, translation performance is also an-
+alyzed with respect to the number (1 and 200) of
+spelling alternatives generated at Step 3. Figure 3
+plots BLEU scores for random (left plot) and real-
+word (right plot) noises. For comparison purposes,
+the curves with no error recovery are also shown.
+Results with non-word noise are not provided since
+they are pretty similar to those with random noise.
+It is worth noticing that real-word errors are re-
+covered in a different way than random errors; in
+fact, for the latter a single spelling alternative seems
+sufficient to guarantee a substantial error recovery,
+whereas for real-word errors this is not the case.
+Concerning the use of spelling variations, it is
+worth remarking that our system is able to fully re-
+cover from both random and non-word errors up to
+noise levels of 10%, which remains high even for
+noise levels up to 20%, where the BLEU degrada-
+tion is limited to around 5% relative.
+Real-word errors are optimally recovered in the
+case of multiple spelling variations until they do not
+exceed 2% of the words in the input text; after that,
+the decrement of the MT quality becomes signif-
+icant but still limited to about 5% BLEU relative
+for a noise level of 10%. So the question arises
+about what could be a realistic real-word noise level.
+Clearly this question is not easy to address. How-
+ever, to get a rough idea we can look at the exam-
+ples reported in Table 1. These five sentences were
+extracted from a text of about 100 words (of which
+Table 1 only shows the sentences containing errors)
+that contain in total 8 errors: 7 of which are non-
+words and 1 is a real-word. Although from these
+figures reliable statistics cannot be estimated, a rea-
+sonable assumption could be that a global noise level
+of 10%6 might contain a 1/10 ratio for real-word vs.
+non-word errors. Thus, looking at the real-word er-
+ror curve of Figure 3, the inability to recover errors
+for noise levels greater than 2-5% should actually be
+acceptable given this empirical observation.
+Another relevant remark from Figure 3 is that
+for low noise levels (less than 1%) the use of the
+error-recovering module is counterproductive, since
+it introduces more errors than those actually affect-
+ing the original input text, causing a slight degra-
+dation of the translation performance. If the com-
+putational cost to generate variants, which will be
+analyzed in the next paragraph, is also taken into ac-
+count, it results evident the importance of design-
+ing a good strategy for enabling or disabling on de-
+mand the error-recovering stage. A starting point for
+defining an effective activation strategy is the esti-
+mation of the noise rate. For doing this, non-words
+can be counted by exploiting proper dictionaries or
+spell checkers; concerning real-word noise, its rate
+can be inferred either from the non-word rate, or by
+means of the perplexity, which is expected to be-
+come higher as the real-word error rate increases
+(Subramaniam et al, 2009). Once the noise level
+of the input text is known, the decision of activat-
+ing the correction module can be easily taken on a
+6By the way, at this noise rate, an error-recovering strategy
+would be highly recommended.
+417
+ 0 10 20
+ 30 40 50
+ 60
+501010.10  0 10
+ 20 30 40
+ 50 60
+B
+L
+E
+U
+Noise Level (%)
+English-Italian
+baselineno-recoverymultiple, 200
+ 0 10 20
+ 30 40 50
+501010.10  0 10
+ 20 30 40
+ 50
+Noise Level (%)
+Italian-English
+baselineno-recoverymultiple, 200
+Figure 4: Effects of random noise and noise correction
+on translation performance for the WF task.
+threshold basis. Alternatively, the proper working
+point, in terms of precision and recall, of the correc-
+tion model could be dynamically chosen as a func-
+tion of the actual noise level.
+5.3 Computational Costs
+Although our investigation does not address explic-
+itly computational aspects of translating noisy in-
+put, nevertheless some general considerations can be
+drawn.
+The effectiveness of our recovering approach re-
+lies on the compact representation of many spelling
+alternatives in a word-based CN. The CN decod-
+ing has been shown to be efficient, just minimally
+larger than the single string decoding (Bertoldi et
+al., 2008). On the contrary, in the current enhanced
+MT setting, the sequence of Steps 1 to 4 for build-
+ing the CN from the noisy input text is quite costly.
+Rather than to an intrinsic complexity, this is due to
+our choice of creating a rich character-based CN in
+Step 3 for the sake of flexibility and to a naive im-
+plementation of Step 4.
+5.4 Portability
+So far we have analyzed in detail our approach
+on the medium-large sized Europarl task, for the
+English-to-Italian translation direction. For assess-
+ing portability, we also considered a simpler task
+?the translation of weather forecast bulletins? where
+the translation quality is definitely higher, for the
+same language pair but in both translation directions.
+The choice of the weather forecast task is not by
+chance. In fact, as the automatically translated bul-
+letins are published on the Web, a very high transla-
+tion quality is required, and then the presence of any
+typing error in the original text could be a concern.
+(By the way, for this task the presence of real-word
+errors is very marginal.)
+Figure 4 plots curves of MT performance under
+random noise conditions against multiple spelling
+variations, for two translation directions. It can
+be noticed that the error-recovering system behaves
+qualitatively as for the Europarl task but even better
+from a quantitative viewpoint. Again, the recovering
+model introduces spurious errors which affect trans-
+lation quality for low levels of noisy input, but in
+this case the break-even point is less than 0.1% noise
+level. On the other side, errors corrupting the input
+text are fully recovered up to 30-40% of noise lev-
+els, for which the BLEU score would be more than
+halved for non-corrected texts.
+6 Future Work
+There are a number of important issues that this
+work has still left open. First of all, we focused
+on a specific way of generating spelling varia-
+tions, based on single characters, but other possible
+choices should be investigated and compared to our
+approach, like the use of n-grams of words.
+An important open question regards efficiency of
+the proposed recovering strategy, since the problem
+has been only sketched in Section 5.3. It is our in-
+tention to analyze the intrinsic complexity of our
+model, possibly discover its bottlenecks and imple-
+ment a more efficient solution.
+Another topic, mentioned in Section 5.2, is the ac-
+tivation strategy of the misspelling recovery. Some
+further investigation is required on how its working
+point can be effectively selected; in fact, since the
+enhanced system necessarily introduces spurious er-
+rors, it would be desirable to increase its precision
+for low-corrupted input texts.
+7 Conclusions
+This paper addressed the issue of automatically
+translating written texts that are corrupted by mis-
+spelling errors. An enhancement of a state-of-the-art
+statistical MT system is proposed which efficiently
+performs the translation of multiple spelling variants
+of noisy input. These alternatives are generated by a
+character-based error recovery system under the as-
+sumption that misspellings are due to typing errors.
+The enhanced MT system has been tested on texts
+corrupted with increasing noise levels of three dif-
+ferent sources: random, non-word, and real-word er-
+rors.
+418
+Analysis of experimental results has led us to
+draw the following conclusions:
+? The impact of misspelling errors on MT perfor-
+mance depends on the noise rate, but not on the
+noise source.
+? The capability of the enhanced MT system to
+recover from errors differs according to the
+noise source: real-word noise is significantly
+harder to remove than random and non-word
+noise, which behave substantially the same.
+? The exploitation of several spelling alternatives
+permits to almost fully recover from errors if
+the noise rate does not exceed 10% for non-
+word noise and 2% for real-word noise, which
+are likely above the corruption level observed
+in many social media.
+? Finally, performance slightly decreases when
+input text is correct or just mistaken at a negli-
+gible level, because the error recovery module
+rewards recall rather than precision and hence
+tends to overgenerate correction alternatives,
+even if not needed.
+Acknowledgments
+This work was supported by the EuroMatrixPlus
+project (IST-231720), which is funded by the EC un-
+der the 7th Framework Programme for Research and
+Technological Development.
+References
+N. Bertoldi, et al 2008. Efficient speech translation
+through confusion network decoding. IEEE Trans-
+actions on Audio, Speech, and Language Processing,
+16(8):1696?1705.
+E. Brill and R. C. Moore. 2000. An improved error
+model for noisy channel spelling correction. In Pro-
+ceedings of ACL. Hong Kong.
+J. Carrera, et al 2009. Machine trans-
+lation for cross-language social media.
+http://www.promt.com/company/technology/pdf/mach
+ine translation for cross language social media.pdf.
+F. Casacuberta, et al 2008. Recent efforts in spoken lan-
+guage processing. IEEE Signal Processing Magazine,
+25(3):80?88.
+K. W. Church and W. A. Gale. 1991. Probability scor-
+ing for spelling correction. Statistics and Computing,
+1(2):93?103.
+M. W. Davis, et al 1995. Text alignment in the real
+world: Improving alignments of noisy translations us-
+ing common lexical features, string matching strate-
+gies and n-gram comparisons. In Proceedings of
+EACL, Dublin, Ireland.
+L. Dey and S. M. Haque. 2009. Studying the effects of
+noisy text on text mining applications. In Proceedings
+of AND, pages 107?114, Barcelona, Spain.
+D. Fossati and B. Di Eugenio. 2008. I saw tree trees in
+the park: How to correct real-word spelling mistakes.
+In Proceedings of LREC, Marrakech, Morocco.
+G. Hirst and A. Budanitsky. 2005. Correcting real-word
+spelling errors by restoring lexical cohesion. Natural
+Language Engineering, 11(01):87?111.
+P. Koehn, et al 2007. Moses: Open source toolkit for
+statistical machine translation. In Proceedings of ACL
+- Demo and Poster Sessions, pages 177?180, Prague,
+Czech Republic.
+K. Kukich. 1992. Spelling correction for the telecom-
+munications network for the deaf. Communications of
+the ACM, 35(5):80?90.
+D. Kushal, et al 2003. Mining the peanut gallery:
+opinion extraction and semantic classification of prod-
+uct reviews. In Proceedings of the WWW conference,
+pages 519?528, Budapest, Hungary.
+L. Mangu, et al 2000. Finding consensus in speech
+recognition: Word error minimization and other appli-
+cations of confusion networks. Computer, Speech and
+Language, 14(4):373?400.
+R. Mitton. 1995. English Spelling and the Computer
+(Studies in Language and Linguistics). Addison Wes-
+ley Publishing Company.
+J. Pedler. 2007. Computer correction of real-word
+spelling errors in dyslexic text. Ph.D. thesis, Univer-
+sity of London.
+M. Reynaert. 2006. Corpus-induced corpus cleanup. In
+Proceedings of LREC, Genoa, Italy.
+J. Schaback and F. Li. 2007. Multi-level feature extrac-
+tion for spelling correction. In IJCAI - Workshop on
+Analytics for Noisy Unstructured Text Data, pages 79?
+86, Hyderabad, India.
+J. Schler, et al 2006. Effects of age and gender on blog-
+ging. In Proceedings of AAAI-CAAW, Palo Alto, CA.
+A. Stolcke. 2002. Srilm - an extensible language model-
+ing toolkit. In Proceedings of ICSLP, Denver, CO.
+L. V. Subramaniam, et al 2009. A survey of types of text
+noise and techniques to handle noisy text. In Proceed-
+ings of AND, pages 115?122, Barcelona, Spain.
+K. Toutanova and R. C. Moore. 2002. Pronunciation
+modeling for improved spelling correction. In Pro-
+ceedings of ACL, pages 144?151, Philadelphia, PA
+S. Vogel. 2003. Using noisy biligual data for statisti-
+cal machine translation. In Proceedings of EACL, Bu-
+dapest, Hungary.
+419
+Proceedings of the 7th Workshop on Statistical Machine Translation, pages 433?441,
+Montre?al, Canada, June 7-8, 2012. c?2012 Association for Computational Linguistics
+Evaluating the Learning Curve of Domain Adaptive
+Statistical Machine Translation Systems
+Nicola Bertoldi Mauro Cettolo Marcello Federico
+Fondazione Bruno Kessler
+via Sommarive 18
+38123 Trento, Italy
+<surename>@fbk.eu
+Christian Buck
+University of Edinburgh
+10 Crichton Street
+EH8 9AB Edinburgh, UK
+christian.buck@ed.ac.uk
+Abstract
+The new frontier of computer assisted transla-
+tion technology is the effective integration of
+statistical MT within the translation workflow.
+In this respect, the SMT ability of incremen-
+tally learning from the translations produced
+by users plays a central role. A still open
+problem is the evaluation of SMT systems that
+evolve over time. In this paper, we propose
+a new metric for assessing the quality of an
+adaptive MT component that is derived from
+the theory of learning curves: the percentage
+slope.
+1 Introduction
+Translation memories and computer assisted trans-
+lation (CAT) tools are currently the dominant tech-
+nologies in the translation and localization market,
+but recent achievements in statistical MT have raised
+new expectations in the translation industry. So far,
+statistical MT has focused on providing ready-to-use
+translations, rather than outputs that minimize the
+effort of a human translator. The MateCAT project1
+aims at pushing what can be considered the new
+frontier of CAT technology: how to effectively inte-
+grate statistical MT within the translation workflow.
+One pursued research direction is developing do-
+main adaptive SMT models, i.e. models that dynam-
+ically adapt to the translations that are continuously
+added to the translation memory by the user dur-
+ing her/his work. The ideal goal is to progressively
+reduce the mismatch between training and testing
+1http://www.matecat.com/
+data, in such a way that the adapted SMT engine will
+be able to provide the user with useful suggestions
+? i.e. perfect or worth being post-edited ? when the
+translation memory fails to retrieve perfect or almost
+perfect matches. Among the well known machine
+learning paradigms that fit with this scenario are on-
+line learning and incremental learning, which basi-
+cally differ in the amount of data that is employed
+to dynamically adapt the system: a single piece of
+data in the first case and a batch of data in the lat-
+ter. Notice that in both cases one assumes that do-
+main adaptation is performed efficiently, i.e. by only
+processing the newly received data. Moreover, al-
+though the quantity of acquired in-domain data is
+generally limited, their high quality and relevance to
+the translation task justify their exploitation by all
+means possible.
+Domain adaptive SMT embeds two challenges:
+(1) the design of effective adaptation algorithms, and
+(2) the evaluation of MT systems evolving over time.
+Since the ultimate goal of our efforts is to increase
+the productivity of human translators, the most ac-
+curate assessment methodology would be of course
+to run a field test. This way, we could compare pro-
+ductivity of human translators receiving suggestions
+from an MT engine featuring dynamic domain adap-
+tation against the productivity of human translators
+working with a static MT engine. As this evaluation
+is infeasible during daily MT development, we can
+resort to the several automatic MT metrics, which
+however, as we will see later, are unsuitable to track
+the dynamic behaviors we are interested to inves-
+tigate. Metrics for measuring performance in the
+case of interactive MT, see for example (Khadivi,
+433
+2008), like Key-Stroke Ratio (KSR), Mouse-Action
+Ratio (MAR), Key-Stroke and Mouse-Action Ratio
+(KSMR) are known to correlate well with the pro-
+ductivity of human translators, but their computation
+requires the actual use of an interactive MT system,
+i.e. a field test.
+In the SMART project,2 the evaluation of adap-
+tive interactive MT is explored (Cesa-Bianchi et al,
+2008). While no specific metric is proposed, the
+analysis is based on a plot of cumulative differences
+of BLEU scores between a baseline and an adaptive
+system. These differences are computed sentence by
+sentence and present an interesting view of the dy-
+namic change of the MT system. We are going to
+further elaborate on this idea.
+Other metrics like Character Error Rate (CER)
+and Translation Edit Rate (TER) would accurately
+predict the translators? productivity if references
+were generated by using the CAT system; on the
+contrary, references are usually, as in this paper, gen-
+erated from scratch based only on the source text
+and can thus be quite far from CAT-based transla-
+tions, both lexically and syntactically. The Human-
+targeted variant of TER, HTER (Snover et al, 2006),
+needs human intervention and is therefore unfit to
+meet our requirements.
+The main goal of this paper is to design an objec-
+tive automatic evaluation methodology for an MT
+system adapting over time. We propose to use the
+percentage slope from the theory on learning curves
+to measure the learning ability of adaptive MT sys-
+tems.
+To assess the proposed metric, we have imple-
+mented a simple but effective adaptation strategy
+suitable for an MT system integrated in a CAT tool.
+We show that the percentage slope is able to expose
+different dynamic behaviors, such as learning, no
+learning, and forgetting.
+2 Dynamic Adaptation Framework
+In the MateCAT project scenario, the MT system,
+which is embedded in the CAT tool to increase the
+translators? productivity, adapts over time by ex-
+ploiting translations generated by the user. The
+adapted system is then used to provide the user
+with translation suggestions for the next sentences.
+2http://www.smart-project.eu
+We refer to this process as dynamic (or incremen-
+tal) adaptation to emphasize that adaptation hap-
+pens continuously based on a stream of data.
+2.1 Abstract View of the Adaptation Process
+From an abstract point of view, the framework of in-
+cremental adaptation can be summarized as follows:
+i) before the process starts, an initial system is
+built on available data including a parallel cor-
+pus;
+ii) a stream of parallel data becomes available that
+is split into blocks of (not necessarily) similar
+size;
+iii) the first/next block is considered, but only the
+source is available yet;
+iv) the latest instance of the adapting system trans-
+lates the source text of the current block;
+v) the target part of the current block becomes
+available for use;3
+vi) the system is adapted using the current parallel
+block and possibly all the previous ones;
+vii) the loop continues from step iii) until all blocks
+are processed.
+In each adaptation step, all of the data available
+so far can be used, but no look ahead is possible.
+Note that, in principle, each block is translated with
+a different instance of the adapting system; hence,
+the same text occurring in two different blocks can
+be translated differently.
+2.2 Evaluation Goals and Requirements
+Although dynamic adaptation is closely related to
+static domain adaptation (Foster and Kuhn, 2007),
+in this scenario we are not interested in the quality
+of the final model. In fact, this model is only avail-
+able once the stream is depleted and therefore is not
+used anymore.
+What we are interested in, and what we want to
+compare among different approaches, is the systems
+evolvement over time.
+Consider a translator who uses such an incremen-
+tally adapting system and performs post-editing on
+its suggested translations. The highest productivity
+3In the CAT framework, the target part of a block is the
+translation post-edited by the user.
+434
+gain is achieved when the adaptation is quick and
+persistent.
+Even though in this paper we are concerned with
+an automatic metric, it is important to keep the use
+case of CAT in mind, in particular the presence of
+a human translator. The TransType2 project4 has
+found that repeated correction of the same error is
+strongly disliked by editors (Macklovitch, 2006) and
+may lead to rejection of the entire system. Similarly,
+segments that were translated correctly by previous,
+less adapted systems, should not be negatively af-
+fected by updates. We will refer to these particular
+aspects of adaptation as backward reliability.
+Automatic measures, which are aimed at static
+MT modules, can not take the evolution of the sys-
+tem into account and are therefore unable to pinpoint
+such problems. Thus, they are not suitable for the
+dynamic adaptation scenario.
+A new evaluation methodology should satisfy the
+following requirements:
+? ability to compare different strategies
+? show behavior over time and reward early im-
+provements and consistent adaptation
+? expose possible overfitting, i.e. check whether
+generalization is lost due to overly aggressive
+adaptation
+? strong correlation to human productivity
+? estimate benefit over a static baseline model
+without adaptation
+? check backward reliability.
+2.3 Evaluation Protocol
+The performance of adaptive systems as sketched
+in Section 2.1 is evaluated on different parts of the
+stream as opposed to the global evaluation used for
+static systems. We distinguish between two proto-
+cols which differ in their use of historic data.
+For block-wise evaluation only the translations of
+the most recent block are evaluated with respect to
+the correct translations once these become available.
+Any static automatic MT score, e.g. TER (Snover
+et al, 2006), BLEU (Papineni et al, 2001), can be
+used, provided that it is reliable on a block of usually
+relatively small size.
+In contrast, in incremental evaluation the scores
+are computed on all blocks available so far. The
+4http://tt2.atosorigin.es
+translations of previous blocks are kept fixed, i.e.
+blocks are not translated again once a newly adapted
+system becomes available as this new system has al-
+ready seen this data.
+Both the block-wise and incremental protocols
+yield a sequence of scores that reflects the adaptation
+behavior over time. The former is useful to expose
+potential weaknesses as discussed above: we expect
+to see improvement at first and after a while, when
+enough adaptation data is available, a level curve. If
+this is not the case, this indicates a problem:
+i) should the scores deteriorate over time we
+might be facing overfitting, possibly due to un-
+expected heterogeneity in our corpus;
+ii) if the scores continue to improve, then the adap-
+tation method is not aggressive enough and the
+system underfits.
+The incremental evaluation on the other hand allows
+for easy comparison of different adaptation strate-
+gies. While the performance on the most recent
+block becomes less important over time, the perfor-
+mance on all the blocks processed so far nicely re-
+flects the utility of the system in the application set-
+ting.
+The metric we are going to propose in the next
+section processes such sequences of partial scores.
+It accumulates the trend into a single number and
+offers an interpretation that relates adaptive behavior
+to productivity gains.
+3 The Percentage Slope
+Learning curves (see (Stump P.E., 2002) for a de-
+tailed introduction) are mathematical models used
+to estimate the efficiency gain when an activity is
+repeated. The learning effect was noted in indus-
+trial environment: the underlying notion is that when
+people repeat an activity, there tends to be a gain in
+efficiency. That is exactly the expected behavior of
+our dynamically adapting MT system: it should im-
+prove its performance on texts including terms and
+expressions whose proper translation has been pre-
+viously provided. Thus we decided to exploit ele-
+ments from learning theory to measure the evolution
+of translation capability.
+Several learning curve models have been pro-
+posed, but only two are in widespread use, the unit
+435
+(U) model due to Crawford and the cumulative av-
+erage (CA) model due to Wright. Both models are
+based on a common mathematical form:
+y = axb (1)
+where:
+a represents the theoretical labor hours required
+to build the first unit produced (a positive num-
+ber)
+b represents the rate of learning (negative value,
+except for ?forgetting?)
+x represents the number of an item in the produc-
+tion sequence (unit #1,#2,#3, . . .)
+The models differ in the interpretation of y:
+U: y is the labor hours required to build unit #x
+CA: y is the average labor hours per unit required
+to build the first x units
+Since b is a mathematically appropriate but
+counter-intuitive number for describing the slope,
+the percentage slope S is typically used:
+S = 10b log10(2)+2 (2)
+S provides the rate of learning on a scale of 0 to 100,
+as a percentage. A 100% slope represents no learn-
+ing at all, zero percentage reflects a theoretically in-
+finite rate of learning. In practice, human operations
+hardly ever achieve a rate of learning faster than 70%
+as measured on this scale.
+The correspondence between our block-wise eval-
+uation (Section 2.3) with the U model, and the incre-
+mental evaluation with the CA model is straightfor-
+ward. In the first case, y is the number of errors
+done in the translation of the block #x; in the sec-
+ond case, y is the average number of errors (that is
+the TER score or the 100-BLEU score) made on the
+first x blocks.
+From a practical point of view, the sequence of
+scores can be provided while the adapting system is
+being used; the learning curve which best matches
+the sequence is then found5 and eventually the per-
+centage slope S is computed.
+5Notice that the best fitting learning curve can be estimated
+in the log scale with a simple linear regression analysis.
+set #sent. #src words #tgt words
+train 1.2M 18.9M 19.4M
+test 3.4k 57.0k 61.4k
+Table 1: Overall statistics on parallel data of the IT
+domain used for training and testing the SMT system.
+Counts of (English) source words and (Italian) target
+words refer to tokenized texts.
+4 Experiments
+In order to test-drive the evaluation metric intro-
+duced in Section 3, several SMT systems showing
+effective, weak, poor or absent adaptation capabil-
+ity have been developed. Moreover, a preliminary
+investigation on backward reliability has been car-
+ried out. The next paragraphs detail and discuss the
+experiments performed.
+4.1 Data
+The task considered in this work involves the trans-
+lation from English into Italian of documents in the
+Information Technology (IT) domain.
+The training set consists of a large Translation
+Memory in the IT domain and several OPUS6 sub-
+corpora, namely KDE4, KDEdoc and PHP. The test
+set includes the human generated translation of 6
+documents, disjoint from the training set. Although
+in the same domain, the test set is quite different
+from the training data as shown by comparing val-
+ues of perplexity (650 vs. 40) and OOV rate (2.4%
+vs. 0.4%) computed on the source side.7 Further-
+more, the 6 documents significantly differ among
+each other: perplexity and OOV rate range from 465
+to 880 and from 0.8 to 3.3, respectively. Table 1 col-
+lects overall statistics on training and test sets.
+To simulate the stream of fresh data, the IT test
+set has been split into blocks of about a thousand8
+words each. Before splitting, sentences have been
+scrambled, with the rationale of generating a large
+number of homogeneous blocks, simulating a test
+set consisting of a single document.
+6http://opus.lingfil.uu.se
+7Figures for the training data were measured through a
+cross-validation technique.
+8Different sizes have been also considered (three and five
+thousands) to test different adaptation rates, but results were
+qualitatively similar to those on shorter blocks and then are not
+reported.
+436
+4.2 Baseline System
+The SMT baseline system is built upon the open-
+source MT toolkit Moses9 (Koehn et al, 2007).
+The translation and the lexicalized reordering mod-
+els are estimated on parallel training data with the
+default setting; a 5-gram LM smoothed through the
+improved Kneser-Ney technique (Chen and Good-
+man, 1999) is estimated on monolingual texts via
+the IRSTLM toolkit (Federico et al, 2008). Here-
+inafter, these models are referred to as background
+(BG) models. The log-linear interpolation weights
+are optimized by means of the standard MERT pro-
+cedure provided within the Moses toolkit.
+4.3 Adaptive System
+The adapting SMT system is built on Moses as well.
+Besides the BG models of the baseline system, trans-
+lation, reordering and language models estimated on
+the stream of fresh data are employed as additional
+features. Hereinafter, these models are referred to
+as foreground (FG) models. Unless differently spec-
+ified, the FG models employed to translate a given
+block are trained on all preceding blocks. Note that
+the first instance of the adapting system (i.e. that
+translating the first block) is exactly the baseline sys-
+tem, because no adaptation data is available to train
+FG models yet. FG translation and reordering mod-
+els are trained in the same way as the BG models.
+Due to the limited amount of adaptation data, the FG
+LM is a 3-gram LM smoothed through the more ro-
+bust Witten-Bell technique (Witten and Bell, 1991).
+The interpolation weights are inherited from a
+companion system trained and tuned on a different
+domain ? official documents of the European Union
+organization ? and are kept fixed.
+4.4 Experiments on Adaptive SMT
+First of all, the baseline and adapting systems were
+run on the scrambled test set and compared at both
+block-wise and incremental mode (see Section 2.3).
+Figure 1 plots block-wise TER and BLEU scores
+of the baseline and adapting systems as functions of
+the amount (number of words) of adaptation data.
+On one hand, it can be guessed that the adapting
+system performs gradually better and better than the
+baseline; on the other hand, it is evident that such
+9http://www.statmt.org/moses
+plots are not the most effective way to show the evo-
+lution of the adapting system. In fact, the transla-
+tion difficulty of contiguous blocks can differ a lot.
+Hence, scores computed on them are not comparable
+and the corresponding curves are jagged.
+The block-wise differences of TER and BLEU
+scores between the adapting and the baseline sys-
+tems are plotted in Figure 2: the plots are now
+cleaner and more readable and vaguely suggest a
+positive trend, but still remain too jagged and do not
+provide any information about the absolute perfor-
+mance of the systems.
+Figure 3 plots the incremental TER and BLEU
+scores of the baseline and adapting systems as func-
+tions of the amount of adaptation data. First of all,
+it is worth noting that the right-most values are the
+scores computed on the whole test set. In standard
+evaluation, those would be the only scores provided
+to show how the adapting system outperforms the
+baseline system; in particular, the relative improve-
+ment is larger for TER (9.3%) than for BLEU (3.9%)
+supposedly because tuning was performed to opti-
+mize BLEU score which thus is harder to improve.
+However, the overall scores obscure the way they
+are reached, that is the evolution over time of the
+systems, which is especially important for adaptive
+systems.
+Secondly, the incremental evaluation yields much
+smoother plots clearly showing that after initial fluc-
+tuations: (i) performance of the baseline stabilizes
+around an average which does not change over time;
+(ii) scores of the adapting system tend to get increas-
+ingly better as more adaptation data is available for
+updating FG models.
+The evaluation metric we are proposing, the per-
+centage slope introduced in Section 3, is indeed able
+to spot such kind of paradigmatic behaviors as we
+will see in the next section. But before going on
+with the assessment of the metric, some further com-
+ments on Figure 3:
+? in early stages, the adaptation is not effective,
+likely because of the scarcity of data. This
+raises two issues: design of more effective
+adaptation strategies and, in the CAT frame-
+work, identifying the appropriate time to re-
+place the baseline with the adapting system;
+? the adaptive system outperforms the baseline in
+437
+ 40
+ 45
+ 50
+ 55
+ 60
+ 65
+ 0  10000  20000  30000  40000  50000  60000
+T
+E
+R
+ 
+(
+%
+)
+# Number of Words
+adabsln
+ 16
+ 18
+ 20
+ 22
+ 24
+ 26
+ 28
+ 30
+ 32
+ 34
+ 36
+ 0  10000  20000  30000  40000  50000  60000
+B
+L
+E
+U
+ 
+(
+%
+)
+# Number of Words
+adabsln
+Figure 1: Block-wise TER (on the left) and BLEU (right) scores of the baseline and the dynamically adapting systems.
+-12
+-10
+-8
+-6
+-4
+-2
+ 0
+ 2
+ 4
+ 0  10000  20000  30000  40000  50000  60000
+T
+E
+R
+ 
+(
+%
+)
+# Number of Words
+ada -- bsln
+-8
+-6
+-4
+-2
+ 0
+ 2
+ 4
+ 6
+ 8
+ 0  10000  20000  30000  40000  50000  60000
+B
+L
+E
+U
+ 
+(
+%
+)
+# Number of Words
+ada -- bsln
+Figure 2: Block-wise TER (left) and BLEU (right) differences between the baseline and the dynamically adapting
+systems.
+terms of TER very soon, while the overtaking
+with regard to BLEU is observed much later.
+This is because the baseline SMT system was
+tuned with respect to the BLEU score on in-
+domain data, differently to the adapting system.
+Both these issues are out of the scope of this paper
+and will be subject of future investigations.
+4.5 Assessment of the Percentage Slope
+To assess its effectiveness, the percentage slope has
+been computed on errors committed by the baseline
+system, the adapting system and an adapting system
+featuring only FG models (that is without BG mod-
+els). The FG-only system was used to translate each
+block either fairly and unfairly: the former mode fits
+the adaptation process sketched in Section 2.1; in the
+latter mode, the FG model is adapted on the block
+before its translation starts.
+Figure 4 shows the TER and BLEU scores of such
+systems in the incremental evaluation. The four dif-
+ferent behaviors are expected to correspond to dif-
+ferent percentage slopes. In fact, the S values col-
+lected in Table 2 confirm the expectations:
+? the baseline, completely unable to learn, has in
+fact an S of 100%
+? the adapting system, that learns through a dy-
+namic adaptation of FG models and generalizes
+thanks to BG models, has an S of 96-98%
+? the FG-only adapting system tested in unfair
+mode worsens its performance as the models
+become larger, i.e. less focused on the block to
+be translated: this is evidenced by an S greater
+than 100%
+438
+ 50
+ 51
+ 52
+ 53
+ 54
+ 55
+ 56
+ 57
+ 58
+ 59
+ 0  10000  20000  30000  40000  50000  60000
+T
+E
+R
+ 
+(
+%
+)
+# Number of Words
+adabsln
+ 21
+ 21.5
+ 22
+ 22.5
+ 23
+ 23.5
+ 24
+ 24.5
+ 25
+ 25.5
+ 0  10000  20000  30000  40000  50000  60000
+B
+L
+E
+U
+ 
+(
+%
+)
+# Number of Words
+adabsln
+Figure 3: Incremental TER (left) and BLEU (right) scores of the baseline and the dynamically adapting systems.
+model
+system
+baseline adapting
+FG-only adapting
+fair unfair
+U 100.4 96.9 96.2 107.2
+CA 100.3 97.7 96.5 107.4
+Table 2: S values of 4 SMT systems (see text) for
+the block-wise TER evaluation, corresponding to the U
+model, and the incremental evaluation, corresponding to
+the CA model.
+? the FG-only adapting system tested in fair
+mode increases its performance as the models
+become larger, i.e. more general, as evidenced
+by an S similar to that of our original adapting
+system (96%).
+Therefore, we can state that S exposes common
+behaviors of evolving SMT systems; however, stan-
+dard metrics like TER and BLEU are still in charge
+of providing absolute performance measures.
+In order to give a hint for properly interpret-
+ing the values reported, we summarize the discus-
+sion in (Stump P.E., 2002) about ?typical learning
+slopes?. Operations that are fully automated tend
+to have slopes of 100%, 70% if entirely manual, an
+intermediate value if mixed. In real industrial envi-
+ronments, the average slope depends on the type of
+manufacturing activity: for example, in aircraft in-
+dustry it is about 85%, it ranges in 90-95% in elec-
+tronics and in machining. Hence, a 96-98% slope
+as we measured in our experiments must be con-
+sidered a significant learning ability of a fully au-
+tomated system.
+4.6 Experiments on Backward Reliability
+A proper assessment of the backward reliability of
+an evolving system as defined in Section 2.2 would
+require the identification of patterns translated dif-
+ferently by the system during its life. We will inves-
+tigate this issue in the future. For the moment, we
+try to attack the problem from a global point of view:
+we simply check that the adaptive system does ?re-
+member? its previous translation capabilities ?on av-
+erage?, while it learns to better translate novel texts.
+To this end, a cross-validation policy was fol-
+lowed: the first two thirds of each test set document
+are used for dynamically training the FG models,
+while the remaining portions are used as held-out
+test sets.
+Figure 5 reports the TER and BLEU scores on
+the 6 test sets of three systems: the baseline sys-
+tem (bsln), the adapting system (ada) fed by in-
+crementally merging the available reduced adapta-
+tion sets, and the system adapted on all adaptation
+data sets (final).
+The final system achieves performance close
+to ada system on each held-out set; this reveals that
+our adaptation process is effective both in learning
+and in remembering.
+We think that the monitoring of the backward re-
+liability of adapting systems is a good practice. A
+cross validation scheme like ours allows not only to
+reveal the backward reliability as shown before, but
+also to discover the forgetting trend of, for example,
+an MT system featuring an overly aggressive learn-
+439
+ 20
+ 25
+ 30
+ 35
+ 40
+ 45
+ 50
+ 55
+ 60
+ 65
+ 70
+ 0  10000  20000  30000  40000  50000  60000
+T
+E
+R
+ 
+(
+%
+)
+# Number of Words
+bslnadaFGonly fair adaFGonly unfair ada
+ 10
+ 20
+ 30
+ 40
+ 50
+ 60
+ 70
+ 0  10000  20000  30000  40000  50000  60000
+B
+L
+E
+U
+ 
+(
+%
+)
+# Number of Words
+bslnadaFGonly fair adaFGonly unfair ada
+Figure 4: Incremental TER (left) and BLEU (right) of 4 systems showing different learning slopes.
+ing method. On the other hand, it only provides cues
+about the average behavior and it is not as quickly
+informative as a single score could be. Hence, the
+design of a proper metric for measuring the back-
+ward reliability of MT systems is a challenging task
+that should be faced by the research community.
+5 Summary and Future Work
+The evaluation of a dynamically adapting system is
+an open issue. Metrics used in interactive MT such
+as HTER or field tests, are infeasible in the daily de-
+velopment as they involve human translators/judges.
+On the other hand, standard MT evaluation met-
+rics either do not expose changes over time (BLEU,
+TER) or cannot be applied (CER).
+The main contribution of this paper is to propose
+the use of the percentage slope for the evaluation of
+adapting MT systems, a metric borrowed from the
+theory on learning curves. For assessing its effec-
+tiveness, we have developed a simple but effective
+adapting SMT system suitable to work in the context
+of a CAT tool supported by MT. We have compared
+several ways to plot the change in error rate over
+time for different systems and identified the most
+suitable for computing the percentage slope. Finally,
+we have shown that the percentage slope well ex-
+poses the paradigmatic behaviors of evolving SMT
+systems.
+The MateCAT project has scheduled field tests
+for the near future which will allow for inclusion
+of human productivity in the assessment of the per-
+centage slope. Moreover, efforts will be devoted to
+the design of adaptation techniques which are more
+sophisticated than the simple approach used in this
+work.
+We have also identified the issue of backward re-
+liability of an adapting system, that is the ability to
+learn without forgetting the past, and the importance
+of monitoring it. A best practice based on a cross
+validation scheme has been proposed. Future inves-
+tigations will concern finding an effective metric to
+measure backward reliability.
+Acknowledgments
+This work was supported by the MateCAT project,
+which is funded by the EC under the 7th Framework
+Programme.
+References
+N. Cesa-Bianchi, G. Reverberi, and S. Szedmak. 2008.
+Online learning algorithms for computer-assisted
+translation. Deliverable 4.2, SMART project (FP6).
+http://www.smart-project.eu/files/D4
+2.pdf.
+S. F. Chen and J. Goodman. 1999. An empirical study of
+smoothing techniques for language modeling. Com-
+puter Speech and Language, 4(13):359?393.
+M. Federico, N. Bertoldi, and M. Cettolo. 2008.
+IRSTLM: an Open Source Toolkit for Handling Large
+Scale Language Models. In Proc. of Interspeech, pp.
+1618?1621, Melbourne, Australia.
+G. Foster and R. Kuhn. 2007. Mixture-Model Adapta-
+tion for SMT. In Proc. of WMT, pp. 128?135, Prague,
+Czech Republic.
+S. Khadivi. 2008. Statistical Computer-Assisted Trans-
+lation. Ph.D. thesis, RWTH Aachen University,
+440
+ 45
+ 50
+ 55
+ 60
+ 65
+ 70
+ 75
+ 1  2  3  4  5  6
+T
+E
+R
+ 
+(
+%
+)
+Document
+bslnadafinal
+ 18
+ 20
+ 22
+ 24
+ 26
+ 28
+ 30
+ 32
+ 34
+ 36
+ 1  2  3  4  5  6
+B
+L
+E
+U
+ 
+(
+%
+)
+Document
+bslnadafinal
+Figure 5: TER (left) and BLEU (right) scores of the baseline system, the evolving system and the final adapted system
+on the document-specific held-out test sets.
+Aachen, Germany. Advisors: Hermann Ney and En-
+rique Vidal.
+P. Koehn, H. Hoang, A. Birch, C. Callison-Burch,
+M. Federico, N. Bertoldi, B. Cowan, W. Shen,
+C. Moran, R. Zens, C. Dyer, O. Bojar, A. Con-
+stantin, and E. Herbst. 2007. Moses: Open Source
+Toolkit for Statistical Machine Translation. In Proc. of
+ACL: Demo and Poster Sessions, pp. 177?180, Prague,
+Czech Republic.
+E. Macklovitch. 2006. Transtype2: The last word. In
+Proc. of LREC 2006, Genoa, Italy.
+K. Papineni, S. Roukos, T. Ward, and W.-J. Zhu. 2001.
+Bleu: a method for automatic evaluation of machine
+translation. Research Report RC22176, IBM Research
+Division, Thomas J. Watson Research Center.
+M. Snover, B. Dorr, R. Schwartz, L. Micciulla, and J.
+Makhoul. 2006. A study of translation edit rate with
+targeted human annotation. In Proc. of AMTA, Boston,
+US-MA.
+E. Stump P.E. 2002. All about learning curves. In Proc.
+of SCEA. http://www.galorath.com/im
+ages/uploads/LearningCurves1.pdf.
+I. H. Witten and T. C. Bell. 1991. The zero-frequency
+problem: Estimating the probabilities of novel events
+in adaptive text compression. IEEE Trans. Inform.
+Theory, IT-37(4):1085?1094.
+441
+Proceedings of the Eighth Workshop on Statistical Machine Translation, pages 301?308,
+Sofia, Bulgaria, August 8-9, 2013 c?2013 Association for Computational Linguistics
+Online Learning Approaches in Computer Assisted Translation
+Prashant Mathur??, Mauro Cettolo?, Marcello Federico?
+? University of Trento
+? FBK - Fondazione Bruno Kessler
+Trento, Italy
+{prashant, cettolo, federico}@fbk.eu
+Abstract
+We present a novel online learning ap-
+proach for statistical machine translation
+tailored to the computer assisted transla-
+tion scenario. With the introduction of
+a simple online feature, we are able to
+adapt the translation model on the fly
+to the corrections made by the transla-
+tors. Additionally, we do online adaption
+of the feature weights with a large mar-
+gin algorithm. Our results show that our
+online adaptation technique outperforms
+the static phrase based statistical machine
+translation system by 6 BLEU points abso-
+lute, and a standard incremental adaptation
+approach by 2 BLEU points absolute.
+1 Introduction
+The growing needs of the localization and trans-
+lation industry have recently boosted research
+around computer assisted translation (CAT) tech-
+nology. The purpose of CAT is to increase the pro-
+ductivity of a human translator. A CAT tool comes
+as a package of a Translation Memory (TM), built-
+in spell checkers, a dictionary, a terminology list
+etc. which help the translator while translating
+a sentence. Recent research has led to the in-
+tegration of CAT tools with statistical machine
+translation (SMT) engines. SMT makes use of a
+large available parallel corpus to generate statisti-
+cal models for translation. Due to their generaliza-
+tion capability, SMT systems are a good fit in this
+scenario and a seamless integration of SMT en-
+gines in CAT have shown to increase translator?s
+productivity (Federico et al, 2012).
+Although automatic systems generate reliable
+translations they are not accurate enough to be
+used directly and need postedition by human trans-
+lators. In state-of-the-art CAT tools, the SMT sys-
+tems are static in nature and so they cannot adapt
+to these corrections. When a SMT system keeps
+repeating the same error, productivity of transla-
+tors as well as their trust in SMT technology are
+negatively affected. As an example, technical doc-
+umentation typically contains a lot of repetitions
+due to the employed writing style and pervasive
+use of terminology. Hence, in order to provide
+useful hints, SMT systems are expected to behave
+consistently regarding the translation of domain-
+specific terms. However, if the user edits the trans-
+lation of a technical term in the target text, most
+current SMT systems are incapable to learn from
+those corrections.
+Online learning is a machine learning task
+where a predictor iteratively: (1) receives an input
+and outputs a label, (2) receives the correct label
+from a human and if the two labels do not match, it
+learns from the mistake. The task of learning from
+user corrections at the sentence level fits well the
+online learning scenario, and its expected useful-
+ness is clearly related to the amount of repetitions
+occurring in the text. The higher the number of
+repetititions in a document the more the SMT sys-
+tem has chances to translate consistently through
+the use of online learning.
+In this paper, we implemented two online learn-
+ing methods through which a phrase-based SMT
+system evolves over time, sentence after sentence,
+by taking advantage of the post-edition or transla-
+tion of the previous sentence by the user.1
+In the first approach, we focus on the translation
+model aspect of SMT which is represented by five
+conventional features, namely lexical and phrase
+translation probabilities in both directed and in-
+verted directions, plus a phrase penalty score.
+Translation, language and reordering models are
+combined in a linear fashion to obtain a score for
+1Moses code is available in the github reposi-
+tory. https://github.com/mtresearcher/
+mosesdecoder/tree/moses_onlinelearning
+301
+the translation hypothesis as shown in Equation 1.
+score(e?, f) = ?i?ihi(e?, f) (1)
+where hi(?) are the feature functions representing
+the models and ?i are the linear weights. The
+highest scored translation is the best hypothesis
+e? output by the system. We extend the transla-
+tion model with a new feature which provides ex-
+tra phrase-pair scores changing according to the
+user feedback. The scores of the new feature are
+adapted in a discriminative fashion, by reward-
+ing phrase-pairs observed in the search space and
+in the reference, and penalizing phrase-pairs ob-
+served in the search space but not in the reference.
+In the second approach, we also adapt the model
+weights of the linear combination after each test
+sentence by using a margin infused relaxed algo-
+rithm (MIRA).
+For assessing the robustness of our methods, we
+performed experiments on two datasets from dif-
+ferent domains and language pairs (?6). More-
+over, our online learning approaches are compared
+against a static baseline system and against the in-
+cremental adaptation approach proposed by Lev-
+enberg et. al. (2010) (?5).
+2 Related Works
+Several online adaptation strategies have been pro-
+posed in the past, only a few deal with adaptation
+of post-edited/evaluation data while most works
+are on adaptation over development data during
+tuning of parameters (Och and Ney, 2003).
+2.1 Online Adaptation during Tuning
+Liang et. al. (2006) improved SMT perfor-
+mance by online adaptation of scaling factors (? in
+(1)) using averaged perceptron algorithm (Collins,
+2002). They presented different strategies to up-
+date the SMT models towards reference or oracle
+translation: (1) aggressively updating towards ref-
+erence, bold update; (2) update towards the ora-
+cle translation in N-Best list, local update; (3) a
+hybrid approach in which a bold update is per-
+formed when the reference is reachable, other-
+wise a local update is performed. Liang and Klein
+(2009) compared two online EM algorithms, step-
+wise online EM (Sato and Ishii, 2000; Cappe? and
+Moulines, 2007) and incremental EM (Neal and
+Hinton, 1998) which they use to update the align-
+ment models (the generative component of SMT)
+on the fly. However, stepwise EM is prone to fail-
+ure if mini-batch size and stepsize parameters are
+not chosen correctly, while incremental EM re-
+quires substantial storage costs because it has to
+store sufficient statistics for each sample. Other
+works on online minimum error rate training in
+SMT (Och and Ney, 2003) that deserve mention-
+ing are (Hopkins and May, 2011; Hasler et al,
+2011).
+2.2 Online Adaptation during Decoding
+Cesa-Bianchi et. al. (2008) proposed an online
+learning approach during decoding. They con-
+struct a layer of online weights over the regu-
+lar feature weights and update these weights at
+sentence level using margin infused relaxed algo-
+rithm (Crammer and Singer, 2003); to our knowl-
+edge, this is the first work on online adaptation
+during decoding. Mart??nez-Go?mez et. al. (2011;
+2012) presented a comparison of online adapta-
+tion techniques in post editing scenario. They
+compared different adaptation strategies on scal-
+ing factors and feature functions (respectively, ?
+and h(?) in (1)). However, they modified the fea-
+ture values during adaptation without any normal-
+ization, which disregards the initial assumption of
+the feature values being probabilities.
+In our approach, the value of the additional on-
+line feature can be modified during decoding with-
+out changing other feature values (probabilities)
+and thus preserving their probability distribution.
+3 Feature Adaptation
+In the CAT scenario, the user receives a translation
+suggestion for each source segment, post-edits it
+and finally approves it. From the SMT point of
+view, for each source segment the decoder ex-
+plores a search space of possible translations and
+finally returns the best scoring one (bestHyp) to
+the user. The user possibly corrects this suggestion
+thus generating the final translation (postedit).
+Our online learning procedure is based on the
+following idea. For each N-best translation (candi-
+date) in the search space, we compute a similarity
+score against the postedit using the sentence-level
+BLEU metric (Lin and Och, 2004), a smoothed
+variant of the popular BLEU metric (Papineni
+et al, 2001). We hence compare the similar-
+ity score of each candidate against the similar-
+ity score achieved by the bestHyp, that was also
+computed against the postedit. If the candidate
+302
+scores better than the bestHyp, then we promote
+the building blocks, i.e. phrase-pairs, of candi-
+date that were not used in bestHyp and demote the
+phrase-pairs used in bestHyp that were not used
+for candidate. On the contrary, if the candidate
+scores worse than the bestHyp, we promote the
+building blocks of bestHyp that are not in candi-
+date and demote those of candidate that are not in
+bestHyp.
+Our promotion/demotion mechanism could be
+implemented by updating the features values of
+the phrase pairs used in the candidate and bestHyp
+translations. However, features in the translation
+models are conditional probabilities and perturb-
+ing a subset of them by also preserving their nor-
+malization constraints can be computationally ex-
+pensive. Instead, we propose to introduce an addi-
+tional online feature which represents a goodness
+score of each phrase-pair in the test set.
+We call the set of phrase pairs used to generate
+a candidate as candidatePP and the set of phrase
+pairs used to generate the bestHyp as bestPP . The
+online feature value of each phrase-pair is initial-
+ized to a constant and is updated according to the
+perceptron update (Rosenblatt, 1958) method. In
+particular, the amount by which a current feature
+value is rewarded or penalized depends on a learn-
+ing rate ? and on the difference between the model
+scores (i.e. h ?w) of candidate and bestHyp as cal-
+culated by the MT system. A sketch of our online
+learning procedure is shown in Algorithm 1.
+Algorithm 1: Online Learning
+foreach sourceSeg do
+bestHyp = Translate(sourceSeg);
+postedit = Human(bestHyp);
+for i = 1 ? iterations do
+N-best=Nbest(source);
+foreach candidate ? N-best do
+sign = sgn |sBLEU(candidate) -
+sBLEU(bestHyp)| ;
+foreach phrasePair ? candidatePP do
+if phrasePair /? bestPP then
+f i = f i?1 + (? ? (?h ? w) ?
+sign);
+end
+end
+foreach phrasePair ? bestPP do
+if phrasePair /? candidatePP then
+f i = f i?1 - (? ? (?h ? w) ?
+sign);
+end
+end
+end
+end
+end
+In Algorithm 1, ?h ? w is the above mentioned
+score difference as computed by the decoder; mul-
+tiplied by ?, it is the margin, that is the value with
+which the online feature score (f ) of the phrase
+pair under processing is modified. We can observe
+that the feature scores are unbounded and could
+lead to instability of the algorithm; therefore, we
+normalise the scores through the sigmoid function:
+f(x) = 21 + exp(x) ? 1 (2)
+4 Weight Adaptation
+In addition to adapting the online feature values,
+we can also apply online adaptation on the fea-
+ture weights of the linear combination (eq. 1). In
+particular, after translating each sentence we can
+adapt the parameters depending on how good the
+last translation was. A commonly used algorithm
+in this online paradigm for tuning of parameters is
+the Margin Infused Relaxed Algorithm (MIRA).
+MIRA is an online large margin algorithm that
+updates the parameter w? of a given model accord-
+ing to the loss that is occurred due to incorrect
+classification. In the case of SMT this margin
+can be coupled with the loss function, which in
+this case is the complement of the sentence level
+BLEU(sBLEU). Thus, the loss function can be
+formulated as:
+l(y?) = sBLEU(y?)? sBLEU(y?) (3)
+where y? is the oracle (closest translation to the
+reference) and y? is the candidate being processed.
+Ideally, this loss should correspond to the differ-
+ence between the model scores:
+?h ? w? = score(y?)? score(y?) (4)
+MIRA is an ultraconservative algorithm, meaning
+that the update of the current weight vector is the
+smallest possible value satisfying the constraint
+that the variation incurred by the objective func-
+tion must not be larger than the variation incurred
+by the model (plus a non-negative slack variable
+?). Formally, weight update at ith iteration is de-
+fined as:
+wi = argminw
+1
+2? ||w ? wi?1||
+2
+? ?? ?
+conservative
++ C????
+aggressive
+?
+j
+?j
+subject to
+lj ? ?hj ? w + ?j ?j ? J ? {1 . . . N}
+(5)
+303
+where j ranges over all candidates in the N-
+best list, lj is the loss between oracle and the
+candidate j, and ?hj ? w is the corresponding
+difference in the model scores. C is an aggressive
+parameter which controls the size of the update, ?
+is the learning rate of the algorithm and ? is usu-
+ally a very small value (in our experiments we kept
+it as 0.0001). After partial differentiation and lin-
+earizing the loss, equation 5 can be rewritten as:
+wi = wi?1 + ? ?
+?
+j
+?j ??hj
+where
+?j = min
+{
+C, lj ? ?hj ? w||?hj ||2
+}
+(6)
+We solve equation 5, by computing ? with
+the optimizer integrated in the Moses toolkit by
+(Hasler et al, 2011). Algorithm 2 gives an
+overview of the online margin infused relaxed al-
+gorithm we implemented in Moses.
+Algorithm 2: Online Margin Infused Relaxed
+foreach sourceSeg do
+bestHyp = Translate(sourceSeg);
+postedit = Human(bestHyp);
+w0 = w;
+for i = 1 ? iterations do
+N-best=Nbest(sourceSeg,wi?1);
+foreach candidatej ? N-best do
+if ?hj ? w + ?j ? lj then
+?j = Optimize(lj , hj , w, C);
+wi = wi?1 + ? ??j ?j?hj ;
+end
+end
+end
+end
+In the following section we overview a stream
+based adaptation method with which we exper-
+imentally compared our two online learning ap-
+proaches as it well fits the framework we are work-
+ing in.
+5 Stream based adaptation
+Continuously updating an SMT system to an in-
+coming stream of parallel data comes under stream
+based adaptation. Levenberg et. al. (2010) pro-
+posed an incremental adaptation technique for the
+core generative component of the SMT system,
+word alignments and language models (Leven-
+berg and Osborne, 2009). To get the word align-
+ments on the new data they use a Stepwise online
+EM algorithm, where old counts (from previous
+alignment models) are interpolated with the new
+counts.
+Since we work at the sentence level, on-the-
+fly computation of probabilities of translation and
+reordering models is expensive in terms of both
+computational and memory requirements. To save
+these costs, we prefer using dynamic suffix ar-
+ray approach described in (Levenberg et al, 2010;
+Callison-Burch et al, 2005; Lopez, 2008). They
+are used to efficiently store the source and the tar-
+get corpus and alignments in efficient data struc-
+ture, namely the suffix array. When a phrase
+translation is asked by the decoder, the corpus is
+searched, the counts are collected and its probabil-
+ities are computed on the fly. However, the current
+implementation in Moses of the stream based MT
+relying on the suffix arrays is severely limited as
+it allows the computation of only three translation
+features, namely the two direct translation proba-
+bilities and the phrase penalty. This results in a
+significant degradation of performance.
+6 Experiments
+6.1 Datasets
+We compared our online learning approaches
+(Sections 3 and 4) and the stream based adapta-
+tion method (Section 5) on two datasets from dif-
+ferent domains, namely Information Technology
+(IT) and TED talks, and two different language
+pairs. The IT domain dataset is proprietary, it in-
+volves the translation of technical documents from
+English to Italian and has been used in the field
+test carried out under the MateCat project2. Ex-
+periments are also conducted on English to French
+TED talks dataset (Cettolo et al, 2012) to assess
+the robustness of the proposed approaches in a dif-
+ferent scenario and to provide results on a publicly
+available dataset for the sake of reproducibility.
+The training, development (dev2010) and evalu-
+ation (tst20103) sets are the same as used in the
+last IWSLT last evaluation campaigns. In experi-
+ments on TED data, we considered the human ref-
+erence translations as post edits, even if they were
+2www.matecat.com
+3As the size of evaluation set in TED data is too large with
+respect to the current implementation of our algorithms, we
+performed evaluation on the first 200 sentences only.
+304
+actually generated from scratch.
+In our experiments, the extent of usefulness of
+online learning highly depends on the amount of
+repetition of text. A reasonable way to measure the
+quantity of repetition in each document is through
+the repetition rate (Bertoldi et al, 2013). It com-
+putes the rate of non-singleton n-grams, n=1...4,
+averaging the values over sub-samples S of thou-
+sand words from the text, and then combining the
+rate of each n-gram to a single score by using the
+geometric mean. Equation 7 shows the formula
+for calculating the repetition rate of a document,
+where dict(n) represents the total number of
+different n-grams and nr is the number of different
+n-grams occurring exactly r times:
+RR =
+( 4?
+n=1
+?
+S dict(n)? n1?
+S dict(n)
+)1/4
+(7)
+Statistics of the parallel sets and their repetition
+rate on both sides are reported in Table 1.
+Domain Set #srcTok srcRR #tgtTok tgtRR
+ITen?it
+Train 57M na 60M na
+Dev 3.3k 12.03 3.5k 11.87
+Test 3.3k 15.00 3.3k 14.57
+TEDen?fr
+Train 2.6M na 2.8M na
+Dev 20k 3.43 20k 5.27
+Test 32k 4.08 34k 3.57
+Table 1: Statistics of the parallel data along with
+the corresponding repetition rate (RR).
+It can be noted that the repetition rates of IT
+and TED sets are significantly different, partic-
+ularly high in IT documents, much lower in the
+TED talks.
+6.2 Systems
+The SMT systems were built using the Moses
+toolkit (Koehn et al, 2007). Training data in each
+domain was used to create translation and lexical
+reordering models. We created a 5-gram LM for
+TED talks and a 6-gram LM for the IT domain
+using IRSTLM (Federico et al, 2008) with im-
+proved Kneser-Ney smoothing (Chen and Good-
+man, 1996) on the target side of the training paral-
+lel corpora. The log linear weights for the baseline
+systems are optimized using MERT (Och, 2003)
+provided in the Moses toolkit. To counter the in-
+stability of MERT, we averaged the weights of
+three MERT runs in each case. Performance is
+measured in terms of BLEU and TER (Snover
+et al, 2006) computed using the MultEval script
+(Clark et al, 2011). Since the implementations of
+standard Giza and of incremental Giza combined
+with dynamic suffix arrays are not comparable,
+we constructed two baselines, a standard phrase
+based SMT system and an incremental Giza base-
+line (?5). Details on experimental SMT systems
+we built follow.
+Baseline This system was built on the parallel
+training data for each domain. We run 5 iterations
+of model 1, 5 of HMM (Vogel et al, 1996), 3 of
+model 3, 3 of model 4 (Brown et al, 1993) us-
+ing MGiza (Gao and Vogel, 2008) toolkit to align
+the parallel corpus at word level. Translation and
+reordering models were built using Moses, while
+log-linear weights were optimized with MERT on
+the corresponding development sets. The same IT
+baseline system was used in the field test of Mate-
+Cat and the references in the IT data are actual
+postedits of its translation.
+IncGiza Baseline We trained alignment models
+with incGiza++4 with 5 iterations of model 1 and
+10 iterations of the HMM model. To build in-
+cremental Giza baselines, we used dynamic suf-
+fix arrays as implemented in Moses which allow
+the addition of new parallel data during decod-
+ing. In the incremental Giza baseline, once a sen-
+tence of the test set is translated, the sentence pair
+(source and target post-edit/reference) along with
+the alignment provided by incGiza are added to
+the models.
+Online learning systems We developed several
+online systems on top of the two aforementioned
+baseline systems: (1) +O employ the additional
+online feature (Section 3) updated with Algorithm
+1; (2) +O+NS as (1) but with the online fea-
+ture normalized with the sigmoid function; (3)
++W weights updated (Section 4) with Algorithm
+2; (4) +O+W combination of online feature and
+weight update; (5) +O+NS+W as system (4) with
+normalized online feature score.
+In the online learning system we have three ad-
+ditional parameters: a weight for the online fea-
+ture, a learning rate for features (used in the per-
+ceptron update), and a learning rate for feature
+weights used by MIRA. These additional param-
+eters were optimized by maximizing the BLEU
+4http://code.google.com/p/inc-giza-pp/
+305
+score on the devset and on top of already opti-
+mized feature weights. For practical reasons, opti-
+mization of the parameters was run with the Sim-
+plex algorithm (Nelder and Mead, 1965).
+7 Results and Discussion
+Tables 2 and 3 collect results by the systems de-
+scribed in Section 6.2 on the IT and TED transla-
+tion tasks, respectively.
+In Table 2, the online system (1st block
+?+O+NS+W? system with 10 iterations of online
+learning) shows significant improvements, over 6
+BLEU points absolute above the baseline. In this
+case the online feature can clearly take advantage
+of the high repetition rates observed in the IT dev
+and test sets (Table 1). Similarly, in the second
+block, the online system (2nd block ?+O+NS+W?
+with 10 iterations of online learning) outperforms
+IncGiza baseline, too. It is interesting to note that
+by continuously updating the baseline system af-
+ter each translation step, even the plain translation
+models are capable to learn from the correction in
+the post-edited text.
+Figure 1 depicts learning curve of Baseline sys-
+tem, ?+O+NS? (referred as +online feature) and
+?+O+NS+W? (referred as +MIRA). We plotted in-
+cremental BLEU scores after translation of each
+sentence, thereby the last point on the plot shows
+the corpus level BLEU on the whole test set.
+In Table 3, from the first block we can observe
+that online learning systems perform only slightly
+better than the baseline systems, the main reason
+being the low repetition rate observed in the eval-
+uation set (as shown in Table 1). The positive re-
+sults observed in the second block (?+O+W? with
+10 iterations) are probably due to the larger room
+for improvement available for translation models
+implemented with dynamic suffix arrays, as they
+only incorporate 3 features instead of 5. Some-
+times, online learning systems show worse results
+with higher numbers of iterations, which seems
+due to overfitting. It is also interesting to notice
+that after optimization the weight value of the on-
+line feature was 0.509 for the IT task and 0.072 for
+the TED talk task. This confirms the different use
+and potential assigned to the online feature by the
+SMT systems in the two tasks.
+8 Conclusion
+We have shown a new way to update the transla-
+tion model on the fly without changing the original
+probability distribution. We empirically proved
+that this method is robust and works for differ-
+ent domain datasets be it Information Technology
+or TED talks. In addition, if the repetition rate is
+high in the text, online learning works much bet-
+ter than if the rate is low. We tested both with an
+unbounded and a bounded range on the online fea-
+ture and found out that bounded values produce
+more stable and consistent results. From previous
+works, it has been proven that MIRA works well
+with sparse features too, so, as for the future plan
+we would like to treat each phrase pair as a sparse
+feature and tune the sparse weights using MIRA.
+From the results, it is evident that we have not used
+any sort of stopping criterion for online learning; a
+random of 1, 5 and 10 iterations were chosen in a
+naive way. Our future plan will extend to working
+on finding a stopping criterion for online learning
+process.
+Acknowledgements
+This work was supported by the MateCat project,
+which is funded by the EC under the 7th Frame-
+work Programme.
+References
+N. Bertoldi, M. Cettolo, and M. Federico. 2013.
+Cache-based online adaptation for machine trans-
+lation enhanced computer assisted translation. In
+Proc. of MT Summit, Nice, France.
+P. F. Brown, S. A. Della Pietra, V. J. Della Pietra, and
+R. L. Mercer. 1993. The mathematics of statistical
+machine translation: Parameter estimation. Compu-
+tational Linguistics, 19(2):263?312.
+C. Callison-Burch, C. Bannard, and J. Schroeder.
+2005. Scaling phrase-based statistical machine
+translation to larger corpora and longer phrases. In
+Proc. of ACL, pages 255?262, Ann Arbor, US-MI.
+O. Cappe? and E. Moulines. 2009. Online EM algo-
+rithm for latent data models. Journal of the Royal
+Statistical Society Series B (Statistical Methodol-
+ogy), 71(3):593?613.
+N. Cesa-Bianchi, G. Reverberi, and S. Szedmak. 2008.
+Online learning algorithms for computer-assisted
+translation. Technical report, SMART project
+(www.smart-project.eu).
+M. Cettolo, C. Girardi, and M. Federico. 2012. WIT3:
+web inventory of transcribed and translated talks. In
+Proc. of EAMT, Trento, Italy.
+S. F. Chen and J. Goodman. 1996. An empirical study
+of smoothing techniques for language modeling. In
+Proc. of ACL, pages 310?318, Santa Cruz, US-CA.
+306
+System Bleu (?) TER (?)
+1 Iter 5 Iter 10 Iter 1 Iter 5 Iter 10 Iter
+Baseline 38.46(1.79) - - 39.98(1.35) - -
++O 39.88(1.77) 41.22(1.80) 41.16(1.74) 38.69(1.30) 37.78(1.32) 38.37(1.30)
++O+NS 39.91(1.80) 40.54(1.79) 40.71(1.76) 38.67(1.31) 38.21(1.29) 38.17(1.31)
++W 39.76(1.76) 38.16(1.77) 37.57(1.82) 38.58(1.27) 39.53(1.30) 39.93(1.30)
++O+W 41.23(1.66) 40.29(1.54) 29.36(1.45) 37.53(1.26) 38.03(1.24) 49.08(1.25)
++O+NS+W 41.19(1.86) 43.07(1.87) 45.13(1.74) 37.60(1.35) 36.43(1.43) 34.53(1.36)
+IncGiza Baseline 28.48(1.50) - - 49.23(1.43) - -
++O 29.34(1.51) 27.80(1.49) 27.52(1.38) 47.86(1.41) 48.20(1.30) 51.01(1.53)
++O+NS 28.69(1.53) 29.68(1.45) 29.36(1.49) 48.21(1.45) 47.51(1.45) 47.92(1.45)
++W 28.25(1.56) 27.68(1.53) 27.57(1.50) 49.05(1.43) 48.74(1.36) 48.10(1.23)
++O+W 29.36(1.61) 29.94(1.64) 25.95(1.25) 47.15(1.41) 46.56(1.31) 50.31(1.15)
++O+NS+W 29.76(1.49) 30.28(1.54) 30.83(1.60) 46.62(1.39) 45.60(1.28) 46.54(1.31)
+Table 2: Result on the IT domain task (EN>IT). Baseline is a standard phrase based SMT system, +O
+has the online feature, +NS adds normalization of online feature, +W has online weight adaptation.
+ 20
+ 25
+ 30
+ 35
+ 40
+ 45
+ 50
+ 0  20  40  60  80  100  120  140  160  180
+B
+LE
+U
+ S
+co
+re
+Sentence Number
+baseline
++online feature
++MIRA
+Figure 1: Incremental BLEU vs. evaluation test size on the information-technology task. Three systems
+are tracked: Baseline, +online feature, +MIRA
+System Bleu (?) TER (?)
+1 Iter 5 Iter 10 Iter 1 Iter 5 Iter 10 Iter
+Baseline 22.18(1.23) - - 58.70(1.38) - -
++O 22.17(1.19) 21.85(1.25) 21.51(1.23) 58.75(1.35) 59.22(1.36) 60.48(1.35)
++O+NS 21.97(1.20) 22.37(1.20) 22.24(1.22) 58.86(1.37) 58.75(1.37) 59.09(1.40)
++W 22.39(1.23) 21.44(1.20) 21.00(1.13) 58.96(1.40) 58.73(1.34) 58.71(1.28)
++O+W 22.33(1.21) 22.11(1.22) 21.54(1.20) 58.63(1.37) 58.31(1.38) 58.70(1.36)
++O+NS+W 22.34(1.23) 22.09(1.21) 21.62(1.18) 58.60(1.37) 58.48(1.36) 58.40(1.33)
+IncGiza Baseline 15.04(1.08) - - 72.64(1.34) - -
++O 15.30(1.08) 15.47(1.10) 15.86(1.11) 72.33(1.35) 71.68(1.37) 71.09(1.36)
++O+NS 15.21(1.09) 15.48(1.12) 15.48(1.11) 72.19(1.33) 72.06(1.36) 71.65(1.33)
++W 14.81(1.08) 14.61(1.07) 14.73(1.08) 73.03(1.37) 74.69(1.48) 74.28(1.46)
++O+W 15.08(1.08) 15.59(1.09) 16.42(1.11) 72.55(1.33) 70.98(1.32) 70.07(1.27)
++O+NS+W 15.09(1.08) 15.64(1.08) 16.15(1.10) 72.57(1.34) 71.13(1.31) 70.61(1.33)
+Table 3: Result on the TED talk task (EN>FR). Baseline is a standard phrase based SMT system, +O
+has the online feature, +NS adds normalization of online feature, +W includes online weight adaptation.
+307
+J. Clark, C. Dyer, A. Lavie, and N. Smith. 2011. Bet-
+ter hypothesis testing for statistical machine transla-
+tion: Controlling for optimizer instability. In Proc.
+of ACL, Portland, US-OR.
+M. Collins. 2002. Discriminative training methods
+for hidden markov models: Theory and experiments
+with perceptron algorithms. In Proc. of EMNLP,
+Philadelphia, US-PA.
+Koby Crammer and Yoram Singer. 2003. Ultracon-
+servative online algorithms for multiclass problems.
+Journal of Machine Learning Research, 3:951?991.
+M. Federico, N. Bertoldi, and M. Cettolo. 2008.
+IRSTLM: an open source toolkit for handling large
+scale language models. In Proc. of Interspeech,
+pages 1618?1621, Brisbane, Australia.
+M. Federico, A. Cattelan, and M. Trombetti. 2012.
+Measuring user productivity in machine translation
+enhanced computer assisted translation. In Proc. of
+AMTA, Bellevue, US-WA.
+Q. Gao and S. Vogel. 2008. Parallel implementations
+of word alignment tool. In Proc. of SETQA-NLP,
+pages 49?57, Columbus, US-OH.
+E. Hasler, B. Haddow, and P. Koehn. 2011. Margin
+infused relaxed algorithm for Moses. The Prague
+Bulletin of Mathematical Linguistics, 96:69?78.
+M. Hopkins and J. May. 2011. Tuning as ranking. In
+Proc. of EMNLP, pages 1352?1362, Edinburgh, UK.
+P. Koehn, H. Hoang, A. Birch, C. Callison-Burch,
+M. Federico, N. Bertoldi, B. Cowan, W. Shen,
+C. Moran, R. Zens, C. Dyer, O. Bojar, A. Con-
+stantin, and E. Herbst. 2007. Moses: open source
+toolkit for statistical machine translation. In Proc.
+of ACL Companion Volume of the Demo and Poster
+Sessions, pages 177?180, Prague, Czech Republic.
+A. Levenberg and M. Osborne. 2009. Stream-based
+randomised language models for SMT. In Proc. of
+EMNLP, pages 756?764, Singapore.
+A. Levenberg, C. Callison-Burch, and M. Osborne.
+2010. Stream-based translation models for statisti-
+cal machine translation. In Proc. of HLT-NAACL,
+Los Angeles, US-CA.
+P. Liang and D. Klein. 2009. Online EM for unsuper-
+vised models. In Proc. of NAACL, pages 611?619,
+Boulder, US-CO.
+P. Liang, A. Bouchard-Co?te?, D. Klein, and B. Taskar.
+2006. An end-to-end discriminative approach to ma-
+chine translation. In Proc. of ACL, pages 761?768,
+Sydney, Australia.
+C.-Y. Lin and F. J. Och. 2004. Orange: a method for
+evaluating automatic evaluation metrics for machine
+translation. In Proc. of COLING, pages 501?507,
+Geneva, Switzerland.
+A. Lopez. 2008. Tera-scale translation models via pat-
+tern matching. In Proc. of COLING, pages 505?512,
+Manchester, UK.
+P. Mart??nez-Go?mez, G. Sanchis-Trilles, and F. Casacu-
+berta. 2011. Online learning via dynamic reranking
+for computer assisted translation. In Proc. of CI-
+CLing, pages 93?105, Tokyo, Japan.
+P. Mart??nez-Go?mez, G. Sanchis-Trilles, and F. Casacu-
+berta. 2012. Online adaptation strategies for statis-
+tical machine translation in post-editing scenarios.
+Pattern Recogn., 45(9):3193?3203.
+R. Neal and G. E. Hinton. 1998. A view of the EM al-
+gorithm that justifies incremental, sparse, and other
+variants. In Learning in Graphical Models, pages
+355?368. Kluwer Academic Publishers.
+J. A. Nelder and R. Mead. 1965. A simplex method
+for function minimization. The Computer Journal,
+7(4):308?313.
+F.J. Och and H. Ney. 2003. A systematic comparison
+of various statistical alignment models. Computa-
+tional Linguistics, 29(1):19?51.
+F. J. Och. 2003. Minimum error rate training in sta-
+tistical machine translation. In Proc. of ACL, pages
+160?167, Sapporo, Japan.
+K. Papineni, S. Roukos, T. Ward, and W.-J. Zhu. 2001.
+Bleu: a method for automatic evaluation of machine
+translation. Research Report RC22176, IBM Re-
+search Division, Thomas J. Watson Research Center.
+F. Rosenblatt. 1958. The Perceptron: a probabilistic
+model for information storage and organization in
+the brain. Psychological Review, 65:386?408.
+M.-A. Sato and S. Ishii. 2000. On-line EM algorithm
+for the normalized Gaussian network. Neural Com-
+put., 12(2):407?432.
+M. Snover, B. Dorr, R. Schwartz, L. Micciulla, and J.
+Makhoul. 2006. A study of translation edit rate
+with targeted human annotation. In Proc. of AMTA,
+Boston, US-MA.
+S. Vogel, H. Ney, and C. Tillmann. 1996. HMM-based
+word alignment in statistical translation. In Proc. of
+COLING, pages 836?841, Copenhagen, Denmark.
+308

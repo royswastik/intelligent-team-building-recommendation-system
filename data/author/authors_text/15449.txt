@@ -1,0 +1,1699 @@
+Proceedings of the 2010 Conference on Empirical Methods in Natural Language Processing, pages 492?501,
+MIT, Massachusetts, USA, 9-11 October 2010. c?2010 Association for Computational Linguistics
+A Multi-Pass Sieve for Coreference Resolution
+Karthik Raghunathan, Heeyoung Lee, Sudarshan Rangarajan, Nathanael Chambers,
+Mihai Surdeanu, Dan Jurafsky, Christopher Manning
+Computer Science Department
+Stanford University, Stanford, CA 94305
+{kr,heeyoung,sudarshn,natec,mihais,jurafsky,manning}@stanford.edu
+Abstract
+Most coreference resolution models determine
+if two mentions are coreferent using a single
+function over a set of constraints or features.
+This approach can lead to incorrect decisions
+as lower precision features often overwhelm
+the smaller number of high precision ones. To
+overcome this problem, we propose a simple
+coreference architecture based on a sieve that
+applies tiers of deterministic coreference mod-
+els one at a time from highest to lowest preci-
+sion. Each tier builds on the previous tier?s
+entity cluster output. Further, our model prop-
+agates global information by sharing attributes
+(e.g., gender and number) across mentions in
+the same cluster. This cautious sieve guar-
+antees that stronger features are given prece-
+dence over weaker ones and that each deci-
+sion is made using all of the information avail-
+able at the time. The framework is highly
+modular: new coreference modules can be
+plugged in without any change to the other
+modules. In spite of its simplicity, our ap-
+proach outperforms many state-of-the-art su-
+pervised and unsupervised models on several
+standard corpora. This suggests that sieve-
+based approaches could be applied to other
+NLP tasks.
+1 Introduction
+Recent work on coreference resolution has shown
+that a rich feature space that models lexical, syn-
+tactic, semantic, and discourse phenomena is cru-
+cial to successfully address the task (Bengston and
+Roth, 2008; Haghighi and Klein, 2009; Haghighi
+and Klein, 2010). When such a rich representation
+is available, even a simple deterministic model can
+achieve state-of-the-art performance (Haghighi and
+Klein, 2009).
+By and large most approaches decide if two men-
+tions are coreferent using a single function over all
+these features and information local to the two men-
+tions.1 This is problematic for two reasons: (1)
+lower precision features may overwhelm the smaller
+number of high precision ones, and (2) local infor-
+mation is often insufficient to make an informed de-
+cision. Consider this example:
+The second attack occurred after some rocket firings
+aimed, apparently, toward [the israelis], apparently in
+retaliation. [we]?re checking our facts on that one. ...
+the president, quoted by ari fleischer, his spokesman, is
+saying he?s concerned the strike will undermine efforts
+by palestinian authorities to bring an end to terrorist at-
+tacks and does not contribute to the security of [israel].
+Most state-of-the-art models will incorrectly link
+we to the israelis because of their proximity and
+compatibility of attributes (both we and the israelis
+are plural). In contrast, a more cautious approach is
+to first cluster the israelis with israel because the de-
+monymy relation is highly precise. This initial clus-
+tering step will assign the correct animacy attribute
+(inanimate) to the corresponding geo-political
+entity, which will prevent the incorrect merging with
+the mention we (animate) in later steps.
+We propose an unsupervised sieve-like approach
+to coreference resolution that addresses these is-
+1As we will discuss below, some approaches use an addi-
+tional component to infer the overall best mention clusters for a
+document, but this is still based on confidence scores assigned
+using local information.
+492
+sues. The approach applies tiers of coreference
+models one at a time from highest to lowest pre-
+cision. Each tier builds on the entity clusters con-
+structed by previous models in the sieve, guarantee-
+ing that stronger features are given precedence over
+weaker ones. Furthermore, each model?s decisions
+are richly informed by sharing attributes across the
+mentions clustered in earlier tiers. This ensures that
+each decision uses all of the information available
+at the time. We implemented all components in our
+approach using only deterministic models. All our
+components are unsupervised, in the sense that they
+do not require training on gold coreference links.
+The contributions of this work are the following:
+? We show that a simple scaffolding framework
+that deploys strong features through tiers of
+models performs significantly better than a
+single-pass model. Additionally, we propose
+several simple, yet powerful, new features.
+? We demonstrate how far one can get with sim-
+ple, deterministic coreference systems that do
+not require machine learning or detailed se-
+mantic information. Our approach outperforms
+most other unsupervised coreference models
+and several supervised ones on several datasets.
+? Our modular framework can be easily extended
+with arbitrary models, including statistical or
+supervised models. We believe that our ap-
+proach also serves as an ideal platform for the
+development of future coreference systems.
+2 Related Work
+This work builds upon the recent observation that
+strong features outweigh complex models for coref-
+erence resolution, in both supervised and unsuper-
+vised learning setups (Bengston and Roth, 2008;
+Haghighi and Klein, 2009). Our work reinforces this
+observation, and extends it by proposing a novel ar-
+chitecture that: (a) allows easy deployment of such
+features, and (b) infuses global information that can
+be readily exploited by these features or constraints.
+Most coreference resolution approaches perform
+the task by aggregating local decisions about pairs
+of mentions (Bengston and Roth, 2008; Finkel and
+Manning, 2008; Haghighi and Klein, 2009; Stoy-
+anov, 2010). Two recent works that diverge from
+this pattern are Culotta et al (2007) and Poon and
+Domingos (2008). They perform coreference reso-
+lution jointly for all mentions in a document, using
+first-order probabilistic models in either supervised
+or unsupervised settings. Haghighi and Klein (2010)
+propose a generative approach that models entity
+clusters explicitly using a mostly-unsupervised gen-
+erative model. As previously mentioned, our work
+is not constrained by first-order or Bayesian for-
+malisms in how it uses cluster information. Ad-
+ditionally, the deterministic models in our tiered
+model are significantly simpler, yet perform gener-
+ally better than the complex inference models pro-
+posed in these works.
+From a high level perspective, this work falls un-
+der the theory of shaping, defined as a ?method of
+successive approximations? for learning (Skinner,
+1938). This theory is known by different names in
+many NLP applications: Brown et al (1993) used
+simple models as ?stepping stones? for more com-
+plex word alignment models; Collins (1999) used
+?cautious? decision list learning for named entity
+classification; Spitkovsky et al (2010) used ?baby
+steps? for unsupervised dependency parsing, etc. To
+the best of our knowledge, we are the first to apply
+this theory to coreference resolution.
+3 Description of the Task
+Intra-document coreference resolution clusters to-
+gether textual mentions within a single document
+based on the underlying referent entity. Mentions
+are usually noun phrases (NPs) headed by nominal
+or pronominal terminals. To facilitate comparison
+with most of the recent previous work, we report re-
+sults using gold mention boundaries. However, our
+approach does not make any assumptions about the
+underlying mentions, so it is trivial to adapt it to pre-
+dicted mention boundaries (e.g., see Haghighi and
+Klein (2010) for a simple mention detection model).
+3.1 Corpora
+We used the following corpora for development and
+evaluation:
+? ACE2004-ROTH-DEV2 ? development split
+of Bengston and Roth (2008), from the corpus
+used in the 2004 Automatic Content Extraction
+(ACE) evaluation. It contains 68 documents
+and 4,536 mentions.
+2We use the same corpus names as (Haghighi and Klein,
+2009) to facilitate comparison with previous work.
+493
+? ACE2004-CULOTTA-TEST ? partition of
+ACE 2004 corpus reserved for testing by sev-
+eral previous works (Culotta et al, 2007;
+Bengston and Roth, 2008; Haghighi and Klein,
+2009). It consists of 107 documents and 5,469
+mentions.
+? ACE2004-NWIRE ? the newswire subset of
+the ACE 2004 corpus, utilized by Poon and
+Domingos (2008) and Haghighi and Klein
+(2009) for testing. It contains 128 documents
+and 11,413 mentions.
+? MUC6-TEST ? test corpus from the sixth
+Message Understanding Conference (MUC-6)
+evaluation. It contains 30 documents and 2,068
+mentions.
+We used the first corpus (ACE2004-ROTH-DEV)
+for development. The other corpora are reserved for
+testing. We parse all documents using the Stanford
+parser (Klein and Manning, 2003). The syntactic in-
+formation is used to identify the mention head words
+and to define the ordering of mentions in a given
+sentence (detailed in the next section). For a fair
+comparison with previous work, we do not use gold
+named entity labels or mention types but, instead,
+take the labels provided by the Stanford named en-
+tity recognizer (NER) (Finkel et al, 2005).
+3.2 Evaluation Metrics
+We use three evaluation metrics widely used in the
+literature: (a) pairwise F1 (Ghosh, 2003) ? com-
+puted over mention pairs in the same entity clus-
+ter; (b) MUC (Vilain et al, 1995) ? which measures
+how many predicted clusters need to be merged to
+cover the gold clusters; and (c) B3 (Amit and Bald-
+win, 1998) ? which uses the intersection between
+predicted and gold clusters for a given mention to
+mark correct mentions and the sizes of the the pre-
+dicted and gold clusters as denominators for preci-
+sion and recall, respectively. We refer the interested
+reader to (X. Luo, 2005; Finkel and Manning, 2008)
+for an analysis of these metrics.
+4 Description of the Multi-Pass Sieve
+Our sieve framework is implemented as a succes-
+sion of independent coreference models. We first de-
+scribe how each model selects candidate mentions,
+and then describe the models themselves.
+4.1 Mention Processing
+Given a mention mi, each model may either decline
+to propose a solution (in the hope that one of the
+subsequent models will solve it) or deterministically
+select a single best antecedent from a list of pre-
+vious mentions m1, . . . , mi?1. We sort candidate
+antecedents using syntactic information provided by
+the Stanford parser, as follows:
+Same Sentence ? Candidates in the same sentence
+are sorted using left-to-right breadth-first traversal
+of syntactic trees (Hobbs, 1977). Figure 1 shows an
+example of candidate ordering based on this traver-
+sal. The left-to-right ordering favors subjects, which
+tend to appear closer to the beginning of the sentence
+and are more probable antecedents. The breadth-
+first traversal promotes syntactic salience by rank-
+ing higher noun phrases that are closer to the top of
+the parse tree (Haghighi and Klein, 2009). If the
+sentence containing the anaphoric mention contains
+multiple clauses, we repeat the above heuristic sep-
+arately in each S* constituent, starting with the one
+containing the mention.
+Previous Sentence ? For all nominal mentions we
+sort candidates in the previous sentences using right-
+to-left breadth-first traversal. This guarantees syn-
+tactic salience and also favors document proximity.
+For pronominal mentions, we sort candidates in pre-
+vious sentences using left-to-right traversal in or-
+der to favor subjects. Subjects are more probable
+antecedents for pronouns (Kertz et al, 2006). For
+example, this ordering favors the correct candidate
+(pepsi) for the mention they:
+[pepsi] says it expects to double [quaker]?s
+snack food growth rate. after a month-long
+courtship, [they] agreed to buy quaker oats. . .
+In a significant departure from previous work,
+each model in our framework gets (possibly incom-
+plete) clustering information for each mention from
+the earlier coreference models in the multi-pass sys-
+tem. In other words, each mention mi may already
+be assigned to a cluster Cj containing a set of men-
+tions: Cj = {m
+j
+1, . . . ,m
+j
+k}; mi ? Cj . Unassigned
+mentions are unique members of their own cluster.
+We use this information in several ways:
+Attribute sharing ? Pronominal coreference reso-
+lution (discussed later in this section) is severely af-
+494
+S	 ?
+of	 ?
+will	 ?
+head	 ?
+NP	 ?
+Richard	 ?Levin	 ?
+the	 ?Globaliza?on	 ?Studies	 ?Center	 ?
+NP	 ?
+NP	 ?
+the	 ?Chancelor	 ?
+NP	 ?
+,	 ?
+VP	 ?
+NP	 ?
+PP	 ?
+this	 ?pres?gious	 ?university	 ?
+NP	 ?
+VP	 ?
+#1	 ?
+#2	 ?
+#3	 ?
+#4	 ?
+Figure 1: Example of left-to-right breadth-first tree
+traversal. The numbers indicate the order in which the
+NPs are visited.
+fected by missing attributes (which introduce pre-
+cision errors because incorrect antecedents are se-
+lected due to missing information) and incorrect at-
+tributes (which introduce recall errors because cor-
+rect links are not generated due to attribute mismatch
+between mention and antecedent). To address this
+issue, we perform a union of all mention attributes
+(e.g., number, gender, animacy) in a given cluster
+and share the result with all cluster mentions. If
+attributes from different mentions contradict each
+other we maintain all variants. For example, our
+naive number detection assigns singular to the
+mention a group of students and plural to five stu-
+dents. When these mentions end up in the same clus-
+ter, the resulting number attributes becomes the set
+{singular, plural}. Thus this cluster can later
+be merged with both singular and plural pronouns.
+Mention selection ? Traditionally, a coreference
+model attempts to resolve every mention in the text,
+which increases the likelihood of errors. Instead, in
+each of our models, we exploit the cluster informa-
+tion received from the previous stages by resolving
+only mentions that are currently first in textual order
+in their cluster. For example, given the following or-
+dered list of mentions, {m11, m
+2
+2, m
+2
+3, m
+3
+4, m
+1
+5, m
+2
+6},
+where the superscript indicates cluster id, our model
+will attempt to resolve only m22 and m
+3
+4. These two
+are the only mentions that have potential antecedents
+and are currently marked as the first mentions in
+their clusters. The intuition behind this heuristic
+is two-fold. First, early cluster mentions are usu-
+ally better defined than subsequent ones, which are
+likely to have fewer modifiers or are pronouns (Fox,
+1993). Several of our models use this modifier infor-
+mation. Second, by definition, first mentions appear
+closer to the beginning of the document, hence there
+are fewer antecedent candidates to select from, and
+fewer opportunities to make a mistake.
+Search Pruning ? Finally, we prune the search
+space using discourse salience. We disable coref-
+erence for first cluster mentions that: (a) are or start
+with indefinite pronouns (e.g., some, other), or (b)
+start with indefinite articles (e.g., a, an). One excep-
+tion to this rule is the model deployed in the first
+pass; it only links mentions if their entire extents
+match exactly. This model is triggered for all nom-
+inal mentions regardless of discourse salience, be-
+cause it is possible that indefinite mentions are re-
+peated in a document when concepts are discussed
+but not instantiated, e.g., a sports bar below:
+Hanlon, a longtime Broncos fan, thinks it is the perfect
+place for [a sports bar] and has put up a blue-and-orange
+sign reading, ?Wanted Broncos Sports Bar On This Site.?
+. . . In a Nov. 28 letter, Proper states ?while we have no
+objection to your advertising the property as a location
+for [a sports bar], using the Broncos? name and colors
+gives the false impression that the bar is or can be affili-
+ated with the Broncos.?
+4.2 The Modules of the Multi-Pass Sieve
+We now describe the coreference models imple-
+mented in the sieve. For clarity, we summarize them
+in Table 1 and show the cumulative performance as
+they are added to the sieve in Table 2.
+4.2.1 Pass 1 - Exact Match
+This model links two mentions only if they con-
+tain exactly the same extent text, including modifiers
+and determiners, e.g., the Shahab 3 ground-ground
+missile. As expected, this model is extremely pre-
+cise, with a pairwise precision over 96%.
+4.2.2 Pass 2 - Precise Constructs
+This model links two mentions if any of the con-
+ditions below are satisfied:
+Appositive ? the two nominal mentions are in an
+appositive construction, e.g., [Israel?s Deputy De-
+fense Minister], [Ephraim Sneh] , said . . . We
+use the same syntactic rules to detect appositions as
+Haghighi and Klein (2009).
+495
+Pass Type Features
+1 N exact extent match
+2 N,P appositive | predicate nominative | role appositive | relative pronoun | acronym | demonym
+3 N cluster head match & word inclusion & compatible modifiers only & not i-within-i
+4 N cluster head match & word inclusion & not i-within-i
+5 N cluster head match & compatible modifiers only & not i-within-i
+6 N relaxed cluster head match & word inclusion & not i-within-i
+7 P pronoun match
+Table 1: Summary of passes implemented in the sieve. The Type column indicates the type of coreference in each
+pass: N ? nominal or P ? pronominal. & and | indicate conjunction and disjunction of features, respectively.
+Predicate nominative ? the two mentions (nominal
+or pronominal) are in a copulative subject-object re-
+lation, e.g., [The New York-based College Board] is
+[a nonprofit organization that administers the SATs
+and promotes higher education] (Poon and Domin-
+gos, 2008).
+Role appositive ? the candidate antecedent is
+headed by a noun and appears as a modifier in an
+NP whose head is the current mention, e.g., [[ac-
+tress] Rebecca Schaeffer]. This feature is inspired
+by Haghighi and Klein (2009), who triggered it only
+if the mention is labeled as a person by the NER.
+We constrain this heuristic more in our work: we
+allow this feature to match only if: (a) the mention
+is labeled as a person, (b) the antecedent is animate
+(we detail animacy detection in Pass 7), and (c) the
+antecedent?s gender is not neutral.
+Relative pronoun ? the mention is a relative pro-
+noun that modifies the head of the antecedent NP,
+e.g., [the finance street [which] has already formed
+in the Waitan district].
+Acronym ? both mentions are tagged as NNP and
+one of them is an acronym of the other, e.g., [Agence
+France Presse] . . . [AFP]. We use a simple acronym
+detection algorithm, which marks a mention as an
+acronym of another if its text equals the sequence
+of upper case characters in the other mention. We
+will adopt better solutions for acronym detection in
+future work (Schwartz, 2003).
+Demonym ? one of the mentions is a demonym of
+the other, e.g., [Israel] . . . [Israeli]. For demonym
+detection we use a static list of countries and their
+gentilic forms from Wikipedia.3
+All the above features are extremely precise. As
+shown in Table 2 the pairwise precision of the sieve
+3
+http://en.wikipedia.org/wiki/List_of_adjectival_and_
+demonymic_forms_of_place_names
+after adding these features is over 95% and recall
+increases 5 points.
+4.2.3 Pass 3 - Strict Head Matching
+Linking a mention to an antecedent based on the
+naive matching of their head words generates a lot
+of spurious links because it completely ignores pos-
+sibly incompatible modifiers (Elsner and Charniak,
+2010). For example, Yale University and Harvard
+University have similar head words, but they are ob-
+viously different entities. To address this issue, this
+pass implements several features that must all be
+matched in order to yield a link:
+Cluster head match ? the mention head word
+matches any head word in the antecedent clus-
+ter. Note that this feature is actually more relaxed
+than naive head matching between mention and an-
+tecedent candidate because it is satisfied when the
+mention?s head matches the head of any entity in the
+candidate?s cluster. We constrain this feature by en-
+forcing a conjunction with the features below.
+Word inclusion ? all the non-stop4 words in the
+mention cluster are included in the set of non-stop
+words in the cluster of the antecedent candidate.
+This heuristic exploits the property of discourse that
+it is uncommon to introduce novel information in
+later mentions (Fox, 1993). Typically, mentions
+of the same entity become shorter and less infor-
+mative as the narrative progresses. For example,
+the two mentions in . . . intervene in the [Florida
+Supreme Court]?s move . . . does look like very dra-
+matic change made by [the Florida court] point to
+the same entity, but the two mentions in the text be-
+low belong to different clusters:
+The pilot had confirmed . . . he had turned onto
+4Our stop word list includes person titles as well.
+496
+MUC B3 Pairwise
+Passes P R F1 P R F1 P R F1
+{1} 95.9 31.8 47.8 99.1 53.4 69.4 96.9 15.4 26.6
+{1,2} 95.4 43.7 59.9 98.5 58.4 73.3 95.7 20.6 33.8
+{1,2,3} 92.1 51.3 65.9 96.7 62.9 76.3 91.5 26.8 41.5
+{1,2,3,4} 91.7 51.9 66.3 96.5 63.5 76.6 91.4 27.8 42.7
+{1,2,3,4,5} 91.1 52.6 66.7 96.1 63.9 76.7 90.3 28.4 43.2
+{1,2,3,4,5,6} 89.5 53.6 67.1 95.3 64.5 76.9 88.8 29.2 43.9
+{1,2,3,4,5,6,7} 83.7 74.1 78.6 88.1 74.2 80.5 80.1 51.0 62.3
+Table 2: Cumulative performance on development (ACE2004-ROTH-DEV) as passes are added to the sieve.
+[the correct runway] but pilots behind him say
+he turned onto [the wrong runway].
+Compatible modifiers only ? the mention?s mod-
+ifiers are all included in the modifiers of the an-
+tecedent candidate. This feature models the same
+discourse property as the previous feature, but it fo-
+cuses on the two individual mentions to be linked,
+rather than their entire clusters. For this feature we
+only use modifiers that are nouns or adjectives.
+Not i-within-i ? the two mentions are not in an i-
+within-i construct, i.e., one cannot be a child NP
+in the other?s NP constituent (Haghighi and Klein,
+2009).
+This pass continues to maintain high precision
+(91% pairwise) while improving recall significantly
+(over 6 points pairwise and almost 8 points MUC).
+4.2.4 Passes 4 and 5 - Variants of Strict Head
+Passes 4 and 5 are different relaxations of the
+feature conjunction introduced in Pass 3, i.e.,
+Pass 4 removes the compatible modifiers
+only feature, while Pass 5 removes the word
+inclusion constraint. All in all, these two passes
+yield an improvement of 1.7 pairwise F1 points,
+due to recall improvements. Table 2 shows that the
+word inclusion feature is more precise than
+compatible modifiers only, but the latter
+has better recall.
+4.2.5 Pass 6 - Relaxed Head Matching
+This pass relaxes the cluster head match heuris-
+tic by allowing the mention head to match any word
+in the cluster of the candidate antecedent. For ex-
+ample, this heuristic matches the mention Sanders
+to a cluster containing the mentions {Sauls, the
+judge, Circuit Judge N. Sanders Sauls}. To maintain
+high precision, this pass requires that both mention
+and antecedent be labeled as named entities and the
+types coincide. Furthermore, this pass implements
+a conjunction of the above features with word
+inclusion and not i-within-i. This pass
+yields less than 1 point improvement in most met-
+rics.
+4.2.6 Pass 7 - Pronouns
+With one exception (Pass 2), all the previous
+coreference models focus on nominal coreference
+resolution. However, it would be incorrect to say
+that our framework ignores pronominal coreference
+in the first six passes. In fact, the previous mod-
+els prepare the stage for pronominal coreference by
+constructing precise clusters with shared mention at-
+tributes. These are crucial factors for pronominal
+coreference.
+Like previous work, we implement pronominal
+coreference resolution by enforcing agreement con-
+straints between the coreferent mentions. We use the
+following attributes for these constraints:
+Number ? we assign number attributes based on:
+(a) a static list for pronouns; (b) NER labels: men-
+tions marked as a named entity are considered sin-
+gular with the exception of organizations, which can
+be both singular or plural; (c) part of speech tags:
+NN*S tags are plural and all other NN* tags are sin-
+gular; and (d) a static dictionary from (Bergsma and
+Lin, 2006).
+Gender ? we assign gender attributes from static
+lexicons from (Bergsma and Lin, 2006; Ji and Lin,
+2009).
+Person ? we assign person attributes only to pro-
+nouns. However, we do not enforce this constraint
+when linking two pronouns if one appears within
+quotes. This is a simple heuristic for speaker de-
+tection, e.g., I and she point to the same person in
+497
+?[I] voted my conscience,? [she] said.
+Animacy ? we set animacy attributes using: (a)
+a static list for pronouns; (b) NER labels, e.g.,
+PERSON is animate whereas LOCATION is not; and
+(c) a dictionary boostrapped from the web (Ji and
+Lin, 2009).
+NER label ? from the Stanford NER.
+If we cannot detect a value, we set attributes to
+unknown and treat them as wildcards, i.e., they can
+match any other value.
+This final model raises the pairwise recall of our
+system almost 22 percentage points, with only an 8
+point drop in pairwise precision. Table 2 shows that
+similar behavior is measured for all other metrics.
+After all passes have run, we take the transitive clo-
+sure of the generated clusters as the system output.
+5 Experimental Results
+We present the results of our approach and other rel-
+evant prior work in Table 3. We include in the ta-
+ble all recent systems that report results under the
+same conditions as our experimental setup (i.e., us-
+ing gold mentions) and use the same corpora. We
+exclude from this analysis two notable works that
+report results only on a version of the task that in-
+cludes finding mentions (Haghighi and Klein, 2010;
+Stoyanov, 2010). The Haghighi and Klein (2009)
+numbers have two variants: with semantics (+S)
+and without (?S). To measure the contribution of
+our multi-pass system, we also present results from a
+single-pass variant of our system that uses all appli-
+cable features from the multi-pass system (marked
+as ?single pass? in the table).
+Our sieve model outperforms all systems on
+two out of the four evaluation corpora (ACE2004-
+ROTH-DEV and ACE2004-NWIRE), on all met-
+rics. On the corpora where our model is not best,
+it ranks a close second. For example, in ACE2004-
+CULOTTA-TEST our system has a B3 F1 score
+only .4 points lower than Bengston and Roth (2008)
+and it outperforms all unsupervised approaches. In
+MUC6-TEST, our sieve?s B3 F1 score is 1.8 points
+lower than Haghighi and Klein (2009) +S, but it out-
+performs a supervised system that used gold named
+entity labels. Finally, the multi-pass architecture al-
+ways beats the equivalent single-pass system with
+its contribution ranging between 1 and 4 F1 points
+depending on the corpus and evaluation metric.
+Our approach has the highest precision on all cor-
+pora, regardless of evaluation metric. We believe
+this is particularly useful for large-scale NLP appli-
+cations that use coreference resolution components,
+e.g., question answering or information extraction.
+These applications can generally function without
+coreference information so it is beneficial to provide
+such information only when it is highly precise.
+6 Discussion
+6.1 Comparison to Previous Work
+The sieve model outperforms all other systems on
+at least two test sets, even though most of the other
+models are significantly richer. Amongst the com-
+parisons, several are supervised (Bengston and Roth,
+2008; Finkel and Manning, 2008; Culotta et al,
+2007). The system of Haghighi and Klein (2009)
++S uses a lexicon of semantically-compatible noun
+pairs acquired transductively, i.e., with knowledge
+of the mentions in the test set. Our system does
+not rely on labeled corpora for training (like super-
+vised approaches) nor access to corpora during test-
+ing (like Haghighi and Klein (2009)).
+The system that is closest to ours is Haghighi and
+Klein (2009) ?S. Like us, they use a rich set of fea-
+tures and deterministic decisions. However, theirs
+is a single-pass model with a smaller feature set
+(no cluster-level, acronym, demonym, or animacy
+information). Table 3 shows that on the two cor-
+pora where results for this system are available, we
+outperform it considerably on all metrics. To un-
+derstand if the difference is due to the multi-pass
+architecture or the richer feature set we compared
+(Haghighi and Klein, 2009) ?S against both our
+multi-pass system and its single-pass variant. The
+comparison indicates that both these contributions
+help: our single-pass system outperforms Haghighi
+and Klein (2009) consistently, and the multi-pass ar-
+chitecture further improves the performance of our
+single-pass system between 1 and 4 F1 points, de-
+pending on the corpus and evaluation metric.
+6.2 Semantic Head Matching
+Recent unsupervised coreference work from
+Haghighi and Klein (2009) included a novel
+semantic component that matched related head
+words (e.g., AOL is a company) learned from select
+498
+MUC B3 Pairwise
+P R F1 P R F1 P R F1
+ACE2004-ROTH-DEV
+This work (sieve) 83.7 74.1 78.6 88.1 74.2 80.5 80.1 51.0 62.3
+This work (single pass) 82.2 72.6 77.1 86.8 72.6 79.1 76.0 47.6 58.5
+Haghighi and Klein (2009) ?S 78.3 70.5 74.2 84.0 71.0 76.9 71.3 45.4 55.5
+Haghighi and Klein (2009) +S 77.9 74.1 75.9 81.8 74.3 77.9 68.2 51.2 58.5
+ACE2004-CULOTTA-TEST
+This work (sieve) 80.4 71.8 75.8 86.3 75.4 80.4 71.6 46.2 56.1
+This work (single pass) 78.4 69.2 73.5 85.1 73.9 79.1 69.5 44.1 53.9
+Haghighi and Klein (2009) ?S 74.3 66.4 70.2 83.6 71.0 76.8 66.4 38.0 48.3
+Haghighi and Klein (2009) +S 74.8 77.7 79.6 79.6 78.5 79.0 57.5 57.6 57.5
+Culotta et al (2007) ? ? ? 86.7 73.2 79.3 ? ? ?
+Bengston and Roth (2008) 82.7 69.9 75.8 88.3 74.5 80.8 55.4 63.7 59.2
+MUC6-TEST
+This work (sieve) 90.5 68.0 77.7 91.2 61.2 73.2 90.3 53.3 67.1
+This work (single pass) 89.3 65.9 75.8 90.2 58.8 71.1 89.5 50.6 64.7
+Haghighi and Klein (2009) +S 87.2 77.3 81.9 84.7 67.3 75.0 80.5 57.8 67.3
+Poon and Domingos (2008) 83.0 75.8 79.2 ? ? ? 63.0 57.0 60.0
+Finkel and Manning (2008) +G 89.7 55.1 68.3 90.9 49.7 64.3 74.1 37.1 49.5
+ACE2004-NWIRE
+This work (sieve) 83.8 73.2 78.1 87.5 71.9 78.9 79.6 46.2 58.4
+This work (single pass) 82.2 71.5 76.5 86.2 70.0 77.3 76.9 41.9 54.2
+Haghighi and Klein (2009) +S 77.0 75.9 76.5 79.4 74.5 76.9 66.9 49.2 56.7
+Poon and Domingos (2008) 71.3 70.5 70.9 ? ? ? 62.6 38.9 48.0
+Finkel and Manning (2008) +G 78.7 58.5 67.1 86.8 65.2 74.5 76.1 44.2 55.9
+Table 3: Results using gold mention boundaries. Where available, we show results for a given corpus grouped in
+two blocks: the top block shows results of unsupervised systems and the bottom block contains supervised systems.
+Bold numbers indicate best results in a given block. +/-S indicates if the (Haghighi and Klein, 2009) system in-
+cludes/excludes their semantic component. +G marks systems that used gold NER labels.
+wikipedia articles. They first identified articles
+relevant to the entity mentions in the test set, and
+then bootstrapped from known syntactic patterns
+for apposition and predicate-nominatives in order to
+learn a database of related head pairs. They show
+impressive gains by using these learned pairs in
+coreference decisions. This type of learning using
+test set mentions is often described as transductive.
+Our work instead focuses on an approach that
+does not require access to the dataset beforehand.
+We thus did not include a similar semantic compo-
+nent in our system, given that running a bootstrap-
+ping learner whenever a new data set is encountered
+is not practical and, ultimately, reduces the usability
+of this NLP component. However, our results show
+that our sieve algorithm with minimal semantic in-
+formation still performs as well as the Haghighi and
+Klein (2009) system with semantics.
+6.3 Flexible Architecture
+The sieve architecture offers benefits beyond im-
+proved accuracy. Its modular design provides a flex-
+ibility for features that is not available in most su-
+pervised or unsupervised systems. The sieve al-
+lows new features to be seamlessly inserted with-
+out affecting (or even understanding) the other com-
+ponents. For instance, once a new high precision
+feature (or group of features) is inserted as its own
+stage, it will benefit later stages with more precise
+clusters, but it will not interfere with their particu-
+499
+lar algorithmic decisions. This flexibility is in sharp
+contrast to supervised classifiers that require their
+models to be retrained on labeled data, and unsu-
+pervised systems that do not offer a clear insertion
+point for new features. It can be difficult to fully
+understand how a system makes a single decision,
+but the sieve allows for flexible usage with minimal
+effort.
+6.4 Error Analysis
+Pronominal Nominal Proper Total
+Pronominal 49 / 237 116 / 317 104 / 595 269 / 1149
+Nominal 79 / 351 129 / 913 61 / 986 269 / 2250
+Proper 51 / 518 15 / 730 38 / 595 104 / 1843
+Total 179 / 1106 260 / 1960 203 / 2176 642 / 5242
+Table 4: Number of pair-wise errors produced by the
+sieve after transitive closure in the MUC6-TEST corpus.
+Rows indicate mention types; columns are types of an-
+tecedent. Each cell shows the number of precision/recall
+errors for that configuration. The total number of gold
+links in MUC6-TEST is 11,236.
+Table 4 shows the number of incorrect pair-wise
+links generated by our system on the MUC6-TEST
+corpus. The table indicates that most of our er-
+rors are for nominal mentions. For example, the
+combined (precision plus recall) number of errors
+for proper or common noun mentions is three times
+larger than the number of errors made for pronom-
+inal mentions. The table also highlights that most
+of our errors are recall errors. There are eight times
+more recall errors than precision errors in our output.
+This is a consequence of our decision to prioritize
+highly precise features in the sieve.
+The above analysis illustrates that our next effort
+should focus on improving recall. In order to under-
+stand the limitations of our current system, we ran-
+domly selected 60 recall errors (20 for each mention
+type) and investigated their causes. Not surprisingly,
+the causes are unique to each type.
+For proper nouns, 50% of recall errors are due to
+mention lengthening, mentions that are longer than
+their earlier mentions. For example, Washington-
+based USAir appears after USAir in the text, so our
+head matching components skip it because their high
+precision depends on disallowing new modifiers as
+the discourse proceeds. When the mentions were re-
+versed (as is the usual case), they match.
+The common noun recall errors are very differ-
+ent from proper nouns: 17 of the 20 random exam-
+ples can be classified as semantic knowledge. These
+errors are roughly evenly split between recognizing
+categories of names (e.g., Gitano is an organization
+name hence it should match the nominal antecedent
+the company), and understanding hypernym rela-
+tions like settlements and agreements.
+Pronoun errors come in two forms. Roughly 40%
+of these errors are attribute mismatches involving
+sometimes ambiguous uses of gender and number
+(e.g., she with Pat Carney). Another 40% are not se-
+mantic or attribute-based, but rather simply arise due
+to the order in which we check potential antecedents.
+In all these situations, the correct links are missed
+because the system chooses a closer (incorrect) an-
+tecedent.
+These four highlighted errors (lengthening, se-
+mantics, attributes, ordering) add up to 77% of all
+recall errors in the selected set. In general, each
+error type is particular to a specific mention type.
+This suggests that recall improvements can be made
+by focusing on one mention type without aversely
+affecting the others. Our sieve-based approach to
+coreference uniquely allows for such new models to
+be seamlessly inserted.
+7 Conclusion
+We presented a simple deterministic approach to
+coreference resolution that incorporates document-
+level information, which is typically exploited only
+by more complex, joint learning models. Our sieve
+architecture applies a battery of deterministic coref-
+erence models one at a time from highest to low-
+est precision, where each model builds on the pre-
+vious model?s cluster output. Despite its simplicity,
+our approach outperforms or performs comparably
+to the state of the art on several corpora.
+An additional benefit of the sieve framework is its
+modularity: new features or models can be inserted
+in the system with limited understanding of the other
+features already deployed. Our code is publicly re-
+leased5 and can be used both as a stand-alone coref-
+erence system and as a platform for the development
+of future systems.
+5http://nlp.stanford.edu/software/
+dcoref.shtml
+500
+The strong performance of our system suggests
+the use of sieves in other NLP tasks for which a va-
+riety of very high-precision features can be designed
+and non-local features can be shared; likely candi-
+dates include relation and event extraction, template
+slot filling, and author name deduplication.
+Acknowledgments
+We gratefully acknowledge the support of the
+Defense Advanced Research Projects Agency
+(DARPA) Machine Reading Program under Air
+Force Research Laboratory (AFRL) prime contract
+no. FA8750-09-C-0181. Any opinions, findings,
+and conclusion or recommendations expressed in
+this material are those of the author(s) and do not
+necessarily reflect the view of DARPA, AFRL, or
+the US government.
+Many thanks to Jenny Finkel for writing a reim-
+plementation of much of Haghighi and Klein (2009),
+which served as the starting point for the work re-
+ported here. We also thank Nicholas Rizzolo and
+Dan Roth for helping us replicate their experimen-
+tal setup, and Heng Ji and Dekang Lin for providing
+their gender lexicon.
+References
+B. Amit and B. Baldwin. 1998. Algorithms for scoring
+coreference chains. In MUC-7.
+E. Bengston and D. Roth. 2008. Understanding the value
+of features for coreference resolution. In EMNLP.
+S. Bergsma and D. Lin. 2006. Bootstrapping Path-Based
+Pronoun Resolution. In ACL-COLING.
+P.F. Brown, V.J. Della Pietra, S.A. Della Pietra, and R.L.
+Mercer. 1993. The mathematics of statistical machine
+translation: Parameter estimation. Computational Lin-
+guistics, 19.
+M. Collins and Y. Singer. 1999. Unsupervised models
+for named entity classification. In EMNLP-VLC.
+A. Culotta, M. Wick, R. Hall, and A. McCallum. 2007.
+First-order probabilistic models for coreference reso-
+lution. In NAACL-HLT.
+M. Elsner and E. Charniak. 2010. The same-head heuris-
+tic for coreference. In ACL.
+J. Finkel, T. Grenager, and C. Manning. 2005. Incorpo-
+rating non-local information into information extrac-
+tion systems by Gibbs sampling. In ACL.
+J. Finkel and C. Manning. 2008. Enforcing transitivity
+in coreference resolution. In ACL.
+B. A. Fox 1993. Discourse structure and anaphora:
+written and conversational English. Cambridge Uni-
+versity Press.
+J. Ghosh. 2003. Scalable clustering methods for data
+mining. Handbook of Data Mining, chapter 10, pages
+247?277.
+A. Haghighi and D. Klein. 2009. Simple coreference
+resolution with rich syntactic and semantic features.
+In EMNLP.
+A. Haghighi and D. Klein. 2010. Coreference resolution
+in a modular, entity-centered model. In HLT-NAACL.
+J.R. Hobbs. 1977. Resolving pronoun references. Lin-
+gua.
+H. Ji and D. Lin. 2009. Gender and animacy knowl-
+edge discovery from web-scale n-grams for unsuper-
+vised person mention detection. In PACLIC.
+L. Kertz, A. Kehler, and J. Elman. 2006. Grammatical
+and Coherence-Based Factors in Pronoun Interpreta-
+tion. In Proceedings of the 28th Annual Conference of
+the Cognitive Science Society.
+D. Klein and C. Manning. 2003. Accurate unlexicalized
+parsing. In ACL.
+X. Luo. 2005. On coreference resolution performance
+metrics. In HTL-EMNLP.
+H. Poon and P. Domingos. 2008. Joint unsuper-
+vised coreference resolution with Markov Logic. In
+EMNLP.
+A.S. Schwartz and M.A. Hearst. 2003. A simple
+algorithm for identifying abbrevation definitions in
+biomedical text. In Pacific Symposium on Biocomput-
+ing.
+B.F. Skinner. 1938. The behavior of organisms: An ex-
+perimental analysis. Appleton-Century-Crofts.
+V.I. Spitkovsky, H. Alshawi, and D. Jurafsky. 2010.
+From baby steps to leapfrog: How ?less is more? in
+unsupervised dependency parsing. In NAACL.
+V. Stoyanov, N. Gilbert, C. Cardie, and E. Riloff. 2010.
+Conundrums in noun phrase coreference resolution:
+making sense of the state-of-the-art. In ACL-IJCNLP.
+M. Vilain, J. Burger, J. Aberdeen, D. Connolly, and L.
+Hirschman. 1995. A model-theoretic coreference
+scoring scheme. In MUC-6.
+501
+Second Joint Conference on Lexical and Computational Semantics (*SEM), Volume 2: Seventh International Workshop on Semantic
+Evaluation (SemEval 2013), pages 73?77, Atlanta, Georgia, June 14-15, 2013. c?2013 Association for Computational Linguistics
+NavyTime: Event and Time Ordering from Raw Text
+Nathanael Chambers
+United States Naval Academy
+Annapolis, MD 21401, USA
+nchamber@usna.edu
+Abstract
+This paper describes a complete event/time
+ordering system that annotates raw text with
+events, times, and the ordering relations be-
+tween them at the SemEval-2013 Task 1. Task
+1 is a unique challenge because it starts from
+raw text, rather than pre-annotated text with
+known events and times. A working system
+first identifies events and times, then identifies
+which events and times should be ordered, and
+finally labels the ordering relation between
+them. We present a split classifier approach
+that breaks the ordering tasks into smaller de-
+cision points. Experiments show that more
+specialized classifiers perform better than few
+joint classifiers. The NavyTime system ranked
+second both overall and in most subtasks like
+event extraction and relation labeling.
+1 Introduction
+The SemEval-2013 Task 1 (TempEval-3) contest is
+the third instantiation of an event ordering challenge.
+However, it is the first to start from raw text with
+the challenge to create an end-to-end algorithm for
+event ordering. Previous challenges included the in-
+dividual aspects of such a system, including event
+extraction, timex extraction, and event/time ordering
+(Verhagen et al, 2007; Verhagen et al, 2010). How-
+ever, neither task was dependent on the other. This
+paper presents NavyTime, a system inspired partly
+by this previous breakup of the tasks. We focus on
+breaking up the event/time ordering task further, and
+show that 5 classifiers yield better performance than
+the traditional 3 (or even 1).
+The first required steps to annotate a document are
+to extract its events and time expressions. This pa-
+per describes a new event extractor with a rich set of
+contextual features that is a top performer for event
+attributes at Tempeval-3. We then explore additions
+to SUTime, a top rule-based extractor for time ex-
+pressions (Chang and Manning, 2012). However,
+the core challenge is to link these extracted events
+and times together. We describe new models for
+these difficult tasks: (1) identifying ordered pairs,
+and (2) labeling the ordering relations.
+Relation identification is rarely addressed in the
+literature. Given a set of events, which pairs of
+events are temporally related? Almost all previous
+work assumes we are given the pairs, and the task
+is to label the relation (before, after, etc.). Raw
+text presents a new challenge: extract the relevant
+pairs before labeling them. We present some of the
+first results that compare rule-based approaches to
+trained probabilistic classifiers. These are the first
+such comparisons to our knowledge.
+Finally, after relation identification, we label re-
+lations between the pairs. This is the traditional
+event ordering task, although we now start from
+noisy pairs. Our main contribution is to build in-
+dependent classifiers for intra-sentence event/time
+pairs. We show improved performance when train-
+ing these split classifiers. NavyTime?s approach is
+highly competitive, achieving 2nd place in relation
+labeling (and overall).
+2 Dataset
+All models are developed on the TimeBank (Puste-
+jovsky et al, 2003) and AQUAINT corpora (Mani
+73
+et al, 2007). These labeled newspaper articles have
+fueled many years of event ordering research. Time-
+Bank includes 183 documents and AQUAINT in-
+cludes 73. The annotators of each were given dif-
+ferent guidance, so they provide unique distributions
+of relations. Development of the algorithms in this
+paper were solely on 10-fold cross validation on the
+union of the two corpora.
+The SemEval-2013 Task 1 (TempEval-3) provides
+unseen raw text to then evaluate the final systems.
+Final results are from this set of unseen newspaper
+articles. They were annotated by a different set of
+people who annotated TimeBank and AQUAINT.
+3 Event Extraction
+The first stage to processing raw text is to extract
+the event mentions. We treat this as a binary classi-
+fication task, classifying each token as either event
+or not-event. Events are always single tokens in the
+TimeBank/AQUAINT corpora, so a document with
+n tokens requires n classifications. Further, each
+event is marked up with its tense, aspect, and class.
+We used a maximum entropy classification
+framework based on the lexical and syntactic con-
+text of the target word. The same features are used
+to first identify events (binary decision), and then
+three classifiers are trained for the tense, aspect, and
+class. The following features were used:
+Token N-grams: Standard n-gram context that
+includes the target token (1,2,3grams), as well as
+the unigrams and bigrams that occur directly before
+and after the target token.
+Part of Speech n-grams: The POS tag of the target,
+and the bigram and trigram ending with the target.
+Lemma: The lemmatized token in WordNet.
+WordNet-Event: A binary feature, true if the token
+is a descendent of the Event synset in WordNet.
+Parse Path: The tree path from the token?s leaf
+node to the root of the syntactic parse tree.
+Typed Dependencies: The typed dependency triple
+of any edge that begins or ends with the target.
+We used 10-fold cross validation on the combined
+corpora of TimeBank and AQUAINT to develop the
+above features, and then trained one classifier on the
+entire dataset. Our approach was the 2nd best event
+extraction system out of 8 submission sites on the
+unseen test set from TempEval-3. Detailed results
+are given in Figure 1.
+Results on event attribute extraction were also
+good (Figure 1). We again ranked 2nd best in both
+Tense and Aspect. Only with the Class attribute did
+we fare worse (4th of 8). We look forward to com-
+paring approaches to see why this particular attribute
+was not as successful.
+4 Temporal Expression Extraction
+As with event extraction, time expressions need to
+be identified from the raw text. Recent work on time
+extraction has suggested that rule-based approaches
+outperform others (Chang and Manning, 2012), so
+we adopted the proven SUTime system for this task.
+SUTime is a rule-based system that extracts phrases
+and normalizes them to a TimeML time. However,
+we improved it with some TimeBank specific rules.
+We observed that the phrases ?a year ago? and ?the
+latest quarter? were often inconsistent with standard
+TimeBank annotations. These tend to involve fiscal
+quarters, largely due to TimeBank?s heavy weight on
+the financial genre. For these phrases, we first deter-
+mine the current fiscal quarter, and adjust the nor-
+malized time to include the quarter, not just the year
+(e.g., 2nd quarter of 2012, rather than just 2012).
+Further, the generic phrase ?last year? should nor-
+malize to just a year, and not include a more specific
+month or quarter. We added rules to strip off months.
+SUTime was the best system for time extraction,
+and our usage matched its performance as one would
+hope. Full credit goes to SUTime, and its extraction
+is not a contribution of this paper. However, Navy-
+Time outperformed SUTime by over 3.5 F1 points
+on time normalization. Our additional rulebank ap-
+pears to have helped significantly, allowing Navy-
+Time to be the 2nd best in this category behind Hei-
+delTime. We recommend users to use either Heidel-
+Time or SUTime with the NavyTime rulebank.
+5 Temporal Relation Extraction
+After events and time expressions are identified, it
+remains to create temporal links between them. A
+temporal link is an ordering relation that occurs in
+four possible entity pairings: event-event, event-
+time, time-time, and event-DCT (DCT is the doc-
+ument creation time).
+74
+Event Extraction F1
+ATT-1 81.05
+NavyTime 80.30
+KUL 79.32
+cleartk-4 & cleartk-3 78.81
+ATT-3 78.63
+JU-CSE 78.62
+KUL-TE3RunABC 77.11
+Temp:ESAfeature 68.97
+FSS-TimEx 65.06
+Temp:WordNetfeature 63.90
+Class Attribute
+System Class F1
+ATT 71.88
+KUL 70.17
+cleartk 67.87
+NavyTime 67.48
+Temp:ESA 54.55
+JU-CSE 52.69
+Temp:WNet 50.00
+FSS-TimEx 42.94
+Tense and Aspect Attributes
+System Tense F1 Aspect F1
+cleartk 62.18 70.40
+NavyTime 61.67 72.43
+ATT 59.47 73.50
+JU-CSE 58.62 72.14
+KUL 49.70 63.20
+not all systems participated
+Figure 1: Complete event rankings on all subtasks scored by F1. Extraction is token span matching.
+It is unrealistic to label all possible pairs in a doc-
+ument. Many event/time pairs have ambiguous or-
+derings, and others are simply not labeled by the an-
+notators. We propose a two-stage approach where
+we first identify likely pairs (relation identification),
+and then independently decide what specific order-
+ing relation holds between them (relation labeling).
+5.1 Relation Identification
+TempEval-3 defined the set of possible relations to
+exist in particular configurations: (1) any pairs in
+the same sentence, (2) event-event pairs of main
+events in adjacent sentences, and (3) event-DCT
+pairs. However, the training and test corpora do not
+follow these rules. Many pairs are skipped to save
+human effort. This task is thus a difficult balance be-
+tween labeling all true relations, but also matching
+the human annotators. We tried two approaches to
+identifying pairs: rule-based, and data-driven learn-
+ing.
+Rule-Based: We extract all event-event and event-
+time pairs in the same sentence if they are adjacent
+to each other (no intervening events or times). We
+also extract main event pairs of adjacent sentences.
+We identify main events by finding the highest VP
+in the parse tree.
+Data-Driven: This approach treats it as a bi-
+nary classification task. Given a pair of enti-
+ties, determine if they are ordered or not-ordered.
+We condense the training corpora?s TLINK rela-
+tions into ordered, and label all non-labeled pairs
+as not-ordered. We tried a variety of classifiers
+for each event/time pair type: (1) intra-sentence
+event-event, (2) intra-sentence event-time, (3) inter-
+Event-Event Features
+Token, lemma, wordnet synset
+POS tag n-grams surrounding events
+Syntactic tree dominance
+Linear order in text
+Does another event appear in between?
+Parse path from e1 to e2
+Typed dependency path from e1 to e2
+Event-Time Features
+Event POS, token, lemma, wordnet synset
+Event tense, aspect, and class
+Is time a day of the week?
+Entire time phrase
+Last token in time phrase
+Does time end the sentence?
+Bigram of event token and time token
+Syntactic tree dominance
+Parse path from event to time
+Typed dependency path from event to time
+Event-DCT Feature
+Event POS, token, lemma, wordnet synset
+Event tense, aspect, and class
+Bag-of-words unigrams surrounding the event
+Figure 2: Features in the 3 types of classifiers.
+sentence event-event, and (4) event-DCT.
+The data-driven features are shown in Figure 2.
+After labeling pairs of entities, the ordered pairs are
+then labeled with specific relations, described next.
+5.2 Relation Labeling
+This is the traditional ordering task. Given a set
+of entity pairs, label each with a temporal relation.
+TempEval-3 uses the full set of 12 relations.
+Traditionally, ordering research trains a single
+classifier for all event-event links, and a second for
+all event-time links. We experimented with more
+75
+UTTime Best 56.45
+NavyTime (TimeBank+AQUAINT) 46.83
+NavyTime (TimeBank) 43.92
+JU-CSE Best 34.77
+Table 1: Task Crel, F1 scores of relation labeling.
+specific classifiers, observing that two events in the
+same sentence share a syntactic context that does not
+exist between two events in different sentences. We
+must instead rely on discourse cues and word seman-
+tics for the latter. We thus propose using different
+classifiers to learn better feature weights for these
+unique contexts. Splitting into separate classifiers is
+largely unexplored on TimeBank, and just recently
+applied to a medical domain (Xu et al, 2013).
+We train two MaxEnt classifiers for event-event
+links (inter and intra-sentence), and two for event-
+time links. The event-DCT links also have their own
+classifier for a total of 5 classifiers. We use the same
+features (Figure 2) as in relation identification.
+5.3 Experiments and Results
+All models were created by using 10-fold cross val-
+idation on TimeBank+AQUAINT. The best model
+was then trained on the entire set. Features seen
+only once were trimmed from training. The relation
+labeling confidence threshold was set to 0.3. Final
+results are reported on the held out test set provided
+by SemEval-2013 Task 1 (TempEval-3).
+Our first experiments focus on relation labeling.
+This is a simpler task than identification in that we
+start with known pairs of entities, and the task is to
+assign a label to them (Task C-relation at SemEval-
+2013 Task 1). Table 1 gives the results. Our system
+initially ranked second with 46.83.
+The next task is both relation identification and
+relation labeling combined (Task C). This is unfor-
+tunately a task that is difficult to define. Without a
+completely labeled graph of events and times, it is
+not about true extraction, but matching human la-
+beling decisions that were constrained by time and
+effort. We experimented with rule-based vs data-
+driven extractors. We held our relation labeling
+model constant, and swapped different identification
+models in and out. Our best configuration was eval-
+uated on test. Results are shown in Table 2. Navy-
+Time is the third best performer.
+Finally, the full task from raw text requires all
+cleartk Best 36.26
+UTTime-5 34.90
+NavyTime (TimeBank+AQUAINT) 31.06
+JU-CSE Best 26.41
+NavyTime (TimeBank) 25.84
+KUL 24.83
+Table 2: Task C, F1 scores of relation ID and labeling.
+cleartk Best 30.98
+NavyTime (TimeBank+AQUAINT) 27.28
+JU-CSE 24.61
+NavyTime (TimeBank) 21.99
+KUL 19.01
+Table 3: Task ABC, Extraction and labeling raw text.
+stages of this paper, starting from event and tem-
+poral extraction, then applying relation ID and la-
+beling. Results are shown in Table 3. Our system
+ranked 2nd of 4 systems.
+Our best performing setup uses trained classi-
+fiers for relation identification of event-event and
+event-DCT links, but deterministic rules for event-
+time links (Sec 5.1). It then uses trained classi-
+fiers for relation labeling of all pair types. Train-
+ing with TimeBank+AQUAINT outperformed just
+TimeBank. The split classifier approach for intra
+and inter-sentence event-event relations also outper-
+formed a single event-event classifier. We cannot
+give more specific results due to space constraints.
+6 Discussion
+Our system was 2nd in most of the subtasks and
+overall (Task ABC). Split-classifiers for inter and
+intra-sentence pairs are beneficial. Syntactic fea-
+tures help event extraction. Compared to cleartk,
+NavyTime was better in event and time extraction
+individually, but worse overall. Our approach to re-
+lation identification is likely the culprit.
+We urge future work to focus on relation identifi-
+cation. Event and time performance is high, and re-
+lation labeling is covered in the literature. For iden-
+tification, it is not clear that TimeBank-style corpora
+are appropriate for evaluation. Human annotators do
+not create connected graphs. How can we evaluate
+systems that do? Do we want systems that mimic
+imperfect, but testable human effort? Accurate eval-
+uation on raw text requires fully labeled test sets.
+76
+References
+Angel Chang and Christopher D. Manning. 2012. Su-
+time: a library for recognizing and normalizing time
+expressions. In Proceedings of the Language Re-
+sources and Evaluation Conference.
+Inderjeet Mani, Ben Wellner, Marc Verhagen, and James
+Pustejovsky. 2007. Three approaches to learning
+tlinks in timeml. Technical Report CS-07-268, Bran-
+deis University.
+James Pustejovsky, Patrick Hanks, Roser Sauri, Andrew
+See, Robert Gaizauskas, Andrea Setzer, Dragomir
+Radev, Beth Sundheim, David Day, Lisa Ferro, et al
+2003. The timebank corpus. In Corpus linguistics,
+volume 2003, page 40.
+Marc Verhagen, Robert Gaizauskas, Frank Schilder,
+Mark Hepple, Graham Katz, and James Pustejovsky.
+2007. Semeval-2007 task 15: Tempeval temporal re-
+lation identification. In Proceedings of the 4th Interna-
+tional Workshop on Semantic Evaluations, pages 75?
+80. Association for Computational Linguistics.
+Marc Verhagen, Roser Sauri, Tommaso Caselli, and
+James Pustejovsky. 2010. Semeval-2010 task 13:
+Tempeval-2. In Proceedings of the 5th International
+Workshop on Semantic Evaluation, pages 57?62. As-
+sociation for Computational Linguistics.
+Yan Xu, Yining Wang, Tianren Liu, Junichi Tsujii, and
+Eric I-Chao Chang. 2013. An end-to-end system
+to identify temporal relation in discharge summaries:
+2012 i2b2 challenge. Journal of the American Medi-
+cal Informatics Association.
+77
+Second Joint Conference on Lexical and Computational Semantics (*SEM), Volume 2: Seventh International Workshop on Semantic
+Evaluation (SemEval 2013), pages 390?394, Atlanta, Georgia, June 14-15, 2013. c?2013 Association for Computational Linguistics
+USNA: A Dual-Classifier Approach to Contextual Sentiment Analysis
+Ganesh Harihara and Eugene Yang and Nathanael Chambers
+United States Naval Academy
+Annapolis, MD 21401, USA
+nchamber@usna.edu
+Abstract
+This paper describes a dual-classifier ap-
+proach to contextual sentiment analysis at the
+SemEval-2013 Task 2. Contextual analysis of
+polarity focuses on a word or phrase, rather
+than the broader task of identifying the senti-
+ment of an entire text. The Task 2 definition
+includes target word spans that range in size
+from a single word to entire sentences. How-
+ever, the context of a single word is depen-
+dent on the word?s surrounding syntax, while a
+phrase contains most of the polarity within it-
+self. We thus describe separate treatment with
+two independent classifiers, outperforming the
+accuracy of a single classifier. Our system
+ranked 6th out of 19 teams on SMS message
+classification, and 8th of 23 on twitter data.
+We also show a surprising result that a very
+small amount of word context is needed for
+high-performance polarity extraction.
+1 Introduction
+A variety of approaches to sentiment analysis have
+been proposed in the literature. Early work sought to
+identify the general sentiment of entire documents,
+but a recent shift to social media has provided a large
+quantity of publicly available data, and private orga-
+nizations are increasingly interested in how a pop-
+ulation ?feels? toward its products. Identifying the
+polarity of language toward a particular topic, how-
+ever, no longer requires identifying the sentiment of
+an entire text, but rather the contextual sentiment
+surrounding a target phrase.
+Identifying the polarity of text toward a phrase is
+significantly different from a sentence?s overall po-
+larity, as seen in this example from the SemEval-
+2013 Task 2 (Wilson et al, 2013) training set:
+I had a severe nosebleed last night. I think
+my iPad caused it as I was browsing for a
+few hours on it. Anyhow, its stopped, which
+is good.
+An ideal sentiment classifier would classify this
+text as overall positive (the nosebleed stopped!), but
+this short snippet actually contains three types of po-
+larity (positive, negative, and neutral). The middle
+sentence about the iPad is not positive, but neutral.
+The word ?nosebleed? has a very negative polarity
+in this context, and the phrase ?its stopped? is posi-
+tive. Someone interested in specific health concerns,
+such as nosebleeds, needs a contextual classifier to
+identify the desired polarity in this context.
+This example also illustrates how phrases of dif-
+ferent sizes require unique handling. Single token
+phrases, such as ?nosebleed?, are highly dependent
+on the surrounding context for its polarity. How-
+ever, the polarity of the middle iPad sentence is con-
+tained within the phrase itself. The surrounding con-
+text is not as important. This paper thus proposes
+a dual-classifier that trains two separate classifiers,
+one for single words, and another for phrases. We
+empirically show that unique features apply to both,
+and both benefit from independent training. In fact,
+we show a surprising result that a very small win-
+dow size is needed for the context of single word
+phrases. Our system performs well on the SemEval
+task, placing 8th of 23 systems on twitter text. It also
+shows strong generalization to SMS text messages,
+placing 6th of 19.
+390
+2 Previous Work
+Sentiment analysis is a large field applicable to
+many genres. This paper focuses on social media
+(microblogs) and contextual polarity, so we only
+address the closest work in those areas. For a
+broader perspective, several survey papers are avail-
+able (Pang and Lee, 2008; Tang et al, 2009; Liu and
+Zhang, 2012; Tsytsarau and Palpanas, 2012).
+Microblogs serve as a quick way to measure a
+large population?s mood and opinion. Many differ-
+ent sources have been used. O?Connor et al (2010)
+used Twitter data to compute a ratio of positive and
+negative words to measure consumer confidence and
+presidential approval. Kramer (2010) counted lex-
+icon words on Facebook for a general ?happiness?
+measure, and Thelwall (2011) built a general senti-
+ment model on MySpace user comments. These are
+general sentiment algorithms.
+Specific work on microblogs has focused on find-
+ing noisy training data with distant supervision.
+Many of these algorithms use emoticons as seman-
+tic indicators of polarity. For instance, a tweet that
+contains a sad face likely contains a negative polar-
+ity (Read, 2005; Go et al, 2009; Bifet and Frank,
+2010; Pak and Paroubek, 2010; Davidov et al, 2010;
+Kouloumpis et al, 2011). In a similar vein, hash-
+tags can also serve as noisy labels (Davidov et al,
+2010; Kouloumpis et al, 2011). Most work on dis-
+tant supervision relies on a variety of syntactic and
+word-based features (Marchetti-Bowick and Cham-
+bers, 2012). We adopt many of these features.
+Supervised learning for contextual sentiment
+analysis has not been thoroughly investigated. La-
+beled data for specific words or queries is expensive
+to generate, so Jiang et al (2011) is one of the few
+approaches with labeled training data. Earlier work
+on product reviews sought the sentiment toward par-
+ticular product features. These systems used rule
+based approaches based on parts of speech and other
+surface features (Nasukawa and Yi, 2003; Hu and
+Liu, 2004; Ding and Liu, 2007).
+Finally, topic identification in microblogs is also
+related. The first approaches are somewhat simple,
+selecting single keywords (e.g., ?Obama?) to rep-
+resent the topic (e.g., ?US President?), and retrieve
+tweets that contain the word (O?Connor et al, 2010;
+Tumasjan et al, 2010; Tan et al, 2011). These sys-
+tems then classify the polarity of the entire tweet,
+and ignore the question of polarity toward the partic-
+ular topic. This paper focuses on the particular key-
+word or phrase, and identifies the sentiment toward
+that phrase, not the overall sentiment of the text.
+3 Dataset
+This paper uses three polarity classes: positive, neg-
+ative, and neutral. We developed all algorithms on
+the ?Task A? corpora provided by SemEval-2013
+Task 2 (Wilson et al, 2013). Both training and de-
+velopment sets were provided, and an unseen test
+set was ultimately used to evaluate the final systems.
+The number of tweets in each set are shown here:
+positive negative neutral
+training 5348 2817 422
+development 648 430 57
+test (tweet) 2734 1541 160
+test (sms) 1071 1104 159
+4 Contextual Sentiment Analysis
+Contextual sentiment analysis focuses on the dispo-
+sition of a certain word or groups of words. Most
+data-driven approaches rely on a labeled corpus to
+drive the learning process, and this paper is no dif-
+ferent. However, we propose a novel approach to
+contextual analysis that differentiates between sin-
+gle words and phrases.
+The semantics of a single word in context from
+that of a phrase are fundamentally different. Since
+one word will have multiple contexts and is heavily
+influenced by the surrounding words, more consid-
+eration is given to adjacent words. A phrase often
+carries its own semantics, so has less variability in
+its meaning based on its context. Context is still im-
+portant, but we propose separate classifiers in order
+to learn weights unique to tokens and phrases. The
+following describes the two unique feature sets. We
+trained a Maximum Entropy classifier for each set.
+4.1 Text Pre-Processing
+All text is lowercased, and twitter usernames (e.g.,
+@user) and URLs are replaced with placeholder to-
+kens. The text is then split on whitespace. We also
+prepend the occurrence of token ?not? to the subse-
+quent token, merging the two (e.g., ?not happy? be-
+391
+comes ?not-happy?). We also found that removing
+prefix and affix punctuation from each token, and
+storing the punctuation for later use in punctuation
+features boosts performance. These cleaned tokens
+are the input to the features described below.
+4.2 Single Word Sentiment Analysis
+Assigning polarity to a single word mainly requires
+features that accurately capture the surrounding con-
+text. In fact, many single words do no carry any po-
+larity in isolation, but solely require context. Take
+the following two examples:
+Justin LOVE YA so excited for the concert in
+october MEXICO LOVES YOU
+Im not getting on twitter tomorrow because all
+my TL will consist of is a bunch of girls talking
+about Justin Beiber
+In these examples, Justin is the name of a singer
+who does not carry an initial polarity. The first tweet
+is clearly positive toward him, while the second is
+not. Our single-token classifier used the following
+set of features to capture these different contexts:
+Target Token: The first features are the unigram
+and bigram ending with the target token. We attach a
+unique string to each to distinguish it from the text?s
+other n-grams. We also include a feature for any
+punctuation that was attached to the end of the token
+(e.g., ?Justin!? generates ?!? as a feature).
+Target Patterns: This feature generalizes the n-
+grams that include the target word. It replaces the
+target word with a variable in an effort to capture
+general patterns that indicate sentiment. For in-
+stance, using the first tweet above, we add the tri-
+gram ?<s> LOVE? and two bigrams, ?<s> ?
+and ? LOVE?.
+Unigrams, Bigrams, Trigrams: We include all
+other n-grams in the text within a window of size
+n from the target token.
+Dictionary Matching: We have two binary fea-
+tures, postivemood and negativemood, that indicate
+if any word in the text appears in a sentiment lex-
+icon?s positive or negative list. We use Bing Liu?s
+Opinion Lexicon1.
+1http://www.cs.uic.edu/?liub/FBS/
+sentiment-analysis.html\#lexicon
+Punctuation Features: We included a binary fea-
+ture for the presence or absence of exclamation
+marks anywhere in the text. Further, we generate
+a feature for punctuation at the end of the text.
+Emoticons: We included two binary features for the
+presence or absence of a smiley face and sad face
+emoticon.
+4.3 Phrasal Sentiment Analysis
+We adopted several single word features for use in
+phrases, including punctuation, dictionary match-
+ing, and emoticons. However, since phrasal analy-
+sis is often less dependent on context and more de-
+pendent on the phrase itself, we altered the n-gram
+features to be unique to the phrase. The following
+features are solely used for target phrases, not single
+words:
+Unigrams, Bigrams, Trigrams: We include all n-
+grams in the target phrase only. This differs from
+the single token features that included n-grams from
+a surrounding window.
+Phrasal Punctuation: If the target phrase ends with
+any type of punctuation, we include it as a feature.
+5 Experiments
+Initial model design and feature tuning was con-
+ducted on the SemEval-2013 Task 2 training set for
+training, and its dev set for evaluation. We split the
+data into two parts: tweets with single word targets,
+and tweets with target phrases. We trained two Max-
+Ent classifiers using the Stanford JavaNLP toolkit2.
+Each datum in the test set is labeled using the appro-
+priate classifier based on the target phrase?s length.
+The first experiments are ablation over the fea-
+tures described in Section 4, separately improving
+the single token and phrasal classifiers. Results are
+reported in Table 1 using simple accuracy on the de-
+velopment set. We initially do not split off punc-
+tuation, and use only unigram features for phrases.
+The window size is initally infinite (i.e., the entire
+text is used for n-grams). Bigrams and trigrams hurt
+performance and are not shown. Reducing the win-
+dow size to a single token (ignore the entire tweet)
+increased performance by 1.2%, and stripping punc-
+tuation off tokens by another 1.9%. The perfor-
+2http://nlp.stanford.edu/software/index.shtml
+392
+Single Token Features
+Just Unigrams 70.5
++ Target Token Patterns 70.4
++ Sentiment Lexicon 71.5
++ Target Token N-Grams 73.3
++ EOS punctuation 73.2
++ Emoticons 73.3
+Set Window Size = 1 74.5
+Strip punctuation off tokens 76.4
+Phrasal Features
+Just Unigrams 76.4
++ Emoticons 76.3
++ EOS punctuation 76.6
++ Exclamation Marks 76.5
++ Sentiment Lexicon 77.7
+Table 1: Feature ablation in order. Single token features
+begin with unigrams only, holding phrasal features con-
+stant at unigrams only. The phrasal table picks up where
+the single token table finishes. Each row uses all features
+added in previous rows.
+Dual-Classifier Comparison
+Single Classifier 76.6%
+Dual-Classifier 77.7%
+Table 2: Performance increase from splitting into two
+classifiers. Accuracy reported on the development set.
+mance increase with phrasal features is 1.3% abso-
+lute, whereas token features contributed 5.9%.
+After choosing the optimum set of features based
+on ablation, we then retrained the classifiers on both
+the training and development sets as one large train-
+ing corpus. The SemEval-2013 Task 2 competition
+included two datasets for testing: tweets and SMS
+messages. Official results for both are given in Ta-
+ble 3 using the F1 measure.
+Finally, we compare our dual-classifier to a single
+standard classifier. We use the same features used
+in Table 1, train on the training set, and report accu-
+racy on the development set. See Table 2. Our dual
+classifier improves relative accuracy by 1.4%.
+6 Discussion
+One of the main surprises from our experiments was
+that a large portion of text could be ignored with-
+out hurting classification performance. We reduced
+Twitter Dataset
+F1 Score
+Top System (1st) 88.9
+This Paper (8th) 81.3
+Majority Baseline (20th) 61.6
+Bottom System (24th) 34.7
+SMS Dataset
+F1 Score
+Top System (1st) 88.4
+This Paper (6th) 79.8
+Majority Baseline (19th) 47.3
+Min System (20th) 36.4
+Table 3: Performance on Twitter and SMS Data.
+the window size in which n-grams are extracted to
+size one, and performance actually increases 1.2%.
+At least for single word target phrases, including n-
+grams of the entire tweet/sms is not helpful. We
+only used n-gram patterns that included the token
+and its two immediate neighbors. A nice side ben-
+efit is that the classifier contains fewer features, and
+trains faster as a result.
+The decision to use two separate classifiers helped
+performance, improving by 1.4% relative accuracy
+on the development set. The decision was moti-
+vated by the observation that the polarity of a token
+is dependent on its surrounding context, but a longer
+phrase is dependent more on its internal syntax. This
+allowed us to make finer-grained feature decisions,
+and the feature ablation experiments suggest our ob-
+servation to be true. Better feature weights are ulti-
+mately learned for the unique tasks.
+Finally, the feature ablation experiments revealed
+a few key takeaways for feature engineering: bi-
+grams and trigrams hurt classification, using a win-
+dow size is better than the entire text, and punctu-
+ation should always be split off tokens. Further, a
+sentiment lexicon reliably improves both token and
+phrasal classification.
+Opportunities for future work on contextual anal-
+ysis exist in further analysis of the feature window
+size. Why doesn?t more context help token classifi-
+cation? Do n-grams simply lack the deeper seman-
+tics needed, or are these supervised algorithms still
+suffering from sparse training data? Better sentence
+and phrase detection may be a fruitful focus.
+393
+References
+Albert Bifet and Eibe Frank. 2010. Sentiment knowl-
+edge discovery in twitter streaming data. In Lecture
+Notes in Computer Science, volume 6332, pages 1?15.
+Dmitry Davidov, Oren Tsur, and Ari Rappoport. 2010.
+Enhanced sentiment learning using twitter hashtags
+and smileys. In Proceedings of the 23rd International
+Conference on Computational Linguistics (COLING
+2010).
+Xiaowen Ding and Bing Liu. 2007. The utility of lin-
+guistic rules in opinion mining. In Proceedings of
+SIGIR-2007, pages 23?27.
+Alec Go, Richa Bhayani, and Lei Huang. 2009. Twit-
+ter sentiment classification using distant supervision.
+Technical report.
+Minqing Hu and Bing Liu. 2004. Mining and sum-
+marizing customer reviews. In Proceedings of the
+ACM SIGKDD International Conference on Knowl-
+edge Discovery and Data Mining.
+Long Jiang, Mo Yu, Ming Zhou, Xiaohua Liu, and Tiejun
+Zhao. 2011. Target-dependent twitter sentiment clas-
+sification. In Proceedings of the Association for Com-
+putational Linguistics (ACL-2011).
+Efthymios Kouloumpis, Theresa Wilson, and Johanna
+Moore. 2011. Twitter sentiment analysis: The good
+the bad and the omg! In Proceedings of the Fifth In-
+ternational AAAI Conference on Weblogs and Social
+Media.
+Adam D. I. Kramer. 2010. An unobtrusive behavioral
+model of ?gross national happiness?. In Proceedings of
+the 28th International Conference on Human Factors
+in Computing Systems (CHI 2010).
+Bing Liu and Lei Zhang. 2012. A survey of opinion min-
+ing and sentiment analysis. Mining Text Data, pages
+415?463.
+Micol Marchetti-Bowick and Nathanael Chambers.
+2012. Learning for microblogs with distant supervi-
+sion: Political forecasting with twitter. In Proceedings
+of the 13th Conference of the European Chapter of the
+Association for Computational Linguistics.
+Tetsuya Nasukawa and Jeonghee Yi. 2003. Sentiment
+analysis: capturing favorability using natural language
+processing. In Proceedings of K-CAP.
+Brendan O?Connor, Ramnath Balasubramanyan,
+Bryan R. Routledge, and Noah A. Smith. 2010.
+From tweets to polls: Linking text sentiment to public
+opinion time series. In Proceedings of the AAAI
+Conference on Weblogs and Social Media.
+Alexander Pak and Patrick Paroubek. 2010. Twitter as a
+corpus for sentiment analysis and opinion mining. In
+Proceedings of the Seventh International Conference
+On Language Resources and Evaluation (LREC).
+B. Pang and L. Lee. 2008. Opinion mining and senti-
+ment analysis. Foundations and Trends in Information
+Retrieval.
+Jonathon Read. 2005. Using emoticons to reduce depen-
+dency in machine learning techniques for sentiment
+classification. In Proceedings of the ACL Student Re-
+search Workshop (ACL-2005).
+Chenhao Tan, Lillian Lee, Jie Tang, Long Jiang, Ming
+Zhou, and Ping Li. 2011. User-level sentiment anal-
+ysis incorporating social networks. In Proceedings
+of the 17th ACM SIGKDD Conference on Knowledge
+Discovery and Data Mining.
+H. Tang, S. Tan, and X. Cheng. 2009. A survey on senti-
+ment detection of reviews. Expert Systems with Appli-
+cations.
+Mike Thelwall, Kevan Buckley, and Georgios Paltoglou.
+2011. Sentiment in twitter events. Journal of the
+American Society for Information Science and Tech-
+nology, 62(2):406?418.
+M. Tsytsarau and T. Palpanas. 2012. Survey on mining
+subjective data on the web. Data Mining and Knowl-
+edge Discovery Journal, 24(3):478?514.
+Andranik Tumasjan, Timm O. Sprenger, Philipp G. Sand-
+ner, and Isabell M. Welpe. 2010. Election forecasts
+with twitter: How 140 characters reflect the political
+landscape. Social Science Computer Review.
+Theresa Wilson, Zornitsa Kozareva, Preslav Nakov, Alan
+Ritter, Sara Rosenthal, and Veselin Stoyanov. 2013.
+Semeval-2013 task 2: Sentiment analysis in twitter.
+In Proceedings of the 7th International Workshop on
+Semantic Evaluation. Association for Computational
+Linguistics.
+394

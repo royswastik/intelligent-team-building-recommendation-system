@@ -1,0 +1,4521 @@
+Training Tree Transducers
+Jonathan Graehl?
+University of Southern California
+Kevin Knight??
+University of Southern California
+Jonathan May?
+University of Southern California
+Many probabilistic models for natural language are now written in terms of hierarchical tree
+structure. Tree-based modeling still lacks many of the standard tools taken for granted in
+(finite-state) string-based modeling. The theory of tree transducer automata provides a possible
+framework to draw on, as it has been worked out in an extensive literature. We motivate the
+use of tree transducers for natural language and address the training problem for probabilistic
+tree-to-tree and tree-to-string transducers.
+1. Introduction
+Much natural language work over the past decade has employed probabilistic finite-
+state transducers (FSTs) operating on strings. This has occurred somewhat under the
+influence of speech recognition research, where transducing acoustic sequences to word
+sequences is neatly captured by left-to-right stateful substitution. Many conceptual tools
+exist, such as Viterbi decoding (Viterbi 1967) and forward?backward training (Baum
+and Eagon 1967), as well as software toolkits like the AT&T FSM Library and USC/ISI?s
+Carmel.1 Moreover, a surprising variety of problems are attackable with FSTs, from
+part-of-speech tagging to letter-to-sound conversion to name transliteration.
+However, language problems like machine translation break this mold, because
+they involve massive re-ordering of symbols, and because the transformation processes
+seem sensitive to hierarchical tree structure. Recently, specific probabilistic tree-based
+models have been proposed not only for machine translation (Wu 1997; Alshawi,
+Bangalore, and Douglas 2000; Yamada and Knight 2001; Eisner 2003; Gildea 2003), but
+also for summarization (Knight and Marcu 2002), paraphrasing (Pang, Knight, and
+Marcu 2003), natural language generation (Langkilde and Knight 1998; Bangalore and
+Rambow 2000; Corston-Oliver et al 2002), parsing, and language modeling (Baker
+1979; Lari and Young 1990; Collins 1997; Chelba and Jelinek 2000; Charniak 2001; Klein
+? Information Sciences Institute, 4676 Admiralty Way, Marina del Rey, CA 90292. E-mail: graehl@isi.edu.
+?? Information Sciences Institute, 4676 Admiralty Way, Marina del Rey, CA 90292. E-mail: knight@isi.edu.
+? Information Sciences Institute, 4676 Admiralty Way, Marina del Rey, CA 90292. E-mail: jonmay@isi.edu.
+1 www.research.att.com/sw/tools/fsm and www.isi.edu/licensed-sw/carmel.
+Submission received: 30 October 2003; revised submission received: 30 August 2007; accepted for
+publication: 20 October 2007.
+? 2008 Association for Computational Linguistics
+Computational Linguistics Volume 34, Number 3
+and Manning 2003). It is useful to understand generic algorithms that may support all
+these tasks and more.
+Rounds (1970) and Thatcher (1970) independently introduced tree transducers as a
+generalization of FSTs. Rounds was motivated by natural language:
+Recent developments in the theory of automata have pointed to an extension of
+the domain of definition of automata from strings to trees . . . parts of mathematical
+linguistics can be formalized easily in a tree-automaton setting . . .We investigate
+decision problems and closure properties. Our results should clarify the nature of
+syntax-directed translations and transformational grammars . . . (Rounds 1970)
+The Rounds/Thatcher tree transducer is very similar to a left-to-right FST, except that
+it works top-down, pursuing subtrees independently, with each subtree transformed
+depending only on its own passed-down state. This class of transducer, called R in
+earlier works (G?cseg and Steinby 1984; Graehl and Knight 2004) for ?root-to-frontier,?
+is often nowadays called T, for ?top-down?.
+Rounds uses a mathematics-oriented example of a T transducer, which we repeat
+in Figure 1. At each point in the top-down traversal, the transducer chooses a produc-
+tion to apply, based only on the current state and the current root symbol. The traversal
+continues until there are no more state-annotated nodes. Non-deterministic transducers
+may have several productions with the same left-hand side, and therefore some free
+choices to make during transduction.
+A T transducer compactly represents a potentially infinite set of input/output tree
+pairs: exactly those pairs (T1, T2) for which some sequence of productions applied to
+T1 (starting in the initial state) results in T2. This is similar to an FST, which compactly
+represents a set of input/output string pairs; in fact, T is a generalization of FST. If
+we think of strings written down vertically, as degenerate trees, we can convert any
+FST into a T transducer by automatically replacing FST transitions with T produc-
+tions, as follows: If an FST transition from state q to state r reads input symbol A
+and outputs symbol B, then the corresponding T production is q A(x0) ? B(r x0). If
+the FST transition output is epsilon, then we have instead q A(x0) ? r x0, or if the
+input is epsilon, then q x0? B(r x0). Figure 2 depicts a sample FST and its equivalent
+T transducer.
+T does have some extra power beyond path following and state-based record-
+keeping. It can copy whole subtrees, and transform those subtrees differently. It can
+also delete subtrees without inspecting them (imagine by analogy an FST that quits and
+accepts right in the middle of an input string). Variants of T that disallow copying and
+deleting are called LT (for linear) and NT (for nondeleting), respectively.
+One advantage to working with tree transducers is the large and useful body of
+literature about these automata; two excellent surveys are G?cseg and Steinby (1984)
+and Comon et al (1997). For example, it is known that T is not closed under composition
+(Rounds 1970), and neither are LT or B (the ?bottom-up? cousin of T), but the non-
+copying LB is closed under composition. Many of these composition results are first
+found in Engelfriet (1975).
+The power of T to change the structure of an input tree is surprising. For example,
+it may not be initially obvious how a T transducer can transform the English structure
+S(PRO, VP(V, NP)) into the Arabic equivalent S(V, PRO, NP), as it is difficult to move
+the subject PRO into position between the verb V and the direct object NP. First,
+T productions have no lookahead capability?the left-hand-side of the S production
+392
+Graehl, Knight, and May Training Tree Transducers
+Figure 1
+Part of a sample T tree transducer, adapted from Rounds (1970).
+consists only of q S(x0, x1), although we want the English-to-Arabic transformation to
+apply only when it faces the entire structure q S(PRO, VP(V, NP)). However, we can
+simulate lookahead using states, as in these productions:
+q S(x0, x1)? S(qpro x0, qvp.v.np x1)
+qpro PRO? PRO
+qvp.v.np VP(x0, x1)? VP(qv x0, qnp x1)
+393
+Computational Linguistics Volume 34, Number 3
+Figure 2
+An FST and its equivalent T transducer.
+By omitting rules like qpro NP? ..., we ensure that the entire production sequence
+will dead-end unless the first child of the input tree is in fact PRO. So finite lookahead
+(into inputs we don?t delete) is not a problem. But these productions do not actually
+move the subtrees around. The next problem is how to get the PRO to appear between
+the V and NP, as in Arabic. This can be carried out using copying. We make two copies
+of the English VP, and assign them different states, as in the following productions.
+States encode instructions for extracting/positioning the relevant portions of the VP.
+For example, the state qleft.vp.v means ?assuming this tree is a VP whose left child is V,
+output only the V, and delete the right child?:
+q S(x0, x1)? S(qleft.vp.v x1, qpro x0, qright.vp.np x1)
+qpro PRO? PRO
+qleft.vp.v VP(x0, x1)? qv x0
+qright.vp.np VP(x0, x1)? qnp x1
+With these rules, the transduction proceeds as in Figure 3. This ends our informal pre-
+sentation of tree transducers.
+Although general properties of T are understood, there are many algorithmic ques-
+tions. In this article, we take on the problem of training probabilistic T transducers. For
+many language problems (machine translation, paraphrasing, text compression, etc.),
+it is possible to collect training data in the form of tree pairs and to distill linguistic
+knowledge automatically. Our problem statement is: Given (1) a particular transducer
+394
+Graehl, Knight, and May Training Tree Transducers
+Figure 3
+Multilevel re-ordering of nodes in a T-transducer.
+with rules R, and (2) a finite training set of sample input/output tree pairs, we want
+to produce (3) a probability estimate for each rule in R such that we maximize the
+probability of the output trees given the input trees. As with the forward?backward
+algorithm, we seek at least a local maximum. Tree transducers with weights have been
+studied (Kuich 1999; Engelfriet, F?l?p, and Vogler 2004; F?l?p and Vogler 2004) but we
+know of no existing training procedure.
+Sections 2?4 of this article define basic concepts and recall the notions of relevant au-
+tomata and grammars. Sections 5?7 describe a novel tree transducer training algorithm,
+and Sections 8?10 describe a variant of that training algorithm for trees and strings.
+Section 11 presents an example linguistic tree transducer and provides empirical evi-
+dence of the feasibility of the training algorithm. Section 12 describes how the training
+algorithm may be used for training context-free grammars. Section 13 discusses related
+and future work.
+2. Trees
+T? is the set of (rooted, ordered, labeled, finite) trees over alphabet ?. An alphabet is a finite
+set. (see Table 1)
+T?(X) are the trees over alphabet ?, indexed by X?the subset of T??X where only
+leaves may be labeled by X (T?(?) = T?). Leaves are nodes with no children.
+The nodes of a tree t are identified one-to-one with its paths: pathst ? paths ? N
+? ?
+??
+i=0 N
+i (N0 ? {()}). The size of a tree is the number of nodes: |t| = |pathst|. The path
+to the root is the empty sequence (), and p1 extended by p2 is p1 ? p2, where ? is the
+concatenation operator:
+(a1, . . . , an) ? (b1, . . . , bm) ? (a1, . . . , an, b1, . . . , bm)
+For p ? pathst, rankt(p) is the number of children, or rank, of the node at p,
+and labelt(p) ? ? is its label. The ranked label of a node is the pair labelandrankt(p) ?
+(labelt(p), rankt(p)). For 1 ? i ? rankt(p), the ith child of the node at p is located at
+395
+Computational Linguistics Volume 34, Number 3
+Table 1
+Notation guide.
+Notation Meaning
+(w)FS(T,A) (weighted) finite-state string (transducers,acceptors)
+(w)RTG (weighted) regular tree grammars (generalizes PCFG)
+(x)(L)(N)T(s) (extended) (linear) (nondeleting) top?down tree(-to-string) transducers
+(S)T(A,S)G (synchronous) tree (adjoining,substitution) grammars
+(S,P)CFG (synchronous,probabilistic) context-free grammars
+R+ positive real numbers
+N natural numbers: {1, 2, 3, . . .}
+? empty set
+? equals (by definition)
+|A| size of finite set A
+X? Kleene star of X, i.e., strings over alphabet X: {(x1, . . . , xn) | n ? 0}
+a ? b String concatenation: (1) ? (2, 3) = (1, 2, 3)
+<lex lexicographic (dictionary) order: () < (1) < (1, 1) < . . . < (1, 2) < . . .
+? alphabet (set of symbols) (commonly: input tree alphabet)
+t ? T? t is a tree with label alphabet ?
+T?(X) ... and with variables from additional leaf label alphabet X
+A(t) tree constructed by placing a unary A above tree t
+A((x1, . . . , xn)) tree constructed by placing an n-ary A over leaves (x1, . . . , xn)
+p tree path, e.g., (a, b) is the bth child of the ath child of root
+paths the set of all tree paths (? N?)
+pathst subset of paths that lead to actual nodes in t
+pathst({A,B}) paths that lead to nodes labeled A or B in t
+t ? p the subtree of twith root at p, so that (t ? p) ? q = t ? (p ? q)
+rankt(p) the number of children of the node p of t
+labelt(p) the label of node p of t
+labelandrankt(p) the pair (labelt(p), rankt(p))
+t[p? t?] substitution of tree t? for the subtree t ? p
+t[p? t?p,?p ?P] parallel substitution of tree t
+?
+p for each t ? p
+yieldt(X) the left? right concatenation of the X labels of the leaves of t
+S ? N start nonterminal of a regular tree grammar
+P,R productions of a regular tree grammar, rules of a tree transducer
+D(M) derivations (keeping a list of applied rewrites) ofM
+LD(M) leftmost derivations ofM
+wM(d ? D(M)) weight of a derivation d: product of weight of each rule usage
+WM(x) total weight of x inM: sum of weight of all LD(M) producing x
+L(M) weighted tree set, tree relation, or tree-to-string relation ofM
+? output tree alphabet
+Qi ? Q initial (start) state of a transducer
+? ? xTPAT? functions from T? to {0, 1} that examine finitely many paths
+True the tree pattern True(t) ? 1,?t
+s ? ?? s is a string from alphabet ?, e.g., () the empty string
+s[i] ith letter of string s - the ith projection ?i
+indicess i such that s[i] exists: (1, . . . , |s|)
+letterss set of all letters s[i] in s
+|s| length of string; |s| = |indicess|, not |letterss|
+spanss Analogous to tree paths, pairs (i,j) denoting substrings
+s ? (i, j) The substring (s[i], . . . , s[j? 1]) indicated by the span (i, j) ? spanss
+s ? [i] same as s[i]; [i] stands for the span (i, i+ 1)
+s[p? s?] Substitution of string s? for span p of s
+s[p? s?p,?p ?P] Parallel (non-overlapping) substitution of string s
+?
+p for each s ? p
+396
+Graehl, Knight, and May Training Tree Transducers
+path p ? (i). The subtree at path p of t is t ? p, defined by pathst?p ? {q | p ? q ? pathst} and
+labelandrankt?p(q) ? labelandrankt(p ? q).
+The paths to X in t are pathst(X) ? {p ? pathst | labelt(p) ? X}.
+A set of paths F ? paths is a frontier iff it is pairwise prefix-independent:
+?p1, p2 ? F, p ? paths : p1 = p2 ? p =? p1 = p2
+We write F for the set of all frontiers. F is a frontier of t, if F ? Ft is a frontier whose
+paths are all valid for t?Ft ? F ? pathst.
+For t, s ? T?(X), p ? pathst, t[p? s] is the substitution of s for p in t, where the subtree
+at path p is replaced by s. For a frontier F of t, the parallel substitution of t?p for the frontier
+F ? Ft in t is written t[p? t?p,?p ? F], where there is a t
+?
+p ? T?(X) for each path p. The
+result of a parallel substitution is the composition of the serial substitutions for all p ? F,
+replacing each t ? pwith t?p. (If Fwere not a frontier, the result would vary with the order
+of substitutions sharing a common prefix.) For example: t[p? t ? p ? (1),?p ? F] would
+splice out each node p ? F, replacing it by its first subtree.
+Trees may be written as strings over? ? {(, )} in the usual way. For example, the tree
+t = S(NP,VP(V,NP)) has labelandrankt((2)) = (VP, 2) and labelandrankt((2, 1)) = (V, 0).
+Commas, written only to separate symbols in ? composed of several typographic
+letters, should not be considered part of the string. For example, if we write ?(t) for
+? ? ?, t ? T?, we mean the tree with label?(t)(()) ? ?, rank?(t)(()) ? 1 and ?(t) ? (1) ? t.
+Using this notation, we can give a definition of T?(X):
+If x ? X, then x ? T?(X) (1)
+If ? ? ?, then ? ? T?(X) (2)
+If ? ? ? and t1, . . . , tn ? T?(X), then ?(t1, . . . , tn) ? T?(X) (3)
+The yield of X in t is yieldt(X), the concatenation (in lexicographic order
+2) over paths
+to leaves l ? pathst (such that rankt(l) = 0) of labelt(l) ? X?that is, the string formed by
+reading out the leaves labeled with X in left-to-right order. The usual case (the yield of t)
+is yieldt ? yieldt(?). More precisely,
+yieldt(X) ?
+?
+?
+?
+l if r = 0 ? l ? X where (l, r) ? labelandrankt(())
+() if r = 0 ? l ? X
+?ri=1yieldt?(i)(X) otherwise where ?
+r
+i=1si ? s1 ? . . . ? sr
+3. Regular Tree Grammars
+In this section, we describe the regular tree grammar, a common way of compactly
+representing a potentially infinite set of trees (similar to the role played by the regu-
+lar grammar for strings). We describe the version where trees in a set have different
+weights, in the same way that a weighted finite-state acceptor gives weights for strings
+2 () <lex (a), (a1) <lex (a2) iff a1 < a2, (a1) ? b1 <lex (a2) ? b2 iff a1 < a2 ? (a1 = a2 ? b1 <lex b2).
+397
+Computational Linguistics Volume 34, Number 3
+? = {S, NP, VP, PP, PREP, DET, N, V, run, the, of, sons, daughters}
+N = {qnp, qpp, qdet, qn, qprep}
+S = q
+P = {q?1.0 S(qnp, VP(VB(run))),
+qnp?0.6 NP(qdet, qn),
+qnp?0.4 NP(qnp, qpp),
+qpp?1.0 PP(qprep, np),
+qdet?1.0 DET(the),
+qprep?1.0 PREP(of),
+qn?0.5 N(sons),
+qn?0.5 N(daughters)}
+Sample generated trees:
+S(NP(DT(the), N(sons)),
+VP(V(run)))
+(with probability 0.3)
+S(NP(NP(DT(the), N(sons)),
+PP(PREP(of), NP(DT(the), N(daughters)))),
+VP(V(run)))
+(with probability 0.036)
+Figure 4
+A sample weighted regular tree grammar (wRTG).
+in a regular language; when discussing weights, we assume the commutative semiring
+({r ? R | r ? 0},+, ?, 0, 1) of nonnegative reals with the usual sum and product.
+A weighted regular tree grammar (wRTG) G is a quadruple (?,N,S,P), where ? is
+the alphabet, N is the finite set of nonterminals, S ? N is the start (or initial) nonterminal,
+and P ? N ? T?(N)? R+ is a finite set of weighted productions (R+ ? {r ? R | r > 0}). A
+production (lhs, rhs,w) is written lhs?w rhs (if w is omitted, the multiplicative identity
+1 is assumed). Productions whose rhs contains no nonterminals (rhs ? T?) are called
+terminal productions, and rules of the form A?w B, for A,B ? N are called -productions,
+or state-change productions, and can be used in lieu of multiple initial nonterminals.
+Figure 4 shows a sample wRTG. This grammar generates an infinite number of trees.
+We define the binary derivation relation on terms T?(N) and derivation histories
+(T?(N ? (paths? P)?):
+?G?
+{
+((a, h), (b, h ? (p, (l, r,w)))) | (l, r,w) ? P?
+p ? pathsa({l})?
+b = a[p? r]
+}
+398
+Graehl, Knight, and May Training Tree Transducers
+That is, (a, h)?G (b, h ? (p, (l, r,w))) iff b may be derived from a by using the rule
+l?w r to replace the nonterminal leaf l at path p with r. The reflexive, transitive closure
+of ?G is written ??G, and the derivations of G, written D(G), are the ways the start
+nonterminal may be expanded into entirely terminal trees:
+D(G) ?
+{
+(t, h) ? T? ? (paths? P)? | (S, ())??G (t, h)
+}
+We also project the ??G relation so that it refers only to trees: t
+? ??G t iff ?h
+?, h ?
+(paths? P)? : (t?, h?)??G (t, h).
+We take the product of the used weights to get the weight of a derivation d ? D(G):
+wG((t, (h1, . . . , hn)) ? D(G)) ?
+n
+?
+i=1
+wi where hi = (pi, (li, ri,wi))
+The leftmost derivations of G build a tree preorder from left to right (always expand-
+ing the leftmost nonterminal in its string representation):
+LD(G) ?
+{
+(t, ((p1, r1), . . . , (pn, rn))) ? DG | ?1 ? i < n : pi+1 ?lex pi
+}
+The total weight of t in G is given byWG : T? ? R, the sum of the weights of leftmost
+derivations producing t: WG(t) ?
+?
+(t,h)?LD(G) wG((t, h)). Collecting the total weight of
+every possible (nonzero weight) output tree, we call L(G) the weighted tree language of
+G, where L(G) = {(t,w) |WG(t) = w ? w > 0} (the unweighted tree language is simply
+the first projection).
+For every weighted context-free grammar, there is an equivalent wRTG that gener-
+ates its weighted derivation trees (whose yield is a string in the context-free language),
+and the yield of any regular tree language is a context-free string language (G?cseg
+and Steinby 1984). We can also interpret a regular tree grammar as a context-free string
+grammar with alphabet ? ? {(, )}.
+wRTGs generate (ignoring weights) exactly the recognizable tree languages, which
+are sets of trees accepted by a non-transducing automaton version of T. This acceptor
+automaton is described in Doner (1970) and is actually a closer mechanical analogue
+to an FSA than is the rewrite-rule-based wRTG. RTGs are closed under intersection
+(G?cseg and Steinby 1984), and the constructive proof also applies to weighted wRTG
+intersection. There is a normal form for wRTGs analogous to that of regular grammars:
+Right-hand sides are a single terminal root with (optional) nonterminal children. What
+is sometimes called a forest in natural language generation (Langkilde 2000; Nederhof
+and Satta 2002) is a finite wRTG without loops?for all valid derivation trees, each
+nonterminal may only occur once in any path from root to a leaf:
+?n ? N, t ? T?(N), h ? (paths? P)? : (n, ())??G (t, h) =? pathst({n}) = ?
+RTGs produce tree sets equivalent to those produced by tree substitution grammars
+(TSGs) (Schabes 1990) up to relabeling. The relabeling is necessary because RTGs distin-
+guish states and tree symbols, which are conflated in TSGs at the elementary tree root.
+Regular tree languages are strictly contained in tree sets of tree adjoining grammars
+(TAG; Joshi and Schabes 1997), which generate string languages strictly between the
+context-free and indexed languages. RTGs are essentially TAGs without auxiliary trees
+399
+Computational Linguistics Volume 34, Number 3
+and their adjunction operation; the productions correspond exactly to TAG?s initial trees
+and the elementary tree substitution operation.
+4. Extended-LHS Tree Transducers (xT)
+Section 1 informally described the root-to-frontier transducer class T. We saw that T
+allows, by use of states, finite lookahead and arbitrary rearrangement of non-sibling
+input subtrees removed by a finite distance. However, it is often easier to write rules that
+explicitly represent such lookahead and movement, relieving the burden on the user to
+produce the requisite intermediary rules and states. We define xT, a generalization of
+weighted T. Because of its good fit to natural language problems, xT is already briefly
+touched on, though not defined, in Section 4 of Rounds (1970).
+A weighted extended-lhs top-down tree transducer M is a quintuple (?,?,Q,Qi,R)
+where ? is the input alphabet, and ? is the output alphabet, Q is a finite set of states,
+Qi ? Q is the initial (or start, or root) state, and R ? Q? xTPAT? ? T?(Q? paths)? R+
+is a finite set of weighted transformation rules. xTPAT? is the set of finite tree patterns:
+predicate functions f : T? ? {0, 1} that depend only on the label and rank of a finite
+number of fixed paths of their input. A rule (q, ?, rhs,w) is written q ? ?w rhs, mean-
+ing that an input subtree matching ? while in state q is transformed into rhs, with
+Q? paths leaves replaced by their (recursive) transformations. TheQ? paths leaves of a
+rhs are called nonterminals (there may also be terminal leaves labeled by the output tree
+alphabet ?).
+xT is the set of all such transducers T; the set of conventional top-down trans-
+ducers, is a subset of xT where the rules are restricted to use finite tree patterns that de-
+pend only on the root: TPAT? ? {p?,r(t)}where p?,r(t) ? (labelt(()) = ? ? rankt(()) = r).
+Rules whose rhs are a pure T? with no states/paths for further expansion are called
+terminal rules. Rules of the form q ? ?w q? () are -rules, or state-change rules, which
+substitute state q? for state q without producing output, and stay at the current input
+subtree. Multiple initial states are not needed: we can use a single start state Qi, and
+instead of each initial state qwith starting weight w add the rule Qi True?w q () (where
+True(t) ? 1,?t).
+We define the binary derivation relation for xT transducer M on partially trans-
+formed terms and derivation histories T????Q ? (paths? R)?:
+?M?
+{
+((a, h), (b, h ? (i, (q, ?, rhs,w)))) | (q, ?, rhs,w) ? R ?
+i ? pathsa ? q = labela(i) ? ?(a ? (i ? (1))) = 1 ?
+b = a
+[
+i? rhs
+[
+p? q?(a ? (i ? (1) ? i?)),
+?p ? pathsrhs : labelrhs(p) = (q
+?, i?)
+]]
+}
+That is, b is derived from a by application of a rule q ? ?w rhs to an unprocessed
+input subtree a ? i which is in state q, replacing it by output given by rhs with variables
+(q?, i?) replaced by the input subtree at relative path i? in state q?.3
+Let ??M, D(M), LD(M), wM, WM, and L(M) (the weighted tree relation of M) follow
+from the single-step?M exactly as they did in Section 3, except that the arguments are
+3 Recall that q(a) is the tree whose root is labeled q and whose single child is the tree a.
+400
+Graehl, Knight, and May Training Tree Transducers
+input and output instead of just output, with initial terms Qi(t) for each input t ? T? in
+place of S:
+D(M) ?
+{
+(t, t?, h) ? T? ? T? ? (paths? R)? | (Qi(t), ())??M (t
+?, h)
+}
+We have given a rewrite semantics for our transducer, similar to wRTG. In the
+intermediate terms of a derivation, the active frontier of computation moves top-down,
+with everything above that frontier forming the top portion of the final output. The next
+rewrite always occurs somewhere on the frontier, and in a complete derivation, the frontier
+finally shrinks and disappears. In wRTG, the frontier consisted of the nonterminal-
+labeled leaves. In xT, the frontier items are not nonterminals, but pairs of state and input
+subtrees. We choose to represent these pairs as subtrees of terms with labels taken from
+? ?? ?Q, where the state is the parent of the input subtree. In fact, given an M ? xT
+and an input tree t, we can take all the (finitely many) pairs of input subtrees and states
+as nonterminals in a wRTGG, with all the (finitely many) possible single-step derivation
+rewrites ofM applied to t as productions (taking the weight of the xT rule used), and the
+initial term Qi(t) as the start nonterminal, isomorphic to the derivations of theMwhich
+start withQi(t): (d, h) ? D(G) iff (t, d, h) ? D(M). Such derivations are exactly how all the
+outputs of an input tree t are produced: when the resulting term d is in T?, we say that
+(t, d) is in the tree relation and that d is an output of t.
+Naturally, there may be input trees for which no complete derivation exists?such
+inputs are not in the domain of the weighted tree relation, having no output. It is known
+that domain(M) ? {i | ?o,w : (i, o,w) ? L(M)}, the set of inputs that produce any output,
+is always a recognizable tree language (Rounds 1970).
+The sources of a rule r = (q, l, rhs,w) ? R are the input-paths in the rhs:
+sources(r) ? {i? | ?p ? pathsrhs(Q? paths), q
+? ? Q : labelrhs(p) = (q?, i?)}
+If the sources of a rule refer to input paths that do not exist in the input, then the
+rule cannot apply (because a ? (i ? (1) ? i?) would not exist). In the traditional statement
+of T, sources(r) are the variables xi, standing for the i
+th child of the root at path (i),
+and the right hand sides of rules refer to them by name: (qi, xi). In xT, however, we
+refer to the mapped input subtrees by path (and we are not limited to the immediate
+children of the root of the subtree under transformation, but may choose any frontier
+of it).
+A transducer is linear if for all its rules r, sources(r) are a frontier and occur at most
+once: ?p1, p2 ? pathsrhs(Q? paths), p ? paths? {()} : p1 = p2 ? p. A transducer is determin-
+istic if for any input, at most one rule matches per state:
+?q ? Q, t ? T?, r = (q, p, r,w), r? = (q?, p?, r?,w?) ? R :
+p(t) = 1 ? p?(t) = 1 =? r = r?
+or in other words, the rules for a given state have patterns that partition possible input
+trees. A transducer is deleting if there are rules in which (for some matching inputs)
+entire subtrees are not used in their rhs.
+In practice, we will be interested mostly in concrete transducers, where the patterns
+fully specify the labels and ranks of an input subtree including all the ancestors
+of sources(r). Naturally, T are concrete. We have taken to writing concrete rules?
+patterns as trees with variables X in the leaves (at the sources), and using those same
+401
+Computational Linguistics Volume 34, Number 3
+variables in the rhs instead of writing the corresponding path in the lhs. For example:
+q A(x0:B,C) ?w q? x0 means a xT rule (q, ?, rhs,w) with rhs = (q?, (1)) and
+? ? (labelandrankt(()) = (A, 1) ? labelt((1)) = B ? labelandrankt((2)) = (C, 0))
+It might be convenient to convert any xT transducer to an equivalent T transducer,
+then process it with T-based algorithms?in such a case, xT would just be syntactic sugar
+for T. We can automatically generate T productions that use extra states to emulate the
+finite lookahead and movement available in xT (as demonstrated in Section 1), but with
+one fatal flaw: Because of the definition of ?M, xT (and thus T) only has the ability
+to process input subtrees that produce corresponding output subtrees (alas, there is no
+such thing as an empty tree), and because TPAT can only inspect the root node while
+deriving replacement subtrees, T can check only the parts of the input subtree that lie
+along paths that are referenced in the rhs of the xT rule. For example, suppose we want
+to transform NP(DET, N) (but not, say, NP(ADJ, N)) into the tree N using rules in T.
+Although this is a simple xT rule, the closest we can get with T would be q NP(x0,
+x1) ? q.N x1, but we cannot check both subtrees without emitting two independent
+subtrees in the output (which rules out producing just N). Thus, xT is a bit more
+powerful than T.
+5. Parsing an xT Tree Relation
+Derivation trees for a transducer M = (?,?,Q,Qi,R) are TR (trees labeled by rules)
+isomorphic to complete leftmost M-derivations. Figure 5 shows derivation trees for a
+particular transducer. In order to generate derivation trees forM automatically, we build
+a modified transducerM?. This new transducer produces derivation trees on its output
+instead of normal output trees.M? is (?,R,Q,Qi,R
+?), with4
+R? ? {(q, ?, r(yieldrhs(Q? paths)),w) | r = (q, ?, rhs,w) ? R}
+That is, the original rhs of rules are flattened into a tree of depth 1, with the root labeled
+by the original rule, and all the non-expanding ?-labeled nodes of the rhs removed, so
+that the remaining children are the nonterminal yield in left to right order. Derivation
+trees deterministically produce a single weighted output tree, and for concrete trans-
+ducers, a single input tree.
+For every leftmost derivation there is exactly one corresponding derivation tree: We
+start with a sequence of leftmost derivations and promote rules applied to paths that
+are prefixes of rules occurring later in the sequence (the first will always be the root), or,
+in the other direction, list out the rules of the derivation tree in order.5 The weights of
+derivation trees are, of course, just the product of the weights of the rules in them.6
+The derived transducer M? nicely produces derivation trees for a given input, but
+in explaining an observed (input/output) pair, we must restrict the possibilities further.
+Because the transformations of an input subtree depend only on that subtree and its
+state, we can build a compact wRTG that produces exactly the weighted derivation
+trees corresponding toM-transductions (I, ())??M (O, h) (Algorithm 1).
+4 By r((t1, . . . , tn )), we mean the tree r(t1, . . . , tn ).
+5 Some path concatenation is required, because paths in histories are absolute, whereas the paths in rule rhs
+are relative to the input subtree.
+6 Because our product is commutative, the order does not matter.
+402
+Graehl, Knight, and May Training Tree Transducers
+Figure 5
+Derivation trees for a T tree transducer.
+Algorithm 1 makes use of memoization?the possible derivations for a given (q, i, o)
+are constant, so we store answers for all past queries in a lookup table and return them,
+avoiding needless recomputation. Even if we prove that there are no derivations for
+some (q, i, o), successful subhypotheses met during the proof may recur and are kept,
+but we do avoid adding productions we know can?t succeed. We have in the worst case
+to visit all |Q| ? |I| ? |O| (q, i, o) pairs and apply all |R| transducer rules successfully at
+each of them, so time and space complexity, proportional to the size of the (unpruned)
+output wRTG, are both O(|Q| ? |I| ? |O| ? |R|), or O(Gn2), where n is the total size of the
+403
+Computational Linguistics Volume 34, Number 3
+Algorithm 1. Deriv (derivation forest for I??xT O)
+Input: xT transducerM = (?,?,Q,Qi,R) and observed tree pair I ? T?, O ? T?.
+Output: derivation wRTG G = (R,N ? Q? pathsI ? pathsO,S,P) generating all
+weighted derivation trees forM that produce O from I. Returns false instead if
+there are no such trees. O(G|I||O|) time and space complexity, where G is a
+grammar constant.
+begin
+S? (Qi, (), ()), N??, P??, memo??
+if PRODUCEI,O(S) then
+N?{n | ?(n?, rhs,w) ? P : n = n? ? n ? yieldrhs(Q? pathsI ? pathsO)}
+return G = (R,N,S,P)
+else
+return false
+end
+PRODUCEI,O(? = (q, i, o) ? Q? pathsI ? pathsO) returns boolean ? begin
+if ?(?, r) ? memo then return r
+memo?memo ? {(?, true)}
+anyrule?? false
+for r = (q, ?, rhs,w) ? R : ?(I ? i) = 1 ?MatchO,?(rhs, o) do
+(o1, . . . , on)? pathsrhs(Q? paths) sorted by o1 <lex . . . <lex on //n = 0 if there are
+no rhs variables
+labelandrankderivrhs(())? (r,n) //derivrhs is a newly created tree
+for j? 1 to n do
+(q?, i?)? labelrhs(oj)
+?? (q?, i ? i?, o ? oj)
+if ?PRODUCEI,O(?) then next r
+labelandrankderivrhs((j))? (?, 0)
+anyrule?? true
+P?P ? {(?, derivrhs,w)}
+memo?memo ? {(?,anyrule?)}
+return anyrule?
+end
+Matcht,?(t
+?, p) ? ?p? ? path(t?) : label(t?, p?) ? ? =? labelandrankt? (p?) =
+labelandrankt(p ? p?)
+input and output trees, and G is the grammar constant accounting for the states and
+rules (and their size).
+If the transducer contains cycles of state-change rules, then the generated derivation
+forest may have infinitely many trees in it, and thus the memoization of PRODUCE
+must temporarily assume that the alignment (q, i, o) under consideration will succeed
+upon reaching itself, through such a cycle, even though the answer is not yet conclusive
+(it may be conclusively true, but not false). Although it would be possible to detect these
+cycles (setting ?pending? rather than true for the interim in memo) and deal with them
+more severely, we can just remove the surplus later in linear time, using Algorithm 2,
+which is an implementation (for wRTG) of a well-known method of pruning useless
+404
+Graehl, Knight, and May Training Tree Transducers
+Algorithm 2. RTGPrune (wRTG useless nonterminal/production identification)
+Input: wRTG G = (?,N,S,P), with P = (p1, . . . , pm) and pi = (qi, ti,wi).
+Output: For all n ? N, B[n] = (?t ? T? : n??G t) (true if n derives some output tree t
+with no remaining nonterminals, false if it?s useless), and
+A[n] = (?t ? T?, t? ? T?({n}) : S??G t
+? ??G t) (n additionally can be produced
+from an S using only productions that can appear in complete derivations).
+Time and space complexity are linear in the total size of the input:
+O(|N|+
+?m
+i=1 (1+ |pathsti |)
+begin
+M??
+for n ? N do B[n]? false, Adj[n]??
+for i? 1 to m do
+Y?{labelti (p) | p ? pathsti (N)}
+// Y are the unique N in rhs of rule i
+for n ? Y do Adj[n]?Adj[n] ? {i}
+if |Y| = 0 thenM?M ? {i}
+r[i]?|Y|
+for n ?M do REACH(n)
+/* Now that B[n] are decided, compute A[n] */
+for n ? N do A[n]? false
+USE(S)
+end
+REACH(n) ? begin
+B[n]? true
+for i ? Adj[n] do
+if ?B[qi] then
+r[i]? r[i]? 1
+if r[i] = 0 then REACH(qi)
+end
+USE(n) ? begin
+A[n]? true
+for n? s.t. ?(n, t,w) ? R : n? ? yieldt(N) do
+/* for n? that are in the rhs of rules whose lhs is n */
+if ?A[n?] ? B[n?] then USE(n?)
+end
+productions from a CFG (Hopcroft and Ullman 1979).7 We eliminate all the remains
+of failed subforests, by removing all nonterminals n, and any productions involving n,
+where Algorithm 2 gives A[n] = false.
+In the next section, we show how to compute the contribution of a nonterminal to
+the weighted trees produced by a wRTG, in a generalization of Algorithm 2 that gives
+us weights that we accumulate per rule over the training examples, for EM training.
+7 The idea is to first remove all nonterminals (and productions referring to them) that don?t yield any
+terminal string, and after that, to remove those which are not reachable top-down from S.
+405
+Computational Linguistics Volume 34, Number 3
+6. Inside?Outside for wRTG
+Given a wRTGG = (?,N,S,P), we can compute the sums of weights of trees derived us-
+ing each production by adapting the well-known inside?outside algorithm for weighted
+context-free (string) grammars (Lari and Young 1990).
+Inside weights ?G for a nonterminal or production are the sum of weights of all trees
+that can be derived from it:
+?G(n ? N) ?
+?
+(n,r,w)?P
+w ? ?G(r)
+?G(r ? T?(N) | (n, r,w) ? P}) ?
+?
+p?pathsr(N)
+?G(labelr(p))
+By definition, ?G(S) gives the sum of the weights of all trees generated by G. For the
+wRTG generated by Deriv(M, I,O), this is exactlyWM(I,O).
+The recursive definition of ? does not assume a non-recursive wRTG. In the
+presence of derivation cycles with weights less than 1, ? can still be evaluated as a
+convergent sum over an infinite number of trees.
+The output of Deriv will always be non-recursive provided there are no cycles of
+-rules in the transducer. There is usually no reason to build such cycles, as the effect
+(in the unweighted case) is just to make all implicated states equivalent.
+Outside weights ?G are for each nonterminal the sums over all its occurrences in
+complete derivations in the wRTG of the weight of the whole tree, excluding the
+occurrence subtree weight (we define this without resorting to division for cancellation,
+but in practice we may use division by ?G(n) to achieve the same result).
+?G(n ? N) ?
+?
+?
+?
+?
+?
+?
+?
+?
+?
+?
+?
+?
+?
+1 if n = S
+uses of n in productions
+? ?? ?
+?
+p,(n?,r,w)?P:labelr(p)=n
+w ? ?G(n?) ?
+?
+p??pathsr(N)?{p}
+?G(labelr(p
+?))
+? ?? ?
+sibling nonterminals
+otherwise.
+Provided that useless nonterminals and productions were removed by Algorithm 2,
+and none of the rule weights are 0, all of the nonterminals in a wRTG will have nonzero
+? and ?. Conversely, if useless nonterminals weren?t removed, they will be detected
+when computing inside?outside weights by virtue of their having zero values, so they
+may be safely pruned without affecting the generated weighted tree language.
+Finally, given inside and outside weights, the sum of weights of trees using a
+particular production is ?G((n, r,w) ? P) ? ?G(n) ? w ? ?G(r). Here we rely on the com-
+mutativity of the product (the left-out inside part reappears on the right of the inside
+part, even when it wasn?t originally the last term).
+Computing ?G and ?G for nonrecursive wRTG is a straightforward translation of
+the recursive definitions (using memoization to compute each result only once) and is
+O(|G|) in time and space. Or, without using memoization, we can take a topological sort
+406
+Graehl, Knight, and May Training Tree Transducers
+using the dependencies induced by the equations for the particular forest, and compute
+in that order. In case of a recursive wRTG, the equations may still be solved (usually
+iteratively), and it is easy to guarantee that the sums converge by appropriately keeping
+the rule weights of state-change productions less than one.
+7. EM Training
+Expectation-Maximization (EM) training (Dempster, Laird, and Rubin 1977) works on
+the principle that the likelihood (product over all training examples of the sum of all
+model derivations for it) can be maximized subject to some normalization constraint on
+the parameters,8 by repeatedly:
+1. Computing the expectation of decisions taken for all possible ways of
+generating the training corpus given the current parameters, accumulating
+(over each training example) parameter counts c of the portion of all
+possible derivations using that parameter?s decision:
+?? ? parameters :
+c? ? Et?training
+?
+?
+?
+?
+?
+d?derivationst
+(# of times ? used in d) ? pparameters(d)
+?
+d?derivationst
+pparameters(d)
+?
+?
+?
+?
+2. Maximizing by assigning the counts to the parameters and renormalizing:
+?? ? parameters : ?? c?
+Z?(c )
+Each iteration is guaranteed to increase the likelihood until a local maximum is
+reached. Normalization may be affected by tying or fixing of parameters. The deriva-
+tions for training examples do not change, but the model weights for them do. Us-
+ing inside?outside weights, we can efficiently compute these weighted sums over all
+derivations for a wRTG, and thus, using Algorithm 1, over all xT derivations explaining
+a given input/output tree pair.
+A simpler version of Deriv that computes derivation trees for a wRTG given an
+output tree could similarly be used to train weights for wRTG rules.9
+Each EM iteration takes time linear in the size of the transducer and linear in the
+size of the derivation tree grammars for the training examples. The size of the derivation
+trees is at worstO(Gn2), so for a corpus ofN examples with maximum input/output size
+n, an iteration takes at worst timeO(NGn2). Typically, we expect only a small fraction of
+possible states and rules will apply to a given input/output subtree mapping.
+8 Each parameter gives the probability of a single model decision, and a derivation?s probability is the
+product of all the decisions producing it.
+9 One may also use Deriv unmodified to train an identity (or constant-input) transducer with one rule
+per wRTG production, having exactly the range of the wRTG in question, and of course transforming
+training trees to appropriate tree pairs.
+407
+Computational Linguistics Volume 34, Number 3
+The recommended normalization function computes the sum of all the counts for
+rules having the same state, which results in trained model weights that give a joint
+probability distribution over input/output tree pairs.
+Attempts at conditional normalization can be problematic, unless the patterns for all
+the rules of a given state can be partitioned into sets so that for any input, only patterns
+from at most one set may match. For example, if all the patterns specify the label and
+rank of the root, then they may be partitioned along those lines. Input-epsilon rules,
+which always match (with pattern True), would make the distribution inconsistent by
+adding extra probability mass, unless they are required (in what is no longer a partition)
+to have their counts normalized against all the partitions for their state (because they
+transform inputs that could fall in any of them).
+One can always marginalize a joint distribution for a particular input to get true
+conditional probabilities. In fact, no method of assigning rule weights can generally
+compute exact conditional probabilities; remarginalization is already required: take as
+the normalization constant the inside weight of the root derivation forest corresponding
+to all the derivations for the input tree in question.
+Even using normalization groups that lead to inconsistent probability distributions,
+EM may still compute some empirically useful local maximum. For instance, placing
+each q lhs in its own normalization group might be of interest; although the inside
+weights of a derivation forest would sum to some s > 1, Train would divide the counts
+earned by each participating rule by s (Algorithm 3).
+8. Strings
+We have covered tree-to-tree transducers; we now turn to tree-to-string transducers.
+In the automata literature, such transductions are called generalized syntax-directed
+translation (Aho and Ullman 1971), and are used to specify compilers that (deter-
+ministically) transform high-level source-language trees into linear target-language
+code. Tree-to-string transducers have also been applied to the machine translation of
+natural languages (Yamada and Knight 2001; Eisner 2003). Tree-to-string transduction
+is appealing when trees are only available on the input side of a training corpus.
+Furthermore, tree/string relationships are less constrained than tree/tree, allowing
+the possibility of simpler models to account for natural language transformations.
+(Though we will not pursue it here, string-to-string training should also be possible
+with tree-based models, if only string-pair data is available; string/string relations
+induced by tree transformations are sometimes called translations in the automata
+literature.)
+? are the strings over alphabet ?. For s = (s1, . . . , sn), the length of s is |s| ? n and
+the ith letter is s[i] ? si, for all i ? indicess ? {i ? N | 1 ? i ? n}. indicess(X) is the subset
+{i ? indicess | i[s] ? X}. The letters in s are letterss = {l|?i ? indicess : s[i] = l}. The spans
+of s are spanss = {(a, b) ? {N
+2 | 1 ? a ? b ? n+ 1}, and the substring at span p = (a, b) of
+s is s ? p ? (sa, . . . sb?1), with s ? (a, a) = (). We use the shorthand [i] ? (i, i+ 1) for all
+i ? N, so s ? [i] = s[i]. The substitution of t for a span (a, b) ? spanss in s is s[(a, b)? t] ?
+(s ? (1, a)) ? t ? (s ? (b,n+ 1)).10
+A partition is a set of non-overlapping spans P??(a, b), (c, d) ? P : c ? d ? a ? b ?
+c ? d ? (a, b) = (c, d), and the parallel substitution of s?p for the partition P of s is writ-
+ten s[p? s?p,?p ? P]. In contrast to parallel tree substitution, we cannot take any
+10 a ? b is string concatenation, defined already in Section 2.
+408
+Graehl, Knight, and May Training Tree Transducers
+composition of the individual substitutions, because the replacement substrings may
+be of different length, changing the referent of subsequent spans. It suffices to perform
+a series of individual substitutions, in right to left order?(an, bn), . . . , (ai, bi), . . . , (a1, b1)
+(ai ? bi+1,?1 ? i < n).
+Algorithm 3. Train (EM training for tree transducers)
+Input: xR transducerM = (?,?,Q,Qd,R) with initial rule weights, observed weighted
+tree pairs T ? T? ? T? ? R+, minimum relative log-likelihood change for
+convergence  ? R+, maximum number of iterations maxit ? N, and for each
+rule r ? R: prior counts (for a Dirichlet prior) prior : R ? R for smoothing, and
+normalization function Zr : (R ? R) ? R used to update weights from counts
+w?r? count(r)/Zr(count).
+Output: New rule weightsW ? {wr | r ? R}.
+begin
+for (i, o,w) ? T do
+di,o?Deriv(M, i, o) // Algorithm 1
+if di,o = false then
+T?T ? {(i, o,w)}
+Warn(more rules are needed to explain (i, o))
+Compute inside?outside weights for di,o
+If Algorithm 2 (RTGPrune) has not already been used to do so, remove all useless
+nonterminals n (and associated rules) whose ?di,o (n) = 0 or ?di,o (n) = 0
+i? 0, L???, ?? 
+for r = (q, ?, rhs,w) ? R do wr?w
+while ? ?  ? i < maxit do
+for r ? R do count[r]? prior(r)
+L?? 0
+for (i, o,wexample) ? T / / Estimate
+do
+let D ? di,o ? (R,N,S,P)
+compute ?D,?D using latestW ? {wr | r ? R} // see Section 6
+for ? = (n, rhs,w) ? P do
+?D(?)??D(n) ? w ? ?D(rhs)
+let r ? labelrhs(())
+count[r]? count[r]+ wexample ?
+?D(?)
+?D(S)
+L?? L? + log?D(S) ? wexample
+for r ? R / / Maximize
+do
+wr?
+count[r]
+Zr(count)
+// e.g., joint
+Zr(c ) ?
+?
+r?=(qr,d,e,f )?R
+c(r?),?r = (qr, ?, rhs,w) ? R
+?? L
+? ? L
+|L?|
+L? L?, i? i+ 1
+end
+409
+Computational Linguistics Volume 34, Number 3
+9. Extended Tree-to-String Transducers (xTs)
+A weighted extended-lhs root-to-frontier tree-to-string transducer M is a quintuple
+(?,?,Q,Qi,R) where ? is the input alphabet, ? is the output alphabet, Q is a finite
+set of states, Qi ? Q is the initial (or start, or root) state, and R ? Q? xTPAT? ? (? ?
+(Q? paths)) ? R+ is a finite set of weighted transformation rules, written q ??w rhs. A
+rule says that to transform an input subtree matching ? while in state q, replace it by
+the string of rhs with its nonterminal (Q? paths) letters replaced by their (recursive)
+transformation.
+xTs is the same as xT, except that the rhs are strings containing some nonterminals
+instead of trees containing nonterminal leaves. By taking the yields of the rhs of an xT
+transducer?s rules, we get an xTs that derives exactly the weighted strings that are the
+yields of the weighted trees generated by its progenitor.
+As discussed in Section 1, we may consider strings as isomorphic to degener-
+ate, monadic-spined right-branching trees, for example, the string (a, b, c) is the tree
+C(a,C(b,C(c,END))). Taking the yield of such a tree, but with END yielding the empty
+string, we have the corresponding string. We choose this correspondence instead of flat
+trees (e.g., C(a, b, c)) because our derivation steps proceed top-down, choosing the states
+for all the children at once (what?s more, we don?t allow symbols C to have arbitrary
+rank). If all the rhs of an xTs transducer are transformed into such trees, then we have
+an xT transducer. The yields of that transducer?s output trees for any input are the
+same as the outputs of the xTs transducer for the same input, but again, only if END is
+considered to yield the empty string. Note that in general the produced output trees will
+not have the canonical right-branching monadic spine that we use to encode strings,11 so
+that yield-taking is a nontrivial operation. Finally, consider that for a given transducer,
+the same output yield may be derived via many output trees, which may differ in the
+number and location of END, and in the branching structure induced by multi-variable
+rhs. Because this leads to additional difficulties in inferring the possible derivations
+given an observed output string, we must study tree-to-string relations apart from tree
+relations.
+Just as wRTG can generate PCFG derivation trees, xTs can generate tree/string pairs
+comparable to a Synchronous CFG (SCFG), with the tree being the CFG derivation tree
+of the SCFG input string, with one caveat: an epsilon leaf symbol (we have used END)
+must be introduced which must be excluded from yield-taking, after which the string-
+to-string translations are identical.
+We define the binary derivation relation on (? ? (Q? T?)) ? (N? R)? (strings of
+output letters and state-labeled input trees and their derivation history)
+?M?
+{
+((a, h), (b, h ? (i, (q, ?, rhs,w)))) | ?(q, ?, rhs,w) ? R, i ? indicesa :
+a[i] = (q, I) ? Q? T? ?
+?(I) = 1 ?
+b = a
+[
+[i]? rhs
+[
+[p]? (q?, I ? i?),
+?p ? indicesrhs : rhs[p] = (q?, i?) ? Q? paths
+]]
+}
+11 In the special case that all rhs contain at most one variable, and that every variable appears in the final
+position of its rhs, the output trees do, in fact, have the same canonical monadic-spined form. For these
+transducers there is no meaningful difference between xTs and xT.
+410
+Graehl, Knight, and May Training Tree Transducers
+where at position i, an input tree I (labeled by state q) in the string a is replaced by
+a rhs from a rule that matches it. Of course, the variables (q?, i?) ? Q? paths in the rhs
+get replaced by the appropriate pairing of (q?, I ? i?). Each rewrite flattens the string of
+trees by breaking one of the trees into zero or more smaller trees, until (in a complete
+derivation) only letters from the output alphabet ? remain. As with xT, rules may only
+apply if the paths in them exist in the input (if i? ? pathsI), even if the tree pattern doesn?t
+mention them.
+Let??M, D(M), LD(M), wM,WM, and L(M) (the weighted tree-to-string relation ofM)
+follow from the single-step?M exactly as they did in Section 4.12
+10. Parsing an xTs Tree-to-String Relation
+Derivation trees for an xTs transducer are defined by an analogous xT transducer,
+exactly as they were for derivation trees for xT, where the nodes are labeled by rules
+to be applied preorder, with the ith child rewriting the ith variable in the rhs of its parent
+node.
+Algorithm 4 (SDeriv) is the tree-to-string analog of Algorithm 1 (Deriv), building a
+tree grammar that generates all the weighted derivation trees explaining an observed
+input tree/output string pair for an xTs transducer.
+SDeriv differs from Deriv in the use of arbitrary output string spans instead of
+output subtrees. The looser alignment constraint causes additional complexity: There
+areO(m2) spans of an observed output stringO of lengthm, and each binary production
+over a span has O(m) ways of dividing the span in two (we also have the n different
+input subtrees and q different rule states).
+There is no way to fix in advance a tree structure over the training example and
+transducer rule output strings without constraining the derivations to be consistent with
+the bracketing. Another way to think of this is that any xTs derivation implies a specific
+tree bracketing over the output string. In order to compute the derivations using the
+tree-to-tree Deriv, we would have to take the union of forests for all the possible output
+trees with the given output yield.
+SDeriv takes time and space linear to the size of the output: O(Gnm3) where G
+combines the states and rules into a single grammar constant, and n is the size of the
+input tree. The reduced O(m2) space bound from 1-best CFG parsing does not apply,
+because we want to keep all successful productions and split points, not only the best
+for each item.
+We use the presence of terminals in the right hand side of rules to constrain the
+alignments of output subspans to nonterminals, giving us minimal-sized subproblems
+tackled by VarsToSpan.
+The canonicalization of same-substring spans is most obviously applicable to zero-
+length spans (which become (1, 1), no matter where they arose), but in the worst case,
+every input label and output letter is unique, so nothing further is gained. Canonical-
+ization may also be applied to input subtrees. By canonicalizing, we effectively name
+subtrees and substrings by value, instead of by path/span, increasing best-case sharing
+and reducing the size of the output. In practice, we still use paths and spans, and hash
+to a canonical representative if desired.
+12 Because the locations in derivation histories are string indexes now rather than tree paths, we use the
+usual < on naturals as the ordering constraint for leftmost derivations.
+411
+Computational Linguistics Volume 34, Number 3
+Algorithm 4. SDeriv (derivation forest for I??xTs O)
+Input: xTs transducerM = (?,?,Q,Qi,R), observed input tree I ? T?, and output
+string O = (o1, . . . , on) ? ??
+Output: derivation wRTG G = (R ? {},N ? N?,S,P) generating all weighted
+derivation trees forM that produce O from I, with
+N? ? ((Q? pathsI ? spansO)?
+(pathsI ? spansO ? (Q? paths)
+?)). Returns false instead if there are no such trees.
+begin
+S? (Qi, (), (1,n)), N? ?, P??,memo??
+if PRODUCEI,O(S) then
+N?{n | ?(n?, rhs,w) ? P : n = n? ? n ? yieldrhs(N
+?)}
+return G = (R ? {},N,S,P)
+else
+return false
+end
+PRODUCEI,O(? = (q ? Q, in ? pathsI, out = (a, b) ? spansO)) returns boolean ? begin
+if ?(?, r) ? memo then return r
+memo?memo ? {(?, true)}
+anyrule?? false
+for rule = (q, pat, rhs,w) ? R : pat(I ? in) = 1 ? FeasibleO(rhs, out) do
+(r1, . . . , rk)? indicesrhs(?) in increasing order
+/* k? 0 if there are none */
+p0? a? 1, pk+1? b
+r0? 0, rk+1?|rhs|+ 1
+for p = (p1, . . . , pk) : (?1 ? i ? k : O[pi] = rhs[ri])?
+(?0 ? i ? k : pk < pk+1 ? (rk+1 ? rk = 1 =? pk+1 ? pk = 1)) do
+/* for all alignments p between rhs[ri] and O[pi], such that
+order, beginning/end, and immediate adjacencies in rhs
+are observed in O. The degenerate k = 0 has just p = ().
+*/
+labelderivrhs(())? (rule)
+v? 0
+for i? 0 to k do
+/* variables rhs ? (ri + 1, ri+1) must generate O ? (pi + 1, pi+1)
+*/
+if ri + 1 = ri+1 then next i
+v? v+ 1
+spangen? (in, (pi + 1, pi+1), rhs ? (ri + 1, ri+1))
+n?VarsToSpanI,O(spangen)
+if n = false then next p
+labelandrankderivrhs((v))? (n, 0)
+anyrule?? true
+rankderivrhs(()) = v
+P?P ? {?, derivrhs,w)}
+memo?memo ? {(?,anyrule?)}
+return anyrule?
+end
+FeasibleO(rhs, span) ? ?l ? lettersrhs : l ? ? =? l ? lettersO?span
+412
+Graehl, Knight, and May Training Tree Transducers
+Algorithm SDeriv (cont.) -labeled nodes are generated as artifacts of sharing by
+cons-nonterminals of derivations for the same spans.
+VarsToSpanI,O
+(wholespan = (in ? pathsI, out = (a, b) ? spansO,nonterms ? (Q? paths)
+?)) returns
+N? ? {false} ?
+/* Adds all the productions that can be used to map from parts of the
+nonterminal string referring to subtrees of I ? in into O ? out and
+returns the appropriate derivation-wRTG nonterminal if there was a
+completely successful derivation, or false otherwise. */
+begin
+ret? false
+if |nonterms| = 1 then
+(q?, i?)? nonterms[1]
+if PRODUCEI,O(q
+?, in ? i?, out) then return (q?, in ? i?, out)
+return false
+wholespan? (in,CANONICALO(out),nonterms)
+if ?(wholespan, r) ? memo then return r
+for s? b to a do
+/* the first nonterminal will cover the span (a,s) */
+(q?, i?)? nonterms[1] /* nonterms will never be empty */
+spanfirst? (q?, i ? i?, (a, s))
+if ?PRODUCEI,O(spanfirst) then next s
+labelspanlist(())? 
+/* cons node for sharing; left child expands to rules used for this
+nonterminal, right child expands to rest of nonterminal/span
+derivation */
+labelandrankspanlist((1))? (spanfirst, 0)
+/* first child: expansions of first nonterminal */
+rankspanlist(())? 2
+spanrest? (in, (s, b),nonterms ? (2, |nonterms|+ 1))
+/* second child: expansions of rest of nonterminals */
+n?VarsToSpanI,O(spanrest)
+if n = false then next s
+labelandrankspanlist((2))? (n, 0)
+P?P ? (wholespan, spanlist, 1)
+ret?wholespan
+memo?memo ? {(wholespan,ret)}
+return ret
+end
+CANONICALO((a, b)) ? min{(x, y) | O ? (x, y) = O ? (a, b) ? x ? 1}
+The enumeration of matching rules and alignments of terminals in the rule rhs to
+positions in the output substring is best interleaved; the loops are nested for clarity
+of presentation only. We use an FSA of subsequences of the output string (skipping
+forward to a desired letter in constant time with an index on outgoing transitions), and
+a trie of the rules? outputs (grouping by collapsing rhs variable sequences into a single
+?skip? symbol), and intersect them, visiting alignments and sets of rules in the rule
+413
+Computational Linguistics Volume 34, Number 3
+index. The choice of expansion sites against an input subtree proceeds by exhaustive
+backtracking, since we want to enumerate all matching patterns. Each of these sets of
+rules is further indexed against the input tree in a kind of leftmost trie.13 Feasible is
+redundant in the presence of such indexing.
+Static grammar analysis could also show that certain transducer states always (or
+never) produce an empty string, or can only produce a certain subset of the terminal al-
+phabet. Such proofs would be used to restrict the alignments considered in VarsToSpan.
+We have modified the usual derivation tree structure to allow sharing the ways
+an output span may align to a rhs substring of multiple consecutive variables; as a
+consequence, we must create some non-rule-labeled nodes, labeled by  (with rank 2).
+Train collects counts only for rule-labeled nodes, and the inside?outside weight compu-
+tations proceed in ignorance of the labels, so we get the same sums and counts as if we
+had non-binarized derivation trees. Instead of a consecutive rhs variable span of length
+n generating n immediate rule-labeled siblings, it generates a single right-branching
+binarized list of length n with each suffix generated from a (shared) nonterminal. As
+in LISP, the left child is the first value in the list, and the right child is the (binarized)
+rest of the list. As the base case, we have (n1,n2) as a list of two nonterminals (single
+variable runs refer to their single nonterminal directly without any  wrapping; we use
+no explicit null list terminator). Just as in CFG parsing, it would be necessary without
+binarization to consider exponentially many productions, corresponding to choosing
+an n-partition of the span length; the binarized nonterminals in our derivation RTG
+effectively share the common suffixes of the partitions.
+SDeriv could be restated in terms of parsing with a binarized set of rules, where
+only some of the binary nonterminals have associated input trees; however, this would
+complicate collecting counts for the original, unbinarized transducer rules.
+If there are many cyclical state-change transitions (e.g., q x0 ? q? x0), a nearly
+worst-case results for the memoized top-down recursive descent parsing of SDeriv,
+because for every reachable alignment, nearly every state would apply (but after prun-
+ing, the training proceeds optimally). An alternative bottom-up SDeriv would be better
+suited in general to input-epsilon heavy transducers (where there is no tree structure
+consumed to guide the top-down choice of rules). The worst-case time and space
+bounds would be the same, but (output) lexical constraints would be used earlier.
+The weighted derivation tree grammar produced by SDeriv may be used (after re-
+moving useless productions with Algorithm 2) exactly as before to perform EM train-
+ing with Train. In doing so, we generalize the standard inside?outside training of
+probabilistic context-free grammar (PCFG) on raw text (Baker 1979). In Section 12,
+we demonstrate this by creating an xTs transducer that transforms a fixed single-node
+dummy tree to the strings of some arbitrary CFG, and train it on a corpus in which the
+dummy input tree is paired with each training string as its output.
+11. Translation Modeling Experiment
+It is possible to cast many current probabilistic natural language models as T-type tree
+transducers. In this section, we implement the translation model of Yamada and Knight
+(2001) and train it using the EM algorithm.
+13 To make a trie of complete tree patterns, represent them canonically as strings interleaving paths leftmost
+for expansion, and labelandrank that must agree with the concurrent location in the input tree.
+414
+Graehl, Knight, and May Training Tree Transducers
+Figure 6 shows a portion of the bilingual English-tree/Japanese-string corpus used
+in Yamada and Knight (2001) and here. Figures 7 and 8 show the generative model and
+parameters; the parameter values shown were learned via specialized EM re-estimation
+formulae described in this article?s appendix. According to the model, an English tree
+becomes a Japanese string in four steps.
+First, every node is re-ordered, that is, its children are permuted probabilistically.
+If there are three children, then there are six possible permutations whose probabilities
+add up to 1. The re-ordering depends only on the child label sequence, and not on any
+wider or deeper context. Note that the English trees in Figure 6 are already flattened in
+pre-processing because the model cannot perform complex re-orderings such as the one
+we described in Section 1, S(PRO,VP(V,NP))? V, PRO, NP.
+Figure 6
+A portion of a bilingual tree/string training corpus.
+415
+Computational Linguistics Volume 34, Number 3
+Figure 7
+The translation model of Yamada and Knight (2001).
+Figure 8
+The parameter tables of Yamada and Knight (2001).
+Second, at every node, a decision is made about inserting a Japanese function word.
+This is a three-way decision at each node?insert to the left, insert to the right, or do not
+insert?and it depends on the labels of the node and its parent.
+Third, English leaf words are translated probabilistically into Japanese, independent
+of context.
+Fourth, the internal nodes are removed, leaving only the Japanese string.
+416
+Graehl, Knight, and May Training Tree Transducers
+This model effectively provides a formula for P(Japanese string | English tree) in
+terms of individual parameters, and EM training seeks to maximize the product of these
+conditional probabilities across the whole tree/string corpus.
+We now build a trainable xTs tree-to-string transducer that embodies the same
+P(Japanese string | English tree).
+It is a four-state transducer. For the main state (and start state) q, meaning ?translate
+this (sub)tree,? we have three rules:
+q x0? i x0, r x0
+q x0? r x0, i x0
+q x0? r x0
+State i means ?produce a Japanese function word out of thin air.? We include an i
+rule for every Japanese word in the vocabulary:
+i x0? ?de?
+i x0? ?kuruma?
+i x0? ?wa?
+. . .
+State r means ?re-order my children and then recurse.? For internal nodes, we
+include a rule for every parent/child sequence and every permutation thereof:
+r NN(x0:CD, x1:NN)? q x0, q x1
+r NN(x0:CD, x1:NN)? q x1, q x0
+. . .
+The rhs sends the child subtrees back to state q for recursive processing. However,
+for English leaf nodes, we instead transition to a different state t, so as to prohibit any
+subsequent Japanese function word insertion:
+r NN(x0:?car?)? t x0
+r CC(x0:?and?)? t x0
+. . .
+State t means ?translate this word,? and we have a rule for every pair of co-
+occurring English and Japanese words:
+t ?car?? ?kuruma?
+t ?car?? ?wa?
+t ?car?? *e*
+. . .
+This follows Yamada and Knight (2001) in also allowing English words to disappear
+(the rhs of the last rule is an empty string).
+Every rule in the xTs transducer has an associated weight and corresponds to
+exactly one of the model parameters.
+The transducer just described, which we will subsequently call simple, is unfaithful
+in one respect so far: The insert-function-word decision is independent of context,
+whereas Yamada and Knight (2001) specifies it is conditioned on the node and parent
+labels. We modify the simple transducer into a new exact transducer by replacing the q
+417
+Computational Linguistics Volume 34, Number 3
+state with a set of states of the form q.parent, indicating the parent symbol of the current
+node being processed. The start state then becomes q.TOP, and the q rules are rewritten
+to specify the current node. Thus, every parent/child pair in the corpus gets its own set
+of insert-function-word rules:
+q.TOP x0:VB? i x0, r x0
+q.TOP x0:VB? r x0, i x0
+q.TOP x0:VB? r x0
+q.VB x0:NN? i x0, r x0
+q.VB x0:NN? r x0, i x0
+q.VB x0:NN? r x0
+. . .
+The r rules now need to send parent information when they recurse to the q.parent
+states:
+r NN(x0:CD, x1:NN)? q.NN x0, q.NN x1
+r NN(x0:CD, x1:NN)? q.NN x1, q.NN x0
+. . .
+The i and t rules stay the same.
+This modification adds to our new transducer model all the contextual information
+specified in Yamada and Knight (2001). However, upon closer inspection one can see
+that the exact transducer is in fact overspecified in the reordering, or r rules. Yamada
+and Knight only conditions reordering on the child sequence, thus, for example, the
+reordering of JJ(JJ NN) is not distinct from the reordering of NN(JJ NN). As specified
+in Train a separate parameter is estimated for each rule in the transducer. We thus
+introduce rule tying to ensure the exact transducer is not misnamed. By designating
+a set of transducer rules as tied we indicate that a single count collection and parameter
+estimation is performed for the entire set during Train. We denote tied rules by marking
+each rule in the same tied class with the symbol @ and a common integer. Thus the JJ(JJ
+NN) and NN(JJ NN) reordering rules described previously are modified as follows:
+r JJ(x0:JJ, x1:NN)? q.JJ x0, q.JJ x1 @ 1
+r JJ(x0:JJ, x1:NN)? q.JJ x1, q.JJ x0 @ 2
+r NN(x0:JJ, x1:NN)? q.NN x0, q.NN x1 @ 1
+r NN(x0:JJ, x1:NN)? q.NN x1, q.NN x0 @ 2
+All reordering rules with the same input and output variable sequence are in the
+same tied class, and thus receive the same probability, independent of their parent
+symbols. We consider the four-state transducer initially specified as our simple model,
+and the modification that introduces parent-dependent q states and tied reordering
+rules as the exact model, since it is a precise xTs transducer formulation of the model
+of Yamada and Knight (2001).
+As a means of providing empirical evidence of the utility of this approach, we
+built both the simple and exact transducers and trained them using the EM algorithm
+described in Section 7. We next compare the alignments and transition probabilities
+achieved by generic tree transducer operations with the model-specific implementation
+of Yamada and Knight (2001).
+We obtained the corpus used as training data in Yamada and Knight (2001). This
+corpus is a set of 2,060 Japanese/English sentence pairs from a dictionary, preprocessed
+418
+Graehl, Knight, and May Training Tree Transducers
+Table 2
+A comparison of the three transducer models used to simulate the model of Yamada and
+Knight (2001).
+model states initial rules rules after training time % link match % sent. match
+training (hours)
+simple 4 98,033 12,413 16.95 87.42 52.66
+exact 28 98,513 12,689 17.42 96.58 81.46
+perfect 29 186,649 24,492 53.19 99.85 99.47
+as described in Yamada and Knight. There are on average 6.9 English words per sen-
+tence and sentences range in size from 2 to 20 words. We built the simple and exact
+unweighted transducers described above; Table 2 summarizes their initial sizes. The
+exact model has 24 more states than the simple; this is due to the parent-dependent
+modification to q. The 480 additional rules are due to insertion rules dependent on
+parent and child information.
+We then ran our training algorithm on the unweighted transducers and the training
+corpus. Because the derivation tree grammars produced by SDeriv can be large and
+time-intensive to compute, we calculated them once prior to training, saved them
+to disk, and then read them at each iteration of the training algorithm.14 Following
+Yamada and Knight (2001), we chose a normalization partition (Z in Train) such that
+we obtain the probabilities of all the rules given their complete left hand side,15 and
+set the Dirichlet prior counts uniformly to 0. We ran 20 iterations of the EM algorithm
+using Train. The time to construct derivation forests and run 20 iterations of EM for
+the various models is in Table 2. Note also the size of the transducers after training in
+Table 2; a rule is considered to be no longer in the transducer if it is estimated to have
+conditional probability 0.0001 or less.
+Because we are trying to duplicate the training experiment of Yamada and Knight
+(2001), we wish to compare the word-to-word alignments discovered by that work to
+those discovered by ours. We recovered alignments from our trained transducers as
+follows: For each tree/string pair we obtained the most likely sequence of rules that
+derives the output string from an input tree, the Viterbi derivation. Figure 9 shows the
+Viterbi derivation tree and rules for an example sentence. By following the sequence of
+applied rules we can also determine which English words translate to which Japanese
+words, and thus construct the Viterbi word alignment. We obtained the full set of align-
+ments induced in Yamada and Knight and compared them to the alignments learned
+from our transducers.
+In Table 2 we report link match accuracy16 as well as sentence match accuracy.
+The simple transducer is clearly only a rough approximation of the model of Yamada
+and Knight (2001). The exact model is much closer, but the low percentage of exact
+sentence matches is a concern. When comparing the parameter table values reported
+by Yamada and Knight with our rule weights we see that the two systems learned
+14 In all models the size on disk in native Java binary object format was about 2.7 GB.
+15 Zr(c ) ?
+?
+r?=(qr ,?,e,f )?R c(r
+? ),?r = (qr, ?, g, h) ? R.
+16 As this model induces 1-to-1 word alignments, we report accuracy as the number of links matching those
+reported by Yamada and Knight (2001) as a percentage of the total number of links.
+419
+Computational Linguistics Volume 34, Number 3
+Figure 9
+A Viterbi derivation tree and the referenced rules.
+different probability distributions in multiple instances. A sample of these parameter
+value differences can be seen in Figure 10.
+In an effort to determine the reason for the discrepancy in weights between the
+parameter values learned in our exact transducer representation of Yamada and Knight
+(2001), we contacted the authors17 and learned that, unreported in the paper, the original
+code contained a constraint that specifically bars an unaligned foreign word insertion
+immediately prior to a NULL English word translation. We incorporate this change to
+our model by simply modifying our transducer, rather than by changing our program-
+ming code. The new transducer, which we call perfect, is a modification of the exact
+transducer as follows.
+We introduce an additional state s, denoting a translation taking place immediately
+after an unaligned foreign function word insertion. We then introduce the following
+additional rules.
+For every rule that inserts a foreign function word, add an additional rule denoting
+an insertion immediately before a translation, and tie these rules together, for example:
+q.VB x0:NN? i x0, r x0 @ 23
+q.VB x0:NN? i x0, s x0 @ 23
+q.VB x0:NN? r x0, i x0 @ 24
+q.VB x0:NN? s x0, i x0 @ 24
+. . .
+To allow subsequent translation, ?transition? rules for state s analogous to the
+transition rules described previously must also be added, for example:
+s NN(x0:?car?)? s x0
+s CC(x0:?and?)? s x0
+. . .
+17 We are grateful to Kenji Yamada for providing full parameter tables and Viterbi alignments from the
+original source.
+420
+Graehl, Knight, and May Training Tree Transducers
+Figure 10
+Rule probabilities corresponding to the parameter tables of Yamada and Knight (2001).
+Finally, for each non-null translation rule, add an identical translation rule starting
+with s instead of t, and tie these rules, for example:
+t ?car?? ?kuruma? @ 54
+t ?car?? ?wa? @ 55
+t ?car?? *e*
+s ?car?? ?kuruma? @ 54
+s ?car?? ?wa? @ 55
+. . .
+Note that there is no corresponding null translation rule from state s; this is in
+accordance with the insertion/NULL translation restriction.
+As can be seen in Table 2 the Viterbi alignments learned from this ?perfect?
+transducer are virtually identical to those reported in Yamada and Knight (2001). No
+421
+Computational Linguistics Volume 34, Number 3
+rule probability in the learned transducer differs from its corresponding parameter
+value in the original table by more than 0.000066. The 11 sentences with different
+alignments, which account for 0.53% of the corpus, were due to two derivations
+having the same probability; this was true in Yamada and Knight (2001) as well,
+and the choice between equal-scoring derivations is arbitrary. Transducer rules that
+correspond to the parameter tables presented in Figure 8 and a comparison of their
+learned weights over the three models with the weight learned in Yamada and Knight
+are in Figure 10. Note that the final perfect model matches the original parameter
+tables perfectly, indicating we can reproduce complicated models with our transducer
+formalism.
+There are several benefits to this xTs formulation. First, it makes the model very
+clear, in the same way that Knight and Al-Onaizan (1998) and Kumar and Byrne (2003)
+elucidate other machine translation models in easily grasped FST terms. Second, the
+model can be trained with generic, off-the-shelf tools?versus the alternative of working
+out model-specific re-estimation formulae and implementing custom training software,
+whose debugging is a significant engineering challenge. Third, we can easily extend the
+model in interesting ways. For example, we can add rules for multi-level and lexical
+re-ordering:
+r NP(x0:NP, PP(IN(?of?), x1:NP))? q x1, ?no?, q x0
+We can eschew pre-processing that flattens trees prior to training, and instead
+incorporate flattening rules into the explicit model.
+We can add rules for phrasal translations:
+r NP(JJ(?big?), NN(?cars?))? ?ooki?, ?kuruma?
+This can include non-constituent phrasal translations:
+r S(NP(PRO(?there?)), VP(VB(?are?)), x0:NP)? q x0, ?ga?, ?arimasu?
+Such non-constituent phrase pairs are commonly used in statistical machine translation
+(Och, Tillmann, and Ney 1999; Marcu and Wong 2002) and are vital to accuracy (Koehn,
+Och, and Marcu 2003). We can also eliminate many epsilon word-translation rules in
+favor of more syntactically-controlled ones, for example:
+r NP(DT(?the?), x0:NN)? q x0
+Removing epsilons serves to reduce practical complexity in training and especially in
+decoding (Yamada and Knight 2002).
+We can make many such changes without modifying the training procedure, as long
+as we stick to the tree automata.
+The implementation of EM training we describe here is part of Tiburon, a generic
+weighted tree automata toolkit described in May and Knight (2006) and available at
+http://www.isi.edu/licensed-sw/tiburon/.
+422
+Graehl, Knight, and May Training Tree Transducers
+12. PCFG Modeling Experiment
+In this section, we demonstrate another application of the xTs training algorithm. We
+show its generality by applying it to the standard task of training a probabilistic context-
+free grammar (PCFG) on string examples. Consider the following grammar:
+S? NP VP
+NP? DT N
+NP? NP PP
+PP? P NP
+VP? V NP
+VP? V NP PP
+DT? the N? the V? the P? the
+DT? window N? window V? window P? window
+DT? father N? father V? father P? father
+DT? mother N? mother V? mother P? mother
+DT? saw N? saw V? saw P? saw
+DT? sees N? sees V? sees P? sees
+DT? of N? of V? of P? of
+DT? through N? through V? through P? through
+Also consider the following observed string data:
+the father saw the window
+the father saw the mother through the window
+the mother sees the father of the mother
+We would like to assign probabilities to the grammar rules such that the probability of
+the string data is maximized (Baker 1979; Lari and Young 1990). We can exploit the xTs
+training algorithm by pretending that each string was probabilistically transduced from
+a tree consisting of the single node ?. All we require is to transform the grammar into
+an xTs transducer:
+Start state: qs
+qs x0? qnp x0, qvp x0
+qnp x0?0.99 qdt x0, qn x0
+qnp x0?0.01 qnp x0, qpp x0
+qpp x0? qp x0, qnp x0
+qvp x0?0.99 qv x0, qnp x0
+qvp x0?0.01 qv x0, qnp x0, qpp x0
+qdt ? ? the qn ? ? the qv ? ? the qp ? ? the
+qdt ? ? window qn ? ? window qv ? ? window qp ? ? window
+qdt ? ? father qn ? ? father qv ? ? father qp ? ? father
+qdt ? ? mother qn ? ? mother qv ? ? mother qp ? ? mother
+qdt ? ? saw qn ? ? saw qv ? ? saw qp ? ? saw
+qdt ? ? sees qn ? ? sees qv ? ? sees qp ? ? sees
+qdt ? ? of qn ? ? of qv ? ? of qp ? ? of
+qdt ? ? through qn ? ? through qv ? ? through qp ? ? through
+423
+Computational Linguistics Volume 34, Number 3
+We also transform the observed string data into tree/string pairs:
+? ? the father saw the window
+? ? the father saw the mother through the window
+? ? the mother sees the father of the mother
+After running the xTs training algorithm, we obtain maximum likelihood values for the
+rules. For example, after one iteration, we find the following values for rules that realize
+verbs:
+qv ? ?0.11 of
+qv ? ?0.11 through
+qv ? ?0.22 sees
+qv ? ?0.56 saw
+After more iterations, values converge to:
+qv ? ?0.33 sees
+qv ? ?0.67 saw
+Viterbi parses for the strings can also be obtained from the derivations forests computed
+by the SDeriv procedure. We note that our use of xTs training relies on copying.18
+13. Related and Future Work
+Concrete xLNT transducers are similar to (weighted) Synchronous TSG (STSG). STSG,
+like TSG, conflate tree labels with states, and so cannot reproduce all the relations in
+L(xLNT) without a subsequent relabeling step, although in some versions the root labels
+of the STSG rules? input and output trees are allowed to differ. Regular lookahead19 for
+deleted input subtrees could be added explicitly to xT. Eisner (2003) briefly discusses
+training for STSG. For bounded trees, xTs can be represented as an FST (Bangalore and
+Riccardi 2002).
+Our training algorithm is a generalization of forward?backward EM training
+for finite-state (string) transducers, which is in turn a generalization of the origi-
+nal forward?backward algorithm for Hidden Markov Models. Eisner (2002) describes
+string-based training under different semirings, and Carmel (Graehl 1997) imple-
+ments FST string-to-string training. In our tree-based training algorithm, inside?outside
+weights replace forward?backward, and paths in trees replace positions in strings. Ex-
+plicit construction and pruning of derivation trees saves time over many EM iterations,
+and could accelerate string-to-string training as well.
+Yamada and Knight (2001) give a training algorithm for a specific tree-to-string
+machine translation model. Gildea (2003) introduces a variation of tree-to-tree mapping
+that allows for cloning (copying a subtree into an arbitrary position elsewhere), in order
+18 Curiously, these rules can have ?x0? in place of ???, because the training routine also supports deleting
+transducers. Such a transducer would transform any input tree to the output PCFG.
+19 Tree patterns ? of arbitrary regular tree languages, as described in Engelfriet (1977).
+424
+Graehl, Knight, and May Training Tree Transducers
+to better robustly model the substantial tree transformations found in human language
+translation data.
+Using a similar approach to Deriv, exploiting the independence (except on state) of
+input-subtree/output-subtree mappings, we can build wRTG for the xT derivation trees
+matching an observed input tree (forward application), or matching an observed output
+tree (backward application).20 For backward application through concrete transducers,
+each derivation tree implies a unique input tree, except where deletion occurs (the
+deleted input subtree could have been anything). For copying transducers, backward
+application requires wRTG intersection in order to ensure that only input-subtree hy-
+potheses possible for all their derived output subtrees are allowed. For noncopying
+xTs transducers with complete tree patterns, backward application is just exhaustive
+context-free grammar parsing, generating a wRTG production from the left-hand-side
+of each xTs rule instance applied in parsing. Training and backward application algo-
+rithms for xTs can be extended in the usual way to parse given finite-state output lattices
+instead of single strings.21
+14. Conclusion
+We have motivated the use of tree transducers for natural language processing, and
+presented algorithms for training them. The tree-input/tree-output algorithm runs in
+O(Gn2) time and space, whereG is a grammar constant, n is the total size of the tree pair,
+and the tree-input/string-output algorithm runs in O(Gnm3) time and space, where n is
+the size of the input tree and m is the size of the output string. Training works in both
+cases by building the derivation forest for each example, pruning it, and then (until
+convergence) collecting fractional counts for rules from those forests and normalizing.
+We have also presented an implementation and experimental results.
+References
+Aho, A. V. and J. D. Ullman. 1971.
+Translations of a context-free grammar.
+Information and Control, 19:439?475.
+Alshawi, Hiyan, Srinivas Bangalore,
+and Shona Douglas. 2000. Learning
+dependency translation models as
+collections of finite state head transducers.
+Computational Linguistics, 26(1):45?60.
+Baker, J. K. 1979. Trainable grammars
+for speech recognition. In Speech
+Communication Papers for the 97th Meeting
+of the Acoustical Society of America,
+pages 547?550, Boston, MA.
+Bangalore, Srinivas and Owen Rambow.
+2000. Exploiting a probabilistic hierarchical
+model for generation. In International
+Conference on Computational Linguistics
+(COLING 2000), pages 42?48, Saarbrucken,
+Germany.
+Bangalore, Srinivas and Giuseppe Riccardi.
+2002. Stochastic finite-state models for
+spoken language machine translation.
+Machine Translation, 17(3):165?184.
+Baum, L. E. and J. A. Eagon. 1967. An
+inequality with application to statistical
+estimation for probabilistic functions
+of Markov processes and to a model
+for ecology. Bulletin of the American
+Mathematicians Society, 73:360?363.
+Charniak, Eugene. 2001. Immediate-head
+parsing for language models. In
+Proceedings of the 39th Annual Meeting
+of the Association for Computational
+Linguistics, pages 116?123, Tolouse,
+France.
+Chelba, C. and F. Jelinek. 2000. Structured
+language modeling. Computer Speech and
+Language, 14(4):283?332.
+Collins, Michael. 1997. Three generative,
+lexicalised models for statistical parsing.
+In Proceedings of the 35th Annual Meeting
+of the ACL (jointly with the 8th Conference
+of the EACL), pages 16?23, Madrid, Spain.
+20 In fact, forward and backward application can also be made to work on wRTG tree sets, with the result
+still being a wRTG of possible derivations, except in the case of forward application with copying.
+21 Instead of pairs of string indices, spans are pairs of lattice states.
+425
+Computational Linguistics Volume 34, Number 3
+Comon, H., M. Dauchet, R. Gilleron,
+F. Jacquemard, D. Lugiez, S. Tison,
+and M. Tommasi. 1997. Tree automata
+techniques and applications. Available at
+http://www.grappa.univ-lille3.fr/tata.
+Release of 12 October 2007.
+Corston-Oliver, Simon, Michael Gamon,
+Eric K. Ringger, and Robert Moore.
+2002. An overview of Amalgam: A
+machine-learned generation module.
+In Proceedings of the International Natural
+Language Generation Conference,
+pages 33?40, New York.
+Dempster, A. P., N. M. Laird, and D. B.
+Rubin. 1977. Maximum likelihood from
+incomplete data via the em algorithm.
+Journal of the Royal Statistical Society,
+Series B, 39(1):1?38.
+Doner, J. 1970. Tree acceptors and some of
+their applications. Journal of Computer and
+System Sciences, 4:406?451.
+Eisner, Jason. 2002. Parameter estimation for
+probabilistic finite-state transducers. In
+Proceedings of the 40th Annual Meeting of the
+Association for Computational Linguistics
+(ACL), pages 1?8, Philadelphia, PA.
+Eisner, Jason. 2003. Learning non-isomorphic
+tree mappings for machine translation. In
+Proceedings of the 41st Annual Meeting of the
+Association for Computational Linguistics
+(companion volume), pages 205?208,
+Sapporo, Japan.
+Engelfriet, Joost. 1975. Bottom-up and
+top-down tree transformations?a
+comparison.Mathematical Systems
+Theory, 9(3):198?231.
+Engelfriet, Joost. 1977. Top-down tree
+transducers with regular look-ahead.
+Mathematical Systems Theory, 10:289?303.
+Engelfriet, Joost, Zolt?n F?l?p, and Heiko
+Vogler. 2004. Bottom-up and top-down
+tree series transformations. Journal of
+Automata, Languages and Combinatorics,
+7(1):11?70.
+F?l?p, Zolt?n and Heiko Vogler. 2004.
+Weighted tree transducers. Journal of
+Automata, Languages and Combinatorics,
+9(1):31?54.
+G?cseg, Ferenc and Magnus Steinby. 1984.
+Tree Automata. Akad?miai Kiad?,
+Budapest.
+Gildea, Daniel. 2003. Loosely tree-based
+alignment for machine translation. In
+Proceedings of the 41st Annual Meeting of the
+Association for Computational Linguistics,
+pages 80?87, Sapporo, Japan.
+Graehl, Jonathan. 1997. Carmel finite-state
+toolkit. Available at http://www.isi.edu/
+licensed-sw/carmel/.
+Graehl, Jonathan and Kevin Knight. 2004.
+Training tree transducers. In HLT-NAACL
+2004: Main Proceedings, pages 105?112,
+Boston, MA.
+Hopcroft, John and Jeffrey Ullman. 1979.
+Introduction to Automata Theory, Languages,
+and Computation. Addison-Wesley Series
+in Computer Science. Addison-Wesley,
+London.
+Joshi, Aravind and Yves Schabes. 1997.
+Tree-adjoining grammars. In G. Rozenberg
+and A. Salomaa, editors, Handbook of
+Formal Languages, volume 3. Springer,
+Berlin, pages 69?124.
+Klein, Dan and Christopher D. Manning.
+2003. Accurate unlexicalized parsing. In
+Proceedings of the 41st Annual Meeting of the
+Association for Computational Linguistics,
+pages 423?430, Sapporo, Japan.
+Knight, Kevin and Yaser Al-Onaizan. 1998.
+Translation with finite-state devices. In
+Proceedings of the 3rd Conference of the
+Association for Machine Translation in
+the Americas on Machine Translation
+and the Information Soup (AMTA-98),
+pages 421?437, Berlin.
+Knight, Kevin and Daniel Marcu. 2002.
+Summarization beyond sentence
+extraction: A probabilistic approach
+to sentence compression. Artificial
+Intelligence, 139(1):91?107.
+Koehn, Phillip, Franz Och, and Daniel
+Marcu. 2003. Statistical phrase-based
+translation. In HLT-NAACL 2003: Main
+Proceedings, pages 127?133, Edmonton,
+Alberta, Canada.
+Kuich, Werner. 1999. Tree transducers and
+formal tree series. Acta Cybernetica,
+14:135?149.
+Kumar, Shankar and William Byrne. 2003.
+A weighted finite state transducer
+implementation of the alignment template
+model for statistical machine translation.
+In HLT-NAACL 2003: Main Proceedings,
+pages 142?149, Edmonton, Alberta,
+Canada.
+Langkilde, Irene. 2000. Forest-based
+statistical sentence generation. In
+Proceedings of the 6th Applied Natural
+Language Processing Conference,
+pages 170?177, Seattle, WA.
+Langkilde, Irene and Kevin Knight. 1998.
+Generation that exploits corpus-based
+statistical knowledge. In Proceedings
+of the Conference of the Association for
+Computational Linguistics (COLING/ACL),
+pages 704?710, Montreal, Canada.
+Lari, K. and S. J. Young. 1990. The estimation
+of stochastic context-free grammars using
+426
+Graehl, Knight, and May Training Tree Transducers
+the inside?outside algorithm. Computer
+Speech and Language, 4(1):35?56.
+Marcu, Daniel and William Wong. 2002.
+A phrase-based, joint probability
+model for statistical machine translation.
+In Proceedings of the Conference on
+Empirical Methods in Natural Language
+Processing (EMNLP), pages 133?139,
+Philadelphia, PA.
+May, Jonathan and Kevin Knight. 2006.
+Tiburon: A weighted tree automata
+toolkit. Implementation and Application of
+Automata: 10th International Conference,
+CIAA 2005, volume 4094 of Lecture
+Notes in Computer Science, pages 102?113,
+Taipei, Taiwan.
+Nederhof, Mark-Jan and Giorgio Satta. 2002.
+Parsing non-recursive CFGs. In Proceedings
+of the 40th Annual Meeting of the Association
+for Computational Linguistics (ACL),
+pages 112?119, Philadelphia, PA.
+Och, Franz, Christoph Tillmann, and
+Hermann Ney. 1999. Improved alignment
+models for statistical machine translation.
+In Proceedings of the Joint Conference of
+Empirical Methods in Natural Language
+Processing and Very Large Corpora,
+pages 20?28, College Park, MD.
+Pang, Bo, Kevin Knight, and Daniel Marcu.
+2003. Syntax-based alignment of multiple
+translations extracting paraphrases and
+generating new sentences. In HLT-NAACL
+2003: Main Proceedings, pages 181?188,
+Edmonton, Alberta, Canada.
+Rounds, William C. 1970. Mappings and
+grammars on trees.Mathematical Systems
+Theory, 4(3):257?287.
+Schabes, Yves. 1990.Mathematical and
+Computational Aspects of Lexicalized
+Grammars. Ph.D. thesis, Department of
+Computer and Information Science,
+University of Pennsylvania.
+Thatcher, James W. 1970. Generalized2
+sequential machine maps. Journal of
+Computer and System Sciences, 4:339?367.
+Viterbi, Andrew. 1967. Error bounds for
+convolutional codes and an asymptotically
+optimum decoding algorithm. IEEE
+Transactions on Information Theory,
+IT-13:260?269.
+Wu, Dekai. 1997. Stochastic inversion
+transduction grammars and bilingual
+parsing of parallel corpora. Computational
+Linguistics, 23(3):377?404.
+Yamada, Kenji and Kevin Knight. 2001. A
+syntax-based statistical translation model.
+In Proceedings of the 39th Annual Meeting of
+the Association for Computational Linguistics,
+pages 523?530, Tolouse, France.
+Yamada, Kenji and Kevin Knight. 2002. A
+decoder for syntax-based statistical MT. In
+Proceedings of the 40th Annual Meeting of the
+Association for Computational Linguistics
+(ACL), pages 303?310, Philadelphia, PA.
+427
+
+Training Tree Transducers
+Jonathan Graehl
+Information Sciences Institute
+University of Southern California
+4676 Admiralty Way
+Marina del Rey, CA 90292
+graehl@isi.edu
+Kevin Knight
+Information Sciences Institute
+University of Southern California
+4676 Admiralty Way
+Marina del Rey, CA 90292
+knight@isi.edu
+Abstract
+Many probabilistic models for natural language
+are now written in terms of hierarchical tree
+structure. Tree-based modeling still lacks many
+of the standard tools taken for granted in (finite-
+state) string-based modeling. The theory of tree
+transducer automata provides a possible frame-
+work to draw on, as it has been worked out in an
+extensive literature. We motivate the use of tree
+transducers for natural language and address
+the training problem for probabilistic tree-to-
+tree and tree-to-string transducers.
+1 Introduction
+Much of natural language work over the past decade has
+employed probabilistic finite-state transducers (FSTs)
+operating on strings. This has occurred somewhat under
+the influence of speech recognition, where transducing
+acoustic sequences to word sequences is neatly captured
+by left-to-right stateful substitution. Many conceptual
+tools exist, such as Viterbi decoding (Viterbi, 1967) and
+forward-backward training (Baum and Eagon, 1967), as
+well as generic software toolkits. Moreover, a surprising
+variety of problems are attackable with FSTs, from part-
+of-speech tagging to letter-to-sound conversion to name
+transliteration.
+However, language problems like machine transla-
+tion break this mold, because they involve massive re-
+ordering of symbols, and because the transformation pro-
+cesses seem sensitive to hierarchical tree structure. Re-
+cently, specific probabilistic tree-based models have been
+proposed not only for machine translation (Wu, 1997;
+Alshawi, Bangalore, and Douglas, 2000; Yamada and
+Knight, 2001; Gildea, 2003; Eisner, 2003), but also for
+This work was supported by DARPA contract F49620-00-
+1-0337 and ARDA contract MDA904-02-C-0450.
+summarization (Knight and Marcu, 2002), paraphras-
+ing (Pang, Knight, and Marcu, 2003), natural language
+generation (Langkilde and Knight, 1998; Bangalore and
+Rambow, 2000; Corston-Oliver et al, 2002), and lan-
+guage modeling (Baker, 1979; Lari and Young, 1990;
+Collins, 1997; Chelba and Jelinek, 2000; Charniak, 2001;
+Klein and Manning, 2003). It is useful to understand
+generic algorithms that may support all these tasks and
+more.
+(Rounds, 1970) and (Thatcher, 1970) independently
+introduced tree transducers as a generalization of FSTs.
+Rounds was motivated by natural language. The Rounds
+tree transducer is very similar to a left-to-right FST, ex-
+cept that it works top-down, pursuing subtrees in paral-
+lel, with each subtree transformed depending only on its
+own passed-down state. This class of transducer is often
+nowadays called R, for ?Root-to-frontier? (G?cseg and
+Steinby, 1984).
+Rounds uses a mathematics-oriented example of an R
+transducer, which we summarize in Figure 1. At each
+point in the top-down traversal, the transducer chooses
+a production to apply, based only on the current state
+and the current root symbol. The traversal continues
+until there are no more state-annotated nodes. Non-
+deterministic transducers may have several productions
+with the same left-hand side, and therefore some free
+choices to make during transduction.
+An R transducer compactly represents a potentially-
+infinite set of input/output tree pairs: exactly those pairs
+(T1, T2) for which some sequence of productions applied
+to T1 (starting in the initial state) results in T2. This is
+similar to an FST, which compactly represents a set of
+input/output string pairs, and in fact, R is a generalization
+of FST. If we think of strings written down vertically, as
+degenerate trees, we can convert any FST into an R trans-
+ducer by automatically replacing FST transitions with R
+productions.
+R does have some extra power beyond path following
+Figure 1: A sample R tree transducer that takes the
+derivative of its input.
+and state-based record keeping. It can copy whole sub-
+trees, and transform those subtrees differently. It can also
+delete subtrees without inspecting them (imagine by anal-
+ogy an FST that quits and accepts right in the middle of
+an input string). Variants of R that disallow copying and
+deleting are called RL (for linear) and RN (for nondelet-
+ing), respectively.
+One advantage of working with tree transducers is the
+large and useful body of literature about these automata;
+two excellent surveys are (G?cseg and Steinby, 1984) and
+(Comon et al, 1997). For example, R is not closed under
+composition (Rounds, 1970), and neither are RL or F (the
+?frontier-to-root? cousin of R), but the non-copying FL
+is closed under composition. Many of these composition
+results are first found in (Engelfriet, 1975).
+R has surprising ability to change the structure of an
+input tree. For example, it may not be initially obvious
+how an R transducer can transform the English structure
+S(PRO, VP(V, NP)) into the Arabic equivalent S(V, PRO,
+NP), as it is difficult to move the subject PRO into posi-
+tion between the verb V and the direct object NP. First, R
+productions have no lookahead capability?the left-hand-
+side of the S production consists only of q S(x0, x1), al-
+though we want our English-to-Arabic transformation to
+apply only when it faces the entire structure q S(PRO,
+VP(V, NP)). However, we can simulate lookahead using
+states, as in these productions:
+- q S(x0, x1) ? S(qpro x0, qvp.v.np x1)
+- qpro PRO ? PRO
+- qvp.v.np VP(x0, x1) ? VP(qv x0, qnp x1)
+By omitting rules like qpro NP? ..., we ensure that the
+entire production sequence will dead-end unless the first
+child of the input tree is in fact PRO. So finite lookahead
+is not a problem. The next problem is how to get the PRO
+to appear in between the V and NP, as in Arabic. This can
+be carried out using copying. We make two copies of the
+English VP, and assign them different states:
+- q S(x0,x1) ? S(qleft.vp.v x1, qpro x0,
+qright.vp.np x1)
+- qpro PRO ? PRO
+- qleft.vp.v VP(x0, x1) ? qv x0
+- qright.vp.np VP(x0, x1) ? qnp x1
+While general properties of R are understood, there
+are many algorithmic questions. In this paper, we take
+on the problem of training probabilistic R transducers.
+For many language problems (machine translation, para-
+phrasing, text compression, etc.), it is possible to collect
+training data in the form of tree pairs and to distill lin-
+guistic knowledge automatically.
+Our problem statement is: Given (1) a particular
+transducer with productions P, and (2) a finite training set
+of sample input/output tree pairs, we want to produce (3)
+a probability estimate for each production in P such that
+we maximize the probability of the output trees given the
+input trees.
+As organized in the rest of this paper, we accomplish
+this by intersecting the given transducer with each in-
+put/output pair in turn. Each such intersection produces a
+set of weighted derivations that are packed into a regular
+tree grammar (Sections 3-5), which is equivalent to a tree
+substitution grammar. The inside and outside probabili-
+ties of this packed derivation structure are used to com-
+pute expected counts of the productions from the original,
+given transducer (Sections 6-7). Section 9 gives a sample
+transducer implementing a published machine translation
+model; some readers may wish to skip to this section di-
+rectly.
+2 Trees
+T? is the set of (rooted, ordered, labeled, finite) trees over
+alphabet ?. An alphabet is just a finite set.
+T?(X) are the trees over alphabet ?, indexed by X?
+the subset of T??X where only leaves may be labeled by
+X . (T?(?) = T?.) Leaves are nodes with no children.
+The nodes of a tree t are identified one-to-one with its
+paths: pathst ? paths ? N? ?
+??
+i=0 Ni (A0 ? {()}).
+The path to the root is the empty sequence (), and p1
+extended by p2 is p1 ? p2, where ? is concatenation.
+For p ? pathst, rankt(p) is the number of chil-
+dren, or rank, of the node at p in t, and labelt(p) ?
+? ? X is its label. The ranked label of a node is the
+pair labelandrankt(p) ? (labelt(p), rankt(p)). For
+1 ? i ? rankt(p), the ith child of the node at p is
+located at path p ? (i). The subtree at path p of t is
+t ? p, defined by pathst?p ? {q | p ? q ? pathst} and
+labelandrankt?p(q) ? labelandrankt(p ? q).
+The paths to X in t are pathst(X) ? {p ?
+pathst | labelt(p) ? X}. A frontier is a set of paths
+f that are pairwise prefix-independent:
+?p1, p2 ? f, p ? paths : p1 = p2 ? p =? p1 = p2
+A frontier of t is a frontier f ? pathst.
+For t, s ? T?(X), p ? pathst, t[p? s] is the substitu-
+tion of s for p in t, where the subtree at path p is replaced
+by s. For a frontier f of t, the mass substitution of X
+for the frontier f in t is written t[p ? X, ?p ? f ] and
+is equivalent to substituting the X(p) for the p serially in
+any order.
+Trees may be written as strings over ? ? {(, )}
+in the usual way. For example, the tree t =
+S(NP,VP(V,NP)) has labelandrankt((2)) = (VP, 2)
+and labelandrankt((2, 1)) = (V, 0). For t ? T?, ? ? ?,
+?(t) is the tree whose root has label ? and whose single
+child is t.
+The yield of X in t is yieldt(X), the string formed by
+reading out the leaves labeled with X in left-to-right or-
+der. The usual case (the yield of t) is yieldt ? yieldt(?).
+? = {S, NP, VP, PP, PREP, DET, N, V, run, the, of, sons,
+daughters}
+N = {qnp, qpp, qdet, qn, qprep}
+S = q
+P = {q?1.0 S(qnp, VP(V(run))),
+qnp?0.6 NP(qdet, qn),
+qnp?0.4 NP(qnp, qpp),
+qpp?1.0 PP(qprep, qnp),
+qdet?1.0 DET(the),
+qprep?1.0 PREP(of),
+qn?0.5 N(sons),
+qn?0.5 N(daughters)}
+Figure 2: A sample weighted regular tree grammar
+(wRTG)
+3 Regular Tree Grammars
+In this section, we describe the regular tree grammar, a
+common way of compactly representing a potentially in-
+finite set of trees (similar to the role played by the finite-
+state acceptor FSA for strings). We describe the version
+(equivalent to TSG (Schabes, 1990)) where the generated
+trees are given weights, as are strings in a WFSA.
+A weighted regular tree grammar (wRTG) G is a
+quadruple (?, N, S, P ), where ? is the alphabet, N is
+the finite set of nonterminals, S ? N is the start (or ini-
+tial) nonterminal, and P ? N?T?(N)?R+ is the finite
+set of weighted productions (R+ ? {r ? R | r > 0}). A
+production (lhs, rhs, w) is written lhs?w rhs. Produc-
+tions whose rhs contains no nonterminals (rhs ? T?)
+are called terminal productions, and rules of the form
+A ?w B, for A,B ? N are called ?-productions, or
+epsilon productions, and can be used in lieu of multiple
+initial nonterminals.
+Figure 2 shows a sample wRTG. This grammar ac-
+cepts an infinite number of trees. The tree S(NP(DT(the),
+N(sons)), VP(V(run))) comes out with probability 0.3.
+We define the binary relation?G (single-step derives
+in G) on T?(N)?(paths?P )?, pairs of trees and deriva-
+tion histories, which are logs of (location, production
+used):
+?G?
+{
+((a, h), (b, h ? (p, (l, r, w)))
+?
+?
+(l, r, w) ? P ? p ? pathsa({l}) ? b = a[p? r]
+}
+where (a, h)?G (b, h ? (p, (l, r, w))) iff tree b may be
+derived from tree a by using the rule l ?w r to replace
+the nonterminal leaf l at path p with r. For a derivation
+history h = ((p1, (l1, r1, w1)), . . . , (pn, (l1, r1, w1))),
+the weight of h is w(h) ??ni=1 wi, and call h leftmost if
+L(h) ? ?1 ? i < n : pi+1 ?lex pi.1
+1() <lex (a), (a1) <lex (a2) iff a1 < a2, (a1) ? b1 <lex
+(a2) ? b2 iff a1 < a2 ? (a1 = a2 ? b1 <lex b2)
+The reflexive, transitive closure of?G is written??G
+(derives in G), and the restriction of ??G to leftmost
+derivation histories is?L?G (leftmost derives in G).
+The weight of a becoming b in G is wG(a, b) ?
+?
+h:(a,())?L?G (b,h)
+w(h), the sum of weights of all unique
+(leftmost) derivations transforming a to b, and the weight
+of t in G is WG(t) = wG(S, t). The weighted regu-
+lar tree language produced by G is LG ? {(t, w) ?
+T? ? R+ |WG(t) = w}.
+For every weighted context-free grammar, there is an
+equivalent wRTG that produces its weighted derivation
+trees with yields being the string produced, and the yields
+of regular tree grammars are context free string languages
+(G?cseg and Steinby, 1984).
+What is sometimes called a forest in natural language
+generation (Langkilde, 2000; Nederhof and Satta, 2002)
+is a finite wRTG without loops, i.e., ?n ? N(n, ()) ??G
+(t, h) =? pathst({n}) = ?. Regular tree languages
+are strictly contained in tree sets of tree adjoining gram-
+mars (Joshi and Schabes, 1997).
+4 Extended-LHS Tree Transducers (xR)
+Section 1 informally described the root-to-frontier trans-
+ducer class R. We saw that R allows, by use of states,
+finite lookahead and arbitrary rearrangement of non-
+sibling input subtrees removed by a finite distance. How-
+ever, it is often easier to write rules that explicitly repre-
+sent such lookahead and movement, relieving the burden
+on the user to produce the requisite intermediary rules
+and states. We define xR, a convenience-oriented gener-
+alization of weighted R. Because of its good fit to natu-
+ral language problems, xR is already briefly touched on,
+though not defined, in (Rounds, 1970).
+A weighted extended-lhs root-to-frontier tree trans-
+ducer X is a quintuple (?,?, Q,Qi, R) where ? is the
+input alphabet, and ? is the output alphabet, Q is a fi-
+nite set of states, Qi ? Q is the initial (or start, or root)
+state, and R ? Q ? XRPAT? ? T?(Q ? paths) ? R+
+is a finite set of weighted transformation rules, written
+(q, pattern) ?w rhs, meaning that an input subtree
+matching pattern while in state q is transformed into
+rhs, with Q? paths leaves replaced by their (recursive)
+transformations. The Q?paths leaves of a rhs are called
+nonterminals (there may also be terminal leaves la-
+beled by the output tree alphabet ?).
+XRPAT? is the set of finite tree patterns: predicate
+functions f : T? ? {0, 1} that depend only on the la-
+bel and rank of a finite number of fixed paths their in-
+put. xR is the set of all such transducers. R, the set
+of conventional top-down transducers, is a subset of xR
+where the rules are restricted to use finite tree patterns
+that depend only on the root: RPAT? ? {p?,r(t)} where
+p?,r(t) ? (labelt(()) = ? ? rankt(()) = r).
+Rules whose rhs are a pure T? with no states/paths
+for further expansion are called terminal rules. Rules
+of the form (q, pat) ?w (q?, ()) are ?-rules, or epsilon
+rules, which substitute state q? for state q without produc-
+ing output, and stay at the current input subtree. Multiple
+initial states are not needed: we can use a single start
+state Qi, and instead of each initial state q with starting
+weight w add the rule (Qi,TRUE) ?w (q, ()) (where
+TRUE(t) ? 1, ?t).
+We define the binary relation?X for xR tranducer X
+on T????Q?(paths?R)?, pairs of partially transformed
+(working) trees and derivation histories:
+?X?
+{
+((a, h), (b, h ? (i, (q, pat, r, w))))
+?
+?
+(q, pat, r, w) ? R ? i ? pathsa ?
+q = labela(i) ? pat(a ? (i ? (1))) = 1 ?
+b = a
+[
+i? r
+[
+p? q?(a ? (i ? (1) ? i?)),
+?p : labelr(p) = (q?, i?)
+]]
+}
+That is, b is derived from a by application of a rule
+(q, pat) ?w r to an unprocessed input subtree a ? i
+which is in state q, replacing it by output given by r, with
+its nonterminals replaced by the instruction to transform
+descendant input subtrees at relative path i? in state q?.
+The sources of a rule r = (q, l, rhs, w) ? R are the input-
+path parts of the rhs nonterminals:
+sources(rhs) ?
+?
+i?
+?
+? ?p ? pathsrhs(Q? paths),
+q? ? Q : labelrhs(p) = (q?, i?)
+?
+If the sources of a rule refer to input paths that do not
+exist in the input, then the rule cannot apply (because
+a ? (i ? (1) ? i?) would not exist). In the traditional state-
+ment of R, sources(rhs) is always {(1), . . . , (n)}, writ-
+ing xi instead of (i), but in xR, we identify mapped input
+subtrees by arbitrary (finite) paths.
+An input tree is transformed by starting at the root
+in the initial state, and recursively applying output-
+generating rules to a frontier of (copies of) input subtrees
+(each marked with their own state), until (in a complete
+derivation, finishing at the leaves with terminal rules) no
+states remain.
+Let ??X , ?L?X , and wX(a, b) follow from ?X ex-
+actly as in Section 3. Then the weight of (i, o) in X
+is WX(i, o) ? wX(Qi(i), o). The weighted tree trans-
+duction given by X is XX ? {(i, o, w) ? T? ? T? ?
+R+|WX(i, o) = w}.
+5 Parsing a Tree Transduction
+Derivation trees for a transducer X = (?,?, Q,Qi, R)
+are trees labeled by rules (R) that dictate the choice of
+rules in a complete X-derivation. Figure 3 shows deriva-
+tion trees for a particular transducer. In order to generate
+Figure 3: Derivation trees for an R tree transducer.
+derivation trees for X automatically, we build a modified
+transducer X ?. This new transducer produces derivation
+trees on its output instead of normal output trees. X ? is
+(?, R,Q,Qi, R?), with
+R? ? {(q, pattern, rule(yieldrhs(Q? paths)), w) |
+rule = (q, pattern, rhs, w) ? R}
+That is, the original rhs of rules are flattened into a
+tree of depth 1, with the root labeled by the original rule,
+and all the non-expanding ?-labeled nodes of the rhs re-
+moved, so that the remaining children are the nonterminal
+yield in left to right order. Derivation trees deterministi-
+cally produce a single weighted output tree.
+The derived transducer X ? nicely produces derivation
+trees for a given input, but in explaining an observed
+(input/output) pair, we must restrict the possibilities fur-
+ther. Because the transformations of an input subtree
+depend only on that subtree and its state, we can (Al-
+gorithm 1) build a compact wRTG that produces ex-
+actly the weighted derivation trees corresponding to X-
+transductions (I, ()) ??X (O, h) (with weight equal to
+wX(h)).
+6 Inside-Outside for wRTG
+Given a wRTG G = (?, N, S, P ), we can compute
+the sums of weights of trees derived using each produc-
+tion by adapting the well-known inside-outside algorithm
+for weighted context-free (string) grammars (Lari and
+Young, 1990).
+The inside weights using G are given by ?G : T? ?
+(R?R?), giving the sum of weights of all tree-producing
+derivatons from trees with nonterminal leaves:
+?G(t) ?
+?
+?
+?
+?
+?
+?
+?
+?
+(t,r,w)?P
+w ? ?G(r) if t ? N
+?
+p?pathst(N)
+?G(labelt(p)) otherwise
+By definition, ?G(S) gives the sum of the weights of
+all trees generated by G. For the wRTG generated by
+DERIV(X, I,O), this is exactly WX(I,O).
+Outside weights ?G for a nonterminal are the sums of
+weights of trees generated by the wRTG that have deriva-
+tions containing it, but excluding its inside weights (that
+is, the weights summed do not include the weights of
+rules used to expand an instance of it).
+?G(n ? N) ? 1 if n = S, else:
+uses of n in productions
+z }| {
+X
+p,(n?,r,w)?P :labelr(p)=n
+w ? ?G(n?) ?
+Y
+p??pathsr(N)?{p}
+?G(labelr(p?))
+| {z }
+sibling nonterminals
+Algorithm 1: DERIV
+Input: xR transducer X = (?,?, Q,Qi, R) and ob-
+served tree pair I ? T?, O ? T?.
+Output: derivation wRTG G = (R,N ? Q? pathsI ?
+pathsO, S, P ) generating all weighted deriva-
+tion trees for X that produce O from I . Returns
+false instead if there are no such trees.
+begin
+S ? (Qi, (), ()), N ? ?, P ? ?
+if PRODUCEI,O(S) then
+return (R,N, S, P )
+else
+return false
+end
+memoized PRODUCEI,O(q, i, o) returns boolean?
+begin
+anyrule?? false
+for r = (q, pattern, rhs, w) ? R : pattern(I ? i) =
+1 ?MATCHO,?(rhs, o) do
+(o1, . . . , on)? pathsrhs(Q? paths) sorted by
+o1 <lex . . . <lex on
+//n = 0 if there are none
+labelandrankderivrhs(())? (r, n)
+for j ? 1 to n do
+(q?, i?)? labelrhs(oj)
+c? (q?, i ? i?, o ? oi)
+if ?PRODUCEI,O(c) then next r
+labelandrankderivrhs((j))? (c, 0)
+anyrule?? true
+P ? P ? {((q, i, o), derivrhs, w)}
+if anyrule? then N ? N ? {(q, i, o)}
+return anyrule?
+end
+MATCHt,?(t?, p) ? ?p? ? path(t?) : label(t?, p?) ?
+? =? labelandrankt?(p?) = labelandrankt(p ? p?)
+The possible derivations for a given
+PRODUCEI,O(q, i, o) are constant and need not be
+computed more than once, so the function is memoized.
+We have in the worst case to visit all |Q| ? |I| ? |O|
+(q, i, o) pairs and have all |R| transducer rules match at
+each of them. If enumerating rules matching transducer
+input-patterns and output-subtrees has cost L (constant
+given a transducer), then DERIV has time complexity
+O(L ? |Q| ? |I| ? |O| ? |R|).
+Finally, given inside and outside weights, the sum
+of weights of trees using a particular production is
+?G((n, r, w) ? P ) ? ?G(n) ? w ? ?G(r).
+Computing ?G and ?G for nonrecursive wRTG is a
+straightforward translation of the above recursive defi-
+nitions (using memoization to compute each result only
+once) and is O(|G|) in time and space.
+7 EM Training
+Estimation-Maximization training (Dempster, Laird, and
+Rubin, 1977) works on the principle that the corpus like-
+lihood can be maximized subject to some normalization
+constraint on the parameters by repeatedly (1) estimating
+the expectation of decisions taken for all possible ways of
+generating the training corpus given the current parame-
+ters, accumulating parameter counts, and (2) maximizing
+by assigning the counts to the parameters and renormal-
+izing. Each iteration is guaranteed to increase the like-
+lihood until a local maximum is reached.
+Algorithm 2 implements EM xR training, repeatedly
+computing inside-outside weights (using fixed transducer
+derivation wRTGs for each input/output tree pair) to ef-
+ficiently sum each parameter contribution to likelihood
+over all derivations. Each EM iteration takes time linear
+in the size of the transducer and linear in the size of the
+derivation tree grammars for the training examples. The
+size of the derivation trees is at worst O(|Q|?|I|?|O|?|R|).
+For a corpus of K examples with average input/output
+size M , an iteration takes (at worst) O(|Q| ? |R| ?K ?M2)
+time?quadratic, like the forward-backward algorithm.
+8 Tree-to-String Transducers (xRS)
+We now turn to tree-to-string transducers (xRS). In the
+automata literature, these were first called generalized
+syntax-directed translations (Aho and Ullman, 1971) and
+used to specify compilers. Tree-to-string transducers
+have also been applied to machine translation (Yamada
+and Knight, 2001; Eisner, 2003).
+We give an explicit tree-to-string transducer example
+in the next section. Formally, a weighted extended-lhs
+root-to-frontier tree-to-string transducer X is a quintuple
+(?,?, Q,Qi, R) where ? is the input alphabet, and ?
+is the output alphabet, Q is a finite set of states, Qi ?
+Q is the initial (or start, or root) state, and R ? Q ?
+XRPAT?? (?? (Q?paths))??R+ are a finite set of
+weighted transformation rules, written (q, pattern) ?w
+rhs. A rule says that to transform (with weight w) an
+input subtree matching pattern while in state q, replace
+it by the string of rhs with its nonterminal (Q ? paths)
+letters replaced by their (recursive) transformation.
+xRS is the same as xR, except that the rhs are strings
+containing some nonterminals instead of trees containing
+nonterminal leaves (so the intermediate derivation objects
+Algorithm 2: TRAIN
+Input: xR transducer X = (?,?, Q,Qd, R), observed
+weighted tree pairs T ? T? ? T? ? R+, normal-
+ization function Z({countr | r ? R}, r? ? R),
+minimum relative log-likelihood change for con-
+vergence ? ? R+, maximum number of iterations
+maxit ? N, and prior counts (for a so-called
+Dirichlet prior) {priorr | r ? R} for smoothing
+each rule.
+Output: New rule weights W ? {wr | r ? R}.
+begin
+for (i, o, w) ? T do
+di,o ?
+DERIV(X, i, o)//Alg. 1
+if di,o = false then
+T ? T ? {(i, o, w)}
+warn(more rules are needed to explain (i,o))
+compute inside/outside weights for di,o and
+remove all useless nonterminals n whose
+?di,o(n) = 0 or ?di,o(n) = 0
+itno? 0, lastL? ??, ? ? ?
+for r = (q, pat, rhs, w) ? R do wr ? w
+while ? ? ? ? itno < maxit do
+for r ? R do countr ? priorr
+L? 0
+for (i, o, wexample) ? T
+//Estimate
+do
+let D ? di,o ? (R,N, S, P )
+compute ?D, ?D using latest
+W ? {wr | r ? R}
+//see Section 6
+for prod = (n, rhs, w) ? P do
+?D(prod)? ?D(n) ? w ? ?D(rhs)
+let rule ? labelrhs(())
+countrule ? countrule+wexample ? ?D(prod)?D(S)
+L? L + log ?D(S) ? wexample
+for r = (q, pattern, rhs, w) ? R
+//Maximize
+do
+wr ?
+countr
+Z({countr|r ? R}, r)
+//e.g.Z((q, a, b, c)) ?
+?
+r=(q,d,e,f)?R
+countr
+? ? L? lastL|L|
+lastL? L, itno? itno+ 1
+end
+are strings containing state-marked input subtrees). We
+have developed an xRS training procedure similar to the
+xR procedure, with extra computational expense to con-
+sider how different productions might map to different
+spans of the output string. Space limitations prohibit a
+detailed description; we refer the reader to a longer ver-
+sion of this paper (submitted). We note that this algo-
+rithm subsumes normal inside-outside training of PCFG
+on strings (Lari and Young, 1990), since we can always
+fix the input tree to some constant for all training exam-
+ples.
+9 Example
+It is possible to cast many current probabilistic natural
+language models as R-type tree transducers. In this sec-
+tion, we implement the translation model of (Yamada
+and Knight, 2001). Their generative model provides
+a formula for P(Japanese string | English tree), in terms
+of individual parameters, and their appendix gives spe-
+cial EM re-estimation formulae for maximizing the prod-
+uct of these conditional probabilities across the whole
+tree/string corpus.
+We now build a trainable xRS tree-to-string transducer
+that embodies the same P(Japanese string | English tree).
+First, we need start productions like these, where q is the
+start state:
+- q x:S ? q.TOP.S x
+- q x:VP ? q.TOP.VP x
+These set up states like q.TOP.S, which means ?translate
+this tree, whose root is S.? Then every q.parent.child pair
+gets its own set of three insert-function-word productions,
+e.g.:
+- q.TOP.S x ? i x, r x
+- q.TOP.S x ? r x, i x
+- q.TOP.S x ? r x
+- q.NP.NN x ? i x, r x
+- q.NP.NN x ? r x, i x
+- q.NP.NN x ? r x
+State i means ?produce a Japanese function word out of
+thin air.? We include an i production for every Japanese
+word in the vocabulary, e.g.:
+- i x ? de
+- i x ? kuruma
+- i x ? wa
+State r means ?re-order my children and then recurse.?
+For internal nodes, we include a production for ev-
+ery parent/child-sequence and every permutation thereof,
+e.g.:
+- r NP(x0:CD, x1:NN) ? q.NP.CD x0, q.NP.NN x1
+- r NP(x0:CD, x1:NN) ? q.NP.NN x1, q.NP.CD x0
+The rhs sends the child subtrees back to state q for re-
+cursive processing. However, for English leaf nodes, we
+instead transition to a different state t, so as to prohibit
+any subsequent Japanese function word insertion:
+- r NN(x0:car) ? t x0
+- r CC(x0:and) ? t x0
+State t means ?translate this word,? and we have a produc-
+tion for every pair of co-occurring English and Japanese
+words:
+- t car ? kuruma
+- t car ? wa
+- t car ? *e*
+This follows (Yamada and Knight, 2001) in also allowing
+English words to disappear, or translate to epsilon.
+Every production in the xRS transducer has an associ-
+ated weight and corresponds to exactly one of the model
+parameters.
+There are several benefits to this xRS formulation.
+First, it clarifies the model, in the same way that (Knight
+and Al-Onaizan, 1998; Kumar and Byrne, 2003) eluci-
+date other machine translation models in easily-grasped
+FST terms. Second, the model can be trained with
+generic, off-the-shelf tools?versus the alternative of
+working out model-specific re-estimation formulae and
+implementing custom training software. Third, we can
+easily extend the model in interesting ways. For exam-
+ple, we can add productions for multi-level and lexical
+re-ordering:
+- r NP(x0:NP, PP(IN(of), x1:NP)) ? q x1, no, q x0
+We can add productions for phrasal translations:
+- r NP(JJ(big), NN(cars)) ? ooki, kuruma
+This can now include crucial non-constituent phrasal
+translations:
+- r S(NP(PRO(there),VP(VB(are), x0:NP) ? q x0, ga,
+arimasu
+We can also eliminate many epsilon word-translation
+rules in favor of more syntactically-controlled ones, e.g.:
+- r NP(DT(the),x0:NN) ? q x0
+We can make many such changes without modifying the
+training procedure, as long as we stick to tree automata.
+10 Related Work
+Tree substitution grammars or TSG (Schabes, 1990)
+are equivalent to regular tree grammars. xR transduc-
+ers are similar to (weighted) Synchronous TSG, except
+that xR can copy input trees (and transform the copies
+differently), but does not model deleted input subtrees.
+(Eisner, 2003) discusses training for Synchronous TSG.
+Our training algorithm is a generalization of forward-
+backward EM training for finite-state (string) transducers,
+which is in turn a generalization of the original forward-
+backward algorithm for Hidden Markov Models.
+11 Acknowledgments
+Thanks to Daniel Gildea and Kenji Yamada for comments
+on a draft of this paper, and to David McAllester for help-
+ing us connect into previous work in automata theory.
+References
+Aho, A. V. and J. D. Ullman. 1971. Translations of a context-free grammar.
+Information and Control, 19:439?475.
+Alshawi, Hiyan, Srinivas Bangalore, and Shona Douglas. 2000. Learning de-
+pendency translation models as collections of finite state head transducers.
+Computational Linguistics, 26(1):45?60.
+Baker, J. K. 1979. Trainable grammars for speech recognition. In D. Klatt and
+J. Wolf, editors, Speech Communication Papers for the 97th Meeting of the
+Acoustical Society of America. Boston, MA, pages 547?550.
+Bangalore, Srinivas and Owen Rambow. 2000. Exploiting a probabilistic hierar-
+chical model for generation. In Proc. COLING.
+Baum, L. E. and J. A. Eagon. 1967. An inequality with application to statistical
+estimation for probabilistic functions of Markov processes and to a model for
+ecology. Bulletin of the American Mathematicians Society, 73:360?363.
+Charniak, Eugene. 2001. Immediate-head parsing for language models. In Proc.
+ACL.
+Chelba, C. and F. Jelinek. 2000. Structured language modeling. Computer
+Speech and Language, 14(4):283?332.
+Collins, Michael. 1997. Three generative, lexicalised models for statistical pars-
+ing. In Proc. ACL.
+Comon, H., M. Dauchet, R. Gilleron, F. Jacquemard, D. Lugiez, S. Tison, and
+M. Tommasi. 1997. Tree automata techniques and applications. Available on
+www.grappa.univ-lille3.fr/tata. release October, 1st 2002.
+Corston-Oliver, Simon, Michael Gamon, Eric K. Ringger, and Robert Moore.
+2002. An overview of Amalgam, a machine-learned generation module. In
+Proc. IWNLG.
+Dempster, A. P., N. M. Laird, and D. B. Rubin. 1977. Maximum likelihood from
+incomplete data via the EM algorithm. Journal of the Royal Statistical Society,
+Series B, 39(1):1?38.
+Eisner, Jason. 2003. Learning non-isomorphic tree mappings for machine trans-
+lation. In Proc. ACL (companion volume).
+Engelfriet, J. 1975. Bottom-up and top-down tree transformations?a compari-
+son. Math. Systems Theory, 9(3):198?231.
+G?cseg, F. and M. Steinby. 1984. Tree Automata. Akad?miai Kiad?, Budapest.
+Gildea, Daniel. 2003. Loosely tree-based alignment for machine translation. In
+Proc. ACL.
+Joshi, A. and Y. Schabes. 1997. Tree-adjoining grammars. In G. Rozenberg and
+A. Salomaa, editors, Handbook of Formal Languages (Vol. 3). Springer, NY.
+Klein, Dan and Christopher D. Manning. 2003. Accurate unlexicalized parsing.
+In Proc. ACL.
+Knight, K. and Y. Al-Onaizan. 1998. Translation with finite-state devices. In
+Proc. AMTA.
+Knight, K. and D. Marcu. 2002. Summarization beyond sentence extraction?
+a probabilistic approach to sentence compression. Artificial Intelligence,
+139(1).
+Kumar, S. and W. Byrne. 2003. A weighted finite state transducer implemen-
+tation of the alignment template model for statistical machine translation. In
+Proceedings of HLT-NAACL.
+Langkilde, I. 2000. Forest-based statistical sentence generation. In Proc. NAACL.
+Langkilde, I. and K. Knight. 1998. Generation that exploits corpus-based statisti-
+cal knowledge. In Proc. ACL.
+Lari, K. and S. J. Young. 1990. The estimation of stochastic context-free gram-
+mars using the inside-outside algorithm. Computer Speech and Language, 4.
+Nederhof, Mark-Jan and Giorgio Satta. 2002. Parsing non-recursive CFGs. In
+Proc. ACL.
+Pang, Bo, Kevin Knight, and Daniel Marcu. 2003. Syntax-based alignment of
+multiple translations extracting paraphrases and generating new sentences. In
+Proc. HLT/NAACL.
+Rounds, William C. 1970. Mappings and grammars on trees. Mathematical
+Systems Theory, 4(3):257?287.
+Schabes, Yves. 1990. Mathematical and Computational Aspects of Lexicalized
+Grammars. Ph.D. thesis, Department of Computer and Information Science,
+University of Pennsylvania.
+Thatcher, J. W. 1970. Generalized2 sequential machine maps. J. Comput. System
+Sci., 4:339?367.
+Viterbi, A. 1967. Error bounds for convolutional codes and an asymptotically
+optimum decoding algorithm. IEEE Trans. Information Theory, IT-13.
+Wu, Dekai. 1997. Stochastic inversion transduction grammars and bilingual pars-
+ing of parallel corpora. Computational Linguistics, 23(3):377?404.
+Yamada, Kenji and Kevin Knight. 2001. A syntax-based statistical translation
+model. In Proc. ACL.
+Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of the ACL, pages 961?968,
+Sydney, July 2006. c?2006 Association for Computational Linguistics
+Scalable Inference and Training of
+Context-Rich Syntactic Translation Models
+Michel Galley*, Jonathan Graehl?, Kevin Knight??, Daniel Marcu??,
+Steve DeNeefe?, Wei Wang? and Ignacio Thayer?
+*Columbia University
+Dept. of Computer Science
+New York, NY 10027
+galley@cs.columbia.edu, {graehl,knight,marcu,sdeneefe}@isi.edu,
+wwang@languageweaver.com, thayer@google.com
+?University of Southern California
+Information Sciences Institute
+Marina del Rey, CA 90292
+?Language Weaver, Inc.
+4640 Admiralty Way
+Marina del Rey, CA 90292
+Abstract
+Statistical MT has made great progress in the last
+few years, but current translation models are weak
+on re-ordering and target language fluency. Syn-
+tactic approaches seek to remedy these problems.
+In this paper, we take the framework for acquir-
+ing multi-level syntactic translation rules of (Gal-
+ley et al, 2004) from aligned tree-string pairs, and
+present two main extensions of their approach: first,
+instead of merely computing a single derivation that
+minimally explains a sentence pair, we construct
+a large number of derivations that include contex-
+tually richer rules, and account for multiple inter-
+pretations of unaligned words. Second, we pro-
+pose probability estimates and a training procedure
+for weighting these rules. We contrast different
+approaches on real examples, show that our esti-
+mates based on multiple derivations favor phrasal
+re-orderings that are linguistically better motivated,
+and establish that our larger rules provide a 3.63
+BLEU point increase over minimal rules.
+1 Introduction
+While syntactic approaches seek to remedy word-
+ordering problems common to statistical machine
+translation (SMT) systems, many of the earlier
+models?particularly child re-ordering models?
+fail to account for human translation behavior.
+Galley et al (2004) alleviate this modeling prob-
+lem and present a method for acquiring millions
+of syntactic transfer rules from bilingual corpora,
+which we review below. Here, we make the fol-
+lowing new contributions: (1) we show how to
+acquire larger rules that crucially condition on
+more syntactic context, and show how to com-
+pute multiple derivations for each training exam-
+ple, capturing both large and small rules, as well
+as multiple interpretations for unaligned words;
+(2) we develop probability models for these multi-
+level transfer rules, and give estimation methods
+for assigning probabilities to very large rule sets.
+We contrast our work with (Galley et al, 2004),
+highlight some severe limitations of probability
+estimates computed from single derivations, and
+demonstrate that it is critical to account for many
+derivations for each sentence pair. We also use
+real examples to show that our probability mod-
+els estimated from a large number of derivations
+favor phrasal re-orderings that are linguistically
+well motivated. An empirical evaluation against
+a state-of-the-art SMT system similar to (Och and
+Ney, 2004) indicates positive prospects. Finally,
+we show that our contextually richer rules provide
+a 3.63 BLEU point increase over those of (Galley
+et al, 2004).
+2 Inferring syntactic transformations
+We assume we are given a source-language (e.g.,
+French) sentence f , a target-language (e.g., En-
+glish) parse tree pi, whose yield e is a translation
+of f , and a word alignment a between f and e.
+Our aim is to gain insight into the process of trans-
+forming pi into f and to discover grammatically-
+grounded translation rules. For this, we need
+a formalism that is expressive enough to deal
+with cases of syntactic divergence between source
+and target languages (Fox, 2002): for any given
+(pi, f ,a) triple, it is useful to produce a derivation
+that minimally explains the transformation be-
+tween pi and f , while remaining consistent with a.
+Galley et al (2004) present one such formalism
+(henceforth ?GHKM?).
+2.1 Tree-to-string alignments
+It is appealing to model the transformation of pi
+into f using tree-to-string (xRs) transducers, since
+their theory has been worked out in an exten-
+sive literature and is well understood (see, e.g.,
+(Graehl and Knight, 2004)). Formally, transfor-
+mational rules ri presented in (Galley et al, 2004)
+are equivalent to 1-state xRs transducers mapping
+a given pattern (subtree to match in pi) to a right
+hand side string. We will refer to them as lhs(ri)
+and rhs(ri), respectively. For example, some xRs
+961
+rules may describe the transformation of does not
+into ne ... pas in French. A particular instance may
+look like this:
+VP(AUX(does), RB(not), x0:VB) ? ne, x0, pas
+lhs(ri) can be any arbitrary syntax tree fragment.
+Its leaves are either lexicalized (e.g. does) or vari-
+ables (x0, x1, etc). rhs(ri) is represented as a se-
+quence of target-language words and variables.
+Now we give a brief overview of how such
+transformational rules are acquired automatically
+in GHKM.1 In Figure 1, the (pi, f ,a) triple is rep-
+resented as a directed graph G (edges going down-
+ward), with no distinction between edges of pi and
+alignments. Each node of the graph is labeled with
+its span and complement span (the latter in italic
+in the figure). The span of a node n is defined by
+the indices of the first and last word in f that are
+reachable from n. The complement span of n is
+the union of the spans of all nodes n? in G that
+are neither descendants nor ancestors of n. Nodes
+of G whose spans and complement spans are non-
+overlapping form the frontier set F ? G.
+What is particularly interesting about the fron-
+tier set? For any frontier of graph G containing
+a given node n ? F , spans on that frontier de-
+fine an ordering between n and each other frontier
+node n?. For example, the span of VP[4-5] either
+precedes or follows, but never overlaps the span of
+any node n? on any graph frontier. This property
+does not hold for nodes outside of F . For instance,
+PP[4-5] and VBG[4] are two nodes of the same
+graph frontier, but they cannot be ordered because
+of their overlapping spans.
+The purpose of xRs rules in this framework is
+to order constituents along sensible frontiers in G,
+and all frontiers containing undefined orderings,
+as between PP[4-5] and VBG[4], must be disre-
+garded during rule extraction. To ensure that xRs
+rules are prevented from attempting to re-order
+any such pair of constituents, these rules are de-
+signed in such a way that variables in their lhs can
+only match nodes of the frontier set. Rules that
+satisfy this property are said to be induced by G.2
+For example, rule (d) in Table 1 is valid accord-
+ing to GHKM, since the spans corresponding to
+1Note that we use a slightly different terminology.
+2Specifically, an xRs rule ri is extracted fromG by taking
+a subtree ? ? pi as lhs(ri), appending a variable to each
+leaf node of ? that is internal to pi, adding those variables to
+rhs(ri), ordering them in accordance to a, and if necessary
+inserting any word of f to ensure that rhs(ri) is a sequence of
+contiguous spans (e.g., [4-5][6][7-8] for rule (f) in Table 1).
+DT
+CD
+VBP
+NNS
+IN
+NNP
+NP
+NNS
+VBG
+3
+2
+2
+1
+7-8
+4
+4
+5
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+3 1-2,4
+-9
+2 1-9
+2 1-9
+1 2-9
+7-8 1-5,9
+4 1-9
+4 1-9
+5 1-4,7
+-9
+9 1-8
+1-2 3-9
+NP 7-8 1-5,9
+NP 5 1-4, 7
+-9
+PP 4-5 1-4,7
+-9
+VP 4-5 1-3,7
+-9
+NP 4-8 1-3,9
+VP 3-8 1-2,9
+S 1-9 ?
+7!
+"#
+$
+%&
+'(
+)
+*+
+,
+.
+Thes
+e
+peop
+le
+inclu
+de
+astro
+naut
+s
+com
+ing
+from
+Fran
+ce
+..
+7
+-
+Figure 1: Spans and complement-spans determine what
+rules are extracted. Constituents in gray are members of the
+frontier set; a minimal rule is extracted from each of them.
+(a) S(x0:NP, x1:VP, x2:.) ? x0, x1, x2
+(b) NP(x0:DT, CD(7), NNS(people)) ? x0, 7?
+(c) DT(these) ??
+(d) VP(x0:VBP, x1:NP) ? x0, x1
+(e) VBP(include) ?-?
+(f) NP(x0:NP, x1:VP) ? x1,?, x0
+(g) NP(x0:NNS) ? x0
+(h) NNS(astronauts) ??*,X
+(i) VP(VBG(coming), PP(IN(from), x0:NP)) ?e?, x0
+(j) NP(x0:NNP) ? x0
+(k) NNP(France) ???
+(l) .(.) ? .
+Table 1: A minimal derivation corresponding to Figure 1.
+its rhs constituents (VBP[3] and NP[4-8]) do not
+overlap. Conversely, NP(x0:DT, x1:CD:, x2:NNS)
+is not the lhs of any rule extractible from G, since
+its frontier constituents CD[2] and NNS[2] have
+overlapping spans.3 Finally, the GHKM proce-
+dure produces a single derivation from G, which
+is shown in Table 1.
+The concern in GHKM was to extract minimal
+rules, whereas ours is to extract rules of any arbi-
+trary size. Minimal rules defined over G are those
+that cannot be decomposed into simpler rules in-
+duced by the same graph G, e.g., all rules in Ta-
+ble 1. We call minimal a derivation that only con-
+tains minimal rules. Conversely, a composed rule
+results from the composition of two or more min-
+imal rules, e.g., rule (b) and (c) compose into:
+NP(DT(these), CD(7), NNS(people)) ??, 7?
+3It is generally reasonable to also require that the root n
+of lhs(ri) be part of F , because no rule induced by G can
+compose with ri at n, due to the restrictions imposed on the
+extraction procedure, and ri wouldn?t be part of any valid
+derivation.
+962
+OR
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+,!
+, x0
+VP
+(x0
+:VB
+P, 
+x1:
+NP
+) 
+!
+x0
+ , x
+1
+S(x
+0:N
+P, 
+x1:
+VP
+, x
+2:.
+) 
+!
+x0
+ , x
+1, x
+2
+NP
+(x0
+:DT
+ CD
+(7)
+, N
+NS
+(pe
+opl
+e))
+ 
+!
+x0
+, 7"
+.(.)
+ 
+!
+.
+DT
+(th
+ese
+) 
+!
+#
+VB
+P(i
+ncl
+ude
+) 
+!
+$%
+&
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+, x0
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+, x0
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m),
+ x0
+:N
+P))
+  
+!
+'(
+, x0
+, !
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m),
+ x0
+:N
+P))
+ 
+!
+'(
+, x0
+NP
+(x0
+:NN
+S) 
+!
+x0
+NP
+(x0
+:NN
+S) 
+!
+!,
+ x0
+NP
+(x0
+:NN
+P) 
+!
+x0
+, !
+NN
+P(F
+ran
+ce)
+ 
+!
+)*
+NN
+S(a
+stro
+nau
+ts) 
+!
++,
+, -
+OR
+OR N
+NS
+(as
+tro
+nau
+ts) 
+!!
+,+
+,,
+ -
+OR
+NP
+(x0
+:NN
+P) 
+!
+x0
+NP
+(x0
+:NN
+P) 
+!
+x0
+NN
+P(F
+ran
+ce)
+ 
+!
+)*
+, !
+NP
+(x0
+:NN
+S) 
+!
+x0
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m),
+ x0
+:N
+P))
+ 
+!
+'(
+, x0
+co
+min
+g
+fro
+m
+NN
+S
+IN
+NN
+P
+NP
+VP
+NP
+VB
+G
+PP
+NP
+7-8
+5
+7-8
+5
+7-8
+4
+4
+5
+4
+5
+6
+7
+8
+4
+4
+4-5
+4-5
+4-8
+NN
+P(F
+ran
+ce)
+ 
+!)
+*,
+ !
+NP
+(x0
+:NN
+P) 
+!
+x0
+, !
+VP
+(V
+BG
+(co
+mi
+ng)
+, 
+PP
+(IN
+(fro
+m)
+, 
+x0:
+NP
+))  
+!
+'(
+, x0
+, !
+NN
+S(a
+stro
+nau
+ts) 
+!
+! ,
+ +
+,,
+ -
+NP
+(x0
+:NN
+S) 
+!
+! ,
+ x0
+NP
+(x0
+:NP
+, x1
+:V
+P) 
+!
+x1
+, !
+, x0
+(a)
+(b)
+-
+'(
+)*
+!
++,
+as
+tro
+na
+uts
+Fra
+nce
+Figure 2: (a) Multiple ways of aligning? to constituents in the tree. (b) Derivation corresponding to the parse tree in Figure 1,
+which takes into account all alignments of? pictured in (a).
+Note that these properties are dependent on G, and
+the above rule would be considered a minimal rule
+in a graph G? similar to G, but additionally con-
+taining a word alignment between 7 and ?. We
+will see in Sections 3 and 5 why extracting only
+minimal rules can be highly problematic.
+2.2 Unaligned words
+While the general theory presented in GHKM ac-
+counts for any kind of derivation consistent with
+G, it does not particularly discuss the case where
+some words of the source-language string f are
+not aligned to any word of e, thus disconnected
+from the rest of the graph. This case is highly fre-
+quent: 24.1% of Chinese words in our 179 mil-
+lion word English-Chinese bilingual corpus are
+unaligned, and 84.8% of Chinese sentences con-
+tain at least one unaligned word. The question is
+what to do with such lexical items, e.g., ? in
+Figure 2(a). The approach of building one mini-
+mal derivation for G as in the algorithm described
+in GHKM assumes that we commit ourselves to
+a particular heuristic to attach the unaligned item
+to a certain constituent of pi, e.g., highest attach-
+ment (in the example, ? is attached to NP[4-8]
+and the heuristic generates rule (f)). A more rea-
+sonable approach is to invoke the principle of in-
+sufficient reason and make no a priori assump-
+tion about what is a ?correct? way of assigning
+the item to a constituent, and return all derivations
+that are consistent with G. In Section 4, we will
+see how to use corpus evidence to give preference
+to unaligned-word attachments that are the most
+consistent across the data. Figure 2(a) shows the
+six possible ways of attaching ? to constituents
+of pi: besides the highest attachment (rule (f)),?
+can move along the ancestors of France, since it is
+to the right of the translation of that word, and be
+considered to be part of an NNP, NP, or VP rule.
+We make the same reasoning to the left: ? can
+either start the NNS of astronauts, or start an NP.
+Our account of all possible ways of consistently
+attaching ? to constituents means we must ex-
+tract more than one derivation to explain transfor-
+mations in G, even if we still restrict ourselves to
+minimal derivations (a minimal derivation for G
+is unique if and only if no source-language word
+in G is unaligned). While we could enumerate
+all derivations separately, it is much more effi-
+cient both in time and space to represent them as a
+derivation forest, as in Figure 2(b). Here, the for-
+est covers all minimal derivations that correspond
+to G. It is necessary to ensure that for each deriva-
+tion, each unaligned item (here ?) appears only
+once in the rules of that derivation, as shown in
+Figure 2 (which satisfies the property). That re-
+quirement will prove to be critical when we ad-
+dress the problem of estimating probabilities for
+our rules: if we allowed in our example to spuri-
+ously generate?s in multiple successive steps of
+the same derivation, we would not only represent
+the transformation incorrectly, but also ?-rules
+would be disproportionately represented, leading
+to strongly biased estimates. We will now see how
+to ensure this constraint is satisfied in our rule ex-
+traction and derivation building algorithm.
+963
+2.3 Algorithm
+The linear-time algorithm presented in GHKM is
+only a particular case of the more general one we
+describe here, which is used to extract all rules,
+minimal and composed, induced by G. Similarly
+to the GHKM algorithm, ours performs a top-
+down traversal of G, but differs in the operations
+it performs at each node n ? F : we must explore
+all subtrees rooted at n, find all consistent ways
+of attaching unaligned words of f, and build valid
+derivations in accordance to these attachments.
+We use a table or-dforest[x, y, c] to store OR-
+nodes, in which each OR-node can be uniquely
+defined by a syntactic category c and a span [x, y]
+(which may cover unaligned words of f). This ta-
+ble is used to prevent the same partial derivation
+to be followed multiple times (the in-degrees of
+OR-nodes generally become large with composed
+rules). Furthermore, to avoid over-generating un-
+aligned words, the root and variables in each rule
+are represented with their spans. For example, in
+Figure 2(b), the second and third child of the top-
+most OR-node respectively span across [4-5][6-8]
+and [4-6][7-8] (after constituent reordering). In
+the former case, ? will eventually be realized in
+an NP, and in the latter case, in a VP.
+The preprocessing step consists of assigning
+spans and complement spans to nodes of G, in
+the first case by a bottom-up exploration of the
+graph, and in the latter by a top-down traversal.
+To assign complement spans, we assign the com-
+plement span of any node n to each of its children,
+and for each of them, add the span of the child
+to the complement span of all other children. In
+another traversal of G, we determine the minimal
+rule extractible from each node in F .
+We explore all tree fragments rooted at n by
+maintaining an open and a closed queue of rules
+extracted from n (qo and qc). At each step, we
+pick the smallest rule in qo, and for each of its
+variable nodes, try to discover new rules (?succes-
+sor rules?) by means of composition with minimal
+rules, until a given threshold on rule size or maxi-
+mum number of rules in qc is reached. There may
+be more that one successor per rule, since we must
+account for all possible spans than can be assigned
+to non-lexical leaves of a rule. Once a threshold is
+reached, or if the open queue is empty, we connect
+a new OR-node to all rules that have just been ex-
+tracted from n, and add it to or-dforest. Finally,
+we proceed recursively, and extract new rules from
+each node at the frontier of the minimal rule rooted
+at n. Once all nodes of F have been processed, the
+or-dforest table contains a representation encod-
+ing only valid derivations.
+3 Probability models
+The overall goal of our translation system is to
+transform a given source-language sentence f
+into an appropriate translation e in the set E
+of all possible target-language sentences. In a
+noisy-channel approach to SMT, we uses Bayes?
+theorem and choose the English sentence e? ? E
+that maximizes:4
+e? = argmax
+e?E
+{
+Pr(e) ? Pr(f |e)
+}
+(1)
+Pr(e) is our language model, and Pr(f |e) our
+translation model. In a grammatical approach to
+MT, we hypothesize that syntactic information
+can help produce good translation, and thus
+introduce dependencies on target-language syntax
+trees. The function to optimize becomes:
+e? = argmax
+e?E
+{
+Pr(e) ?
+?
+pi??(e)
+Pr(f |pi) ?Pr(pi|e)
+}
+(2)
+?(e) is the set of all English trees that yield the
+given sentence e. Estimating Pr(pi|e) is a prob-
+lem equivalent to syntactic parsing and thus is not
+discussed here. Estimating Pr(f |pi) is the task of
+syntax-based translation models (SBTM).
+Given a rule set R, our SBTM makes the
+common assumption that left-most compositions
+of xRs rules ?i = r1 ? ... ? rn are independent
+from one another in a given derivation ?i ? ?,
+where ? is the set of all derivations constructible
+from G = (pi, f ,a) using rules of R. Assuming
+that ? is the set of all subtree decompositions of pi
+corresponding to derivations in ?, we define the
+estimate:
+Pr(f |pi) =
+1
+|?|
+?
+?i??
+?
+rj??i
+p(rhs(rj)|lhs(rj)) (3)
+under the assumption:
+?
+rj?R:lhs(rj)=lhs(ri)
+p(rhs(rj)|lhs(rj)) = 1 (4)
+It is important to notice that the probability
+distribution defined in Equation 3 requires a
+normalization factor (|?|) in order to be tight, i.e.,
+sum to 1 over all strings fi ? F that can be derived
+4We denote general probability distributions with Pr(?)
+and use p(?) for probabilities assigned by our models.
+964
+Xa
+Y b
+a?
+b?
+c?c
+(!,f 1
+,a 1):
+X
+a
+Y b
+b?
+a?
+c?c
+(!,f 2
+,a 2):
+Figure 3: Example corpus.
+from pi. A simple example suffices to demonstrate
+it is not tight without normalization. Figure 3
+contains a sample corpus from which four rules
+can be extracted:
+r1: X(a, Y(b, c)) ? a?, b?, c?
+r2: X(a, Y(b, c)) ? b?, a?, c?
+r3: X(a, x0:Y) ? a?, x0
+r4: Y(b, c) ? b?, c?
+From Equation 4, the probabilities of r3 and r4
+must be 1, and those of r1 and r2 must sum to
+1. Thus, the total probability mass, which is dis-
+tributed across two possible output strings a?b?c?
+and b?a?c?, is: p(a?b?c?|pi) + p(b?a?c?|pi) = p1 +
+p3 ? p4 + p2 = 2, where pi = p(rhs(ri)|lhs(ri)).
+It is relatively easy to prove that the probabil-
+ities of all derivations that correspond to a given
+decomposition ?i ? ? sum to 1 (the proof is omit-
+ted due to constraints on space). From this prop-
+erty we can immediately conclude that the model
+described by Equation 3 is tight.5
+We examine two estimates p(rhs(r)|lhs(r)).
+The first one is the relative frequency estimator
+conditioning on left hand sides:
+p(rhs(r)|lhs(r)) =
+f(r)
+?
+r?:lhs(r?)=lhs(r) f(r
+?)
+(5)
+f(r) represents the number of times rule r oc-
+curred in the derivations of the training corpus.
+One of the major negative consequences of
+extracting only minimal rules from a corpus is
+that an estimator such as Equation 5 can become
+extremely biased. This again can be observed
+from Figure 3. In the minimal-rule extraction of
+GHKM, only three rules are extracted from the ex-
+ample corpus, i.e. rules r2, r3, and r4. Let?s as-
+sume now that the triple (pi, f1,a1) is represented
+99 times, and (pi, f2,a2) only once. Given a tree
+pi, the model trained on that corpus can generate
+the two strings a?b?c? and b?a?c? only through two
+derivations, r3 ? r4 and r2, respectively. Since
+all rules in that example have probability 1, and
+5If each tree fragment in pi is the lhs of some rule in R,
+then we have |?| = 2n, where n is the number of nodes of
+the frontier set F ? G (each node is a binary choice point).
+given that the normalization factor |?| is 2, both
+probabilities p(a?b?c?|pi) and p(b?a?c?|pi) are 0.5.
+On the other hand, if all rules are extracted and
+incorporated into our relative-frequency probabil-
+ity model, r1 seriously counterbalances r2 and the
+probability of a?b?c? becomes: 12 ?(
+99
+100+1) = .995
+(since it differs from .99, the estimator remains bi-
+ased, but to a much lesser extent).
+An alternative to the conditional model of
+Equation 3 is to use a joint model conditioning on
+the root node instead of the entire left hand side:
+p(r|root(r)) =
+f(r)
+?
+r?:root(r?)=root(r) f(r
+?)
+(6)
+This can be particularly useful if no parser or
+syntax-based language model is available, and we
+need to rely on the translation model to penalize
+ill-formed parse trees. Section 6 will describe an
+empirical evaluation based on this estimate.
+4 EM training
+In our previous discussion of parameter estima-
+tion, we did not explore the possibility that one
+derivation in a forest may be much more plau-
+sible than the others. If we knew which deriva-
+tion in each forest was the ?true? derivation, then
+we could straightforwardly collect rule counts off
+those derivations. On the other hand, if we had
+good rule probabilities, we could compute the
+most likely (Viterbi) derivations for each training
+example. This is a situation in which we can em-
+ploy EM training, starting with uniform rule prob-
+abilities. For each training example, we would like
+to: (1) score each derivation ?i as a product of the
+probabilities of the rules it contains, (2) compute
+a conditional probability pi for each derivation ?i
+(conditioned on the observed training pair) by nor-
+malizing those scores to add to 1, and (3) collect
+weighted counts for each rule in each ?i, where
+the weight is pi. We can then normalize the counts
+to get refined probabilities, and iterate; the corpus
+likelihood is guaranteed to improve with each it-
+eration. While it is infeasible to enumerate the
+millions of derivations in each forest, Graehl and
+Knight (2004) demonstrate an efficient algorithm.
+They also analyze how to train arbitrary tree trans-
+ducers into two steps. The first step is to build a
+derivation forest for each training example, where
+the forest contains those derivations licensed by
+the (already supplied) transducer?s rules. The sec-
+ond step employs EM on those derivation forests,
+running in time proportional to the size of the
+965
+Best minimal-rule derivation (Cm) p(r)
+(a) S(x0:NP-C x1:VP x2:.) ? x0 x1 x2 .845
+(b) NP-C(x0:NPB) ? x0 .82
+(c) NPB(DT(the) x0:NNS) ? x0 .507
+(d) NNS(gunmen) ??K .559
+(e) VP(VBD(were) x0:VP-C) ? x0 .434
+(f) VP-C(x0:VBN x1:PP) ? x1 x0 .374
+(g) PP(x0:IN x1:NP-C) ? x0 x1 .64
+(h) IN(by) ?? .0067
+(i) NP-C(x0:NPB) ? x0 .82
+(j) NPB(DT(the) x0:NN) ? x0 .586
+(k) NN(police) ?f? .0429
+(l) VBN(killed) ??? .0072
+(m) .(.) ? . .981
+.
+ 
+The
+gunm
+enw
+ere
+killed
+by
+the
+polic
+e.
+DT
+VBD
+VBN
+DT
+NN
+NP
+PP
+VP-C
+VPS
+NNS
+IN
+NP
+.
+!"
+#$
+%
+&'
+Best composed-rule derivation (C4) p(r)
+(o) S(NP-C(NPB(DT(the) NNS(gunmen))) x0:VP .(.)) ??K x0 . 1
+(p) VP(VBD(were) VP-C(x0:VBN PP(IN(by) x1:NP-C))) ?? x1 x0 0.00724
+(q) NP-C(NPB(DT(the) NN(police))) ?f? 0.173
+(r) VBN(killed) ??? 0.00719
+Figure 4: Two most probable derivations for the graph on the right: the top table restricted to minimal rules; the bottom one,
+much more probable, using a large set of composed rules. Note: the derivations are constrained on the (pi, f ,a) triple, and thus
+include some non-literal translations with relatively low probabilities (e.g. killed, which is more commonly translated as{?).
+rule nb. of nb. of deriv- EM-
+set rules nodes time time
+Cm 4M 192M 2 h. 4 h.
+C3 142M 1255M 52 h. 34 h.
+C4 254M 2274M 134 h. 60 h.
+Table 2: Rules and derivation nodes for a 54M-word, 1.95M
+sentence pair English-Chinese corpus, and time to build
+derivations (on 10 cluster nodes) and run 50 EM iterations.
+forests. We only need to borrow the second step
+for our present purposes, as we construct our own
+derivation forests when we acquire our rule set.
+A major challenge is to scale up this EM train-
+ing to large data sets. We have been able to run
+EM for 50 iterations on our Chinese-English 54-
+million word corpus. The derivation forests for
+this corpus contain 2.2 billion nodes; the largest
+forest contains 1.1 million nodes. The outcome
+is to assign probabilities to over 254 million rules.
+Our EM runs with either lhs normalization or lhs-
+root normalization. In the former case, each lhs
+has an average of three corresponding rhs?s that
+compete with each other for probability mass.
+5 Model coverage
+We now present some examples illustrating the
+benefit of composed rules. We trained three
+p(rhs(ri)|lhs(ri)) models on a 54 million-word
+English-Chinese parallel corpus (Table 2): the first
+one (Cm) with only minimal rules, and the two
+others (C3 and C4) additionally considering com-
+posed rules with no more than three, respectively
+four, internal nodes in lhs(ri). We evaluated these
+models on a section of the NIST 2002 evaluation
+corpus, for which we built derivation forests and
+lhs: S(x0:NP-C VP(x1:VBD x2:NP-C) x3:.)
+corpus rhsi p(rhsi|lhs)
+Chinese x1 x0 x2 x3 .3681
+(minimal) x0 x1 , x3 x2 .0357
+x2 , x0 x1 x3 .0287
+x0 x1 , x3 x2 . .0267
+Chinese x0 x1 x2 x3 .9047
+(composed) x0 x1 , x2 x3 .016
+x0 , x1 x2 x3 .0083
+x0 x1 ? x2 x3 .0072
+Arabic x1 x0 x2 x3 .5874
+(composed) x0 x1 x2 x3 .4027
+x1 x2 x0 x3 .0077
+x1 x0 x2 " x3 .0001
+Table 3: Our model transforms English subject-verb-object
+(SVO) structures into Chinese SVO and into Arabic VSO.
+With only minimal rules, Chinese VSO is wrongly preferred.
+extracted the most probable one (Viterbi) for each
+sentence pair (based on an automatic alignment
+produced by GIZA). We noticed in general that
+Viterbi derivations according to C4 make exten-
+sive usage of composed rules, as it is the case in
+the example in Figure 4. It shows the best deriva-
+tion according to Cm and C4 on the unseen (pi,f,a)
+triple displayed on the right. The second deriva-
+tion (log p = ?11.6) is much more probable than
+the minimal one (log p = ?17.7). In the case
+of Cm, we can see that many small rules must be
+applied to explain the transformation, and at each
+step, the decision regarding the re-ordering of con-
+stituents is made with little syntactic context. For
+example, from the perspective of a decoder, the
+word by is immediately transformed into a prepo-
+sition (IN), but it is in general useful to know
+which particular function word is present in the
+sentence to motivate good re-orderings in the up-
+966
+lhs1: NP-C(x0:NPB PP(IN(of) x1:NP-C)) (NP-of-NP)
+lhs2: PP(IN(of) NP-C(x0:NPB PP(IN(of) NP-C(x1:NPB x2:VP)))) (of-NP-of-NP-VP)
+lhs3: VP(VBD(said) SBAR-C(IN(that) x0:S-C)) (said-that-S)
+lhs4: SBAR(WHADVP(WRB(when)) S-C(x0:NP-C VP(VBP(are) x1:VP-C))) (when-NP-are-VP)
+rhs1i p(rhs1i|lhs1) rhs2i p(rhs2i|lhs2) rhs3i p(rhs3i|lhs3) rhs4i p(rhs4i|lhs4)
+x1 x0 .54 x2 ? x1 ? x0 .6754 ? , x0 .6062 ( x1 x0 ? .6618
+x0 x1 .2351 ( x2 ? x1 ? x0 .035 ? x0 .1073 S x1 x0 ? .0724
+x1 ? x0 .0334 x2 ? x1 ? x0 , .0263 h: , x0 .0591 ( x1 x0 ? , .0579
+x1 x0 ? .026 x2 ? x1 ? x0 	 .0116 ? ? , x0 .0234 , ( x1 x0 ? .0289
+Table 4: Translation probabilities promote linguistically motivated constituent re-orderings (for lhs1 and lhs2), and enable
+non-constituent (lhs3) and non-contiguous (lhs4) phrasal translations.
+per levels of the tree. A rule like (e) is particu-
+larly unfortunate, since it allows the word were to
+be added without any other evidence that the VP
+should be in passive voice. On the other hand, the
+composed-rule derivation of C4 incorporates more
+linguistic evidence in its rules, and re-orderings
+are motivated by more syntactic context. Rule
+(p) is particularly appropriate to create a passive
+VP construct, since it expects a Chinese passive
+marker (?), an NP-C, and a verb in its rhs, and
+creates the were ... by construction at once in the
+left hand side.
+5.1 Syntactic translation tables
+We evaluate the promise of our SBTM by analyz-
+ing instances of translation tables (t-table). Table 3
+shows how a particular form of SVO construc-
+tion is transformed into Chinese, which is also an
+SVO language. While the t-table for Chinese com-
+posed rules clearly gives good estimates for the
+?correct? x0 x1 ordering (p = .9), i.e. subject be-
+fore verb, the t-table for minimal rules unreason-
+ably gives preference to verb-subject ordering (x1
+x0, p = .37), because the most probable transfor-
+mation (x0 x1) does not correspond to a minimal
+rule. We obtain different results with Arabic, an
+VSO language, and our model effectively learns
+to move the subject after the verb (p = .59).
+lhs1 in Table 4 shows that our model is able
+to learn large-scale constituent re-orderings, such
+as re-ordering NPs in a NP-of-NP construction,
+and put the modifier first as it is more commonly
+the case in Chinese (p = .54). If more syntac-
+tic context is available as in lhs2, our model
+provides much sharper estimates, and appropri-
+ately reverses the order of three constituents with
+high probability (p = .68), inserting modifiers first
+(possessive markers? are needed here for better
+syntactic disambiguation).
+A limitation of earlier syntax-based systems is
+their poor handling of non-constituent phrases.
+Table 4 shows that our model can learn rules for
+such phrases, e.g., said that (lhs3). While the that
+has no direct translation, our model effectively
+learns to separate? (said) from the relative clause
+with a comma, which is common in Chinese.
+Another promising prospect of our model seems
+to lie in its ability to handle non-contiguous
+phrases, a feature that state of the art systems
+such as (Och and Ney, 2004) do not incorpo-
+rate. The when-NP-are-VP construction of lhs4
+presents such a case. Our model identifies that are
+needs to be deleted, that when translates into the
+phrase( ...?, and that the NP needs to be moved
+after the VP in Chinese (p = .66).
+6 Empirical evaluation
+The task of our decoder is to find the most likely
+English tree pi that maximizes all models involved
+in Equation 2. Since xRs rules can be converted to
+context-free productions by increasing the number
+of non-terminals, we implemented our decoder as
+a standard CKY parser with beam search. Its rule
+binarization is described in (Zhang et al, 2006).
+We compare our syntax-based system against
+an implementation of the alignment template
+(AlTemp) approach to MT (Och and Ney, 2004),
+which is widely considered to represent the state
+of the art in the field. We registered both systems
+in the NIST 2005 evaluation; results are presented
+in Table 5. With a difference of 6.4 BLEU points
+for both language pairs, we consider the results
+of our syntax-based system particularly promis-
+ing, since these are the highest scores to date that
+we know of using linguistic syntactic transforma-
+tions. Also, on the one hand, our AlTemp sys-
+tem represents quite mature technology, and in-
+corporates highly tuned model parameters. On
+the other hand, our syntax decoder is still work in
+progress: only one model was used during search,
+i.e., the EM-trained root-normalized SBTM, and
+as yet no language model is incorporated in the
+search (whereas the search in the AlTemp sys-
+tem uses two phrase-based translation models and
+967
+Syntactic AlTemp
+Arabic-to-English 40.2 46.6
+Chinese-to-English 24.3 30.7
+Table 5: BLEU-4 scores for the 2005 NIST test set.
+Cm C3 C4
+Chinese-to-English 24.47 27.42 28.1
+Table 6: BLEU-4 scores for the 2002 NIST test set, with rules
+of increasing sizes.
+12 other feature functions). Furthermore, our de-
+coder doesn?t incorporate any syntax-based lan-
+guage model, and admittedly our ability to penal-
+ize ill-formed parse trees is still limited.
+Finally, we evaluated our system on the NIST-
+02 test set with the three different rule sets (see
+Table 6). The performance with our largest rule
+set represents a 3.63 BLEU point increase (14.8%
+relative) compared to using only minimal rules,
+which indicates positive prospects for using even
+larger rules. While our rule inference algorithm
+scales to higher thresholds, one important area of
+future work will be the improvement of our de-
+coder, conjointly with analyses of the impact in
+terms of BLEU of contextually richer rules.
+7 Related work
+Similarly to (Poutsma, 2000; Wu, 1997; Yamada
+and Knight, 2001; Chiang, 2005), the rules dis-
+cussed in this paper are equivalent to productions
+of synchronous tree substitution grammars. We
+believe that our tree-to-string model has several
+advantages over tree-to-tree transformations such
+as the ones acquired by Poutsma (2000). While
+tree-to-tree grammars are richer formalisms that
+provide the potential benefit of rules that are lin-
+guistically better motivated, modeling the syntax
+of both languages comes as an extra cost, and it
+is admittedly more helpful to focus our syntac-
+tic modeling effort on the target language (e.g.,
+English) in cases where it has syntactic resources
+(parsers and treebanks) that are considerably more
+available than for the source language. Further-
+more, we think there is, overall, less benefit in
+modeling the syntax of the source language, since
+the input sentence is fixed during decoding and is
+generally already grammatical.
+With the notable exception of Poutsma, most
+related works rely on models that are restricted
+to synchronous context-free grammars (SCFG).
+While the state-of-the-art hierarchical SMT sys-
+tem (Chiang, 2005) performs well despite strin-
+gent constraints imposed on its context-free gram-
+mar, we believe its main advantage lies in its
+ability to extract hierarchical rules across phrasal
+boundaries. Context-free grammars (such as Penn
+Treebank and Chiang?s grammars) make indepen-
+dence assumptions that are arguably often unrea-
+sonable, but as our work suggests, relaxations
+of these assumptions by using contextually richer
+rules results in translations of increasing quality.
+We believe it will be beneficial to account for this
+finding in future work in syntax-based SMT and in
+efforts to improve upon (Chiang, 2005).
+8 Conclusions
+In this paper, we developed probability models for
+the multi-level transfer rules presented in (Galley
+et al, 2004), showed how to acquire larger rules
+that crucially condition on more syntactic context,
+and how to pack multiple derivations, including
+interpretations of unaligned words, into derivation
+forests. We presented some theoretical arguments
+for not limiting extraction to minimal rules, val-
+idated them on concrete examples, and presented
+experiments showing that contextually richer rules
+provide a 3.63 BLEU point increase over the min-
+imal rules of (Galley et al, 2004).
+Acknowledgments
+We would like to thank anonymous review-
+ers for their helpful comments and suggestions.
+This work was partially supported under the
+GALE program of the Defense Advanced Re-
+search Projects Agency, Contract No. HR0011-
+06-C-0022.
+References
+D. Chiang. 2005. A hierarchical phrase-based model for
+statistical machine translation. In Proc. of ACL.
+H. Fox. 2002. Phrasal cohesion and statistical machine trans-
+lation. In Proc. of EMNLP, pages 304?311.
+M. Galley, M. Hopkins, K. Knight, and D. Marcu. 2004.
+What?s in a translation rule? In Proc. of HLT/NAACL-04.
+J. Graehl and K. Knight. 2004. Training tree transducers. In
+Proc. of HLT/NAACL-04, pages 105?112.
+F. Och and H. Ney. 2004. The alignment template approach
+to statistical machine translation. Computational Linguis-
+tics, 30(4):417?449.
+A. Poutsma. 2000. Data-oriented translation. In Proc. of
+COLING, pages 635?641.
+D. Wu. 1997. Stochastic inversion transduction grammars
+and bilingual parsing of parallel corpora. Computational
+Linguistics, 23(3):377?404.
+K. Yamada and K. Knight. 2001. A syntax-based statistical
+translation model. In Proc. of ACL, pages 523?530.
+H. Zhang, L. Huang, D. Gildea, and K. Knight. 2006. Syn-
+chronous binarization for machine translation. In Proc. of
+HLT/NAACL.
+968
+Human Language Technologies: The 2010 Annual Conference of the North American Chapter of the ACL, pages 447?455,
+Los Angeles, California, June 2010. c?2010 Association for Computational Linguistics
+Bayesian Inference for Finite-State Transducers?
+David Chiang1 Jonathan Graehl1 Kevin Knight1 Adam Pauls2 Sujith Ravi1
+1Information Sciences Institute
+University of Southern California
+4676 Admiralty Way, Suite 1001
+Marina del Rey, CA 90292
+2Computer Science Division
+University of California at Berkeley
+Soda Hall
+Berkeley, CA 94720
+Abstract
+We describe a Bayesian inference algorithm
+that can be used to train any cascade of
+weighted finite-state transducers on end-to-
+end data. We also investigate the problem
+of automatically selecting from among mul-
+tiple training runs. Our experiments on four
+different tasks demonstrate the genericity of
+this framework, and, where applicable, large
+improvements in performance over EM. We
+also show, for unsupervised part-of-speech
+tagging, that automatic run selection gives a
+large improvement over previous Bayesian ap-
+proaches.
+1 Introduction
+In this paper, we investigate Bayesian infer-
+ence for weighted finite-state transducers (WFSTs).
+Many natural language models can be captured
+by weighted finite-state transducers (Pereira et al,
+1994; Sproat et al, 1996; Knight and Al-Onaizan,
+1998; Clark, 2002; Kolak et al, 2003; Mathias and
+Byrne, 2006), which offer several benefits:
+? WFSTs provide a uniform knowledge represen-
+tation.
+? Complex problems can be broken down into a
+cascade of simple WFSTs.
+? Input- and output-epsilon transitions allow
+compact designs.
+? Generic algorithms exist for doing inferences
+with WFSTs. These include best-path de-
+coding, k-best path extraction, composition,
+?The authors are listed in alphabetical order. Please direct
+correspondence to Sujith Ravi (sravi@isi.edu). This work
+was supported by NSF grant IIS-0904684 and DARPA contract
+HR0011-06-C0022.
+intersection, minimization, determinization,
+forward-backward training, forward-backward
+pruning, stochastic generation, and projection.
+? Software toolkits implement these generic al-
+gorithms, allowing designers to concentrate on
+novel models rather than problem-specific in-
+ference code. This leads to faster scientific ex-
+perimentation with fewer bugs.
+Weighted tree transducers play the same role for
+problems that involve the creation and transforma-
+tion of tree structures (Knight and Graehl, 2005). Of
+course, many problems do not fit either the finite-
+state string or tree transducer framework, but in this
+paper, we concentrate on those that do.
+Bayesian inference schemes have become popu-
+lar recently in natural language processing for their
+ability to manage uncertainty about model param-
+eters and to allow designers to incorporate prior
+knowledge flexibly. Task-accuracy results have gen-
+erally been favorable. However, it can be time-
+consuming to apply Bayesian inference methods to
+each new problem. Designers typically build cus-
+tom, problem-specific sampling operators for ex-
+ploring the derivation space. They may factor their
+programs to get some code re-use from one problem
+to the next, but highly generic tools for string and
+tree processing are not available.
+In this paper, we marry the world of finite-state
+machines with the world of Bayesian inference, and
+we test our methods across a range of natural lan-
+guage problems. Our contributions are:
+? We describe a Bayesian inference algorithm
+that can be used to train any cascade of WFSTs
+on end-to-end data.
+? We propose a method for automatic run selec-
+447
+tion, i.e., how to automatically select among
+multiple training runs in order to achieve the
+best possible task accuracy.
+The natural language applications we consider
+in this paper are: (1) unsupervised part-of-speech
+(POS) tagging (Merialdo, 1994; Goldwater and
+Griffiths, 2007), (2) letter substitution decipher-
+ment (Peleg and Rosenfeld, 1979; Knight et al,
+2006; Ravi and Knight, 2008), (3) segmentation of
+space-free English (Goldwater et al, 2009), and (4)
+Japanese/English phoneme alignment (Knight and
+Graehl, 1998; Ravi and Knight, 2009a). Figure 1
+shows how each of these problems can be repre-
+sented as a cascade of finite-state acceptors (FSAs)
+and finite-state transducers (FSTs).
+2 Generic EM Training
+We first describe forward-backward EM training for
+a single FST M. Given a string pair (v,w) from our
+training data, we transform v into an FST Mv that
+just maps v to itself, and likewise transform w into
+an FST Mw. Then we compose Mv with M, and com-
+pose the result with Mw. This composition follows
+Pereira and Riley (1996), treating epsilon input and
+output transitions correctly, especially with regards
+to their weighted interleaving. This yields a deriva-
+tion lattice D, each of whose paths transforms v into
+w.1 Each transition in D corresponds to some tran-
+sition in the FST M. We run the forward-backward
+algorithm over D to collect fractional counts for the
+transitions in M. After we sum fractional counts for
+all examples, we normalize with respect to com-
+peting transitions in M, assign new probabilities to
+M, and iterate. Transitions in M compete with each
+other if they leave the same state with the same input
+symbol, which may be empty ().
+In order to train an FSA on observed string data,
+we convert the FSA into an FST by adding an input-
+epsilon to every transition. We then convert each
+training string v into the string pair (, v). After run-
+ning the above FST training algorithm, we can re-
+move all input- from the trained machine.
+It is straightforward to modify generic training to
+support the following controls:
+1Throughout this paper, we do not assume that lattices are
+acyclic; the algorithms described work on general graphs.
+B:E
+a:A b:B A:D
+A:C
+=
+a: 
+ :D
+ :E b: 
+a:  :C
+Figure 2: Composition of two FSTs maintaining separate
+transitions.
+Maximum iterations and early stopping. We spec-
+ify a maximum number of iterations, and we halt
+early if the ratio of log P(data) from one iteration
+to the next exceeds a threshold (such as 0.99999).
+Initial point. Any probabilities supplied on the pre-
+trained FST are interpreted as a starting point for
+EM?s search. If no probabilities are supplied, EM
+begins with uniform probabilities.
+Random restarts. We can request n random restarts,
+each from a different, randomly-selected initial
+point.
+Locking and tying. Transitions on the pre-trained
+FST can be marked as locked, in which case EM
+will not modify their supplied probabilities. Groups
+of transitions can be tied together so that their frac-
+tional counts are pooled, and when normalization
+occurs, they all receive the same probability.
+Derivation lattice caching. If memory is available,
+training can cache the derivation lattices computed
+in the first EM iteration for all training pairs. Subse-
+quent iterations then run much faster. In our experi-
+ments, we observe an average 10-fold speedup with
+caching.
+Next we turn to training a cascade of FSTs on
+end-to-end data. The algorithm takes as input: (1) a
+sequence of FSTs, and (2) pairs of training strings
+(v,w), such that v is accepted by the first FST in
+the cascade, and w is produced by the last FST. The
+algorithm outputs the same sequence of FSTs, but
+with trained probabilities.
+To accomplish this, we first compose the supplied
+FSTs, taking care to keep the transitions from differ-
+ent machines separate. Figure 2 illustrates this with a
+small example. It may thus happen that a single tran-
+sition in an input FST is represented multiple times
+in the composed device, in which case their prob-
+448
+ABCD:a 
+REY:r 
+?:c 
+1.  Unsupervised part-of-speech tagging with constrained dictionary 
+POS Tag 
+sequence 
+Observed 
+word 
+sequence 
+2.  Decipherment of letter-substitution cipher 
+English 
+letter 
+sequence 
+Observed 
+enciphered 
+text 
+3.  Re-Spacing of English text written without spaces 
+Word 
+sequence 
+Observed 
+letter 
+sequence 
+w/o spaces 
+4.  Alignment of Japanese/English phoneme sequences 
+English 
+phoneme 
+sequence 
+Japanese 
+katakana 
+phoneme 
+sequence 
+26 x 26 table 
+letter bigram model, 
+learned separately 
+constrained tag?word 
+substitution model tag bigram model 
+unigram model over 
+words and non-words deterministic spell-out 
+mapping from each English  
+phoneme to each Japanese  
+phoneme sequence of length 1 to 3 
+NN 
+JJ 
+JJ 
+JJ 
+NN 
+VB ? 
+? 
+? 
+NN:fish 
+IN:at 
+VB:fish 
+SYM:a DT:a 
+a 
+b 
+b 
+b 
+a 
+c ? 
+? 
+? 
+a:A 
+a:B 
+a:C 
+b:A b:B b:C 
+A AR 
+ARE AREY 
+AREYO 
+?:? 
+AREY:a 
+?:b 
+?:d 
+?:r ?:e 
+?:y 
+AE:? 
+?:S 
+?:S 
+?:U 
+Figure 1: Finite-state cascades for five natural language problems.
+449
+abilities are tied together. Next, we run FST train-
+ing on the end-to-end data. This involves creating
+derivation lattices and running forward-backward on
+them. After FST training, we de-compose the trained
+device back into a cascade of trained machines.
+When the cascade?s first machine is an FSA,
+rather than an FST, then the entire cascade is viewed
+as a generator of strings rather than a transformer of
+strings. Such a cascade is trained on observed strings
+rather than string pairs. By again treating the first
+FSA as an FST with empty input, we can train using
+the FST-cascade training algorithm described in the
+previous paragraph.
+Once we have our trained cascade, we can apply it
+to new data, obtaining (for example) the k-best out-
+put strings for an input string.
+3 Generic Bayesian Training
+Bayesian learning is a wide-ranging field. We focus
+on training using Gibbs sampling (Geman and Ge-
+man, 1984), because it has been popularly applied
+in the natural language literature, e.g., (Finkel et al,
+2005; DeNero et al, 2008; Blunsom et al, 2009).
+Our overall plan is to give a generic algorithm
+for Bayesian training that is a ?drop-in replacement?
+for EM training. That is, we input an FST cas-
+cade and data and output the same FST cascade
+with trained weights. This is an approximation to a
+purely Bayesian setup (where one would always in-
+tegrate over all possible weightings), but one which
+makes it easy to deploy FSTs to efficiently decode
+new data. Likewise, we do not yet support non-
+parametric approaches?to create a drop-in replace-
+ment for EM, we require that all parameters be spec-
+ified in the initial FST cascade. We return to this is-
+sue in Section 5.
+3.1 Particular Case
+We start with a well-known application of Bayesian
+inference, unsupervised POS tagging (Goldwater
+and Griffiths, 2007). Raw training text is provided,
+and each potential corpus tagging corresponds to a
+hidden derivation of that data. Derivations are cre-
+ated and probabilistically scored as follows:
+1. i? 1
+2. Choose tag t1 according to P0(t1)
+3. Choose word w1 according to P0(w1 | t1)
+4. i? i + 1
+5. Choose tag ti according to
+?P0(ti | ti?1) + ci?11 (ti?1, ti)
+? + ci?11 (ti?1)
+(1)
+6. Choose word wi according to
+?P0(wi | ti) + ci?11 (ti,wi)
+? + ci?11 (ti)
+(2)
+7. With probability Pquit, quit; else go to 4.
+This defines the probability of any given derivation.
+The base distribution P0 represents prior knowl-
+edge about the distribution of tags and words, given
+the relevant conditioning context. The ci?11 are the
+counts of events occurring before word i in the
+derivation (the ?cache?).
+When ? and ? are large, tags and words are essen-
+tially generated according to P0. When ? and ? are
+small, tags and words are generated with reference
+to previous decisions inside the cache.
+We use Gibbs sampling to estimate the distribu-
+tion of tags given words. The key to efficient sam-
+pling is to define a sampling operator that makes
+some small change to the overall corpus derivation.
+With such an operator, we derive an incremental
+formula for re-scoring the probability of an entire
+new derivation based on the probability of the old
+derivation. Exchangeability makes this efficient?
+we pretend like the area around the small change oc-
+curs at the end of the corpus, so that both old and
+new derivations share the same cache. Goldwater
+and Griffiths (2007) choose the re-sampling operator
+?change the tag of a single word,? and they derive
+the corresponding incremental scoring formula for
+unsupervised tagging. For other problems, design-
+ers develop different sampling operators and derive
+different incremental scoring formulas.
+3.2 Generic Case
+In order to develop a generic algorithm, we need
+to abstract away from these problem-specific de-
+sign choices. In general, hidden derivations corre-
+spond to paths through derivation lattices, so we first
+450
+Figure 3: Changing a decision in the derivation lattice.
+All paths generate the observed data. The bold path rep-
+resents the current sample, and the dotted path represents
+a sidetrack in which one decision is changed.
+compute derivation lattices for our observed training
+data through our cascade of FSTs. A random path
+through these lattices constitutes the initial sample,
+and we calculate its derivation probability directly.
+One way to think about a generic small change
+operator is to consider a single transition in the cur-
+rent sample. This transition will generally compete
+with other transitions. One possible small change is
+to ?sidetrack? the derivation to a competing deriva-
+tion. Figure 3 shows how this works. If the sidetrack
+path quickly re-joins the old derivation path, then an
+incremental score can be computed. However, side-
+tracking raises knotty questions. First, what is the
+proper path continuation after the sidetracking tran-
+sition is selected? Should the path attempt to re-join
+the old derivation as soon as possible, and if so, how
+is this efficiently done? Then, how can we compute
+new derivation scores for all possible sidetracks, so
+that we can choose a new sample by an appropriate
+weighted coin flip? Finally, would such a sampler be
+reversible? In order to satisfy theoretical conditions
+for Gibbs sampling, if we move from sample A to
+sample B, we must be able to immediately get back
+to sample A.
+We take a different tack here, moving from point-
+wise sampling to blocked sampling. Gao and John-
+son (2008) employed blocked sampling for POS tag-
+ging, and the approach works nicely for arbitrary
+derivation lattices. We again start with a random
+derivation for each example in the corpus. We then
+choose a training example and exchange its entire
+derivation lattice to the end of the corpus. We cre-
+ate a weighted version of this lattice, called the pro-
+posal lattice, such that we can approximately sample
+whole paths by stochastic generation. The probabil-
+ities are based on the event counts from the rest of
+the sample (the cache), and on the base distribution,
+and are computed in this way:
+P(r | q) =
+?P0(r | q) + c(q, r)
+? + c(q)
+(3)
+where q and r are states of the derivation lattice, and
+the c(?) are counts collected from the corpus minus
+the entire training example being resampled. This is
+an approximation because we are ignoring the fact
+that P(r | q) in general depends on choices made
+earlier in the lattice. The approximation can be cor-
+rected using the Metropolis-Hastings algorithm, in
+which the sample drawn from the proposal lattice is
+accepted only with a certain probability ?; but Gao
+and Johnson (2008) report that ? > 0.99, so we skip
+this step.
+3.3 Choosing the best derivations
+After the sampling run has finished, we can choose
+the best derivations using two different methods.
+First, if we want to find the MAP derivations of the
+training strings, then following Goldwater and Grif-
+fiths (2007), we can use annealing: raise the proba-
+bilities in the sampling distribution to the 1T power,
+where T is a temperature parameter, decrease T to-
+wards zero, and take a single sample.
+But in practice one often wants to predict the
+MAP derivation for a new string w? not contained
+in the training data. To approximate the distribution
+of derivations of w? given the training data, we aver-
+age the transition counts from all the samples (after
+burn-in) and plug the averaged counts into (3) to ob-
+tain a single proposal lattice.2 The predicted deriva-
+tion is the Viterbi path through this lattice. Call this
+method averaging. An advantage of this approach is
+that the trainer, taking a cascade of FSAs as input,
+outputs a weighted version of the same cascade, and
+this trained cascade can be used on unseen examples
+without having to rerun training.
+3.4 Implementation
+That concludes the generic Bayesian training algo-
+rithm, to which we add the following controls:
+2A better approximation might have been to build a proposal
+lattice for each sample (after burn-in), and then construct a sin-
+gle FSA that computes the average of the probability distribu-
+tions computed by all the proposal lattices. But this FSA would
+be rather large.
+451
+Number of Gibbs sampling iterations. We execute
+the full number specified.
+Base distribution. Any probabilities supplied on the
+pre-trained FST are interpreted as base distribution
+probabilities. If no probabilities are supplied, then
+the base distribution is taken to be uniform.
+Hyperparameters. We supply a distinct ? for each
+machine in the FST cascade. We do not yet support
+different ? values for different states within a single
+FST.
+Random restarts. We can request multiple runs
+from different, randomly-selected initial samples.
+EM-based initial point. If random initial samples
+are undesirable, we can request that the Gibbs sam-
+pler be initialized with the Viterbi path using param-
+eter values obtained by n iterations of EM.
+Annealing schedule. If annealing is used, it follows
+a linear annealing schedule with starting and stop-
+ping temperature specified by the user.
+EM and Bayesian training for arbitrary FST
+cascades are both implemented in the finite-state
+toolkit Carmel, which is distributed with source
+code.3 All controls are implemented as command-
+line switches. We use Carmel to carry out the exper-
+iments in the next section.
+4 Run Selection
+For both EM and Bayesian methods, different train-
+ing runs yield different results. EM?s objective func-
+tion (probability of observed data) is very bumpy for
+the unsupervised problems we work on?different
+initial points yield different trained WFST cascades,
+with different task accuracies. Averaging task accu-
+racies across runs is undesirable, because we want to
+deploy a particular trained cascade in the real world,
+and we want an estimate of its performance. Select-
+ing the run with the best task accuracy is illegal in an
+unsupervised setting. With EM, we have a good al-
+ternative: select the run that maximizes the objective
+function, i.e., the likelihood of the observed training
+data. We find a decent correlation between this value
+and task accuracy, and we are generally able to im-
+prove accuracy using this run selection method. Fig-
+ure 4 shows a scatterplot of 1000 runs for POS tag-
+ging. A single run with a uniform start yields 81.8%
+3http://www.isi.edu/licensed-sw/carmel
+ 0.75
+ 0.8
+ 0.85
+ 0.9
+ 211200
+ 211300
+ 211400
+ 211500
+ 211600
+ 211700
+ 211800
+ 211900
+ 212000
+ 212100
+ 212200
+T
+a
+g
+g
+i
+n
+g
+ 
+a
+c
+c
+u
+r
+a
+c
+y
+ 
+(
+%
+ 
+o
+f
+ 
+w
+o
+r
+d
+ 
+t
+o
+k
+e
+n
+s
+)
+-log P(data)
+EM (random start)EM (uniform start)
+Figure 4: Multiple EM restarts for POS tagging. Each
+point represents one random restart; the y-axis is tag-
+ging accuracy and the x-axis is EM?s objective function,
+? log P(data).
+accuracy, while automatic selection from 1000 runs
+yields 82.4% accuracy.
+Gibbs sampling runs also yield WFST cascades
+with varying task accuracies, due to random initial
+samples and sampling decisions. In fact, the varia-
+tion is even larger than what we find with EM. It is
+natural to ask whether we can do automatic run se-
+lection for Gibbs sampling. If we are using anneal-
+ing, it makes sense to use the probability of the fi-
+nal sample, which is supposed to approximate the
+MAP derivation. When using averaging, however,
+choosing the final sample would be quite arbitrary.
+Instead, we propose choosing the run that has the
+highest average log-probability (that is, the lowest
+entropy) after burn-in. The rationale is that the runs
+that have found their way to high-probability peaks
+are probably more representative of the true distri-
+bution, or at least capture a part of the distribution
+that is of greater interest to us.
+We find that this method works quite well in prac-
+tice. Figure 5 illustrates 1000 POS tagging runs
+for annealing with automatic run selection, yield-
+ing 84.7% accuracy. When using averaging, how-
+ever, automatic selection from 1000 runs (Figure 6)
+produces a much higher accuracy of 90.7%. This
+is better than accuracies reported previously using
+452
+ 0.75
+ 0.8
+ 0.85
+ 0.9
+ 235100
+ 235150
+ 235200
+ 235250
+ 235300
+ 235350
+ 235400
+T
+a
+g
+g
+i
+n
+g
+ 
+a
+c
+c
+u
+r
+a
+c
+y
+ 
+(
+%
+ 
+o
+f
+ 
+w
+o
+r
+d
+ 
+t
+o
+k
+e
+n
+s
+)
+-log P(derivation) for final sample
+Bayesian run (with annealing)
+Figure 5: Multiple Bayesian learning runs (using anneal-
+ing with temperature decreasing from 2 to 0.08) for POS
+tagging. Each point represents one run; the y-axis is tag-
+ging accuracy and the x-axis is the ? log P(derivation) of
+the final sample.
+ 0.75
+ 0.8
+ 0.85
+ 0.9
+ 236800
+ 236900
+ 237000
+ 237100
+ 237200
+ 237300
+ 237400
+ 237500
+ 237600
+ 237700
+ 237800
+ 237900
+T
+a
+g
+g
+i
+n
+g
+ 
+a
+c
+c
+u
+r
+a
+c
+y
+ 
+(
+%
+ 
+o
+f
+ 
+w
+o
+r
+d
+ 
+t
+o
+k
+e
+n
+s
+)
+-log P(derivation) averaged over all post-burnin samples
+Bayesian run (using averaging)
+Figure 6: Multiple Bayesian learning runs (using averag-
+ing) for POS tagging. Each point represents one run; the
+y-axis is tagging accuracy and the x-axis is the average
+? log P(derivation) over all samples after burn-in.
+Bayesian methods (85.2% from Goldwater and Grif-
+fiths (2007), who use a trigram model) and close to
+the best accuracy reported on this task (91.8% from
+Ravi and Knight (2009b), who use an integer linear
+program to minimize the model directly).
+5 Experiments and Results
+We run experiments for various natural language ap-
+plications and compare the task accuracies achieved
+by the EM and Bayesian learning methods. The
+tasks we consider are:
+Unsupervised POS tagging. We adopt the com-
+mon problem formulation for this task described
+by Merialdo (1994), in which we are given a raw
+24,115-word sequence and a dictionary of legal tags
+for each word type. The tagset consists of 45 dis-
+tinct grammatical tags. We use the same modeling
+approach as as Goldwater and Griffiths (2007), us-
+ing a probabilistic tag bigram model in conjunction
+with a tag-to-word model.
+Letter substitution decipherment. Here, the task
+is to decipher a 414-letter substitution cipher and un-
+cover the original English letter sequence. The task
+accuracy is defined as the percent of ciphertext to-
+kens that are deciphered correctly. We work on the
+same standard cipher described in previous litera-
+ture (Ravi and Knight, 2008). The model consists
+of an English letter bigram model, whose probabil-
+ities are fixed and an English-to-ciphertext channel
+model, which is learnt during training.
+Segmentation of space-free English. Given
+a space-free English text corpus (e.g.,
+iwalkedtothe...), the task is to segment the
+text into words (e.g., i walked to the ...).
+Our input text corpus consists of 11,378 words,
+with spaces removed. As illustrated in Figure 1,
+our method uses a unigram FSA that models every
+letter sequence seen in the data, which includes
+both words and non-words (at most 10 letters long)
+composed with a deterministic spell-out model.
+In order to evaluate the quality of our segmented
+output, we compare it against the gold segmentation
+and compute the word token f-measure.
+Japanese/English phoneme alignment. We
+use the problem formulation of Knight and
+Graehl (1998). Given an input English/Japanese
+katakana phoneme sequence pair, the task is to
+produce an alignment that connects each English
+453
+MLE Bayesian
+EM prior VB-EM Gibbs
+POS tagging 82.4 ? = 10?2, ? = 10?1 84.1 90.7
+Letter decipherment 83.6 ? = 106, ? = 10?2 83.6 88.9
+Re-spacing English 0.9 ? = 10?8, ? = 104 0.8 42.8
+Aligning phoneme strings? 100 ? = 10?2 99.9 99.1
+Table 1: Gibbs sampling for Bayesian inference outperforms both EM and Variational Bayesian EM. ?The output of
+EM alignment was used as the gold standard.
+phoneme to its corresponding Japanese sounds (a
+sequence of one or more Japanese phonemes). For
+example, given a phoneme sequence pair ((AH B
+AW T) ? (a b a u t o)), we have to produce
+the alignments ((AH ? a), (B ? b), (AW ?
+a u), (T ? t o)). The input data consists of
+2,684 English/Japanese phoneme sequence pairs.
+We use a model that consists of mappings from each
+English phoneme to Japanese phoneme sequences
+(of length up to 3), and the mapping probabilities
+are learnt during training. We manually analyzed
+the alignments produced by the EM method for
+this task and found them to be nearly perfect.
+Hence, for the purpose of this task we treat the EM
+alignments as our gold standard, since there are no
+gold alignments available for this data.
+In all the experiments reported here, we run EM
+for 200 iterations and Bayesian for 5000 iterations
+(the first 2000 for burn-in). We apply automatic run
+selection using the objective function value for EM
+and the averaging method for Bayesian.
+Table 1 shows accuracy results for our four tasks,
+using run selection for both EM and Bayesian learn-
+ing. For the Bayesian runs, we compared two infer-
+ence methods: Gibbs sampling, as described above,
+and Variational Bayesian EM (Beal and Ghahra-
+mani, 2003), both of which are implemented in
+Carmel. We used the hyperparameters (?, ?) as
+shown in the table. Setting a high value yields a fi-
+nal distribution that is close to the original one (P0).
+For example, in letter decipherment we want to keep
+the language model probabilities fixed during train-
+ing, and hence we set the prior on that model to
+be very strong (? = 106). Table 1 shows that the
+Bayesian methods consistently outperform EM for
+all the tasks (except phoneme alignment, where EM
+was taken as the gold standard). Each iteration of
+Gibbs sampling was 2.3 times slower than EM for
+POS tagging, and in general about twice as slow.
+6 Discussion
+We have described general training algorithms for
+FST cascades and their implementation, and exam-
+ined the problem of run selection for both EM and
+Bayesian training. This work raises several interest-
+ing points for future study.
+First, is there an efficient method for perform-
+ing pointwise sampling on general FSTs, and would
+pointwise sampling deliver better empirical results
+than blocked sampling across a range of tasks?
+Second, can generic methods similar to the ones
+described here be developed for cascades of tree
+transducers? It is straightforward to adapt our meth-
+ods to train a single tree transducer (Graehl et al,
+2008), but as most types of tree transducers are
+not closed under composition (Ge?cseg and Steinby,
+1984), the compose/de-compose method cannot be
+directly applied to train cascades.
+Third, what is the best way to extend the FST for-
+malism to represent non-parametric Bayesian mod-
+els? Consider the English re-spacing application. We
+currently take observed (un-spaced) data and build
+a giant unigram FSA that models every letter se-
+quence seen in the data of up to 10 letters, both
+words and non-words. This FSA has 207,253 tran-
+sitions. We also define P0 for each individual transi-
+tion, which allows a preference for short words. This
+set-up works fine, but in a nonparametric approach,
+P0 is defined more compactly and without a word-
+length limit. An extension of FSTs along the lines
+of recursive transition networks may be appropriate,
+but we leave details for future work.
+454
+References
+Matthew J. Beal and Zoubin Ghahramani. 2003. The
+Variational Bayesian EM algorithm for incomplete
+data: with application to scoring graphical model
+structures. Bayesian Statistics, 7:453?464.
+Phil Blunsom, Trevor Cohn, Chris Dyer, and Miles Os-
+borne. 2009. A Gibbs sampler for phrasal syn-
+chronous grammar induction. In Proceedings of ACL-
+IJCNLP 2009.
+Alexander Clark. 2002. Memory-based learning of mor-
+phology with stochastic transducers. In Proceedings
+of ACL 2002.
+John DeNero, Alexandre Bouchard-Co?te?, and Dan Klein.
+2008. Sampling alignment structure under a Bayesian
+translation model. In Proceedings of EMNLP 2008.
+Jenny Rose Finkel, Trond Grenager, and Christopher
+Manning. 2005. Incorporating non-local informa-
+tion into information extraction systems by Gibbs sam-
+pling. In Proceedings of ACL 2005.
+Jianfeng Gao and Mark Johnson. 2008. A comparison of
+Bayesian estimators for unsupervised Hidden Markov
+Model POS taggers. In Proceedings of EMNLP 2008.
+Ferenc Ge?cseg and Magnus Steinby. 1984. Tree Au-
+tomata. Akade?miai Kiado?, Budapest.
+Stuart Geman and Donald Geman. 1984. Stochastic re-
+laxation, Gibbs distributions and the Bayesian restora-
+tion of images. IEEE Transactions on Pattern Analysis
+and Machine Intelligence, 6(6):721?741.
+Sharon Goldwater and Thomas L. Griffiths. 2007.
+A fully Bayesian approach to unsupervised part-of-
+speech tagging. In Proceedings of ACL 2007.
+Sharon Goldwater, Thomas L. Griffiths, and Mark John-
+son. 2009. A Bayesian framework for word segmen-
+tation: Exploring the effects of context. Cognition,
+112(1):21 ? 54.
+Jonathan Graehl, Kevin Knight, and Jonathan May. 2008.
+Training tree transducers. Computational Linguistics,
+34(3):391?427.
+Kevin Knight and Yaser Al-Onaizan. 1998. Transla-
+tion with finite-state devices. In Proceedings of AMTA
+1998.
+Kevin Knight and Jonathan Graehl. 1998. Machine
+transliteration. Computational Linguistics, 24(4):599?
+612.
+Knight Knight and Jonathan Graehl. 2005. An overview
+of probabilistic tree transducers for natural language
+processing. In Proceedings of CICLing-2005.
+Kevin Knight, Anish Nair, Nishit Rathod, and Kenji Ya-
+mada. 2006. Unsupervised analysis for decipherment
+problems. In Proceedings of COLING-ACL 2006.
+Okan Kolak, Willian Byrne, and Philip Resnik. 2003. A
+generative probabilistic OCR model for NLP applica-
+tions. In Proceedings of HLT-NAACL 2003.
+Lambert Mathias and William Byrne. 2006. Statisti-
+cal phrase-based speech translation. In Proceedings
+of ICASSP 2006.
+Bernard Merialdo. 1994. Tagging English text with
+a probabilistic model. Computational Linguistics,
+20(2):155?171.
+Shmuel Peleg and Azriel Rosenfeld. 1979. Break-
+ing substitution ciphers using a relaxation algorithm.
+Communications of the ACM, 22(11):598?605.
+Fernando C. N. Pereira and Michael D. Riley. 1996.
+Speech recognition by composition of weighted finite
+automata. Finite-State Language Processing, pages
+431?453.
+Fernando Pereira, Michael Riley, and Richard Sproat.
+1994. Weighted rational transductions and their appli-
+cations to human language processing. In ARPA Hu-
+man Language Technology Workshop.
+Sujith Ravi and Kevin Knight. 2008. Attacking deci-
+pherment problems optimally with low-order n-gram
+models. In Proceedings of EMNLP 2008.
+Sujith Ravi and Kevin Knight. 2009a. Learning
+phoneme mappings for transliteration without parallel
+data. In Proceedings of NAACL HLT 2009.
+Sujith Ravi and Kevin Knight. 2009b. Minimized mod-
+els for unsupervised part-of-speech tagging. In Pro-
+ceedings of ACL-IJCNLP 2009.
+Richard Sproat, Chilin Shih, William Gale, and Nancy
+Chang. 1996. A stochastic finite-state word-
+segmentation algorithm for Chinese. Computational
+Linguistics, 22(3):377?404.
+455

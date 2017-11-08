@@ -1,0 +1,1576 @@
+Proceedings of the 23rd International Conference on Computational Linguistics (Coling 2010), pages 1101?1109,
+Beijing, August 2010
+Large Scale Parallel Document Mining for Machine Translation
+Jakob Uszkoreit Jay M. Ponte Ashok C. Popat Moshe Dubiner
+Google, Inc.
+{uszkoreit,ponte,popat,moshe}@google.com
+Abstract
+A distributed system is described that re-
+liably mines parallel text from large cor-
+pora. The approach can be regarded
+as cross-language near-duplicate detec-
+tion, enabled by an initial, low-quality
+batch translation. In contrast to other ap-
+proaches which require specialized meta-
+data, the system uses only the textual con-
+tent of the documents. Results are pre-
+sented for a corpus of over two billion web
+pages and for a large collection of digi-
+tized public-domain books.
+1 Introduction
+While the World Wide Web provides an abun-
+dance of readily available monolingual text, par-
+allel data is still a comparatively scarce resource,
+yet plays a crucially important role in training sta-
+tistical machine translation systems.
+We describe an approach to mining document-
+aligned parallel text to be used as training data
+for a statistical machine translation system. Pre-
+vious approaches have focused on rather homo-
+geneous corpora and relied on metadata such as
+publication dates (Munteanu and Marcu, 2005;
+Munteanu and Marcu, 2006; Udupa et al, 2009;
+Do et al, 2009; Abdul-Rauf and Schwenk, 2009)
+or information about document structure (Resnik
+and Smith, 2003; Chen and Nie, 2000). In large
+and unstructured collections of documents such as
+the Web, however, metadata is often sparse or un-
+reliable. Our approach, in contrast, scales com-
+putationally to very large and diverse collections
+of documents and does not require metadata. It is
+based solely on the textual contents of the input
+documents.
+Casting the problem as one of cross-language
+near duplicate detection, we use a baseline ma-
+chine translation system to translate all input doc-
+uments into a single language. However, the
+words and phrases that are most discriminatory
+for the purposes of information retrieval and du-
+plicate detection are the relatively rare ones, pre-
+cisely those that are less likely to be translated
+well by the baseline translation system.
+Our approach to circumvent this problem and
+to avoid the prohibitive quadratic computational
+complexity of the naive approach of performing a
+comparison of every possible pair of input docu-
+ments is similar to previous work in near duplicate
+detection (Broder, 2000; Henzinger, 2006; Man-
+ber, 1994) and noisy data retrieval (Harding et al,
+1997).
+We use shingles consisting of word n-grams to
+construct relatively rare features from more com-
+mon, in-vocabulary words. For each input doc-
+ument, we identify a comparatively small set of
+candidate pairings with documents sharing at least
+a certain number of such features. We then per-
+form a more expensive comparison between each
+document and all documents in its candidate set
+using lower order n-gram features that would typ-
+ically be too frequent to be used efficiently in
+forming candidate pairings, but provide a higher
+coverage of the scored document pairs. Another
+important aspect of our approach is that it can be
+implemented in a highly parallel way, as we de-
+scribe in the following section.
+1101
+2 System Description
+The input is a set of documents from diverse
+sources such as web pages and digitized books.
+In a first stage, all documents are independently
+translated into English using a baseline statistical
+machine translation system.
+We then extract two different sets of n-grams
+from the translated documents: matching n-grams
+that are used to construct the candidate sets as well
+as scoring n-grams used only in the computation
+of a score for a given pair of documents. This
+stage generates two indexes: a forward index list-
+ing all extracted scoring n-grams, indexed by doc-
+Machine translate input data
+Extract n-grams
+Filter inverted index
+by document frequency and 
+number of original languages
+Generate all pairs of documents 
+sharing matching n-grams
+Score unique document pairs,
+querying the forward Index
+Discard non-symmetric pairs
+Join with original input data
+Evaluate on reference document 
+alignments
+Fold global, per-scoring n-gram 
+information from inverted index 
+into forward index
+Documents 
+in Multiple 
+Languages
+English 
+Translations
+Forward Index
+Inverted Index
+Per-document n-best lists
+Figure 1: Architecture of the Parallel Text Mining
+System.
+ument; and an inverted index referencing all doc-
+uments from which we extracted a given match-
+ing n-gram, indexed by n-grams. The inverted
+index is also used to accumulate global informa-
+tion about scoring n-grams, such as their docu-
+ment frequency, yet for scoring n-grams we do
+not accumulate a posting list of all documents in
+which they occur.
+In the next step, the system generates all possi-
+ble pairs of documents for each matching n-gram
+posting list in the inverted index. Since we keep
+only those pairs of documents that originated in
+different languages, we can discard posting lists
+from the inverted index that contain only a single
+document, i.e. those of singleton n-grams, or only
+documents in a single language.
+Crucially, we further discard posting lists for
+matching n-grams whose frequency exceeds a
+certain threshold. When choosing a sufficiently
+large order for the matching n-grams, their long-
+tailed distribution causes only a small fraction of
+matching n-grams to be filtered out due to fre-
+quency, as we show empirically in Section 5. It
+is this filtering step that causes the overall runtime
+of the system to be linear in the size of the input
+data and allows the system to scale to very large
+document collections.
+In parallel, global information about scoring n-
+grams accumulated in the inverted index that is
+required for pairwise scoring, such as their doc-
+ument frequency, is folded into the forward in-
+dex by iterating over all forward index entries, re-
+questing the respective per-feature quantities from
+the inverted index and storing them with each oc-
+currence of a scoring n-gram in an updated for-
+ward index.
+In the next stage, we compute pairwise scores
+for all candidate document pairs, accessing the
+forward index entry of each of the two scored doc-
+uments to obtain the respective scoring n-grams.
+Document pairs with a score below a given thresh-
+old are discarded. For each input document, this
+results in one n-best list per language. In the last
+step we retain only those document pairs where
+each document is contained in the n-best list of
+the other document for its original language. Fi-
+nally we perform a join of our identified transla-
+tion pairs with the original text by making another
+1102
+pass over the original, untranslated input data
+where the contents of document pairs with suffi-
+ciently high scores are then aggregated and out-
+put. Document pairings involving all languages
+are identified simultaneously. Each stage of the
+system fits well into the MapReduce program-
+ming model (Dean and Ghemawat, 2004). The
+general architecture is shown in Figure 1.
+2.1 Pairwise Scoring
+For scoring a pair of documents d and d?, the
+forward index is queried for the entries for both
+documents. Let Fd = {f1, f2, ...fn} and Fd? =
+{f ?1, f ?2, ...f ?n?} be the sets of scoring n-grams in
+the forward index entries of d and d?, respectively.
+Let idf(f) = log |D|df(f) be the inverse document
+frequency of a scoring n-gram f , where |D| is
+the number of documents in the input corpus and
+df(f) is the number documents from which we
+extracted the feature f . Interpreting Fd and Fd? as
+incidence vectors in the vector space of n-grams
+and replacing each non-zero component f with
+idf(f), we compute the score of the document pair
+as the inverse document frequency weighted co-
+sine similarity of Fd and Fd?
+score(d, d?) = Fd ? Fd?||Fd|| ? ||Fd? || (1)
+The per-document n-best lists are sorted ac-
+cording to this score and document pairs for which
+the score is below a threshold are discarded com-
+pletely.
+We do not use term frequency in the scoring
+metric. In preliminary experiments, incorporat-
+ing the term frequency to yield basic tf/idf as
+well as using other information retrieval ranking
+functions incorporating term frequencies such as
+BM25 (Robertson et al, 1995) resulted in a degra-
+dation of performance compared to the simpler
+scoring function described above. We believe this
+is due to the fact that, in contrast to the standard
+information retrieval setting, the overall length of
+our queries is on par with that of the documents in
+the collection.
+The scoring is completely agnostic regarding
+the scoring n-grams? positions in the documents.
+Since especially for long documents such as
+books this may produce spurious matches, we ap-
+ply an additional filter to remove document pairs
+for which the relative ordering of the matching
+scoring n-grams is very different. Together with
+each scoring n-gram we also extract its relative
+position in each document and store it in the for-
+ward index. When scoring a document pair, we
+compute the normalized permutation edit distance
+(Cormode et al, 2001) between the two sequences
+of overlapping n-grams sorted by their position in
+the respective document. If this distance exceeds
+a certain threshold, we discard the document pair.
+2.2 Computational Complexity
+By limiting the frequency of matching n-grams,
+the complexity becomes linear. Let the tunable
+parameter c be the maximum occurrence count for
+matching n-grams to be kept in the inverted in-
+dex. Let m be the average number of matching
+n-grams extracted from a single document whose
+count is below c and D be the set of documents
+in the input corpus. Then the system generates up
+to |D| ?m ? c candidate pairings. Scoring a given
+candidate document pair according to cosine sim-
+ilarity involves computing three dot-products be-
+tween sparse vectors with one non-zero compo-
+nent per scoring n-gram extracted and not filtered
+from the respective document. Let s be the av-
+erage number of such scoring n-grams per docu-
+ment, which is bounded by the average document
+length. Then the time complexity of the entire
+document alignment is in
+O(|D| ?m ? c ? s) (2)
+and therefore linear in the number of input doc-
+uments in the corpus and the average document
+size.
+The space complexity is dominated by the size
+of the inverted and forward indexes, both of which
+are linear in the size of the input corpus.
+2.3 Sentence-Level Alignment
+Further filtering is performed on a per-sentence
+basis during per-document-pair sentence align-
+ment of the mined text with a standard dynamic
+programming sentence alignment algorithm using
+sentence length and multilingual probabilistic dic-
+tionaries as features. Afterwards we crudely align
+1103
+words within each pair of aligned source and tar-
+get sentences. This crude alignment is used only
+to filter nonparallel sentences. Let S be the set
+of source words, T the set of target words and
+S ? T the set of ordered pairs. Let the source
+sentence contain words S0 ? S and the target
+sentence contain words T0 ? T . An alignment
+A0 ? S0 ? T0 will be scored by
+score(A0) =
+?
+(s,t)?A0
+ln p(s, t)p(s) p(t) (3)
+where the joint probabilities p(s, t) and marginal
+probabilities p(s), p(t) are taken to be the respec-
+tive empirical distributions (without smoothing)
+in an existing word aligned corpus. This is greed-
+ily maximized and the result is divided by its ap-
+proximate expected value
+?
+(s,t)?S0?T
+p(s, t)
+p(s) ln
+p(s, t)
+p(s) p(t) (4)
+We discard sentence pairs for which the ratio be-
+tween the actual and the expected score is less
+than 1/3. We also drop sentence pairs for which
+both sides are identical, or a language detector de-
+clares them to be in the wrong language.
+2.4 Baseline Translation System
+To translate the input documents into English we
+use phrase-based statistical machine translation
+systems based on the log-linear formulation of the
+problem (Och and Ney, 2002).
+We train the systems on the Europarl Cor-
+pus (Koehn, 2002), the DGT Multilingual
+Translation Memory (European Commission
+Directorate-General for Translation, 2007) and
+the United Nations ODS corpus (United Nations,
+2006). Minimum error rate training (Macherey
+et al, 2008) under the BLEU criterion is used
+to optimize the feature function weights on de-
+velopment data consisting of the nv-dev2007 and
+news-dev2009 data sets provided by the organiz-
+ers of the 2007 and 2009 WMT shared translation
+tasks1. We use a 4-gram language model trained
+on a variety of large monolingual corpora. The
+BLEU scores of our baseline translation system
+1available at http://statmt.org
+on the test sets from various WMT shared trans-
+lation tasks are listed in Table 5. An empirical
+analysis of the impact of the baseline translation
+system quality on the data mining system is given
+in Section 6.3.
+3 Input Document Collections
+We evaluate the parallel text mining system on
+two input data sets:
+web A collection of 2.5 Billion general pages
+crawled from the Web, containing only pages
+in Czech, English, French, German, Hungar-
+ian and Spanish
+books A collection of 1.5 Million public domain
+books digitized using an optical character
+recognition system. The collection consists
+primarily of English, French and fewer Span-
+ish volumes
+3.1 Reference Sets
+We created reference sets of groups of docu-
+ments in multiple languages which are true trans-
+lations of one another for both the web and the
+books data set. Due to the presence of duplicates,
+each reference pairing can contain more than a
+single alternative translation per language. The
+web reference set was constructed by exploiting
+the systematic hyperlink structure of the web-site
+http://america.gov/, that links pages in
+one language to their respective translations into
+one or more other languages. The resulting refer-
+ence set contains documents in Arabic, Chinese,
+English, French, Russian and Spanish, however,
+for most English pages there is only one transla-
+tion into one of the other languages. Overall, the
+reference set contains 6,818 documents and 7,286
+translation pairs.
+The books reference set contains 30 manually
+aligned groups of translations covering a total of
+103 volumes in English and French.
+4 Evaluation Metrics
+The fact that the system outputs pairs of docu-
+ments and the presence of duplicate documents in
+the corpus motivate the use of modified versions
+of precision and recall.
+1104
+Let C be a set of candidate parallel document
+pairs and let R be a possibly incomplete reference
+set of groups of parallel documents known to exist
+in the corpus. Consider the following two subsets
+of C:
+? Matching pairs which are in some reference
+cluster.
+? Touching pairs which are non-matching but
+have at least one document in some reference
+cluster.
+We define
+Precision = |CMatching||CMatching|+ |CTouching|
+and
+Recall = |CMatching||R| (5)
+5 Parameter Selection
+We conducted a series of small-scale experiments
+on only those documents contained in the web ref-
+erence data set to empirically determine good set-
+tings for the tunable parameters of the text min-
+ing system. Among the most important parame-
+ters are the orders of the n-grams used for pair-
+ing documents as well as scoring them. Aside
+from the obvious impact on the quality of the out-
+put, these parameters have a very large influence
+on the overall computational performance of the
+system. The choice of the order of the extracted
+matching n-grams is mainly a trade-off between
+recall and efficiency. If the order is too large
+the system will miss valid pairs; if too small the
+the threshold on matching n-gram frequency will
+need to be increased.
+Figure 2 shows the F1-scores obtained run-
+ning only on the documents contained in the web
+reference set with different orders of matching
+and scoring n-grams. Figure 3 shows the corre-
+sponding number of pairwise comparisons made
+when using different orders of matching n-grams.
+While there is a drop of 0.01 in F1 score between
+using 2-grams and 5-grams as matching n-grams,
+this drop in quality seems to be well worth the 42-
+fold reduction in resulting pairwise comparisons.
+0.89
+0.9
+0.91
+0.92
+0.93
+0.94
+0.95
+0.96
+2 3 4 5
+F1
+Sc
+ore
+on
+we
+bT
+est
+Da
+ta
+Se
+t
+Scoring n-gram Order
+2-gram matching
+3-gram matching
+4-gram matching
+5-gram matching
+Figure 2: F1 scores on the web reference set for
+different scoring and matching n-gram orders.
+105
+106
+107
+2 3 4 5
+Nu
+mb
+er
+of
+Pa
+irw
+ise
+Co
+mp
+ari
+son
+s
+Matching n-gram Order
+Figure 3: Number of pairwise comparisons made
+when using matching n-grams of different orders.
+The largest portion of the loss in F1 score is in-
+curred when increasing the matching n-gram or-
+der from 4 to 5, the reduction in pairwise compar-
+isons, however, is still more than twofold.
+Table 1 shows the precision and recall on the
+web reference set when running only on docu-
+ments in the reference set using 5-grams as match-
+ing n-grams and bigrams for scoring for differ-
+ent values of the threshold on the cosine similar-
+ity score. In this setting as well as in large-scale
+experiments on both complete data sets described
+in section 6.1, a threshold of 0.1 yields the highest
+F1 score.
+1105
+score threshold 0.06 0.10 0.12 0.16 0.20
+precision 0.92 0.97 0.98 0.99 0.99
+recall 0.91 0.91 0.90 0.89 0.83
+Table 1: Precision and recall on the web reference
+set when running only on documents contained in
+the reference set.
+6 Evaluation
+We run the parallel text mining system on the web
+and books data sets using 5-grams for matching
+and bigrams for scoring. In both cases we discard
+matching n-grams which occurred in more than
+50 documents and output only the highest scoring
+candidate for each document.
+In case of the web data set, we extract every 5-
+gram as potential matching feature. For the books
+data set, however, we downsample the number
+of candidate matching 5-grams by extracting only
+those whose integer fingerprints under some hash
+function have four specific bits set, thus keeping
+on average only 1/16 of the matching n-grams.
+Here, we also restrict the total number of match-
+ing n-grams extracted from any given document
+to 20,000. Scoring bigrams are dropped from
+the forward index if their document frequency ex-
+ceeds 100,000, at which point their influence on
+the pairwise score would be negligible.
+Running on the web data set, the system on
+average extracts 250 matching 5-grams per doc-
+ument, extracting a total of approximately 430
+Billion distinct 5-grams. Of those, 78% are
+singletons and 21% only occur in a single lan-
+guage. Only approximately 0.8% of all match-
+ing n-grams are filtered due to having a docu-
+ment frequency higher than 50. The forward in-
+dex initially contains more than 500 Billion bi-
+gram occurrences; after pruning out singletons
+and bigrams with a document frequency larger
+than 100,000, the number of indexed scoring fea-
+ture occurrences is reduced to 40%. During scor-
+ing, approximately 50 Billion pairwise compar-
+isons are performed.
+In total the n-gram extraction, document scor-
+ing and subsequent filtering takes less than 24
+hours on a cluster of 2,000 state-of-the-art CPUs.
+The number of words after sentence-level fil-
+tering and alignment that the parallel text mining
+baseline books web
+Czech 27.5 M 0 271.9 M
+French 479.8 M 228.5 M 4,914.3 M
+German 54.2 M 0 3,787.6 M
+Hungarian 26.9 M 0 198.9 M
+Spanish 441.0 M 15.0 M 4,846.8 M
+Table 2: The number of words per language in the
+baseline training corpora and extracted from the
+two different data sets.
+system extracted for the different languages from
+each dataset are listed in Table 2.
+score threshold 0.06 0.10 0.12 0.16 0.20
+precision 0.88 0.93 0.95 0.97 0.97
+recall 0.68 0.65 0.63 0.52 0.38
+Table 3: Precision and recall on the reference set
+when running on the complete web data set with
+different score thresholds.
+score threshold 0.06 0.10 0.12 0.16 0.20
+precision 0.95 1.00 1.00 1.00 1.00
+recall 0.71 0.71 0.71 0.48 0.38
+Table 4: Precision and recall on the reference set
+when running on the complete books data set with
+different score thresholds.
+6.1 Precision and Recall
+Tables 3 and 4 show precision and recall on the re-
+spective reference sets for the web and the books
+input data sets. While the text mining system
+maintains a very high precision, recall drops sig-
+nificantly compared to running only on the doc-
+uments in the reference set. One reason for this
+behavior is that the number of n-grams in the test
+data set which are sufficiently rare to be used as
+queries drops with increasing amounts of input
+data and in particular short documents which only
+share a small number of matching n-grams any-
+way, may happen to only share matching n-grams
+with a too high document frequency. Further anal-
+ysis shows that another, more significant factor is
+the existence of multiple, possibly partial transla-
+tions and near-duplicate documents which cause
+symmetrization to discard valid document pairs
+because each document in the pair is determined
+by the document pair score to be more similar to
+a different translation of a near-duplicate or sub-
+1106
+Language Pair Training Data WMT 2007 news commentary WMT 2008 news WMT 2009 news
+Czech English baseline 21.59 14.59 16.46web 29.26 (+7.67) 20.16 (+5.57) 23.25 (+6.76)
+German English baseline 27.99 20.34 20.03web 32.35 (+4.36) 23.22 (+2.88) 23.35 (+3.32)
+Hungarian English baseline - 10.21 11.02web - 12.92 (+2.71) 14.68 (+3.66)
+French English
+baseline 34.26 22.14 26.39
+books 34.73 (+0.47) 22.39 (+0.25) 27.15 (+0.76)
+web 36.65 (+2.39) 23.22 (+1.08) 28.34 (+1.95)
+Spanish English
+baseline 43.67 24.15 26.88
+books 44.07 (+0.40) 24.32 (+0.17) 27.16 (+0.28)
+web 46.21 (+2.54) 25.52 (+1.37) 28.50 (+1.62)
+English Czech baseline 14.78 12.45 11.62web 20.65 (+5.86) 18.70 (+6.25) 16.60 (+4.98)
+English German baseline 19.89 14.67 14.31web 23.49 (+3.60) 16.78 (+2.11) 16.96 (+2.65)
+English Hungarian baseline - 07.93 08.52web - 10.16 (+2.23) 11.42 (+2.90)
+English French
+baseline 31.59 22.29 25.14
+books 31.92 (+0.33) 22.42 (+0.13) 25.46 (+0.32)
+web 34.35 (+2.76) 23.56 (+1.27) 27.05 (+1.91)
+English Spanish
+baseline 42.05 24.65 25.85
+books 42.05 24.79 (+0.14) 26.07 (+0.22)
+web 45.21 (+3.16) 26.46 (+1.81) 27.79 (+1.94)
+Table 5: BLEU scores of the translation systems trained on the automatically mined parallel corpora
+and the baseline training data.
+set of the document. This problem seems to affect
+news articles in particular where there are often
+multiple different translations of large subsets of
+the same or slightly changed versions of the arti-
+cle.
+6.2 Translation Quality
+Arabic English NIST 2006 NIST 2008
+Baseline (UN ODS) 44.31 42.79
+Munteanu and Marcu 45.13 43.86
+Present work 44.72 43.64
+Chinese English NIST 2006 NIST 2008
+Baseline (UN ODS) 25.71 19.79
+Munteanu and Marcu 28.11 21.69
+Present work 28.08 22.02
+Table 6: BLEU scores of the Chinese and Arabic
+to English translation systems trained on the base-
+line UN ODS corpus and after adding either the
+Munteanu and Marcu corpora or the training data
+mined using the presented approach.
+We trained a phrase-based translation system
+on the mined parallel data sets and evaluated it
+on translation tasks for the language pairs Czech,
+French, German, Hungarian and Spanish to and
+from English, measuring translation quality with
+the BLEU score (Papineni et al, 2002). The trans-
+lation tasks evaluated are the WMT 2007 news
+commentary test set as well the WMT 2008 and
+2009 news test sets.
+The parallel data for this experiment was mined
+using the general settings described in the previ-
+ous section and a threshold of 0.1 on the pairwise
+score. We ensure that the test data is not included
+in the training data by filtering out all sentences
+from the training data that share more than 30%
+of their 6-grams with any sentence from one of
+the test corpora.
+Table 5 shows the BLEU scores of the differ-
+ent translation systems. The consistent and signif-
+icant improvements in BLEU score demonstrate
+the usefulness of the mined document pairs in
+training a translation system.
+Even though the presented approach works
+on a less granular level than the sentence-level
+approach of Munteanu and Marcu (2005), we
+compare results on the same input data2 used
+by those authors to automatically generate the
+2LDC corpora LDC2005T12, LDC2005T14 and
+LDC2006T02, the second editions of the Arabic, Chinese
+and English Gigaword corpora.
+1107
+Sampling Rate WMT 2007 news commentary WMT 2008 news WMT 2009 news
+degraded Cz?En En?Cz degraded Cz?En En?Cz degraded Cz?En En?Cz
+1.0 21.59 29.26 20.65 14.59 20.16 18.70 16.46 23.25 16.60
+0.5 20.12 29.16 20.55 13.65 20.16 18.71 15.44 23.16 16.56
+0.25 18.59 29.09 20.61 12.79 20.09 18.58 14.35 23.18 16.50
+0.125 16.69 29.10 20.39 11.87 20.07 18.48 13.05 23.06 16.53
+0.0625 14.72 29.04 20.44 10.87 20.06 18.49 11.62 23.11 16.44
+0.0312 12.60 28.75 20.28 09.71 19.97 18.45 10.43 23.04 16.41
+Table 7: BLEU scores of the degraded Czech to English baseline systems used for translating Czech
+documents from the web data set as well as those of Czech to and from English systems trained on data
+mined using translations of varying quality created by sampling from the training data.
+Arabic English and Chinese English sentence-
+aligned parallel LDC corpora LDC2007T08 and
+LDC2007T09. We trained Arabic and Chinese
+English baseline systems on the United Nations
+ODS corpus (United Nations, 2006); we also use
+these to translate the non-English portions of the
+input data to English. We then evaluate the effects
+of also training on either the LDC2007T08 and
+LDC2007T09 corpora or the parallel documents
+mined by our approach in addition to the United
+Nations ODS corpus on the NIST 2006 and 2008
+MT evaluation test sets. The results are presented
+in Table 6.
+The approach proposed in (Munteanu and
+Marcu, 2005) relies critically on the existence
+of publication dates in order to be computation-
+ally feasible, yet it still scales superlinearly in the
+amount of input data. It could therefore not easily
+be applied to much larger and less structured input
+data collections. While our approach neither uses
+metadata nor operates on the sentence level, in all
+but one of the tasks, the system trained on the data
+mined using our approach performs similarly or
+slightly better.
+6.3 Impact of Baseline Translation Quality
+In order to evaluate the impact of the translation
+quality of the baseline system on the quality of
+the mined document pairs, we trained artificially
+degraded Czech to English translation systems by
+sampling from the baseline training data at de-
+creasing rates. We translate the Czech subset of
+the web document collection into English with
+each of the degraded systems and apply the paral-
+lel data mining system in the same configuration.
+Table 7 shows the BLEU scores of the degraded
+baseline systems and those resulting from adding
+the different mined data sets to the non-degraded
+Czech English and English Czech systems. De-
+grading the input data translation quality by up to
+8.9% BLEU results in a consistent but only com-
+paratively small decrease of less than 0.6% BLEU
+in the scores obtained when training on the mined
+document pairs. This does not only show that the
+impact of variations of the baseline system quality
+on the data mining system is limited, but also that
+the data mining system will already work with a
+rather low quality baseline system.
+7 Conclusion
+We presented a scalable approach to mining paral-
+lel text from collections of billions of documents
+with high precision. The system makes few as-
+sumptions about the input documents. We demon-
+strated that it works well on different types of
+data: a large collection of web pages and a col-
+lection of digitized books. We further showed that
+the produced parallel corpora can significantly im-
+prove the quality of a state-of-the-art statistical
+machine translation system.
+8 Acknowledgments
+We thank the anonymous reviewers for their in-
+sightful comments.
+References
+Abdul-Rauf, Sadaf and Holger Schwenk. 2009. On
+the use of comparable corpora to improve SMT per-
+formance. In EACL, pages 16?23.
+Broder, Andrei Z. 2000. Identifying and filtering near-
+duplicate documents. In COM ?00: Proceedings of
+the 11th Annual Symposium on Combinatorial Pat-
+1108
+tern Matching, pages 1?10, London, UK. Springer-
+Verlag.
+Chen, Jiang and Jian-Yun Nie. 2000. Parallel web
+text mining for cross-language IR. In In In Proc. of
+RIAO, pages 62?77.
+Cormode, Graham, S. Muthukrishnan, and
+Su?leyman Cenk Sahinalp. 2001. Permutation
+editing and matching via embeddings. In ICALP
+?01: Proceedings of the 28th International Collo-
+quium on Automata, Languages and Programming,,
+pages 481?492, London, UK. Springer-Verlag.
+Dean, Jeffrey and Sanjay Ghemawat. 2004. MapRe-
+duce: Simplified data processing on large clusters.
+In Proceedings of the Sixth Symposium on Operat-
+ing System Design and Implementation (OSDI-04),
+San Francisco, CA, USA.
+Do, Thi-Ngoc-Diep, Viet-Bac Le, Brigitte Bigi, Lau-
+rent Besacier Eric, and Castelli. 2009. Mining a
+comparable text corpus for a Vietnamese - French
+statistical machine translation system. In Proceed-
+ings of the 4th EACL Workshop on Statistical Ma-
+chine Translation, pages 165?172, Athens, Greece,
+March.
+European Commission Directorate-General for Trans-
+lation. 2007. DGT-TM parallel corpus.
+http://langtech.jrc.it/DGT-TM.html.
+Harding, Stephen M., W. Bruce Croft, and C. Weir.
+1997. Probabilistic retrieval of OCR degraded text
+using n-grams. In ECDL ?97: Proceedings of
+the First European Conference on Research and
+Advanced Technology for Digital Libraries, pages
+345?359, London, UK. Springer-Verlag.
+Henzinger, Monika. 2006. Finding near-duplicate
+web pages: a large-scale evaluation of algorithms.
+In SIGIR ?06: Proceedings of the 29th annual inter-
+national ACM SIGIR conference on Research and
+development in information retrieval, pages 284?
+291, New York, NY, USA. ACM.
+Koehn, Philipp. 2002. Europarl: A multilingual cor-
+pus for evaluation of machine translation. Draft.
+Macherey, Wolfgang, Franz Och, Ignacio Thayer, and
+Jakob Uszkoreit. 2008. Lattice-based minimum er-
+ror rate training for statistical machine translation.
+In Proceedings of the 2008 Conference on Empiri-
+cal Methods in Natural Language Processing, pages
+725?734, Honolulu, Hi, October. Association for
+Computational Linguistics.
+Manber, Udi. 1994. Finding similar files in a large file
+system. In Proceedings of the USENIX Winter 1994
+Technical Conferenc.
+Munteanu, Dragos Stefan and Daniel Marcu. 2005.
+Improving machine translation performance by ex-
+ploiting non-parallel corpora. Comput. Linguist.,
+31(4):477?504.
+Munteanu, Dragos Stefan and Daniel Marcu. 2006.
+Extracting parallel sub-sentential fragments from
+non-parallel corpora. In ACL.
+Och, Franz Josef and Hermann Ney. 2002. Dis-
+criminative training and maximum entropy models
+for statistical machine translation. In Proceedings
+of the 40th Annual Meeting of the Association for
+Computational Linguistics (ACL), pages 295?302,
+Philadelphia, PA, USA.
+Papineni, Kishore, Salim Roukos, Todd Ward, and
+Wei-Jing Zhu. 2002. BLEU: a method for auto-
+matic evaluation of machine translation. In Pro-
+ceedings of the 40th Annual Meeting of the Asso-
+ciation for Computational Linguistics (ACL), pages
+311?318, Philadelphia, PA, USA.
+Resnik, Philip and Noah A. Smith. 2003. The web
+as a parallel corpus. Computational Linguistics,
+29:349?380.
+Robertson, S E, S Walker, S Jones, M M Hancock-
+Beaulieu, and M Gatford. 1995. Okapi at TREC?3.
+In Proceedings of the Third Text REtrieval Confer-
+ence (TREC-3).
+Udupa, Raghavendra, K. Saravanan, A. Kumaran, and
+Jagadeesh Jagarlamudi. 2009. Mint: A method
+for effective and scalable mining of named entity
+transliterations from large comparable corpora. In
+EACL, pages 799?807.
+United Nations. 2006. ODS UN parallel corpus.
+http://ods.un.org/.
+1109
+Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing, pages 941?948,
+Edinburgh, Scotland, UK, July 27?31, 2011. c?2011 Association for Computational Linguistics
+Entire Relaxation Path for Maximum Entropy Problems
+Moshe Dubiner
+Google
+moshe@google.com
+Yoram Singer
+Google
+singer@google.com
+Abstract
+We discuss and analyze the problem of find-
+ing a distribution that minimizes the relative
+entropy to a prior distribution while satisfying
+max-norm constraints with respect to an ob-
+served distribution. This setting generalizes
+the classical maximum entropy problems as
+it relaxes the standard constraints on the ob-
+served values. We tackle the problem by in-
+troducing a re-parametrization in which the
+unknown distribution is distilled to a single
+scalar. We then describe a homotopy between
+the relaxation parameter and the distribution
+characterizing parameter. The homotopy also
+reveals an aesthetic symmetry between the
+prior distribution and the observed distribu-
+tion. We then use the reformulated problem to
+describe a space and time efficient algorithm
+for tracking the entire relaxation path. Our
+derivations are based on a compact geomet-
+ric view of the relaxation path as a piecewise
+linear function in a two dimensional space
+of the relaxation-characterization parameters.
+We demonstrate the usability of our approach
+by applying the problem to Zipfian distribu-
+tions over a large alphabet.
+1 Introduction
+Maximum entropy (max-ent) models and its dual
+counterpart, logistic regression, is a popular and ef-
+fective tool in numerous natural language process-
+ing tasks. The principle of maximum entropy was
+spelled out explicitly by E.T. Jaynes (1968). Ap-
+plications of maximum entropy approach to natural
+language processing are numerous. A notable ex-
+ample and probably one of the earliest usages and
+generalizations of the maximum entropy principle
+to language processing is the work of Berger, Della
+Pietra?2, and Lafferty (Berger et al, 1996, Della
+Pietra et al, 1997). The original formulation of
+max-ent cast the problem as the task of finding the
+distribution attaining the highest entropy subject to
+equality constraints. While this formalism is aes-
+thetic and paves the way to a simple dual in the form
+of a unique Gibbs distribution (Della Pietra et al,
+1997), it does not provide sufficient tools to deal
+with input noise and sparse representation of the
+target Gibbs distribution. To mitigate these issues,
+numerous relaxation schemes of the equality con-
+straints have been proposed. A notable recent work
+by Dudik, Phillips, and Schapire (2007) provided a
+general constraint-relaxation framework. See also
+the references therein for an in depth overview of
+other approaches and generalizations of max-ent.
+The constraint relaxation surfaces a natural param-
+eter, namely, a relaxation value. The dual form of
+this free parameter is the regularization value of pe-
+nalized logistic regression problems. Typically this
+parameter is set by experimentation using cross val-
+idation technique. The relaxed maximum-entropy
+problem setting is the starting point of this paper.
+In this paper we describe and analyze a frame-
+work for efficiently tracking the entire relaxation
+path of constrained max-ent problems. We start in
+Sec. 2 with a generalization in which we discuss the
+problem of finding a distribution that minimizes the
+relative entropy to a given prior distribution while
+satisfying max-norm constraints with respect to an
+observed distribution. In Sec. 3 we tackle the prob-
+lem by introducing a re-parametrization in which the
+941
+unknown distribution is distilled to a single scalar.
+We next describe in Sec. 4 a homotopy between the
+relaxation parameter and the distribution character-
+izing parameter. This formulation also reveals an
+aesthetic symmetry between the prior distribution
+and the observed distribution. We use the reformu-
+lated problem to describe in Secs. 5-6 space and time
+efficient algorithms for tracking the entire relaxation
+path. Our derivations are based on a compact ge-
+ometric view of the relaxation path as a piecewise
+linear function in a two dimensional space of the
+relaxation-characterization parameters. In contrast
+to common homotopy methods for the Lasso Os-
+borne et al (2000), our procedure for tracking the
+max-ent homotopy results in an uncharacteristically
+low complexity bounds thus renders the approach
+applicable for large alphabets. We provide prelim-
+inary experimental results with Zipf distributions in
+Sec. 8 that demonstrate the merits of our approach.
+Finally, we conclude in Sec. 9 with a brief discus-
+sion of future directions.
+2 Notations and Problem Setting
+We denote vectors with bold face letters, e.g. v.
+Sums are denoted by calligraphic letters, e.g. M =?
+j mj . We use the shorthand [n] to denote the set
+of integers {1, . . . , n}. The n?th dimensional sim-
+plex, denoted ?, consists of all vectors p such that,?n
+j=1 pj = 1 and for all j ? [n], pj ? 0. We gen-
+eralize this notion to multiplicity weighted vectors.
+Formally, we say that a vector p with multiplicity m
+is in the simplex, (p,m) ? ?, if ?nj=1 mjpj = 1,
+and for all j ? [n], pj ? 0, and mj ? 0.
+The generalized relaxed maximum-entropy prob-
+lem is concerned with obtaining an estimate p, given
+a prior distribution u and an observed distribution q
+such that the relative entropy between p and u is as
+small as possible while p and q are within a given
+max-norm tolerance. Formally, we cast the follow-
+ing constrained optimization problem,
+min
+p
+n?
+j=1
+mjpj log
+(pj
+uj
+)
+, (1)
+such that (p,m) ? ? ; ?p ? q?? ? 1/?. The
+vectors u and q are dimensionally compatible with
+p, namely, (q,m) ? ? and (u,m) ? ?. The scalar
+? is a relaxation parameter. We use 1/? rather than
+? itself for reasons that become clear in the sequel.
+We next describe the dual form of (1). We derive
+the dual by introducing Lagrange-Legendre multi-
+pliers for each of the constraints appearing in (1).
+Let ?+j ? 0 denote the multiplier for the constraint
+qj ? pj ? 1/? and ??j ? 0 the multiplier for the
+constraint qj ? pj ? ?1/?. In addition, we use ? as
+the multiplier for the constraint
+?
+j mjpj = 1. fter
+some routine algebraic manipulations we get that the
+Lagrangian is,
+?n
+j=1 mi
+(
+pj log
+(
+pj
+uj
+)
++ ?j(qj ? pj) + |?j |?
+)
++ ?
+(?n
+j=1 mjpj ? 1
+)
+. (2)
+To find the dual form we take the partial derivative
+of the Lagrangian with respect to each pj , equate to
+zero, and get that log
+(
+pj
+uj
+)
++1??j +? = 0, which
+implies that pj ? uje?j . We now employ the fact
+that (p,m) ? ? to get that the exact form for pj is
+pj =
+uje?j?n
+i=1 miuie?i
+. (3)
+Using (3) in the compact form of the Lagrangian we
+obtain the following dual problem
+max
+?
+?
+?
+?
+?log (Z)?
+n?
+j=1
+mjqj?j +
+n?
+j=1
+mj
+? |?j |
+?
+?
+? ,
+(4)
+where Z = ?nj=1mjuje?j . We make rather little
+use of the dual form of the problem. However, the
+complementary slackness conditions that are neces-
+sary for optimality to hold play an important role in
+the next section in which we present a reformulation
+of the relaxed maximum entropy problem.
+3 Problem Reformulation
+First note that the primal problem is a strictly con-
+vex function over a compact convex domain. Thus,
+its optimum exists and is unique. Let us now charac-
+terize the form of the solution. We partition the set
+of indices in [n] into three disjoint sets depending on
+whether the constraint |pj ? qj| ? 1/? is active and
+its form. Concretely, we define
+I? = {1 ? j ? n | pj = qj ? 1/?}
+I0 = {1 ? j ? n | |pj ? qj| < 1/?} (5)
+I+ = {1 ? j ? n | pj = qj + 1/?} .
+942
+F(1,1)
+(-1,-1)
+Figure 1: The capping function F .
+Recall that Z =
+?n
+j=1 mjuje?j . Thus, from
+(3) we can rewrite pj = uje?j/Z . We next use
+the complementary slackness conditions (see for in-
+stance (Boyd and Vandenberghe, 2004)) to further
+characterize the solution. For any j ? I? we must
+have ??j = 0 and ?+j ? 0 therefore ?j ? 0, which
+immediately implies that pj ? uj/Z . By definition
+we have that pj = qj ? 1/? for j ? I?. Combin-
+ing these two facts we get that uj/Z ? qj ? 1/? for
+j ? I?. Analogous derivation yields that uj/Z ?
+qj + 1/? for j ? I+. Last, if the set I0 is not empty
+then for each j in I0 we must have ?+j = 0 and
+??j = 0 thus ?j = 0. Resorting again to the def-
+inition of p from (3) we get that pj = uj/Z for
+j ? I0. Since |pj ? qj| < 1/? for j ? I0 we
+get that |uj/Z ? qj| < 1/?. To recap, there ex-
+ists Z > 0 such that the optimal solution takes the
+following form,
+pj =
+?
+?
+?
+qj ? 1/? uj/Z ? qj ? 1/?
+uj/Z |uj/Z ? qj| < 1/?
+qj + 1/? uj/Z ? qj + 1/?
+. (6)
+We next introduce an key re-parametrization,
+defining ? = ?/Z . We also denote by F (?) the
+capping function F (x) = max {?1,min {1, x}}. A
+simple illustration of the capping function is given
+in Fig. 1. Equipped with these definition we can
+rewrite (6) as follows,
+pj = qj +
+1
+? F (?uj ? ?qj) . (7)
+Given u, q, and ?, the value of ? can be found by
+using
+?
+j mjpj =
+?
+j mjqj = 1, which implies
+G(?, ?) def=
+n?
+j=1
+mjF (?uj ? ?qj) = 0 . (8)
+We defer the derivation of the actual algorithm for
+computing ? (and in turn p) to the next section. In
+the meanwhile let us continue to explore the rich
+structure of the general solution. Note that ?,u are
+interchangeable with ?,q. We can thus swap the
+roles of the prior distribution with the observed dis-
+tribution and obtain an analogous characterization.
+In the next section we further explore the depen-
+dence of ? on ?. The structure we reveal shortly
+serves as our infrastructure for deriving efficient al-
+gorithms for following the regularization path.
+4 The function ?(?)
+In order to explore the dependency of ? on ? let us
+introduce the following sums
+M =
+?
+j?I+
+mj ?
+?
+j?I?
+mj
+U =
+?
+j?I0
+mj uj
+Q =
+?
+j?I0
+mj qj . (9)
+Fixing ? and using (9), we can rewrite (8) as follows
+?U ? ?Q+M = 0 . (10)
+Clearly, so long as the partition of [n] into the sets
+I+, I?, I0 is intact, there is a simple linear relation
+between ? and ?. The number of possible subsets
+I?, I0, I+ is finite. Thus, the range 0 < ? < ?
+decomposes into a finite number of intervals each
+of which corresponds to a fixed partition of [n] into
+I+, I?, I0. In each interval ? is a linear function of
+?, unless I0 is empty. Let ?? be the smallest ? value
+for which I0 is empty. Let ?? be its corresponding
+? value. If I0 is never empty for any finite value of ?
+we define ?? = ?? =?. Clearly, replacing (?, ?)
+with (??, ??) for any ? ? 1 and ? ? ?? yields
+the same feasible solution as I+(??) = I+(?),
+I?(??) = I?(?). Hence, as far as the original prob-
+lem is concerned there is no reason to go past ??
+during the process of characterizing the solution. We
+recap our derivation so far in the following lemma.
+Lemma 4.1 For 0 ? ? ? ??, the value of ? as
+defined by (7) is a unique. Further, the function ?(?)
+is a piecewise linear continuous function in ?. When
+? ? ?? letting ? = ???/?? keeps (7) valid.
+We established the fact that ?(?) is a piecewise lin-
+ear function. The lingering question is how many
+943
+linear sub-intervals the function can attain. To study
+this property, we take a geometric view of the plane
+defined by (?, ?). Our combinatorial characteriza-
+tion of the number of sub-intervals makes use of the
+following definitions of lines in R2,
+?+j = {(?, ?) | uj?? qj? = +1} (11)
+??j = {(?, ?) | uj?? qj? = ?1} (12)
+?0 = {(?, ?) | ?U ? ?Q+M = 0} , (13)
+where?? < ? <? and j ? [n]. The next theorem
+gives an upper bound on the number of linear seg-
+ments the function ?() may attain. While the bound
+is quadratic in the dimension, for both artificial data
+and real data the bound is way too pessimistic.
+Theorem 4.2 The piecewise linear function ?(?)
+consists of at most n2 linear segments for ? ? R+.
+Proof Since we showed that that ?(?) is a piece-
+wise linear function, it remains to show that it
+has at most n2 linear segments. Consider the
+two dimensional function G(?, ?) from (8). The
+(?, ?) plane is divided by the 2n straight lines
+?1, ?2, . . . , ?n, ??1, ??2, . . . , ??n into at most 2n2+1
+polygons. The latter property is proved by induc-
+tion. It clearly holds for n = 0. Assume that it holds
+for n ? 1. Line ?n intersects the previous 2n ? 2
+lines at no more than 2n ? 2 points, thus splitting
+at most 2n ? 1 polygons into two separate polygo-
+nal parts. Line ??n is parallel to ?n, again adding
+at most 2n ? 1 polygons. Recapping, we obtain at
+most 2(n ? 1)2 + 1 + 2(2n ? 1) = 2n2 + 1 poly-
+gons, as required per induction. Recall that ?(?) is
+linear inside each polygon. The two extreme poly-
+gons where G(?, ?) = ??nj=1 mj clearly disallow
+G(?, ?) = 0, hence ?(?) can have at most 2n2 ? 1
+segments for ?? < ? < ?. Lastly, we use the
+symmetry G(??,??) = ?G(?, ?) which implies
+that for ? ? R+ there are at most n2 segments.
+This result stands in contrast to the Lasso homotopy
+tracking procedure (Osborne et al, 2000), where the
+worst case number of segments seems to be expo-
+nential in n. Moreover, when the prior u is uniform,
+uj = 1/
+?n
+j=1 mj for all j ? [n], the number of
+segments is at most n + 1. We defer the analysis of
+the uniform case to a later section as the proof stems
+from the algorithm we describe in the sequel.
+0 20 40 60 80 1000
+10
+20
+30
+40
+50
+?
+?
+Figure 2: An illustration of the function ?(?) for a syn-
+thetic 3 dimensional example.
+10 20 30 40 50 60
+?1.5
+?1
+?0.5
+0
+0.5
+1
+1.5
+?
+G
+Figure 3: An illustration of the function G(?) for a syn-
+thetic 4 dimensional example and a ? = 17.
+5 Algorithm for a Single Relaxation Value
+Suppose we are given u,q,m and a specific relax-
+ation value ??. How can we find p? The obvious
+approach is to solve the one dimensional monotoni-
+cally nondecreasing equation G(?) def= G(??, ?) = 0
+by bisection. In this section we present a more effi-
+cient and direct procedure that is guaranteed to find
+the optimal solution p in a finite number of steps.
+Clearly G(?) is a piecewise linear function with
+at most 2n easily computable change points of the
+slope. See also Fig. (5) for an illustration of G(?).
+In order to find the slope change points we need to
+calculate the point (?, ?j) for all the lines ??j where
+1 ? j ? n. Concretely, these values are
+?j =
+?q|j| + sign(j)
+u|j|
+. (14)
+We next sort the above values of ?j and denote the
+resulting sorted list as ?pi1 ? ?pi2 ? ? ? ? ? ?pi2n . For
+any 0 ? j ? 2n letMj ,Uj ,Qj be the sums, defined
+944
+in (9), for the line segment ?pij?1 < ? < ?pij (de-
+noting ?pi0 = ??, ?pi2n+1 = ?). We compute
+the sums Mj,Uj ,Qj incrementally, starting from
+M0 = ?
+?n
+i=1 mi, U0 = Q0 = 0. Once the
+values of j?1?th sums are known, we can compute
+the next sums in the sequence as follows,
+Mj = Mj?1 + m|pij|
+Uj = Uj?1 ? sign(?j)m|pij | u|pij |
+Qj = Qj?1 ? sign(?j)m|pij | q|pij| .
+From the above sums we can compute the value of
+the function G(?, ?) at the end point of the line seg-
+ment (?pij?1 , ?pij), which is the same as the start
+point of the line segment (?pij , ?pij+1),
+Gj = Mj?1 + Uj?1 ?j ?Qj?1 ?
+= Mj + Uj ?j ?Qj ? .
+The optimal value of ? resides in the line segment
+for which G(?) attains 0. Such a segment must exist
+since G0 = M0 = ?
+?n
+i=1 mi < 0 and G2n =
+?M0 > 0. Therefore, there exists an index 1 ?
+j < 2n, where Gj ? 0 ? Gj+1. Once we bracketed
+the feasible segment for ?, the optimal value of ? is
+found by solving the linear equation (10),
+? = (Qj ? ? Mj) /Uj . (15)
+From the optimal value of ? it is straightforward to
+construct p using (7). Due to the sorting step, the al-
+gorithm?s run time is O(n log(n)) and it takes linear
+space. The number of operations can be reduced to
+O(n) using a randomized search procedure.
+6 Homotopy Tracking
+We now shift gears and focus on the main thrust
+of this paper, namely, an efficient characterization
+of the entire regularization path for the maximum
+entropy problem. Since we have shown that the
+optimal solution p can be straightforwardly ob-
+tained from the variable ?, it suffices to efficiently
+track the function ?(?) as we traverse the plane
+(?, ?) from ? = 0 through the last change point
+which we denoted as (??, ??). In this section
+we give an algorithm that traverses ?(?) by lo-
+cating the intersections of ?0 with the fixed lines
+??n, ??n+1, . . . , ??1, ?1, . . . , ?n and updating ?0 af-
+ter each intersection.
+More formally, the local homotopy tracking fol-
+lows the piecewise linear function ?(?), segment by
+segment. Each segment corresponds to a subset of
+the line ?0 for a given triplet (M,U ,Q). It is simple
+to show that ?(0) = 0, hence we start with
+? = 0, M = 0, U = Q = 1 . (16)
+We now track the value of ? as ? increases, and the
+relaxation parameter 1/? decreases. The character-
+ization of ?0 remains intact until ?0 hits one of the
+lines ?j for 1 ? |j| ? n. To find the line intersect-
+ing ?0 we need to compute the potential intersection
+points (?j, ?j) = ?0 ? ?j which amounts to calculat-
+ing ??n, ??n+1, . . . , ??1, ?1, ?2, ? ? ? , ?n where
+?j =
+Mu|j| + Usign(j)
+Qu|j| ? Uq|j|
+. (17)
+The lines for which the denominator is zero cor-
+respond to infeasible intersection and can be dis-
+carded. The smallest value ?j which is larger than
+the current traced value of ? corresponds to the next
+line intersecting ?0.
+While the above description is mathematically
+sound, we devised an equivalent intersection in-
+spection scheme which is more numerically stable
+and efficient. We keep track of partition I?, I0, I1
+through the vector,
+sj =
+?
+?
+?
+?1 j ? I?
+0 j ? I0
++1 j ? I+
+.
+Initially s1 = s2 = ? ? ? = sn = 0. What kind of
+intersection does ?0 have with ?j? Recall that QU is
+the slope of ?0 while
+q|j|
+u|j| is the slope of ?j . Thus
+Q
+U >
+q|j|
+u|j| means that the |j|?th constraint is moving
+?up? from I? to I0 or from I0 to I+. When QU <
+q|j|
+u|j|
+the |j|?th constraint is moving ?down? from I+ to I0
+or from I0 to I?. See also Fig. 4 for an illustration
+of the possible transitions between the sets. For in-
+stance, the slope of ?(?) on the bottom left part of
+the figure is larger than the slope the line it inter-
+sects. Since this line defines the boundary between
+I? and I0, we transition from I? to I0. We need
+only consider 1 ? |j| ? n of the following types.
+Moving ?up? from I? to I0 requires
+s|j| = ?1 j < 0 Qu|j| ? Uq|j| > 0 .
+945
+Figure 4: Illustration of the possible intersections be-
+tween ?(?) and ?j and the corresponding transition be-
+tween the sets I?, I0.
+Similarly, moving ?down? from I+ to I0 requires
+s|j| = 1 j > 0 Qu|j| ? Uq|j| < 0 .
+Finally, moving ?up? or ?down? from I0 entails
+s|j| = 0 j(Qu|j| ? Uq|j|) > 0 .
+If there are no eligible ?j?s, we have finished travers-
+ing ?(). Otherwise let index j belong to the the
+smallest eligible ?j . Infinite accuracy guarantees
+that ?j ? ?. In practice we perform the update
+? ? max(?, ?j)
+M ? M+ sign(Qu|j| ? Uq|j|)m|j|
+U ? U +
+(
+2
+??s|j|
+??? 1
+)
+m|j| u|j|
+Q ? Q+
+(
+2
+??s|j|
+??? 1
+)
+m|j| q|j|
+sj ? sj + sign(Qu|j| ? Uq|j|) .
+We are done with the tracking process when I0 is
+empty, i.e. for all j sj 6= 0.
+The local homotopy algorithm takes O(n) mem-
+ory and O(nk) operations where k is the number of
+change points in the function ?(?). This algorithm
+is simple to implement, and when k is relatively
+small it is efficient. An illustration of the tracking
+result, ?(?), along with the lines ??j , that provide a
+geometrical description of the problem, is given in
+Fig. 5.
+7 Uniform Prior
+We chose to denote the prior distribution as u to un-
+derscore the fact that in the case of no prior knowl-
+0 0.2 0.4 0.6 0.8 1 1.2 1.4 1.6 1.8
+?4
+?2
+0
+2
+4
+6
+8
+10
+?
+?
+Figure 5: The result of the homotopy tracking for a 4
+dimensional problem. The lines ?j for j < 0 are drawn in
+blue and for j > 0 in red. The function ?(?) is drawn in
+green and its change points in black. Note that although
+the dimension is 4 the number of change points is rather
+small and does not exceed 4 either in this simple example.
+edge u is the uniform distribution,
+u def= uj =
+( n?
+i=1
+mi
+)?1
+.
+In this case the objective function amounts to the
+negative entropy and by flipping the sign of the ob-
+jective we obtain the classical maximum entropy
+problem. The fact that the prior probability is the
+same for all possible observations infuses the prob-
+lem with further structure which we show how to
+exploit in this section. Needless to say though that
+all the results we obtained thus far are still valid.
+Let us consider a point (?, ?) on the boundary be-
+tween I0 and I+, namely, there exist a line ?+i such
+that,
+?ui ? ?qi = ?u? ?qi = 1 .
+By definition, for any j ? I0 we have
+?uj ? ?qj = ?u? ?qj < 1 = ?u? ?qi .
+Thus, qi < qj for all j ? I0 which implies that
+mj u qj > mj u qi . (18)
+Summing over j ? I0 we get that
+Qu =
+?
+j?I0
+mj qj u >
+?
+j?I0
+mj u qi = Uqi ,
+hence,
+qi
+ui
+= qiu <
+Q
+U
+946
+and we must be moving ?up? from I0 to I+ when the
+line ?0 hits ?i. Similarly we must be moving ?down?
+from when ?0 hits on the boundary between I0 and
+I?. We summarize these properties in the following
+theorem.
+Theorem 7.1 When the prior distribution u is uni-
+form, I?(?) and I+(?) are monotonically nonde-
+creasing and I0(?) is monotonically nonincreasing
+in ? > 0 . Further, the piecewise linear function
+?(?) consists of at most n + 1 line segments.
+The homotopy tracking procedure when the prior
+is uniform is particularly simple and efficient. In-
+tuitively, there is a sole condition which controls
+the order in which indices would enter I? from I0,
+which is simply how ?far? each qi is from u, the sin-
+gle prior value. Therefore, the algorithm starts by
+sorting q. Let qpi1 > qpi2 > ? ? ? > qpin denote the
+sorted vector. Instead of maintaining the vector of
+set indicators s, we merely maintain two indices j?
+and j+ which designate the size of I? and I+ that
+were constructed thus far. Due to the monotonic-
+ity property of the sets I? as ? grows, the two sets
+can be written as, I? = {?j | 1 ? j < j?} and
+I+ = {?j | j+ < j ? n}. The homotopy track-
+ing procedure starts as before with ? = 0,M = 0,
+U = Q = 1. We also set j? = 1 and j+ = n which
+by definition imply that I? are empty and I0 = [n].
+In each tracking iteration we need to compare only
+two values which we compactly denote as,
+?? =
+Mu ? U
+Qu ? Uqpij?
+.
+When ?? ? ?+ we just encountered a transition
+from I0 to I? and as we encroach I? we perform
+the updates, ? ? ??, M ?M ? mpij? , U ?
+U ?mpij?u, Q? Q?mpij?qpij? , j? ? j? + 1.
+Similarly when ?? > ?+ we perform the updates
+? ? ?+, M?M + mpij+ , U ? U ? mpij+u,
+Q? Q ? mpij+ qpij+ , j+ ? j+ ? 1.
+The tracking process stops when j? > j+ as we
+exhausted the transitions out of the set I0 which be-
+comes empty. Homotopy tracking for a uniform
+prior takes O(n) memory and O(n log(n)) opera-
+tions and is very simple to implement.
+We also devised a global homotopy tracking algo-
+rithms that requires a priority queue which facilitates
+insertions, deletions, and finding the largest element
+100
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+Sample Size / Dimensions
+# 
+Ch
+an
+ge
+ P
+oi
+nt
+s 
+/ D
+im
+en
+sio
+ns
+Figure 6: The number of line-segments in the homotopy
+as a function of the number of samples used to build the
+observed distribution q.
+in the queue in O(log(n)) time. The algorithm re-
+quires O(n) memory and O(n2 log(n)) operations.
+Clearly, if the number of line segments constituting
+?(?) is greater than n log(n) (recall that the upper
+bound is O(n2)) then the global homotopy proce-
+dure is faster than the local one. However, as we
+show in Sec. 8, in practice the number of line seg-
+ments is merely linear and it thus suffices to use the
+local homotopy tracking algorithm.
+8 Number of line segments in practice
+The focus of the paper is the design and analysis
+of a novel homotopy method for maximum entropy
+problems. We thus left with relatively little space
+to discuss the empirical aspects of our approach. In
+this section we focus on one particular experimental
+facet that underscores the usability of our apparatus.
+We briefly discuss current natural language applica-
+tions that we currently work on in the next section.
+The practicality of our approach hinges on the
+number of line segments that occur in practice. Our
+bounds indicate that this number can scale quadrat-
+ically with the dimension, which would render the
+homotopy algorithm impractical when the size of the
+alphabet is larger than a few thousands. We there-
+fore extensively tested the actual number of line seg-
+ments in the resulting homotopy when u and q are
+Zipf (1949) distributions. We used an alphabet of
+size 50, 000 in our experiments. The distribution u
+was set to be the Zipf distribution with an offset pa-
+rameter of 2, that is, ui ? 1/(i + 2). We defined
+a ?mother? distribution for q, denoted q?, which is
+947
+a plain Zipf distribution without an offset, namely
+q?i ? 1/i. We then sampled n/2l letters according
+to the distribution q? where l ? ?3, . . . , 3. Thus the
+smallest sample was n/23 = 6, 250 and the largest
+sample was n/3?3 = 40, 000. Based on the sample
+we defined the observed distribution q such that qi
+is proportional to the number of times the i?th let-
+ter appeared in the sample. We repeated the process
+100 times for each sample size and report average
+results. Note that when the sample is substantially
+smaller than the dimension the observed distribution
+q tends to be ?simple? as it consists of many zero
+components. In Fig. 6 we depict the average num-
+ber line segments for each sample size. When the
+sample size is one eighth of the dimension we aver-
+age st most 0.1n line segments. More importantly,
+even when the size of the sample is fairly large, the
+number of lines segments is linear in the dimension
+with a constant close to one. We also performed
+experiments with large sample sizes for which the
+empirical distribution q is very close to the mother
+distribution q?. We seldom found that the number of
+line segments exceeds 4n and the mode is around
+2n. These findings render our approach usable even
+in the very large natural language applications.
+9 Conclusions
+We presented a novel efficient apparatus for tracking
+the entire relaxation path of maximum entropy prob-
+lems. We currently study natural language process-
+ing applications. In particular, we are in the process
+of devising homotopy methods for domain adapta-
+tion Blitzer (2008) and language modeling based
+on context tree weighting (Willems et al, 1995).
+We also examine generalization of our approach in
+which the relative entropy objective is replaced with
+a separable Bregman (Censor and Zenios, 1997)
+function. Such a generalization is likely to distill
+further connections to the other homotopy methods,
+in particular the least angle regression algorithm of
+Efron et al (2004) and homotopy methods for the
+Lasso in general (Osborne et al, 2000). We also plan
+to study separable Bregman functions in order to de-
+rive entire path solutions for less explored objectives
+such as the Itakura-Saito spectral distance (Rabiner
+and Juang, 1993) and distances especially suited for
+natural language processing.
+References
+A.L. Berger, S.A. Della Pietra, and V. J. Della Pietra.
+A maximum entropy approach to natural lan-
+guage processing. Computational Linguistics, 22
+(1):39?71, 1996.
+John Blitzer. Domain Adaptation of Natural Lan-
+guage Processing Systems. PhD thesis, University
+of Pennsylvania, 2008.
+S. Boyd and L. Vandenberghe. Convex Optimiza-
+tion. Cambridge University Press, 2004.
+Y. Censor and S.A. Zenios. Parallel Optimization:
+Theory, Algorithms, and Applications. Oxford
+University Press, New York, NY, USA, 1997.
+S. Della Pietra, V. Della Pietra, and J. Lafferty. In-
+ducing features of random fields. IEEE Trans-
+actions on Pattern Analysis and Machine Intelli-
+gence, 5:179?190, 1997.
+M. Dud??k, S. J. Phillips, and R. E. Schapire. Maxi-
+mum entropy density estimation with generalized
+regularization and an application to species distri-
+bution modeling. Journal of Machine Learning
+Research, 8:1217?1260, June 2007.
+Bradley Efron, Trevor Hastie, Iain Johnstone, and
+Robert Tibshirani. Least angle regression. Annals
+of Statistics, 32(2):407?499, 2004.
+Edwin T. Jaynes. Prior probabilities. IEEE Transac-
+tions on Systems Science and Cybernetics, SSC-4
+(3):227?241, September 1968.
+Michael R. Osborne, Brett Presnell, and Berwin A.
+Turlach. On the lasso and its dual. Journal
+of Computational and Graphical Statistics, 9(2):
+319?337, 2000.
+L. Rabiner and B.H. Juang. Fundamentals of Speech
+Recognition. Prentice Hall, 1993.
+F. M. J. Willems, Y. M. Shtarkov, and T. J. Tjalkens.
+The context tree weighting method: basic proper-
+ties. IEEE Transactions on Information Theory,
+41(3):653?664, 1995.
+George K. Zipf. Human Behavior and the Principle
+of Least Effort. Addison-Wesley, 1949.
+948

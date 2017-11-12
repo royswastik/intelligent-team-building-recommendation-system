@@ -3,14 +3,17 @@ import os,sys,inspect
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0,parentdir)
+
+
+import itertools
 from gensim.models import Doc2Vec
 import gensim.models.doc2vec
-# from collections import OrderedDic
+from gensim import corpora
 from gensim.models.doc2vec import LabeledSentence
 import multiprocessing
 
 def getDocuments():
-	path = "../data/"
+	path = "../data/author/filtered_text_token/"
 	file_names = os.listdir(path)
 	documents = []
 	for file_name in file_names:
@@ -18,23 +21,58 @@ def getDocuments():
 		
 		with open(path+file_name) as fp:
 			for line in fp.readlines():
-				word_list.append(line.strip('\n'))
-			documents.append( LabeledSentence(words=word_list, tags=[file_name.split(".")[0]]) )
+				word = line.strip(',').strip('\n')
+				if word !='':
+					word_list.append(word)
+			if word_list!=[]:
+				documents.append( LabeledSentence(words=word_list, tags=[file_name.split(".")[0]]) )
 
 	return documents
 
 def train_word2Vec():
 	"""Trains Doc2Vec Model for all documents"""
-
 	documents = getDocuments()
+	# print documents
+	print len(documents)
 	model = Doc2Vec(size=300, window=10, min_count=1, workers=4)
 	model.build_vocab(documents)
-	for epoch in range(20):
+	for epoch in range(30):
 		model.train(documents,total_examples=model.corpus_count,epochs=epoch)
 	# pass
-	vecTest= model.infer_vector(["natural","disasters","deaths","bombings","elections","financial","fluctuations"])
+	model.save('Authors.doc2vec')
+	vecTest= model.infer_vector(["birthday","answer","useful  url information","answer","answer","variety","birthday","question","example","conventional  cqa policy","answer","purpose","answer","alternative","answer","in-depth analysis"])
 	print vecTest
 	sims = model.docvecs.most_similar([vecTest],topn = 100)
 	print sims
 
-train_word2Vec()
+# train_word2Vec()
+
+def testModel():
+	path = "../data/author/filtered_text_token/"
+	word_list = []
+	with open(path+"10.txt_token.txt") as fp:
+		for line in fp.readlines():
+			word = line.strip(',').strip('\n')
+			if word !='':
+				word_list.append(word)
+	
+	# word_list =["attitude","label","table","summarization","algorithm","sent","ment-opinion","segment","answer","sentence","cluster","sentence","similar","process"]
+	# print word_list
+	model = Doc2Vec.load('Authors.doc2vec')
+	vecTest= model.infer_vector(word_list)
+	# print vecTest
+	sims = model.docvecs.most_similar([vecTest],topn = 976)
+	print sims
+
+testModel()
+
+def lda():
+	documents = getDocuments()
+	docFlat = list(itertools.chain(*documents))
+	dictionary = corpora.Dictionary(docFlat)
+	doc_term_matrix = [dictionary.doc2bow(doc) for doc in docFlat]
+	Lda = gensim.models.ldamodel.LdaModel
+	ldamodel = Lda(doc_term_matrix, num_topics=20, id2word = dictionary, passes=10)
+	ldamodel.save('lda.model')
+	ldamodel.print_topics(num_topics=20,num_words=10)
+# lda()

@@ -4,6 +4,7 @@ currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentfram
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0,parentdir)
 
+from sklearn.metrics.pairwise import cosine_similarity
 
 import itertools
 from gensim.models import Doc2Vec
@@ -64,7 +65,16 @@ def testModel():
 	sims = model.docvecs.most_similar([vecTest],topn = 976)
 	print sims
 
-testModel()
+# testModel()
+
+#TODO - check how similar two documents are
+def get_similarity_score(doc1, doc2):
+	model = Doc2Vec.load('Authors.doc2vec')
+	tokens1 = doc1.split[" "]
+	tokens2 = doc2.split[" "]
+	s1 = model.infer_vector(tokens1, alpha=0.025, min_alpha=0.025, steps=20)
+	s2 = model.infer_vector(tokens2, alpha=0.025, min_alpha=0.025, steps=20)
+	print(cosine_similarity(s1, s2))
 
 def lda():
 	documents = getDocuments()
@@ -76,3 +86,7 @@ def lda():
 	ldamodel.save('lda.model')
 	ldamodel.print_topics(num_topics=20,num_words=10)
 # lda()
+
+if __name__ == '__main__':
+	score = get_similarity_score("I am a man", "I am an author")
+	print(score)

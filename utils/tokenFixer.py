@@ -128,7 +128,7 @@ def test():
     TextExtractor.write_to_file((",".join(fixed_list)), os.path.join(constants.TEST_OUTPUT, '10.txt'))
     print("Success")
 
-def test():
+def test2():
     # if not os.path.isdir(os.path.join(constants.DATA_PATH, "authors_topic")):
     #     os.mkdir(os.path.join(constants.DATA_PATH, "authors_topic"))
     for fileName in os.listdir(os.path.join(constants.DATA_PATH,'authors_topic')):

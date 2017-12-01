@@ -4,7 +4,7 @@ import os, sys, inspect
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
 sys.path.insert(0, parentdir)
-from utils import nlp_parser as NLPParser, tokenFixer as TokenFixer
+from utils import nlp_parser as NLPParser, tokenFixer as TokenFixer, text_extractor as TextExtractor
 
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -13,9 +13,10 @@ from gensim.models import Doc2Vec
 import gensim.models.doc2vec
 from gensim import corpora
 from gensim.models.doc2vec import LabeledSentence
+import constants
 import multiprocessing
 
-
+#Get Preprocessed Documents
 def getDocuments():
     path = "../data/author/filtered_text_token/"
     file_names = os.listdir(path)
@@ -33,7 +34,7 @@ def getDocuments():
 
     return documents
 
-
+#Train Doc2Vec Model
 def train_word2Vec():
     """Trains Doc2Vec Model for all documents"""
     documents = getDocuments()
@@ -53,9 +54,7 @@ def train_word2Vec():
     sims = model.docvecs.most_similar([vecTest], topn=100)
     print sims
 
-
-# train_word2Vec()
-
+# Test Doc2Vec Model
 def testModel():
     path = "../data/author/filtered_text_token/"
     word_list = []
@@ -73,10 +72,7 @@ def testModel():
     sims = model.docvecs.most_similar([vecTest], topn=976)
     print sims
 
-
-# testModel()
-
-# TODO - check how similar two documents are
+# Similarity score between two documents
 def get_similarity_score(doc1, doc2):
     model = Doc2Vec.load('Authors.doc2vec')
     tokens1 = doc1.split[" "]
@@ -85,7 +81,7 @@ def get_similarity_score(doc1, doc2):
     s2 = model.infer_vector(tokens2, alpha=0.025, min_alpha=0.025, steps=20)
     print(cosine_similarity(s1, s2))
 
-
+#Apply LDA to extra topics
 def lda():
     documents = getDocuments()
     docFlat = list(itertools.chain(*documents))
@@ -97,18 +93,28 @@ def lda():
     ldamodel.print_topics(num_topics=20, num_words=10)
 
 
-# lda()
+def getDosFromIds(AuthorIds):
+    docs = []
+    for id in AuthorIds:
+        text = TextExtractor.extract_corrected_text(os.path.join(constants.DATA_PATH, "authors_text", id+".txt"))
+        docs.append(text)
+    return docs
 
+# team contains list of author ids
+def get_similarity_with_team(problem_statement, team):
+    docs = getDosFromIds(team)
+    return get_cosine_similarity(problem_statement, docs)
+
+#Get cosine similarity between two documents
 def get_cosine_similarity(input1, docs):
-    # path_doc2vec=  os.path.join(os.path.dirname(_file_), 'Authors_final.doc2vec')
-    # model = Doc2Vec.load('Authors.doc2vec')
+    path_doc2vec=  os.path.join(constants.DATA_PATH, "doc2vec", 'Authors_final.doc2vec')
+    model = Doc2Vec.load(path_doc2vec)
     inputTokens = get_tokens_from_docs([input1])
     docTokens = get_tokens_from_docs(docs)
-    # vec1 = model.infer_vector(inputTokens)
+    vec1 = model.infer_vector(inputTokens)
 
-    # vec2 = model.infer_vector(docTokens)
-    return 0
-    # return cosine_similarity(vec1, vec2)
+    vec2 = model.infer_vector(docTokens)
+    return cosine_similarity(vec1, vec2)
 
 
 def get_tokens_from_docs(docs):

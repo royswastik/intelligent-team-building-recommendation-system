@@ -10,6 +10,7 @@ from common import *
 import publication_extractor
 from textblob import TextBlob
 import constants
+import tokenFixer as TokenFixer
 
 # from nltk.tag.stanford import NERTagger
 # st = NERTagger('ner/all.3class.distsim.crf.ser.gz', 'ner/stanford-ner.jar')
@@ -53,11 +54,13 @@ def pos_tag(tokens):
 def get_parse_tree(postoks):
     return chunker.parse(postoks)
 
+# Get leaves from POS tag
 def leaves(tree):
     """Finds NP (nounphrase) leaf nodes of a chunk tree."""
     for subtree in tree.subtrees(filter = lambda t: t.label()=='NP'):
         yield subtree.leaves()
 
+# Normalize every word
 def normalise(word):
     """Normalises words to lowercase and stems and lemmatizes it."""
     word = word.lower()
@@ -65,26 +68,22 @@ def normalise(word):
     word = lemmatizer.lemmatize(word)
     return word
 
+#Remove Unacceptable words
 def acceptable_word(word):
     """Checks conditions for acceptable word: length, stopword. We can increase the length if we want to consider large phrase"""
     accepted = bool(2 <= len(word) <= 40
         and word.lower() not in en_stop)
     return accepted
 
-
+# Get terms after tokenization
 def get_terms(tree):
     for leaf in leaves(tree):
         term = [ normalise(w) for w,t in leaf if acceptable_word(w) ]
         yield term
 
+# Get Named Entities
 def get_named_entities(text):
     return nltk.ne_chunk(text)
-    # for sent in nltk.sent_tokenize(text):
-    #     tokens = nltk.tokenize.word_tokenize(sent)
-    #     tags = st.tag(tokens)
-    #     # for tag in tags:
-    #     #     if tag[1]=='PERSON': print tag
-    #     #     if tag[1]=='LOCATION': print tag
 
 def write_author_noun_phrases():
     readDir = os.path.join(constants.DATA_PATH, "authors_text")
@@ -109,7 +108,10 @@ def write_author_noun_phrases():
             # count += 1
 
 if __name__ == "__main__":
-    write_author_noun_phrases()
+    # print(get_noun_phrases("Need to develop Text Summarization Algorithm to summarize text from web pages."))
+
+    print(get_noun_phrases("Need to develop Text Summarization Algorithm to summarize text from web pages."))
+    # write_author_noun_phrases()
     # text = publication_extractor.extract_corrected_text("A00-1001")
     # nounPhrases = get_noun_phrases(text)
     # filtered = [elem for elem in nounPhrases if len(elem) > 5 and  re.match('^[a-z\d\-_\s]+$', elem) is not None]

@@ -5,6 +5,7 @@ parentdir = os.path.dirname(currentdir)
 sys.path.insert(0,parentdir)
 import operator
 import networkx as nx
+import matplotlib.pyplot as plt
 G = nx.Graph()
 import itertools
 from author_collab import *

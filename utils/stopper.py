@@ -8,11 +8,14 @@ from nltk.corpus import names, gazetteers
 def get_stopword_path(filename):
     return "../data/stopwords/"+filename
 
+CUSTOM_PREFIX_STOP = {'document', 'topic', 'summary', 'sentence', 'institute', 'department', 'type', 'story', 'responsibility'}
+CUSTOM_SUFFIX_STOP = {'pro', 'markup', 'xml', 'sentence'}
 
 CUSTOM_PHRASES_STOPS = {'system', 'document', 'xml document', 'element', 'text document', 'full document', 'approach',
                         'text document', 'experiment', 'functionality', 'document set', 'text segment', 'feature',
                         'start_tag', 'end tag', 'specific domain' , 'markup', 'behaviour', 'accuracy', 'xml markup',
-                        'department', 'national', 'letter', 'number', 'sentence', 'performance' }
+                        'department', 'national', 'letter', 'number', 'sentence', 'performance', 'marked up document',
+                        'archive', 'markup element', 'several topic', 'main topic', 'engineer', 'responsibility'}
 
 NUMBERS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven',
            'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen',

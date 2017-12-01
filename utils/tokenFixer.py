@@ -27,7 +27,7 @@ def fix_broken_words(list):
         if len(phrase) == 0:
             continue
         if do_remove_phrase(phrase):
-            print("Removing: " + phrase)
+            # print("Removing: " + phrase)
             continue
         words = phrase.split(" ")
         wordCount = len(words)
@@ -40,7 +40,7 @@ def fix_broken_words(list):
                 continue
 
             if do_remove_word(word):
-                print("Removing: " + word)
+                # print("Removing: " + word)
                 continue
 
             if len(word) <= 3:
@@ -106,6 +106,13 @@ def do_remove_word(w):
 def do_remove_phrase(phrase):
     if phrase in  stopper.CUSTOM_PHRASES_STOPS:
         return True
+
+    if phrase.split(" ")[-1] in stopper.CUSTOM_PREFIX_STOP:
+        return True
+
+    if phrase.split(" ")[0] in stopper.CUSTOM_SUFFIX_STOP:
+        return True
+
     return False
 
 def test():
@@ -119,6 +126,22 @@ def test():
     print("Number of phrases:"+str(len(list)))
     print("Fixed Number of phrases:"+str(len(fixed_list)))
     TextExtractor.write_to_file((",".join(fixed_list)), os.path.join(constants.TEST_OUTPUT, '10.txt'))
+    print("Success")
+
+def test():
+    # if not os.path.isdir(os.path.join(constants.DATA_PATH, "authors_topic")):
+    #     os.mkdir(os.path.join(constants.DATA_PATH, "authors_topic"))
+    for fileName in os.listdir(os.path.join(constants.DATA_PATH,'authors_topic')):
+        outPath = os.path.join(constants.DATA_PATH,'author_topic_filtered', fileName)
+        if os.path.isfile(outPath): #Already exist
+            continue
+        print(fileName)
+        list = TextExtractor.extract_corrected_text(os.path.join(constants.DATA_PATH, "authors_topic", fileName)).split(",")
+        print("Number of phrases:"+str(len(list)))
+        fixed_list, phraseChanged = fix_broken_words(list)
+        print("Fixed Number of phrases:"+str(len(fixed_list)))
+        TextExtractor.write_to_file((",".join(fixed_list)), outPath)
+
     print("Success")
 
 if __name__ == '__main__':

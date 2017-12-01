@@ -77,13 +77,14 @@ def get_terms(tree):
         term = [ normalise(w) for w,t in leaf if acceptable_word(w) ]
         yield term
 
-# def get_named_entities(text):
-#     for sent in nltk.sent_tokenize(text):
-#         tokens = nltk.tokenize.word_tokenize(sent)
-#         tags = st.tag(tokens)
-#         for tag in tags:
-#             if tag[1]=='PERSON': print tag
-#             if tag[1]=='LOCATION': print tag
+def get_named_entities(text):
+    return nltk.ne_chunk(text)
+    # for sent in nltk.sent_tokenize(text):
+    #     tokens = nltk.tokenize.word_tokenize(sent)
+    #     tags = st.tag(tokens)
+    #     # for tag in tags:
+    #     #     if tag[1]=='PERSON': print tag
+    #     #     if tag[1]=='LOCATION': print tag
 
 def write_author_noun_phrases():
     readDir = os.path.join(constants.DATA_PATH, "authors_text")

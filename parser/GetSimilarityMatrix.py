@@ -1,7 +1,10 @@
 import os
 import sys
 import difflib
-sys.path.insert(0, r'C:\Users\soumy\Desktop\SML\intelligent-team-building-recommendation-system-master\intelligent-team-building-recommendation-system-master')
+
+userPath = r'<>'
+
+sys.path.insert(0, userPath)
 
 import constants
 

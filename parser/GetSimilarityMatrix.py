@@ -2,7 +2,7 @@ import os
 import sys
 import difflib
 
-userPath = r'<>'
+userPath = r'<path-to-project-root>'
 
 sys.path.insert(0, userPath)
 
